@@ -297,6 +297,9 @@ export const startSuiteRunWithRecorder = async ({
   environmentOverride,
   toolSnapshot,
   toolSnapshotDebug,
+  iterationOverride,
+  matchOptionsOverride,
+  namedHostId,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -311,11 +314,30 @@ export const startSuiteRunWithRecorder = async ({
     servers: string[];
     serverBindings?: Array<{
       serverName: string;
-      workspaceServerId?: string;
+      projectServerId?: string;
     }>;
   };
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
+  /**
+   * Transient per-run iteration count (1-10). Overlays `runs` on every
+   * snapshotted test case via the `startTestSuiteRun` mutation; persisted
+   * `testCase.runs` is untouched.
+   */
+  iterationOverride?: number;
+  /**
+   * One-off match-option override for this run only. Convex
+   * `precreateIterationsForRun` resolves it on top of suite default +
+   * case override into each iteration's `testCaseSnapshot.matchOptions`.
+   */
+  matchOptionsOverride?: import("@/shared/eval-matching").MatchOptionsDTO;
+  /**
+   * Scope this run to a single host attached to the suite. The Convex
+   * mutation snapshots the host's current config and uses the snapshot's
+   * server set as the run's environment. The runner is unchanged — it
+   * just receives the host's servers like any other run.
+   */
+  namedHostId?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -328,6 +350,9 @@ export const startSuiteRunWithRecorder = async ({
       environmentOverride,
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
       toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+      iterationOverride,
+      matchOptionsOverride,
+      ...(namedHostId ? { namedHostId } : {}),
     },
   );
 
@@ -364,6 +389,7 @@ export const startSuiteRunWithRecorder = async ({
           expectedOutput: tc.expectedOutput,
           promptTurns: tc.promptTurns,
           advancedConfig: tc.advancedConfig,
+          matchOptions: tc.matchOptions,
           testCaseId: tc._id,
         }));
       }
@@ -381,6 +407,7 @@ export const startSuiteRunWithRecorder = async ({
             expectedOutput: tc.expectedOutput,
             promptTurns: tc.promptTurns,
             advancedConfig: tc.advancedConfig,
+            matchOptions: tc.matchOptions,
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];
@@ -396,5 +423,9 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    hostConfig: response?.hostConfig as
+      | Record<string, unknown>
+      | null
+      | undefined,
   };
 };

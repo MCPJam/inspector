@@ -353,7 +353,7 @@ export function CheckoutDialog({
   checkoutSession: initialSession,
   checkoutCallId,
   onRespond,
-  serverInfo,
+  serverInfo: _serverInfo,
   onCallTool,
 }: CheckoutDialogProps) {
   const [step, setStep] = useState<CheckoutStep>("payment");

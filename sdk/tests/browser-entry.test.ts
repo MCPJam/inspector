@@ -103,5 +103,8 @@ describe("browser entrypoint", () => {
     expect(
       (browser as Record<string, unknown>).OAuthConformanceTest
     ).toBeUndefined();
+    expect(
+      (browser as Record<string, unknown>).probeMcpServer
+    ).toBeUndefined();
   });
 });

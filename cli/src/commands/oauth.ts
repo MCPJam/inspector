@@ -1,5 +1,7 @@
 import {
   type OAuthConformanceConfig,
+  type OAuthConformanceSuiteResult,
+  type OAuthLoginConfig,
   type OAuthVerificationConfig,
   OAuthConformanceTest,
   OAuthConformanceSuite,
@@ -11,6 +13,7 @@ import {
 } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
+  getGlobalOptions,
   parseHeadersOption,
   parsePositiveInteger,
 } from "../lib/server-config.js";
@@ -33,9 +36,21 @@ import {
   type OAuthOutputFormat,
 } from "../lib/oauth-output.js";
 import {
+  renderConformanceReporterResult,
+  resolveConformanceOutputFormatForCli,
+} from "../lib/conformance-output.js";
+import { readInputSource } from "../lib/json-input.js";
+import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
+import {
   buildCommandArtifactError,
+  type DebugArtifactOutcome,
   writeCommandDebugArtifact,
 } from "../lib/debug-artifact.js";
+import {
+  hasCredentialsToSave,
+  redactCredentialsFromResult,
+  writeCredentialsFile,
+} from "../lib/credentials-file.js";
 import {
   createCliRpcLogCollector,
 } from "../lib/rpc-logs.js";
@@ -45,29 +60,70 @@ import type { MCPServerConfig, OAuthLoginResult } from "@mcpjam/sdk";
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
 
-function getOAuthFormat(command: Command): OAuthOutputFormat {
+function getOAuthFormat(
+  command: Command,
+): OAuthOutputFormat {
   const opts = command.optsWithGlobals() as { format?: string };
   return resolveOAuthOutputFormat(opts.format, process.stdout.isTTY);
 }
 
-function getStructuredOAuthFormat(command: Command): "json" | "human" {
-  const format = getOAuthFormat(command);
-  if (format === "junit-xml") {
-    throw usageError(
-      'The oauth metadata/proxy commands only support --format "json" or "human".',
-    );
-  }
-  return format;
+function getOAuthConformanceFormat(
+  command: Command,
+  reporter: ReporterFormat | undefined,
+): OAuthOutputFormat {
+  const opts = command.optsWithGlobals() as { format?: string };
+  return resolveConformanceOutputFormatForCli(
+    opts.format,
+    process.stdout.isTTY,
+    reporter,
+  );
 }
 
 function writeOAuthOutput(output: string): void {
   process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 }
 
+export function buildOAuthLoginDebugOutcome(options: {
+  commandError?: unknown;
+  result?: OAuthLoginResult;
+  credentialsFileError?: unknown;
+}): DebugArtifactOutcome {
+  if (options.commandError !== undefined) {
+    return {
+      status: "error",
+      error: options.commandError,
+    };
+  }
+
+  if (options.credentialsFileError !== undefined) {
+    return {
+      status: "error",
+      result: options.result,
+      error: options.credentialsFileError,
+    };
+  }
+
+  if (options.result?.completed) {
+    return {
+      status: "success",
+      result: options.result,
+    };
+  }
+
+  return {
+    status: "error",
+    result: options.result,
+    error: buildCommandArtifactError(
+      "OAUTH_LOGIN_INCOMPLETE",
+      options.result?.error?.message ?? "OAuth login did not complete.",
+    ),
+  };
+}
+
 export interface OAuthCommandOptions {
   url: string;
-  protocolVersion: "2025-03-26" | "2025-06-18" | "2025-11-25";
-  registration: "cimd" | "dcr" | "preregistered";
+  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25";
+  registration?: "cimd" | "dcr" | "preregistered";
   authMode?: "headless" | "interactive" | "client_credentials";
   clientId?: string;
   clientSecret?: string;
@@ -80,6 +136,7 @@ export interface OAuthCommandOptions {
   verifyCallTool?: string;
   conformanceChecks?: boolean;
   printUrl?: boolean;
+  credentialsOut?: string;
 }
 
 interface OAuthProxyCommandOptions {
@@ -98,13 +155,13 @@ export function registerOAuthCommands(program: Command): void {
     .command("login")
     .description("Run an OAuth login flow against an HTTP MCP server")
     .requiredOption("--url <url>", "MCP server URL")
-    .requiredOption(
+    .option(
       "--protocol-version <version>",
-      "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol override: 2025-03-26, 2025-06-18, or 2025-11-25",
     )
-    .requiredOption(
+    .option(
       "--registration <strategy>",
-      "Registration strategy: dcr, preregistered, or cimd",
+      "Registration override: dcr, preregistered, or cimd",
     )
     .option(
       "--auth-mode <mode>",
@@ -143,9 +200,14 @@ export function registerOAuthCommands(program: Command): void {
       "--debug-out <path>",
       "Write a structured debug artifact to a file",
     )
+    .option(
+      "--credentials-out <path>",
+      "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
+    )
     .action(async (options, command) => {
-      const format = getStructuredOAuthFormat(command);
-      const config = buildOAuthConformanceConfig(
+      const globalOptions = getGlobalOptions(command);
+      const format = getOAuthFormat(command);
+      const config = buildOAuthLoginConfig(
         options as OAuthCommandOptions,
         {
           defaultAuthMode: "interactive",
@@ -154,7 +216,7 @@ export function registerOAuthCommands(program: Command): void {
       const snapshotCollector = options.debugOut
         ? createCliRpcLogCollector({ __cli__: config.serverUrl })
         : undefined;
-      const isTTY = process.stderr.isTTY;
+      const isTTY = process.stderr.isTTY && !globalOptions.quiet;
       if (isTTY) {
         config.onProgress = (message: string) => {
           process.stderr.write(`\r\x1b[K${message}`);
@@ -180,32 +242,38 @@ export function registerOAuthCommands(program: Command): void {
         snapshotConfig,
       );
 
+      let credentialsFilePath: string | undefined;
+      let credentialsFileError: unknown;
+      if (
+        commandError === undefined &&
+        result &&
+        options.credentialsOut &&
+        hasCredentialsToSave(result)
+      ) {
+        try {
+          credentialsFilePath = await writeCredentialsFile(
+            options.credentialsOut as string,
+            result,
+          );
+        } catch (error) {
+          credentialsFileError = error;
+        }
+      }
+
       await writeCommandDebugArtifact({
         outputPath: options.debugOut as string | undefined,
         format,
+        quiet: globalOptions.quiet,
         commandName: "oauth login",
         commandInput: summarizeOAuthLoginCommandInput(
           options as OAuthCommandOptions,
         ),
         target,
-        outcome: commandError
-          ? {
-              status: "error",
-              error: commandError,
-            }
-          : result?.completed
-            ? {
-                status: "success",
-                result,
-              }
-            : {
-                status: "error",
-                result,
-                error: buildCommandArtifactError(
-                  "OAUTH_LOGIN_INCOMPLETE",
-                  result?.error?.message ?? "OAuth login did not complete.",
-                ),
-              },
+        outcome: buildOAuthLoginDebugOutcome({
+          commandError,
+          result,
+          credentialsFileError,
+        }),
         snapshot: options.debugOut
           ? {
               input: {
@@ -225,7 +293,17 @@ export function registerOAuthCommands(program: Command): void {
         throw cliError("INTERNAL_ERROR", "OAuth login did not return a result.");
       }
 
-      writeResult(result, format);
+      if (options.credentialsOut) {
+        writeResult(
+          redactCredentialsFromResult(result, credentialsFilePath),
+          format,
+        );
+        if (credentialsFileError) {
+          throw credentialsFileError;
+        }
+      } else {
+        writeResult(result, format);
+      }
       if (!result.completed) {
         setProcessExitCode(1);
       }
@@ -281,15 +359,46 @@ export function registerOAuthCommands(program: Command): void {
       "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
     )
     .option(
+      "--credentials-out <path>",
+      "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
+    )
+    .option(
       "--print-url",
       "In interactive mode, print the consent URL to stderr instead of launching a browser",
     )
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
-      const format = getOAuthFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getOAuthConformanceFormat(command, reporter);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
       const result = await new OAuthConformanceTest(config).run();
+      let credentialsFilePath: string | undefined;
+      let credentialsFileError: unknown;
 
-      writeOAuthOutput(renderOAuthConformanceResult(result, format));
+      if (options.credentialsOut && hasCredentialsToSave(result)) {
+        try {
+          credentialsFilePath = await writeCredentialsFile(
+            options.credentialsOut as string,
+            result,
+          );
+        } catch (error) {
+          credentialsFileError = error;
+        }
+      }
+
+      writeOAuthOutput(
+        reporter
+          ? renderConformanceReporterResult(result, reporter)
+          : renderOAuthConformanceResult(result, format, {
+              credentialsFilePath,
+            }),
+      );
+      if (credentialsFileError) {
+        throw credentialsFileError;
+      }
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -309,8 +418,17 @@ export function registerOAuthCommands(program: Command): void {
       "--verify-call-tool <name>",
       "Also call the named tool after listing",
     )
+    .option(
+      "--credentials-out <path>",
+      "Write OAuth credentials from the first flow that returns credentials to <path> (mode 0600)",
+    )
+    .option(
+      "--reporter <reporter>",
+      "Structured reporter output: json-summary or junit-xml",
+    )
     .action(async (options, command) => {
-      const format = getOAuthFormat(command);
+      const reporter = parseReporterFormat(options.reporter as string | undefined);
+      const format = getOAuthConformanceFormat(command, reporter);
       const config = loadOAuthSuiteConfig(options.config as string);
 
       if (options.verifyTools || options.verifyCallTool) {
@@ -332,8 +450,35 @@ export function registerOAuthCommands(program: Command): void {
 
       const suite = new OAuthConformanceSuite(config);
       const result = await suite.run();
+      const credentialsResultIndex = findCredentialsResultIndex(result);
+      let credentialsFilePath: string | undefined;
+      let credentialsFileError: unknown;
 
-      writeOAuthOutput(renderOAuthConformanceSuiteResult(result, format));
+      if (
+        options.credentialsOut &&
+        credentialsResultIndex !== undefined
+      ) {
+        try {
+          credentialsFilePath = await writeCredentialsFile(
+            options.credentialsOut as string,
+            result.results[credentialsResultIndex],
+          );
+        } catch (error) {
+          credentialsFileError = error;
+        }
+      }
+
+      writeOAuthOutput(
+        reporter
+          ? renderConformanceReporterResult(result, reporter)
+          : renderOAuthConformanceSuiteResult(result, format, {
+              credentialsFilePath,
+              credentialsResultIndex,
+            }),
+      );
+      if (credentialsFileError) {
+        throw credentialsFileError;
+      }
       if (!result.passed) {
         setProcessExitCode(1);
       }
@@ -344,8 +489,9 @@ export function registerOAuthCommands(program: Command): void {
     .description("Fetch OAuth metadata from a URL")
     .requiredOption("--url <url>", "OAuth metadata URL")
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthMetadata(options.url as string);
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, format);
     });
 
   oauth
@@ -359,10 +505,14 @@ export function registerOAuthCommands(program: Command): void {
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
-    .option("--body <value>", "Request body as JSON or raw string")
+    .option(
+      "--body <value>",
+      "Request body as JSON, raw string, @path, or - for stdin",
+    )
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthProxy(options as OAuthProxyCommandOptions);
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, format);
     });
 
   oauth
@@ -376,12 +526,16 @@ export function registerOAuthCommands(program: Command): void {
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
-    .option("--body <value>", "Request body as JSON or raw string")
+    .option(
+      "--body <value>",
+      "Request body as JSON, raw string, @path, or - for stdin",
+    )
     .action(async (options, command) => {
+      const format = getOAuthFormat(command);
       const result = await runOAuthDebugProxy(
         options as OAuthProxyCommandOptions,
       );
-      writeResult(result, getStructuredOAuthFormat(command));
+      writeResult(result, format);
     });
 }
 
@@ -394,8 +548,10 @@ export function buildOAuthConformanceConfig(
   const serverUrl = options.url.trim();
   assertValidUrl(serverUrl, "server URL");
 
-  const protocolVersion = parseProtocolVersion(options.protocolVersion);
-  const registrationStrategy = parseRegistrationStrategy(options.registration);
+  const protocolVersion = parseRequiredProtocolVersion(options.protocolVersion);
+  const registrationStrategy = parseRequiredRegistrationStrategy(
+    options.registration,
+  );
   const authMode = parseAuthMode(
     options.authMode ?? defaults?.defaultAuthMode ?? "interactive",
   );
@@ -498,11 +654,145 @@ export function buildOAuthConformanceConfig(
   };
 }
 
+function findCredentialsResultIndex(
+  result: OAuthConformanceSuiteResult,
+): number | undefined {
+  const index = result.results.findIndex(hasCredentialsToSave);
+  return index >= 0 ? index : undefined;
+}
+
+export function buildOAuthLoginConfig(
+  options: OAuthCommandOptions,
+  defaults?: {
+    defaultAuthMode?: "headless" | "interactive" | "client_credentials";
+  },
+): OAuthLoginConfig {
+  const serverUrl = options.url.trim();
+  assertValidUrl(serverUrl, "server URL");
+
+  const protocolVersion = options.protocolVersion
+    ? parseProtocolVersion(options.protocolVersion)
+    : undefined;
+  const registrationStrategy = options.registration
+    ? parseRegistrationStrategy(options.registration)
+    : undefined;
+  const authMode = parseAuthMode(
+    options.authMode ?? defaults?.defaultAuthMode ?? "interactive",
+  );
+
+  if (options.printUrl && authMode !== "interactive") {
+    throw usageError(
+      "--print-url only applies to --auth-mode interactive. Headless and client_credentials modes do not open a browser.",
+    );
+  }
+
+  if (
+    protocolVersion !== undefined &&
+    registrationStrategy === "cimd" &&
+    protocolVersion !== "2025-11-25"
+  ) {
+    throw usageError(
+      `CIMD registration is not supported for protocol version ${protocolVersion}.`,
+    );
+  }
+
+  if (authMode === "client_credentials" && registrationStrategy === "cimd") {
+    throw usageError(
+      "--auth-mode client_credentials cannot be used with --registration cimd. CIMD is a browser-based registration flow and only works with --auth-mode headless or --auth-mode interactive. For client_credentials, use --registration dcr or --registration preregistered instead.",
+    );
+  }
+
+  const clientId = options.clientId?.trim();
+  const clientSecret = options.clientSecret;
+  const clientMetadataUrl = options.clientMetadataUrl?.trim();
+  const redirectUrl = options.redirectUrl?.trim();
+
+  if (registrationStrategy === "preregistered" && !clientId) {
+    throw usageError(
+      "--client-id is required when --registration preregistered is used.",
+    );
+  }
+
+  if (
+    registrationStrategy === "preregistered" &&
+    authMode === "client_credentials" &&
+    !clientSecret
+  ) {
+    throw usageError(
+      "--client-secret is required for preregistered client_credentials runs.",
+    );
+  }
+
+  if (clientMetadataUrl) {
+    assertValidUrl(clientMetadataUrl, "client metadata URL");
+  }
+
+  if (redirectUrl) {
+    assertValidUrl(redirectUrl, "redirect URL");
+  }
+
+  const customHeaders = parseHeadersOption(options.header);
+  const client: NonNullable<OAuthLoginConfig["client"]> = {};
+
+  if (clientId) {
+    client.preregistered = {
+      clientId,
+      ...(clientSecret ? { clientSecret } : {}),
+    };
+  }
+
+  if (clientMetadataUrl) {
+    client.clientIdMetadataUrl = clientMetadataUrl;
+  }
+
+  const verification: OAuthVerificationConfig | undefined =
+    options.verifyTools || options.verifyCallTool
+      ? {
+          listTools: options.verifyTools ?? !!options.verifyCallTool,
+          ...(options.verifyCallTool
+            ? { callTool: { name: options.verifyCallTool } }
+            : {}),
+        }
+      : undefined;
+
+  const auth = buildAuthConfig(
+    authMode,
+    registrationStrategy ?? "dcr",
+    clientId,
+    clientSecret,
+  );
+
+  if (options.printUrl && auth.mode === "interactive") {
+    (auth as { openUrl?: (url: string) => Promise<void> }).openUrl =
+      async (url: string) => {
+        process.stderr.write(`OAUTH_CONSENT_URL: ${url}\n`);
+      };
+  }
+
+  return {
+    serverUrl,
+    ...(protocolVersion ? { protocolVersion } : {}),
+    ...(registrationStrategy ? { registrationStrategy } : {}),
+    protocolMode: protocolVersion ?? "auto",
+    registrationMode: registrationStrategy ?? "auto",
+    auth,
+    client,
+    scopes: options.scopes?.trim() || undefined,
+    customHeaders,
+    redirectUrl,
+    stepTimeout: options.stepTimeout ?? 30_000,
+    verification,
+    oauthConformanceChecks: false,
+  };
+}
+
 export function summarizeOAuthLoginCommandInput(
   options: OAuthCommandOptions,
 ): Record<string, unknown> {
   return {
     serverUrl: options.url.trim(),
+    protocolMode: options.protocolVersion ?? "auto",
+    registrationMode: options.registration ?? "auto",
     protocolVersion: options.protocolVersion,
     registration: options.registration,
     authMode: options.authMode ?? "interactive",
@@ -519,7 +809,10 @@ export function summarizeOAuthLoginCommandInput(
 }
 
 export function buildOAuthLoginSnapshotConfig(
-  config: OAuthConformanceConfig,
+  config: Pick<
+    OAuthLoginConfig,
+    "serverUrl" | "customHeaders" | "stepTimeout" | "client" | "auth"
+  >,
   result?: OAuthLoginResult,
 ): MCPServerConfig {
   const baseConfig: MCPServerConfig = {
@@ -613,6 +906,18 @@ function parseProtocolVersion(
   );
 }
 
+function parseRequiredProtocolVersion(
+  value: string | undefined,
+): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+  if (!value) {
+    throw usageError(
+      "--protocol-version is required for oauth conformance flows.",
+    );
+  }
+
+  return parseProtocolVersion(value);
+}
+
 function parseRegistrationStrategy(
   value: string,
 ): "cimd" | "dcr" | "preregistered" {
@@ -623,6 +928,18 @@ function parseRegistrationStrategy(
   throw usageError(
     `Invalid registration strategy "${value}". Use ${[...VALID_REGISTRATION_STRATEGIES].join(", ")}.`,
   );
+}
+
+function parseRequiredRegistrationStrategy(
+  value: string | undefined,
+): "cimd" | "dcr" | "preregistered" {
+  if (!value) {
+    throw usageError(
+      "--registration is required for oauth conformance flows.",
+    );
+  }
+
+  return parseRegistrationStrategy(value);
 }
 
 function parseAuthMode(
@@ -686,10 +1003,12 @@ export function parseProxyBody(value: string | undefined): unknown {
     return undefined;
   }
 
+  const source = readInputSource(value, "Request body");
+
   try {
-    return JSON.parse(value);
+    return JSON.parse(source);
   } catch {
-    return value;
+    return source;
   }
 }
 

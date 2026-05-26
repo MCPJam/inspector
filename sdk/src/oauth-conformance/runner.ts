@@ -40,6 +40,7 @@ import {
   type NormalizedOAuthConformanceConfig,
   type OAuthConformanceCheckId,
   type OAuthConformanceConfig,
+  type OAuthConformanceCredentials,
   type StepResult,
   type TrackedRequestFn,
   type VerificationResult,
@@ -205,6 +206,21 @@ function buildSummary(
   }
 
   return `OAuth conformance failed at ${firstFailure.step}: ${firstFailure.error?.message || "Unknown error"}`;
+}
+
+function buildCredentials(
+  state: OAuthFlowState,
+): OAuthConformanceCredentials | undefined {
+  const credentials: OAuthConformanceCredentials = {
+    ...(state.clientId ? { clientId: state.clientId } : {}),
+    ...(state.clientSecret ? { clientSecret: state.clientSecret } : {}),
+    ...(state.accessToken ? { accessToken: state.accessToken } : {}),
+    ...(state.refreshToken ? { refreshToken: state.refreshToken } : {}),
+    ...(state.tokenType ? { tokenType: state.tokenType } : {}),
+    ...(state.expiresIn !== undefined ? { expiresIn: state.expiresIn } : {}),
+  };
+
+  return Object.keys(credentials).length > 0 ? credentials : undefined;
 }
 
 function mergeConformanceDynamicRegistration(
@@ -818,6 +834,7 @@ export class OAuthConformanceTest {
       steps,
       summary: buildSummary(this.config, steps, passed),
       durationMs,
+      credentials: buildCredentials(state),
       verification,
     };
   }

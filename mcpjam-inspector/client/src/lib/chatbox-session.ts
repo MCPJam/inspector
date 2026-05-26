@@ -1,7 +1,41 @@
-import { getShareableAppOrigin, slugify } from "@/lib/shared-server-session";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import {
+  normalizeChatboxHostStyleId,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-client-style";
+import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
+import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 
-export type ChatboxShareMode = "any_signed_in_with_link" | "invited_only";
+const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
+
+export function slugify(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "server";
+}
+
+export function getShareableAppOrigin(): string {
+  if (typeof window === "undefined") {
+    return MCPJAM_APP_ORIGIN;
+  }
+
+  return window.location.protocol === "http:" ||
+    window.location.protocol === "https:"
+    ? window.location.origin
+    : MCPJAM_APP_ORIGIN;
+}
+
+/**
+ * Chatbox access modes. Mirrors the backend `chatboxModeValidator`.
+ */
+export type ChatboxShareMode =
+  | "project_members"
+  | "invited_only"
+  | "anyone_with_link";
 
 export interface ChatboxBootstrapServer {
   serverId: string;
@@ -19,40 +53,93 @@ export interface ChatboxWelcomeDialogPayload {
   body?: string;
 }
 
+export interface ChatUiPayload {
+  surfaces?: {
+    welcome?: ChatboxWelcomeDialogPayload | null;
+  } | null;
+}
+
 export interface ChatboxBootstrapPayload {
-  workspaceId: string;
+  projectId: string;
   chatboxId: string;
   name: string;
   description?: string;
   hostStyle: ChatboxHostStyle;
   mode: ChatboxShareMode;
   allowGuestAccess: boolean;
-  viewerIsWorkspaceMember: boolean;
+  viewerIsProjectMember: boolean;
   systemPrompt: string;
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
   servers: ChatboxBootstrapServer[];
   /** When set by bootstrap or playground snapshot, drives hosted welcome copy. */
-  welcomeDialog?: ChatboxWelcomeDialogPayload | null;
+  chatUi?: ChatUiPayload | null;
+  /**
+   * User override for the MCP Apps `hostCapabilities` blob (see
+   * HostConfigInputV2.hostCapabilitiesOverride). When undefined the hosted
+   * runtime falls back to the active `hostStyle`'s preset.
+   */
+  hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * User override for the chat-UI chrome (logo, palette, indicator, fonts).
+   * Mirrors `HostConfigInputV2.chatUiOverride`. When undefined the hosted
+   * runtime renders the active `hostStyle`'s preset chrome verbatim.
+   * Snapshotted at chatbox creation time — see comment on `hostStyle`
+   * for snapshot semantics.
+   */
+  chatUiOverride?: ChatUiOverride;
+  /**
+   * Versioned envelope for host-level MCP state — see
+   * `HostConfigMcpProfileV1` in `client/src/lib/host-config-v2.ts`.
+   * When undefined the hosted runtime falls back to SDK-default
+   * `clientInfo` / `supportedProtocolVersions` and the resource-declared
+   * sandbox policy. The backend canonicalizer guarantees a non-undefined
+   * value here is a valid `{ profileVersion: 1, ... }` envelope.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 }
 
 export interface ChatboxSession {
-  token: string;
+  /**
+   * Resolved chatbox identity. Returned by /api/web/chatboxes/redeem and
+   * stored at the top level so callers don't have to dig through
+   * `payload`. Every chatbox-aware backend call keys on this; the URL
+   * link token is consumed only at redemption time and is not persisted.
+   */
+  chatboxId: string;
+  /**
+   * Backend-owned monotonic counter returned by /web/chatbox/redeem.
+   * Bumps whenever access changes (mode, revoke-all, allowlist edits,
+   * invite removal). Threaded into every chatbox-aware server call so
+   * inspector caches invalidate cleanly.
+   */
+  accessVersion: number;
   payload: ChatboxBootstrapPayload;
   surface?: "preview" | "share_link";
+  /**
+   * Original URL share token captured at redeem time. Persisted so the
+   * hosted Copy link button can reconstruct the canonical share URL after
+   * the redeem flow rewrites the address bar to `/#<slug>`. UI-only — no
+   * backend call should key on this; access is gated by `accessVersion`.
+   */
+  shareToken?: string;
 }
 
-export const CHATBOX_SESSION_STORAGE_KEY = "mcpjam_chatbox_session_v1";
+// Bumped from v1 → v2: ChatboxSession dropped the URL token and added
+// required top-level `chatboxId` + `accessVersion`. Reading a v1 row would
+// produce a malformed session; rev the key so the v1 row is ignored and
+// the next landing-page mount re-redeems cleanly.
+export const CHATBOX_SESSION_STORAGE_KEY = "mcpjam_chatbox_session_v2";
 export const CHATBOX_OAUTH_PENDING_KEY = "mcp-oauth-chatbox-pending";
 export const CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY =
   "mcpjam_chatbox_signin_return_path_v1";
 export const CHATBOX_PLAYGROUND_KEY_PREFIX =
   "mcpjam_chatbox_playground_session_v1:";
 
-/** sessionStorage: optional servers the tester enabled for this share-link session. */
-export function chatboxEnabledOptionalStorageKey(chatboxToken: string): string {
-  return `chatbox-enabled-optional:${chatboxToken}`;
+/** sessionStorage: optional servers the tester enabled for this chatbox session. */
+export function chatboxEnabledOptionalStorageKey(chatboxId: string): string {
+  return `chatbox-enabled-optional:${chatboxId}`;
 }
 
 /** sessionStorage: optional servers enabled in builder preview for a chatbox id. */
@@ -69,15 +156,84 @@ export interface ChatboxPlaygroundSession extends ChatboxSession {
   updatedAt: number;
 }
 
-function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
-  if (
-    mode === "any_signed_in_with_link" ||
-    mode === "workspace_with_link" ||
-    mode === "anyone_with_link"
-  ) {
-    return "any_signed_in_with_link";
-  }
+// Defensive normalizer for the chatUi envelope in playground snapshots and
+// /web/chatbox/redeem responses. Returns `undefined` when no recognized
+// surface is present; the hosted runtime only consumes the `welcome`
+// surface today (feedback never reaches the bootstrap payload).
+function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const surfaces = (input as { surfaces?: unknown }).surfaces;
+  if (!surfaces || typeof surfaces !== "object") return undefined;
+  const welcomeRaw = (surfaces as { welcome?: unknown }).welcome;
+  const welcome =
+    welcomeRaw &&
+    typeof welcomeRaw === "object" &&
+    typeof (welcomeRaw as { enabled?: unknown }).enabled === "boolean"
+      ? {
+          enabled: (welcomeRaw as { enabled: boolean }).enabled,
+          body:
+            typeof (welcomeRaw as { body?: unknown }).body === "string"
+              ? (welcomeRaw as { body: string }).body
+              : "",
+        }
+      : undefined;
+  if (!welcome) return undefined;
+  return { surfaces: { welcome } };
+}
 
+function normalizeHostCapabilitiesOverride(
+  input: unknown,
+): Record<string, unknown> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as Record<string, unknown>;
+}
+
+/**
+ * Defensive boundary check for `chatUiOverride` in redeem responses /
+ * playground snapshots. Same untrusted-shape gate as
+ * {@link normalizeHostCapabilitiesOverride}: reject obvious shape errors,
+ * pass anything object-shaped through as `ChatUiOverride`. The backend
+ * validator is the source of truth for structural correctness; this only
+ * guards against an upstream serialization bug slipping garbage into
+ * typed code.
+ */
+function normalizeChatUiOverride(
+  input: unknown,
+): ChatUiOverride | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as ChatUiOverride;
+}
+
+function normalizeMcpProfile(
+  input: unknown,
+): HostConfigMcpProfileV1 | undefined {
+  // Same untrusted-shape gate as normalizeHostCapabilitiesOverride: this
+  // is the boundary between the redeem-response JSON and the typed
+  // session. The backend canonicalizer (`canonicalizeMcpProfile` in
+  // `convex/lib/hostConfigV2.ts`) is the source of truth for structural
+  // validity — a value reaching this point is either undefined or a
+  // backend-validated `{ profileVersion: 1, ... }` envelope. We only
+  // reject obvious shape errors (non-object, array, null) so an upstream
+  // serialization bug can't slip a truthy garbage payload into typed
+  // code that assumes the envelope shape.
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as HostConfigMcpProfileV1;
+}
+
+function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
+  if (mode === "project_members") return "project_members";
+  if (mode === "anyone_with_link") return "anyone_with_link";
+  // Legacy alias from before the chatbox auth refactor renamed the
+  // any-signed-in-with-link mode. Editor/builder surfaces still write
+  // it; map to the semantic equivalent so persisted sessions don't
+  // silently downgrade to invited-only when read back.
+  if (mode === "any_signed_in_with_link") return "anyone_with_link";
   return "invited_only";
 }
 
@@ -95,26 +251,30 @@ export function hasActiveChatboxSession(): boolean {
   return readChatboxSession() !== null;
 }
 
-function normalizeChatboxSession(
+export function normalizeChatboxSession(
   parsed: Partial<ChatboxSession> | null,
 ): ChatboxSession | null {
   if (!parsed || typeof parsed !== "object") {
     return null;
   }
 
-  const token = typeof parsed.token === "string" ? parsed.token.trim() : "";
+  const chatboxId =
+    typeof parsed.chatboxId === "string" ? parsed.chatboxId.trim() : "";
+  const accessVersion =
+    typeof parsed.accessVersion === "number" &&
+    Number.isFinite(parsed.accessVersion)
+      ? parsed.accessVersion
+      : null;
   const payload = parsed.payload;
   const hostStyle =
-    payload?.hostStyle === "claude" || payload?.hostStyle === "chatgpt"
-      ? payload.hostStyle
-      : payload?.hostStyle == null
-        ? "claude"
-        : null;
+    normalizeChatboxHostStyleId(payload?.hostStyle) ??
+    (payload?.hostStyle == null ? DEFAULT_HOST_STYLE.id : null);
 
   if (
-    !token ||
+    !chatboxId ||
+    accessVersion === null ||
     !payload ||
-    typeof payload.workspaceId !== "string" ||
+    typeof payload.projectId !== "string" ||
     typeof payload.chatboxId !== "string" ||
     typeof payload.name !== "string" ||
     hostStyle === null ||
@@ -123,16 +283,17 @@ function normalizeChatboxSession(
     typeof payload.temperature !== "number" ||
     typeof payload.requireToolApproval !== "boolean" ||
     typeof payload.allowGuestAccess !== "boolean" ||
-    typeof payload.viewerIsWorkspaceMember !== "boolean" ||
+    typeof payload.viewerIsProjectMember !== "boolean" ||
     !Array.isArray(payload.servers)
   ) {
     return null;
   }
 
   return {
-    token,
+    chatboxId,
+    accessVersion,
     payload: {
-      workspaceId: payload.workspaceId,
+      projectId: payload.projectId,
       chatboxId: payload.chatboxId,
       name: payload.name,
       description:
@@ -142,7 +303,7 @@ function normalizeChatboxSession(
       hostStyle,
       mode: normalizeChatboxShareMode(payload.mode),
       allowGuestAccess: payload.allowGuestAccess,
-      viewerIsWorkspaceMember: payload.viewerIsWorkspaceMember,
+      viewerIsProjectMember: payload.viewerIsProjectMember,
       systemPrompt: payload.systemPrompt,
       modelId: payload.modelId,
       temperature: payload.temperature,
@@ -168,20 +329,23 @@ function normalizeChatboxSession(
             : null,
           optional: Boolean(server.optional),
         })),
-      welcomeDialog:
-        payload.welcomeDialog &&
-        typeof payload.welcomeDialog === "object" &&
-        typeof payload.welcomeDialog.enabled === "boolean"
-          ? {
-              enabled: payload.welcomeDialog.enabled,
-              body:
-                typeof payload.welcomeDialog.body === "string"
-                  ? payload.welcomeDialog.body
-                  : "",
-            }
-          : undefined,
+      chatUi: normalizeChatUiPayload(payload.chatUi),
+      hostCapabilitiesOverride: normalizeHostCapabilitiesOverride(
+        (payload as { hostCapabilitiesOverride?: unknown })
+          .hostCapabilitiesOverride,
+      ),
+      chatUiOverride: normalizeChatUiOverride(
+        (payload as { chatUiOverride?: unknown }).chatUiOverride,
+      ),
+      mcpProfile: normalizeMcpProfile(
+        (payload as { mcpProfile?: unknown }).mcpProfile,
+      ),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
+    shareToken:
+      typeof parsed.shareToken === "string" && parsed.shareToken.trim()
+        ? parsed.shareToken.trim()
+        : undefined,
   };
 }
 
@@ -381,20 +545,20 @@ export function buildPlaygroundChatboxLink(
 const BUILDER_SESSION_KEY = "mcpjam_chatbox_builder_session_v1";
 
 export interface ChatboxBuilderSession {
-  workspaceId: string;
+  projectId: string;
   chatboxId: string | null;
   draft: Record<string, unknown> | null;
   viewMode: string;
 }
 
 export function readBuilderSession(
-  workspaceId: string,
+  projectId: string,
 ): ChatboxBuilderSession | null {
   try {
     const raw = sessionStorage.getItem(BUILDER_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ChatboxBuilderSession;
-    if (parsed.workspaceId !== workspaceId) return null;
+    if (parsed.projectId !== projectId) return null;
     return parsed;
   } catch {
     return null;

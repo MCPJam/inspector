@@ -24,6 +24,7 @@ async function runCli(args: string[]): Promise<{
       {
         cwd: CLI_DIR,
         encoding: "utf8",
+        env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
       },
       (error, stdout, stderr) => {
         if (error && typeof (error as NodeJS.ErrnoException).code !== "number") {

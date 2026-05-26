@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -9,7 +10,7 @@ const mockState = vi.hoisted(() => ({
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
   authFetch: vi.fn(),
-  buildHostedServerRequest: vi.fn(),
+  buildServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
   hasToken: vi.fn(() => false),
@@ -66,6 +67,11 @@ const allowedOpenAiModel = {
   name: "GPT-4o Mini",
   provider: "openai" as const,
 };
+const orgOpenAiModel = {
+  id: "gpt-4o-mini",
+  name: "GPT-4o Mini",
+  provider: "openai" as const,
+};
 const gatedOpenAiModel = {
   id: "openai/gpt-5.4-pro",
   name: "GPT-5.4 Pro",
@@ -86,6 +92,12 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
     gatedAnthropicModel,
     gatedGoogleModel,
     gatedOpenAiModel,
+    allowedHostedModel,
+    allowedOpenAiModel,
+    guestModel,
+  ]),
+  buildAvailableModelsFromOrgConfig: vi.fn(() => [
+    orgOpenAiModel,
     allowedHostedModel,
     allowedOpenAiModel,
     guestModel,
@@ -149,7 +161,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
-  buildHostedServerRequest: mockState.buildHostedServerRequest,
+  buildServerRequest: mockState.buildServerRequest,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -216,7 +228,7 @@ vi.mock("@ai-sdk/react", async () => {
           setMessages: mockState.setMessages,
           addToolApprovalResponse: mockState.addToolApprovalResponse,
         };
-      },
+      }
     ),
   };
 });
@@ -258,13 +270,16 @@ describe("useChatSession hosted mode", () => {
     mockState.convexAuth.isLoading = false;
     mockState.authFetch.mockReset();
     mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
-    mockState.buildHostedServerRequest.mockReset();
+    mockState.setMessages.mockReset();
+    mockState.buildServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
     mockState.latestOnData = undefined;
+    vi.mocked(generateId).mockReset();
+    vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
   });
 
@@ -272,45 +287,53 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxId: "cbx_test", accessVersion: 1,
+        },
+      })
     );
 
     const body = lastTransportOptions.body();
     expect(result.current.chatSessionId).toBe("chat-session-id");
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      shareToken: "share-token",
+      chatboxId: "cbx_test", accessVersion: 1,
       accessScope: "chat_v2",
     });
     unmount();
   });
 
-  it("includes chatboxToken in the hosted transport body", async () => {
+  it("includes chatboxId and accessVersion in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedChatboxToken: "chatbox-token",
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxId: "cbx_test", accessVersion: 1,
+          oauthTokens: {
+            "server-id-1": "browser-token",
+          },
+        },
+      })
     );
 
     const body = lastTransportOptions.body();
     expect(result.current.chatSessionId).toBe("chat-session-id");
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxToken: "chatbox-token",
+      chatboxId: "cbx_test", accessVersion: 1,
       accessScope: "chat_v2",
     });
+    expect(body).not.toHaveProperty("oauthTokens");
     unmount();
   });
 
@@ -318,19 +341,112 @@ describe("useChatSession hosted mode", () => {
     const { unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedChatboxToken: "chatbox-token",
-        hostedChatboxSurface: "preview",
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxSurface: "preview",
+        },
+      })
     );
 
     const body = lastTransportOptions.body();
     expect(body).toMatchObject({
-      chatboxToken: "chatbox-token",
+      chatboxId: "cbx_test", accessVersion: 1,
       surface: "preview",
     });
     unmount();
+  });
+
+  it("uses organization provider config to expose BYOK hosted models", async () => {
+    mockState.selectedModelId = "gpt-4o-mini";
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              providerKey: "openai",
+              enabled: true,
+              hasSecret: true,
+            },
+          ],
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.availableModels.map((model) => model.id)).toContain(
+        "gpt-4o-mini",
+      );
+    });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(result.current.isMcpJamModel).toBe(false);
+    expect(result.current.traceViewsSupported).toBe(true);
+    unmount();
+  });
+
+  it("resets the thread when the hosted scope changes under the same auth header", async () => {
+    vi.mocked(generateId)
+      .mockImplementationOnce(() => "chat-session-id")
+      .mockImplementation(() => "chat-session-id-2");
+    const onReset = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({
+        hostedContext,
+      }: {
+        hostedContext: {
+          projectId: string;
+          selectedServerIds: string[];
+          chatboxId: string;
+          accessVersion: number;
+        };
+      }) =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext,
+          onReset,
+        }),
+      {
+        initialProps: {
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+            chatboxId: "cbx_1", accessVersion: 1,
+          },
+        },
+      }
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    expect(result.current.chatSessionId).toBe("chat-session-id");
+
+    mockState.setMessages.mockClear();
+    onReset.mockClear();
+
+    rerender({
+      hostedContext: {
+        projectId: "project-2",
+        selectedServerIds: ["server-id-2"],
+        chatboxId: "cbx_2", accessVersion: 1,
+      },
+    });
+
+    await waitFor(() => {
+      expect(result.current.chatSessionId).toBe("chat-session-id-2");
+    });
+
+    expect(mockState.setMessages).toHaveBeenCalledTimes(1);
+    expect(onReset).toHaveBeenCalledWith("auth-bootstrap");
   });
 
   it("marks session bootstrap complete only after auth setup finishes", async () => {
@@ -339,15 +455,17 @@ describe("useChatSession hosted mode", () => {
       () =>
         new Promise<string>((resolve) => {
           resolveAccessToken = resolve;
-        }),
+        })
     );
 
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
     );
 
     expect(result.current.isSessionBootstrapComplete).toBe(false);
@@ -357,39 +475,6 @@ describe("useChatSession hosted mode", () => {
     await waitFor(() => {
       expect(result.current.isSessionBootstrapComplete).toBe(true);
     });
-  });
-
-  it("includes the selected direct-guest server in hosted chat bodies", async () => {
-    mockState.convexAuth.isAuthenticated = false;
-    mockState.buildHostedServerRequest.mockReturnValue({
-      serverName: "Excalidraw (App)",
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key" },
-      oauthAccessToken: "guest-oauth-token",
-      clientCapabilities: { roots: { listChanged: true } },
-    });
-
-    const { result, unmount } = renderHook(() =>
-      useChatSession({
-        selectedServers: ["Excalidraw (App)"],
-      }),
-    );
-
-    const body = lastTransportOptions.body();
-
-    expect(result.current.chatSessionId).toBe("chat-session-id");
-    expect(mockState.buildHostedServerRequest).toHaveBeenCalledWith(
-      "Excalidraw (App)",
-    );
-    expect(body).toMatchObject({
-      chatSessionId: "chat-session-id",
-      serverName: "Excalidraw (App)",
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key" },
-      oauthAccessToken: "guest-oauth-token",
-      clientCapabilities: { roots: { listChanged: true } },
-    });
-    unmount();
   });
 
   it("uses the latest hosted selectedServerIds on the next send without changing chatSessionId", async () => {
@@ -403,15 +488,17 @@ describe("useChatSession hosted mode", () => {
       }) =>
         useChatSession({
           selectedServers,
-          hostedWorkspaceId: "workspace-1",
-          hostedSelectedServerIds,
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: hostedSelectedServerIds,
+          },
         }),
       {
         initialProps: {
           selectedServers: ["server-1"],
           hostedSelectedServerIds: ["server-id-1"],
         },
-      },
+      }
     );
 
     await waitFor(() => {
@@ -436,9 +523,9 @@ describe("useChatSession hosted mode", () => {
             mockState.authFetch.mock.calls.at(-1)?.[1] as
               | RequestInit
               | undefined
-          )?.body ?? "{}",
-        ),
-      ),
+          )?.body ?? "{}"
+        )
+      )
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-1"],
@@ -466,130 +553,13 @@ describe("useChatSession hosted mode", () => {
             mockState.authFetch.mock.calls.at(-1)?.[1] as
               | RequestInit
               | undefined
-          )?.body ?? "{}",
-        ),
-      ),
+          )?.body ?? "{}"
+        )
+      )
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-2"],
     });
-  });
-
-  it("uses the latest direct-guest server request on the next send without changing chatSessionId", async () => {
-    mockState.convexAuth.isAuthenticated = false;
-    mockState.buildHostedServerRequest.mockImplementation(
-      (serverName: string) =>
-        serverName === "Excalidraw (App)"
-          ? {
-              serverName: "Excalidraw (App)",
-              serverUrl: "https://mcp.excalidraw.com/mcp",
-              serverHeaders: { "X-Api-Key": "guest-key-1" },
-              oauthAccessToken: "guest-oauth-token-1",
-            }
-          : {
-              serverName: "Learn (App)",
-              serverUrl: "https://mcp.learn.com/mcp",
-              serverHeaders: { "X-Api-Key": "guest-key-2" },
-              oauthAccessToken: "guest-oauth-token-2",
-            },
-    );
-
-    const { result, rerender } = renderHook(
-      ({ selectedServers }: { selectedServers: string[] }) =>
-        useChatSession({
-          selectedServers,
-        }),
-      {
-        initialProps: {
-          selectedServers: ["Excalidraw (App)"],
-        },
-      },
-    );
-
-    await waitFor(() => {
-      expect(result.current.isSessionBootstrapComplete).toBe(true);
-    });
-
-    const initialChatSessionId = result.current.chatSessionId;
-    mockState.authFetch.mockClear();
-
-    act(() => {
-      result.current.sendMessage({ text: "first" });
-    });
-
-    await waitFor(() => {
-      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
-    });
-
-    expect(
-      JSON.parse(
-        String(
-          (
-            mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}",
-        ),
-      ),
-    ).toMatchObject({
-      chatSessionId: initialChatSessionId,
-      serverName: "Excalidraw (App)",
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key-1" },
-      oauthAccessToken: "guest-oauth-token-1",
-    });
-
-    rerender({
-      selectedServers: ["Learn (App)"],
-    });
-
-    expect(result.current.chatSessionId).toBe(initialChatSessionId);
-
-    act(() => {
-      result.current.sendMessage({ text: "second" });
-    });
-
-    await waitFor(() => {
-      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
-    });
-
-    expect(
-      JSON.parse(
-        String(
-          (
-            mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}",
-        ),
-      ),
-    ).toMatchObject({
-      chatSessionId: initialChatSessionId,
-      serverName: "Learn (App)",
-      serverUrl: "https://mcp.learn.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key-2" },
-      oauthAccessToken: "guest-oauth-token-2",
-    });
-  });
-
-  it("keeps plain hosted guest chat bodies when no server is selected", async () => {
-    mockState.convexAuth.isAuthenticated = false;
-
-    const { result, unmount } = renderHook(() =>
-      useChatSession({
-        selectedServers: [],
-      }),
-    );
-
-    const body = lastTransportOptions.body();
-
-    expect(result.current.chatSessionId).toBe("chat-session-id");
-    expect(mockState.buildHostedServerRequest).not.toHaveBeenCalled();
-    expect(body).toMatchObject({
-      chatSessionId: "chat-session-id",
-    });
-    expect(body.serverUrl).toBeUndefined();
-    unmount();
   });
 
   it("ingests hosted rpc logs from chat error responses", async () => {
@@ -615,16 +585,18 @@ describe("useChatSession hosted mode", () => {
         {
           status: 500,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
     );
 
     await waitFor(() => {
@@ -643,7 +615,7 @@ describe("useChatSession hosted mode", () => {
             serverName: "server-1",
             method: "tools/list",
           }),
-        ]),
+        ])
       );
     });
   });
@@ -652,9 +624,11 @@ describe("useChatSession hosted mode", () => {
     renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
     );
 
     act(() => {
@@ -682,7 +656,7 @@ describe("useChatSession hosted mode", () => {
           direction: "RECEIVE",
           method: "result",
         }),
-      ]),
+      ])
     );
   });
 
@@ -693,10 +667,12 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxId: "cbx_test", accessVersion: 1,
+        },
+      })
     );
 
     await waitFor(() => {
@@ -713,42 +689,42 @@ describe("useChatSession hosted mode", () => {
     ]);
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "anthropic/claude-haiku-4.5",
-      )?.disabled,
+        (model) => model.id === "anthropic/claude-haiku-4.5"
+      )?.disabled
     ).toBeUndefined();
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "anthropic/claude-opus-4.6",
-      ),
+        (model) => model.id === "anthropic/claude-opus-4.6"
+      )
     ).toMatchObject({
       disabled: true,
       disabledReason: "Sign in to use MCPJam provided models",
     });
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "google/gemini-3.1-pro-preview",
-      ),
+        (model) => model.id === "google/gemini-3.1-pro-preview"
+      )
     ).toMatchObject({
       disabled: true,
       disabledReason: "Sign in to use MCPJam provided models",
     });
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro",
-      ),
+        (model) => model.id === "openai/gpt-5.4-pro"
+      )
     ).toMatchObject({
       disabled: true,
       disabledReason: "Sign in to use MCPJam provided models",
     });
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "qwen/qwen3.6-plus",
-      )?.disabled,
+        (model) => model.id === "qwen/qwen3.6-plus"
+      )?.disabled
     ).toBeUndefined();
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-4o-mini",
-      )?.disabled,
+        (model) => model.id === "openai/gpt-4o-mini"
+      )?.disabled
     ).toBeUndefined();
     unmount();
   });
@@ -761,10 +737,12 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxId: "cbx_test", accessVersion: 1,
+        },
+      })
     );
 
     await waitFor(() => {
@@ -781,10 +759,12 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxId: "cbx_test", accessVersion: 1,
+        },
+      })
     );
 
     await waitFor(() => {
@@ -794,7 +774,7 @@ describe("useChatSession hosted mode", () => {
     expect(
       result.current.availableModels
         .filter((model) => !model.disabled)
-        .map((model) => model.id),
+        .map((model) => model.id)
     ).toEqual([
       "qwen/qwen3.6-plus",
       "openai/gpt-4o-mini",
@@ -809,9 +789,11 @@ describe("useChatSession hosted mode", () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
     );
 
     await waitFor(() => {
@@ -841,7 +823,7 @@ describe("useChatSession hosted mode", () => {
         expect.objectContaining({
           chatSessionId: "history-session-1",
           persistedSnapshotToolCallIds: ["tool-call-1"],
-        }),
+        })
       );
     });
 
@@ -857,21 +839,21 @@ describe("useChatSession hosted mode", () => {
         _serverId: "server-id-1",
       },
     };
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(toolOutput), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(toolOutput), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
 
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
     );
 
     await waitFor(() => {
@@ -900,7 +882,7 @@ describe("useChatSession hosted mode", () => {
 
     await waitFor(() => {
       expect(
-        result.current.restoredToolRenderOverrides["tool-call-1"]?.toolOutput,
+        result.current.restoredToolRenderOverrides["tool-call-1"]?.toolOutput
       ).toEqual(toolOutput);
     });
 
@@ -908,25 +890,99 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("sets liveFetchPreferred for mcp-apps revisits but leaves openai-apps on the cached path", async () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    await result.current.loadChatSession({
+      chatSessionId: "history-session-revisit",
+      messagesBlobUrl: null,
+      version: 5,
+      widgetSnapshots: [
+        {
+          toolCallId: "tool-call-mcp",
+          toolName: "create_view",
+          serverId: "server-id-1",
+          uiType: "mcp-apps",
+          resourceUri: "ui://excalidraw/mcp-app.html",
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: false,
+          prefersBorder: false,
+          widgetHtmlUrl: "https://storage.example.com/mcp-widget.html",
+        },
+        {
+          toolCallId: "tool-call-openai",
+          toolName: "show_pizzeria",
+          serverId: "server-id-1",
+          uiType: "openai-apps",
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: false,
+          prefersBorder: false,
+          widgetHtmlUrl: "https://storage.example.com/openai-widget.html",
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      const mcp =
+        result.current.restoredToolRenderOverrides["tool-call-mcp"];
+      const openai =
+        result.current.restoredToolRenderOverrides["tool-call-openai"];
+      expect(mcp).toBeDefined();
+      expect(openai).toBeDefined();
+      // MCP Apps revisit: live-first with cached fallback. Cached URL is
+      // preserved so the renderer can fall back if the server is no longer
+      // connected.
+      expect(mcp?.liveFetchPreferred).toBe(true);
+      expect(mcp?.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/mcp-widget.html"
+      );
+      // OpenAI Apps revisit: cached path only (cannot live-fetch
+      // `outputTemplate = "__cached__"`).
+      expect(openai?.liveFetchPreferred).toBe(false);
+      expect(openai?.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/openai-widget.html"
+      );
+      expect(openai?.isOffline).toBe(true);
+    });
+
+    unmount();
+  });
+
   it("keeps even gated hosted models available for authenticated viewers", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
-        hostedShareToken: "share-token",
-      }),
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+          chatboxId: "cbx_test", accessVersion: 1,
+        },
+      })
     );
 
     await waitFor(() => {
       expect(result.current.availableModels.map((model) => model.id)).toContain(
-        "openai/gpt-5.4-pro",
+        "openai/gpt-5.4-pro"
       );
     });
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro",
-      )?.disabled,
+        (model) => model.id === "openai/gpt-5.4-pro"
+      )?.disabled
     ).toBeUndefined();
     unmount();
   });

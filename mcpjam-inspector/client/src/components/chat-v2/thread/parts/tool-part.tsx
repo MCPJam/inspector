@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import {
   Box,
   Check,
@@ -12,7 +19,7 @@ import {
   Shield,
   ShieldCheck,
   ShieldX,
-  X,
+  Terminal,
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
@@ -22,6 +29,7 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
 import {
   getToolNameFromType,
   getToolStateMeta,
@@ -29,19 +37,19 @@ import {
   isDynamicTool,
 } from "../thread-helpers";
 import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { CspDebugPanel } from "../csp-debug-panel";
+import { CspWorkbench } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
-import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
+import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { navigateApp } from "@/lib/app-navigation";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
@@ -50,6 +58,7 @@ const SAVE_VIEW_REDIRECTED_KEY = "mcpjam-save-view-redirected";
 
 export function ToolPart({
   part,
+  chatSessionId,
   uiType,
   displayMode,
   pipWidgetId,
@@ -70,6 +79,7 @@ export function ToolPart({
   minimalMode = false,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
+  chatSessionId?: string;
   uiType?: UIType | null;
   displayMode?: DisplayMode;
   pipWidgetId?: string | null;
@@ -101,6 +111,12 @@ export function ToolPart({
     ? part.toolName
     : getToolNameFromType((part as any).type);
 
+  // SEP-1865 App-Provided Tools: opaque `app_<hash>` aliases are resolved
+  // through the shared app-tool registry/log helper so UI never leaks the
+  // model-facing alias when a human-readable tool name is available.
+  const appToolAttribution = useAppToolAttribution(label, chatSessionId);
+  const displayLabel = appToolAttribution?.rawName ?? label;
+
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
 
@@ -126,51 +142,54 @@ export function ToolPart({
   const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const mcpIconClassName =
     resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
-  const pendingApprovalClasses =
-    resolvedThemeMode === "dark"
-      ? "text-[11px] font-medium text-pending"
-      : "text-[11px] font-medium text-pending-foreground";
-  const approvedToolClasses =
-    "flex items-center gap-1 text-[11px] font-medium text-success";
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");
   const isDenied =
     approvalVisualState === "denied" || state === "output-denied";
   const hideDiagnosticsUI = minimalMode;
-  const hideAppControls = isDenied || needsApproval;
+  const hideAppControls = isDenied;
   const [userExpanded, setUserExpanded] = useState(false);
-  const isExpanded = needsApproval || (!hideDiagnosticsUI && userExpanded);
+  const [paramsExpanded, setParamsExpanded] = useState(false);
+  const isExpanded = !hideDiagnosticsUI && userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "csp" | "context" | null
+    "data" | "state" | "sandbox" | "context" | null
   >("data");
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
   const traceDisplayText =
-    typeof (part as { traceDisplayText?: unknown }).traceDisplayText ===
-    "string"
-      ? (part as { traceDisplayText: string }).traceDisplayText
+    typeof (part as unknown as { traceDisplayText?: unknown })
+      .traceDisplayText === "string"
+      ? (part as unknown as { traceDisplayText: string }).traceDisplayText
       : undefined;
   const traceDisplayMode = (part as { traceDisplayMode?: TraceDisplayMode })
     .traceDisplayMode;
   const hasAttachedTraceDisplay = Boolean(
     traceDisplayText &&
-    (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
+      (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown")
   );
   const hasInput = inputData !== undefined && inputData !== null;
+  const paramCount = useMemo(() => {
+    if (!hasInput) return 0;
+    if (Array.isArray(inputData)) return inputData.length;
+    if (typeof inputData === "object") {
+      return Object.keys(inputData as Record<string, unknown>).length;
+    }
+    return 1;
+  }, [hasInput, inputData]);
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined,
+    toolCallId ? s.widgets.get(toolCallId) : undefined
   );
-  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const hostContext = useHostContextStore((s) => s.draftHostContext);
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
-    [hostContext],
+    [hostContext]
   );
   const hasWidgetDebug = !!widgetDebugInfo;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
@@ -193,7 +212,7 @@ export function ToolPart({
 
   const debugOptions = useMemo(() => {
     const options: {
-      tab: "data" | "state" | "csp" | "context";
+      tab: "data" | "state" | "sandbox" | "context";
       icon: typeof Database;
       label: string;
       badge?: number;
@@ -213,9 +232,9 @@ export function ToolPart({
     }
 
     options.push({
-      tab: "csp",
+      tab: "sandbox",
       icon: Shield,
-      label: "CSP",
+      label: "Sandbox",
       badge: widgetDebugInfo?.csp?.violations?.length,
     });
 
@@ -226,7 +245,7 @@ export function ToolPart({
     widgetDebugInfo?.modelContext,
   ]);
 
-  const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
+  const handleDebugClick = (tab: "data" | "state" | "sandbox" | "context") => {
     if (activeDebugTab === tab) {
       setActiveDebugTab(null);
       setUserExpanded(false);
@@ -276,7 +295,7 @@ export function ToolPart({
     void Promise.resolve(onSaveView()).then(() => {
       if (!shouldRedirectAfterSave) return;
       localStorage.setItem(SAVE_VIEW_REDIRECTED_KEY, "true");
-      window.location.hash = "views";
+      navigateApp("/views");
     });
   };
 
@@ -305,8 +324,8 @@ export function ToolPart({
                 isDisabled
                   ? "text-muted-foreground/30 cursor-not-allowed"
                   : isActive
-                    ? "bg-background text-foreground shadow-sm cursor-pointer"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                  ? "bg-background text-foreground shadow-sm cursor-pointer"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -328,18 +347,18 @@ export function ToolPart({
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "State"
-            : tab === "csp"
-              ? "CSP"
-              : "Context";
+          ? "State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "Widget State"
-            : tab === "csp"
-              ? "CSP"
-              : "Model Context";
+          ? "Widget State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -355,8 +374,8 @@ export function ToolPart({
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
                   : badge && badge > 0
-                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                  ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -383,8 +402,8 @@ export function ToolPart({
   const saveViewAriaLabel = isSaving
     ? "Saving view"
     : canSaveView
-      ? "Save as View"
-      : saveDisabledReason || "No output to save";
+    ? "Save as View"
+    : saveDisabledReason || "No output to save";
 
   const renderSaveViewButton = () => (
     <span className="relative inline-flex items-center">
@@ -417,6 +436,25 @@ export function ToolPart({
       </Tooltip>
     </span>
   );
+
+  const toggleExpanded = () => {
+    if (hideDiagnosticsUI) {
+      return;
+    }
+    setUserExpanded((prev) => {
+      const willExpand = !prev;
+      if (willExpand && activeDebugTab === null) {
+        setActiveDebugTab("data");
+      }
+      return willExpand;
+    });
+  };
+
+  const handleHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleExpanded();
+  };
 
   const renderToolInput = () =>
     hasInput ? (
@@ -502,34 +540,121 @@ export function ToolPart({
     );
   };
 
+  if (needsApproval) {
+    return (
+      <div className="text-xs">
+        <div className="flex flex-col gap-2 w-full">
+          <div
+            className={cn(
+              "flex w-full items-center gap-3 pl-3.5 pr-1.5 py-1.5 rounded-full border",
+              approvalVisualState === "approved"
+                ? "border-success/40 bg-success/10"
+                : approvalVisualState === "denied"
+                ? "border-destructive/40 bg-destructive/10"
+                : "border-border/60 bg-muted/30"
+            )}
+          >
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">
+              <Terminal className="h-3 w-3" />
+              <span>Run</span>
+            </span>
+            <span className="font-mono text-[13px] text-foreground truncate min-w-0">
+              {displayLabel}
+            </span>
+            {appToolAttribution && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                from {appToolAttribution.appName}
+              </span>
+            )}
+
+            {approvalVisualState === "pending" && (
+              <>
+                {paramCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setParamsExpanded((v) => !v)}
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer shrink-0"
+                    aria-expanded={paramsExpanded}
+                  >
+                    {paramCount} parameter{paramCount === 1 ? "" : "s"}
+                    <ChevronDown
+                      className={cn(
+                        "h-3 w-3 transition-transform",
+                        paramsExpanded && "rotate-180"
+                      )}
+                    />
+                  </button>
+                ) : (
+                  <span className="px-2 text-[12px] text-muted-foreground/60 shrink-0">
+                    no parameters
+                  </span>
+                )}
+                <span className="ml-auto h-4 w-px bg-border/60 shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!approvalId) return;
+                    setApprovalVisualState("approved");
+                    onApprove?.(approvalId);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground hover:brightness-110 transition cursor-pointer"
+                >
+                  <Check className="h-3 w-3" />
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!approvalId) return;
+                    setApprovalVisualState("denied");
+                    onDeny?.(approvalId);
+                  }}
+                  className="inline-flex items-center rounded-full px-3 py-1 text-[12px] font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition cursor-pointer"
+                >
+                  Deny
+                </button>
+              </>
+            )}
+
+            {approvalVisualState === "approved" && (
+              <span className="inline-flex items-center gap-1 px-2 text-[12px] font-medium text-success">
+                <ShieldCheck className="h-3 w-3" />
+                Approved
+              </span>
+            )}
+            {approvalVisualState === "denied" && (
+              <span className="inline-flex items-center gap-1 px-2 text-[12px] font-medium text-destructive">
+                <ShieldX className="h-3 w-3" />
+                Denied
+              </span>
+            )}
+          </div>
+
+          {paramsExpanded && hasInput && approvalVisualState === "pending" && (
+            <div className="w-full rounded-lg border border-border/40 bg-muted/20 max-h-[300px] overflow-auto">
+              <JsonEditor
+                height="100%"
+                viewOnly
+                value={inputData}
+                className="p-2 text-[11px]"
+                collapsible
+                defaultExpandDepth={2}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={cn(
-        "@container rounded-lg border text-xs",
-        needsApproval && approvalVisualState === "pending"
-          ? "border-pending/40 bg-pending/5"
-          : needsApproval && approvalVisualState === "approved"
-            ? "border-success/40 bg-success/5"
-            : needsApproval && approvalVisualState === "denied"
-              ? "border-destructive/40 bg-destructive/5"
-              : "border-border/50 bg-background/70",
-      )}
-    >
-      <button
-        type="button"
+    <div className="@container rounded-lg border text-xs border-border/50 bg-background/70">
+      <div
+        role="button"
+        tabIndex={hideDiagnosticsUI ? -1 : 0}
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
-        onClick={() => {
-          if (hideDiagnosticsUI && !needsApproval) {
-            return;
-          }
-          setUserExpanded((prev) => {
-            const willExpand = !prev;
-            if (willExpand && activeDebugTab === null) {
-              setActiveDebugTab("data");
-            }
-            return willExpand;
-          });
-        }}
+        onClick={toggleExpanded}
+        onKeyDown={handleHeaderKeyDown}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
@@ -542,24 +667,14 @@ export function ToolPart({
               className={`${mcpIconClassName} shrink-0`}
             />
             <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
-              {label}
+              {displayLabel}
             </span>
+            {appToolAttribution && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0">
+                from {appToolAttribution.appName}
+              </span>
+            )}
           </span>
-          {needsApproval && approvalVisualState === "pending" && (
-            <span className={pendingApprovalClasses}>Approve tool call?</span>
-          )}
-          {needsApproval && approvalVisualState === "approved" && (
-            <span className={approvedToolClasses}>
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Approved
-            </span>
-          )}
-          {needsApproval && approvalVisualState === "denied" && (
-            <span className="flex items-center gap-1 text-[11px] font-medium text-destructive">
-              <ShieldX className="h-3.5 w-3.5" />
-              Denied
-            </span>
-          )}
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground">
           {showDisplayModeControls && (
@@ -594,15 +709,18 @@ export function ToolPart({
                 {renderSaveViewButton()}
               </>
             )}
-          {toolState && StatusIcon && (
-            <span
-              className="inline-flex h-5 w-5 items-center justify-center"
-              title={toolState.label}
-            >
-              <StatusIcon className={toolState.className} />
-              <span className="sr-only">{toolState.label}</span>
-            </span>
-          )}
+          {toolState &&
+            StatusIcon &&
+            state !== "output-available" &&
+            state !== "input-available" && (
+              <span
+                className="inline-flex h-5 w-5 items-center justify-center"
+                title={toolState.label}
+              >
+                <StatusIcon className={toolState.className} />
+                <span className="sr-only">{toolState.label}</span>
+              </span>
+            )}
           {!needsApproval && !hideDiagnosticsUI && (
             <ChevronDown
               className={`h-4 w-4 transition-transform duration-150 ${
@@ -611,7 +729,7 @@ export function ToolPart({
             />
           )}
         </span>
-      </button>
+      </div>
 
       {isExpanded && (
         <div className="border-t border-border/40 px-3 py-3">
@@ -651,9 +769,19 @@ export function ToolPart({
                   </div>
                 </div>
               )}
-              {hasWidgetDebug && activeDebugTab === "csp" && (
-                <CspDebugPanel
-                  cspInfo={widgetDebugInfo.csp}
+              {hasWidgetDebug && activeDebugTab === "sandbox" && (
+                <CspWorkbench
+                  sandboxInfo={
+                    widgetDebugInfo.csp
+                      ? {
+                          ...widgetDebugInfo.csp,
+                          applied: widgetDebugInfo.applied,
+                          lifecycle: widgetDebugInfo.lifecycle,
+                          mounts: widgetDebugInfo.mounts,
+                          hostInfo: widgetDebugInfo.hostInfo ?? null,
+                        }
+                      : undefined
+                  }
                   protocol={widgetDebugInfo.protocol}
                 />
               )}
@@ -667,7 +795,7 @@ export function ToolPart({
                       <div className="text-[9px] text-muted-foreground/50">
                         Updated:{" "}
                         {new Date(
-                          widgetDebugInfo.modelContext.updatedAt,
+                          widgetDebugInfo.modelContext.updatedAt
                         ).toLocaleTimeString()}
                       </div>
                     )}
@@ -728,42 +856,6 @@ export function ToolPart({
               )}
               {!hasWidgetDebug && renderToolData()}
             </>
-          )}
-          {needsApproval && approvalVisualState === "pending" && (
-            <div className="flex items-center gap-2 pt-2 border-t border-border/40 mt-3">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-3 text-xs border-success/40 text-success hover:bg-success/10"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!approvalId) return;
-                  setApprovalVisualState("approved");
-                  setUserExpanded(false);
-                  onApprove?.(approvalId);
-                }}
-              >
-                <Check className="h-3 w-3 mr-1" />
-                Approve
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-3 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!approvalId) return;
-                  setApprovalVisualState("denied");
-                  setUserExpanded(false);
-                  onDeny?.(approvalId);
-                }}
-              >
-                <X className="h-3 w-3 mr-1" />
-                Deny
-              </Button>
-            </div>
           )}
         </div>
       )}

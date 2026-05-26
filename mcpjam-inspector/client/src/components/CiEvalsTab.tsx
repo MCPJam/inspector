@@ -24,9 +24,8 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
-import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { useCiEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
   aggregateSuite,
@@ -57,22 +56,31 @@ import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
 import { TraceViewer } from "./evals/trace-viewer";
 import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { EvalRoute } from "@/lib/eval-route-types";
+
+function navigateToCiEvalsPath(
+  route: EvalRoute,
+  options?: { replace?: boolean },
+) {
+  navigateApp(buildCiEvalsPath(route), options);
+}
+
 interface CiEvalsTabProps {
-  convexWorkspaceId: string | null;
+  convexProjectId: string | null;
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
 }
 
 export function CiEvalsTab({
-  convexWorkspaceId,
+  convexProjectId,
   ensureServersReady,
 }: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
-  const route = useCiEvalsRoute();
+  const route = useCiEvalsRouteFromUrl();
   const mutations = useEvalMutations();
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
@@ -105,22 +113,21 @@ export function CiEvalsTab({
     availableModels,
   } = useEvalTabContext({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
 
-  const { servers: ciWorkspaceServers = [] } = useWorkspaceServers({
+  const { servers: ciProjectServers = [] } = useProjectServers({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
 
   const ciNavigation = useMemo(() => createCiSuiteNavigation(route), [route]);
 
   const queries = useEvalQueries({
-    isAuthenticated: isAuthenticated && Boolean(convexWorkspaceId),
-    user: convexWorkspaceId ? user : null,
+    isAuthenticated: isAuthenticated && Boolean(convexProjectId),
     selectedSuiteId,
     deletingSuiteId,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
     organizationId: null,
   });
 
@@ -138,14 +145,14 @@ export function CiEvalsTab({
   // CI/CD: suite config and tests are defined in code (SDK); close edit URLs.
   useEffect(() => {
     if (route.type === "suite-edit") {
-      navigateToCiEvalsRoute(
+      navigateToCiEvalsPath(
         { type: "suite-overview", suiteId: route.suiteId },
         { replace: true },
       );
       return;
     }
     if (route.type === "test-edit") {
-      navigateToCiEvalsRoute(
+      navigateToCiEvalsPath(
         {
           type: "test-detail",
           suiteId: route.suiteId,
@@ -176,12 +183,12 @@ export function CiEvalsTab({
 
   useEffect(() => {
     if (route.type !== "create") return;
-    window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+    navigateApp("/evals");
   }, [route.type]);
 
   useEffect(() => {
     if (route.type !== "commit-detail" || !route.suite) return;
-    navigateToCiEvalsRoute(
+    navigateToCiEvalsPath(
       {
         type: "suite-overview",
         suiteId: route.suite,
@@ -282,7 +289,8 @@ export function CiEvalsTab({
     ensureServersReady,
     latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
-    workspaceServers: ciWorkspaceServers,
+    projectServers: ciProjectServers,
+    availableModels,
   });
 
   const suiteAggregate = useMemo(() => {
@@ -312,7 +320,7 @@ export function CiEvalsTab({
     if (!selectedSuiteId) return;
     if (queries.isOverviewLoading) return;
     if (!selectedSuiteEntry) {
-      navigateToCiEvalsRoute({ type: "list" });
+      navigateToCiEvalsPath({ type: "list" });
     }
   }, [
     route.type,
@@ -322,11 +330,11 @@ export function CiEvalsTab({
   ]);
 
   const handleSelectSuite = useCallback((suiteId: string) => {
-    navigateToCiEvalsRoute({ type: "suite-overview", suiteId });
+    navigateToCiEvalsPath({ type: "suite-overview", suiteId });
   }, []);
 
   const handleSelectCommit = useCallback((commitSha: string) => {
-    navigateToCiEvalsRoute({ type: "commit-detail", commitSha });
+    navigateToCiEvalsPath({ type: "commit-detail", commitSha });
   }, []);
 
   const handleSelectSuiteInCommit = useCallback(
@@ -338,7 +346,7 @@ export function CiEvalsTab({
             ? route.fromCommit
             : null;
       if (!commitSha) return;
-      navigateToCiEvalsRoute({
+      navigateToCiEvalsPath({
         type: "suite-overview",
         suiteId,
         fromCommit: commitSha,
@@ -362,7 +370,7 @@ export function CiEvalsTab({
         toast.success("Suite deleted");
 
         if (selectedSuiteId === suite._id) {
-          navigateToCiEvalsRoute({ type: "list" });
+          navigateToCiEvalsPath({ type: "list" });
         }
       } catch (error) {
         toast.error(
@@ -394,7 +402,7 @@ export function CiEvalsTab({
           route.runId === runId &&
           selectedSuiteId
         ) {
-          navigateToCiEvalsRoute({
+          navigateToCiEvalsPath({
             type: "suite-overview",
             suiteId: selectedSuiteId,
           });
@@ -411,12 +419,12 @@ export function CiEvalsTab({
   );
 
   const handleCiBreadcrumbToSuiteList = useCallback(() => {
-    navigateToCiEvalsRoute({ type: "list" });
+    navigateToCiEvalsPath({ type: "list" });
   }, []);
 
   const handleCiBreadcrumbToSuiteOverview = useCallback(() => {
     if (!selectedSuite) return;
-    navigateToCiEvalsRoute({
+    navigateToCiEvalsPath({
       type: "suite-overview",
       suiteId: selectedSuite._id,
     });
@@ -424,7 +432,7 @@ export function CiEvalsTab({
 
   const handleCiBreadcrumbToCommit = useCallback(() => {
     if (!commitBreadcrumbContext) return;
-    navigateToCiEvalsRoute({
+    navigateToCiEvalsPath({
       type: "commit-detail",
       commitSha: commitBreadcrumbContext.commitSha,
     });
@@ -438,7 +446,7 @@ export function CiEvalsTab({
       isLoading={isLoading}
       isAuthenticated={isAuthenticated}
       user={user}
-      workspaceId={convexWorkspaceId}
+      projectId={convexProjectId}
     >
       <>
         <div className="h-full flex flex-col overflow-hidden">
@@ -529,7 +537,7 @@ export function CiEvalsTab({
                   onSortChange={setRunDetailSidebarSortBy}
                   selectedIterationId={route.iteration ?? null}
                   onSelectIteration={(iterationId) => {
-                    navigateToCiEvalsRoute({
+                    navigateToCiEvalsPath({
                       type: "run-detail",
                       suiteId: route.suiteId,
                       runId: route.runId,
@@ -540,7 +548,7 @@ export function CiEvalsTab({
                   onOpenRunInsights={
                     route.type === "run-detail"
                       ? () =>
-                          navigateToCiEvalsRoute({
+                          navigateToCiEvalsPath({
                             type: "run-detail",
                             suiteId: route.suiteId,
                             runId: route.runId,
@@ -628,7 +636,7 @@ export function CiEvalsTab({
                         </div>
                       </div>
                     </div>
-                    <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
+                    <SdkEvalQuickstart projectId={convexProjectId} />
                   </div>
                 </div>
               ) : route.type === "commit-detail" && selectedCommitGroup ? (
@@ -704,13 +712,14 @@ export function CiEvalsTab({
                     omitSuiteHeader
                     onRunTestCase={
                       selectedSuite
-                        ? (tc) => {
+                        ? (tc, opts) => {
                             void (async () => {
                               const data = await handlers.handleRunTestCase(
                                 selectedSuite,
                                 tc,
                                 {
                                   location: "test_cases_overview",
+                                  iterationOverride: opts?.iterationOverride,
                                 },
                               );
                               const iterationId = (data?.iteration?._id ??

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -16,20 +17,19 @@ import { cn } from "@/lib/utils";
 import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import { useProjectMembers } from "@/hooks/useProjects";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import {
-  buildWorkspaceOwnerProfileByUserId,
-  resolveWorkspaceThreadOwnerAvatar,
-} from "./workspace-thread-owner-avatar";
+  buildProjectOwnerProfileByUserId,
+  resolveProjectThreadOwnerAvatar,
+} from "./project-thread-owner-avatar";
 import { ConvertChatSessionDialog } from "./convert-chat-session-dialog";
 
 /** Delays (ms) after a turn completes to re-fetch list while backend ingestion may still be running. */
 const HISTORY_REFETCH_RETRY_DELAYS_MS = [250, 800, 2000] as const;
 
-type ArchiveSectionScope = "personal" | "workspace";
+type ArchiveSectionScope = "personal" | "project";
 
 interface ChatHistoryRailProps {
   activeSessionId?: string | null;
@@ -38,11 +38,13 @@ interface ChatHistoryRailProps {
   isAuthenticated: boolean;
   isStreaming: boolean;
   sharedThreadsEnabled?: boolean;
-  workspaceId?: string | null;
+  projectId?: string | null;
   requestHeaders?: HeadersInit;
   enabled?: boolean;
   refreshSignal?: number;
   onSelectThread: (session: ChatHistorySession) => void;
+  /** Fired on row pointer-enter so callers can warm caches for the click path. */
+  onPrefetchThread?: (session: ChatHistorySession) => void;
   onNewChat: (options?: { shared?: boolean }) => void;
   /** If the user has an active thread selected, run before archiving all (e.g. draft-confirm modal). */
   beforeResetChatAfterArchiveAll?: () => boolean | Promise<boolean>;
@@ -201,11 +203,12 @@ export function ChatHistoryRail({
   isAuthenticated,
   isStreaming,
   sharedThreadsEnabled = true,
-  workspaceId,
+  projectId,
   requestHeaders,
   enabled = true,
   refreshSignal = 0,
   onSelectThread,
+  onPrefetchThread,
   onNewChat,
   beforeResetChatAfterArchiveAll,
   onArchiveAllComplete,
@@ -215,19 +218,21 @@ export function ChatHistoryRail({
     useState<ArchiveSectionScope | null>(null);
   const [sessionToConvert, setSessionToConvert] =
     useState<ChatHistorySession | null>(null);
-  const { personal, workspace, loading, error, isReactive, refetch, actions } =
+  const canUseProjectSharing =
+    isAuthenticated && sharedThreadsEnabled && Boolean(projectId);
+  const { personal, project, loading, error, isReactive, refetch, actions } =
     useChatHistory({
-      workspaceId,
+      projectId,
       enabled,
       requestHeaders,
     });
 
-  const { activeMembers } = useWorkspaceMembers({
+  const { activeMembers } = useProjectMembers({
     isAuthenticated,
-    workspaceId: workspaceId ?? null,
+    projectId: projectId ?? null,
   });
   const ownerProfileByUserId = useMemo(
-    () => buildWorkspaceOwnerProfileByUserId(activeMembers),
+    () => buildProjectOwnerProfileByUserId(activeMembers),
     [activeMembers],
   );
 
@@ -238,7 +243,7 @@ export function ChatHistoryRail({
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
 
-    const timeoutIds: ReturnType<typeof window.setTimeout>[] = [];
+    const timeoutIds: number[] = [];
 
     if (wasStreaming && !isStreaming && !isReactive) {
       void refetch();
@@ -272,7 +277,9 @@ export function ChatHistoryRail({
   }, [enabled, isReactive, refetch, refreshSignal]);
 
   const archiveBusy = archivingScope !== null;
-  const canConvertToTestCase = Boolean(isAuthenticated);
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const canConvertToTestCase =
+    Boolean(isAuthenticated) && playgroundEnabled === true;
 
   const handleArchiveSection = async (
     scope: ArchiveSectionScope,
@@ -317,7 +324,7 @@ export function ChatHistoryRail({
           )}
         >
           <div className="min-w-0 px-1 py-1">
-            {loading && personal.length === 0 && workspace.length === 0 && (
+            {loading && personal.length === 0 && project.length === 0 && (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
@@ -326,7 +333,7 @@ export function ChatHistoryRail({
             {!loading &&
               error &&
               personal.length === 0 &&
-              workspace.length === 0 && (
+              project.length === 0 && (
                 <div className="flex flex-col items-center gap-2 py-8 px-4 text-center">
                   <p className="text-xs text-muted-foreground">
                     Could not load chat history.
@@ -369,9 +376,10 @@ export function ChatHistoryRail({
                         isActive={session._id === activeSessionId}
                         isAuthenticated={isAuthenticated}
                         isStreaming={isStreaming}
-                        sharedThreadsEnabled={sharedThreadsEnabled}
+                        sharedThreadsEnabled={canUseProjectSharing}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
+                        onPrefetch={onPrefetchThread}
                         onActionComplete={onSessionAction}
                         canConvertToTestCase={canConvertToTestCase}
                         onConvertToTestCase={setSessionToConvert}
@@ -381,7 +389,7 @@ export function ChatHistoryRail({
                   </ThreadSection>
                 </div>
 
-                {isAuthenticated && sharedThreadsEnabled ? (
+                {canUseProjectSharing ? (
                   <ThreadSection
                     headingId="chat-history-shared-threads-heading"
                     title="Shared Sessions"
@@ -390,29 +398,30 @@ export function ChatHistoryRail({
                     newChatAriaLabel="New chat in Shared Sessions"
                     archiveTooltip="Archive all in Shared Sessions"
                     canArchive={
-                      workspace.length > 0 && !isStreaming && !archiveBusy
+                      project.length > 0 && !isStreaming && !archiveBusy
                     }
-                    archiving={archivingScope === "workspace"}
+                    archiving={archivingScope === "project"}
                     onArchive={() =>
-                      void handleArchiveSection("workspace", workspace)
+                      void handleArchiveSection("project", project)
                     }
                     onNewChat={() => onNewChat({ shared: true })}
                     newChatDisabled={isStreaming}
                   >
-                    {workspace.map((session) => (
+                    {project.map((session) => (
                       <ChatHistoryRow
                         key={session._id}
                         session={session}
                         isActive={session._id === activeSessionId}
                         isAuthenticated={isAuthenticated}
                         isStreaming={isStreaming}
-                        sharedThreadsEnabled={sharedThreadsEnabled}
+                        sharedThreadsEnabled={canUseProjectSharing}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
+                        onPrefetch={onPrefetchThread}
                         onActionComplete={onSessionAction}
                         canConvertToTestCase={canConvertToTestCase}
                         onConvertToTestCase={setSessionToConvert}
-                        workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(
+                        projectThreadOwner={resolveProjectThreadOwnerAvatar(
                           session,
                           ownerProfileByUserId,
                         )}
@@ -430,7 +439,7 @@ export function ChatHistoryRail({
         open={sessionToConvert !== null}
         session={sessionToConvert}
         isAuthenticated={isAuthenticated}
-        workspaceId={workspaceId ?? null}
+        projectId={projectId ?? null}
         requestHeaders={requestHeaders}
         onOpenChange={(open) => {
           if (!open) {
@@ -439,8 +448,8 @@ export function ChatHistoryRail({
         }}
         onImported={({ suiteId, testCaseId }) => {
           setSessionToConvert(null);
-          window.location.hash = withTestingSurface(
-            buildEvalsHash({
+          navigateApp(
+            buildEvalsPath({
               type: "test-edit",
               suiteId,
               testId: testCaseId,

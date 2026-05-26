@@ -39,6 +39,8 @@ function formatCardDuration(durationMs: number | null): string {
 export function ModelCompareCardHeader({
   model,
   modelLabel: modelLabelProp,
+  compareLabel,
+  compareSubLabel,
   summary,
   allSummaries,
   mode,
@@ -58,6 +60,18 @@ export function ModelCompareCardHeader({
   model?: ModelDefinition;
   /** Override for the displayed model name; takes precedence over `model.name`. */
   modelLabel?: string;
+  /**
+   * Polymorphic compare-card title (Phase 3 of the multi-host plan).
+   * Takes precedence over both `modelLabel` and `model?.name`. In model
+   * mode the caller passes `model.name`; in host mode it passes the host
+   * name.
+   */
+  compareLabel?: string;
+  /**
+   * Secondary line under the title (host mode shows the resolved model
+   * name here; model mode leaves it empty).
+   */
+  compareSubLabel?: string;
   summary: MultiModelCardSummary | null;
   allSummaries: MultiModelCardSummary[];
   mode: TraceViewMode;
@@ -85,7 +99,7 @@ export function ModelCompareCardHeader({
     return null;
   }
 
-  const displayName = modelLabelProp ?? model?.name ?? "";
+  const displayName = compareLabel ?? modelLabelProp ?? model?.name ?? "";
 
   const isNonComparableSummary =
     summary?.status === "error" || summary?.status === "cancelled";
@@ -183,24 +197,31 @@ export function ModelCompareCardHeader({
           )}
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <div className="truncate text-sm font-semibold leading-tight">
-                {displayName}
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <div className="truncate text-sm font-semibold leading-tight">
+                  {displayName}
+                </div>
+                {!compactCompareHeader && result === "passed" ? (
+                  <span
+                    className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
+                    aria-label="Passed"
+                  >
+                    Passed
+                  </span>
+                ) : !compactCompareHeader && result === "failed" ? (
+                  <span
+                    className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+                    aria-label="Failed"
+                  >
+                    Failed
+                  </span>
+                ) : null}
               </div>
-              {!compactCompareHeader && result === "passed" ? (
-                <span
-                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
-                  aria-label="Passed"
-                >
-                  Passed
-                </span>
-              ) : !compactCompareHeader && result === "failed" ? (
-                <span
-                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
-                  aria-label="Failed"
-                >
-                  Failed
-                </span>
+              {compareSubLabel ? (
+                <div className="truncate text-[11px] leading-tight text-muted-foreground">
+                  {compareSubLabel}
+                </div>
               ) : null}
             </div>
             {!compactCompareHeader && result == null ? (

@@ -112,14 +112,14 @@ describe("chat-history routes", () => {
           JSON.stringify({
             ok: true,
             personal: [{ chatSessionId: "s1", firstMessagePreview: "Hello" }],
-            workspace: [],
+            project: [],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
       );
 
       const res = await app.request(
-        "/chat-history/list?workspaceId=ws1&status=active",
+        "/chat-history/list?projectId=ws1&status=active",
         {
           method: "GET",
           headers: { Authorization: "Bearer test-token" },
@@ -133,7 +133,7 @@ describe("chat-history routes", () => {
 
       const [fetchUrl] = fetchMock.mock.calls[0];
       expect(fetchUrl).toContain("/direct-chat/list");
-      expect(fetchUrl).toContain("workspaceId=ws1");
+      expect(fetchUrl).toContain("projectId=ws1");
       expect(fetchUrl).toContain("status=active");
     });
 

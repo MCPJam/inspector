@@ -7,6 +7,7 @@ import {
   type NotificationMethod,
 } from "@modelcontextprotocol/client";
 import type { ProgressHandler } from "./types.js";
+import type { ManagedMcpClient } from "./managed-mcp-client.js";
 
 export const ResourceListChangedNotificationMethod =
   "notifications/resources/list_changed" as const;
@@ -86,7 +87,7 @@ export class NotificationManager {
    * @param serverId - The server ID
    * @param client - The MCP client to configure
    */
-  applyToClient(serverId: string, client: Client): void {
+  applyToClient(serverId: string, client: ManagedMcpClient): void {
     const serverHandlers = this.handlers.get(serverId);
     if (!serverHandlers) {
       return;
@@ -130,11 +131,25 @@ export class NotificationManager {
  */
 export function applyProgressHandler(
   serverId: string,
-  client: Client,
+  client: ManagedMcpClient,
   progressHandler: ProgressHandler
 ): void {
   client.setNotificationHandler(ProgressNotificationMethod, (notification) => {
-    const params = notification.params ?? { progressToken: 0, progress: 0 };
+    // The `ManagedMcpClient` interface widens setNotificationHandler to
+    // accept any NotificationMethod, so the per-method param narrowing
+    // is lost at this call site. The runtime payload is always a
+    // ProgressNotificationParams here because the method literal is
+    // pinned at registration; cast to recover the shape rather than
+    // ramify the interface with generic narrowing.
+    const params =
+      ((notification as { params?: unknown }).params as
+        | {
+            progressToken: string | number;
+            progress: number;
+            total?: number;
+            message?: string;
+          }
+        | undefined) ?? { progressToken: 0, progress: 0 };
     progressHandler({
       serverId,
       progressToken: params.progressToken,

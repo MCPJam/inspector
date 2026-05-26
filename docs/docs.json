@@ -28,12 +28,12 @@
         "group": "Inspector Features",
         "icon": "star",
         "pages": [
-          "inspector/app-builder",
-          "inspector/chat",
+          "inspector/playground",
+          "inspector/clients",
           "inspector/guided-oauth",
           "inspector/tools-prompts-resources",
           "inspector/test-cases",
-          "inspector/workspaces",
+          "inspector/projects",
           "inspector/views",
           "inspector/skills"
         ]
@@ -49,6 +49,7 @@
           "cli/apps-conformance",
           "cli/tools-resources-prompts",
           "cli/ci",
+          "cli/telemetry",
           "cli/reference"
         ]
       },
@@ -123,6 +124,11 @@
     "light": "/logo/mcp_jam_light.png",
     "dark": "/logo/mcp_jam_dark.png"
   },
+  "redirects": [
+    { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
+    { "source": "/inspector/chat", "destination": "/inspector/playground" },
+    { "source": "/inspector/app-builder", "destination": "/inspector/playground" }
+  ],
   "navbar": {
     "links": [
       {

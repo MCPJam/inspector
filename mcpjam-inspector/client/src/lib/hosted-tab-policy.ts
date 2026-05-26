@@ -1,13 +1,19 @@
 const HASH_TAB_ALIASES = {
   chat: "chat-v2",
+  /** Public hash slug; in-app tab id is `clients`. */
+  connect: "clients",
+  /** Legacy alias: `/hosts` and `#hosts` map to the renamed clients tab. */
+  hosts: "clients",
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
+  "clients",
   "servers",
   "registry",
   "chat-v2",
   "chatboxes",
   "app-builder",
+  "playground",
   "views",
   "client-config",
   "evals",
@@ -27,7 +33,7 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   ...HOSTED_SIDEBAR_ALLOWED_TABS,
   "profile",
   "organizations",
-  "workspace-settings",
+  "project-settings",
 ] as const;
 
 export const HOSTED_HASH_BLOCKED_TABS = [

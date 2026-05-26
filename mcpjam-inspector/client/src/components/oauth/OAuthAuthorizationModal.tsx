@@ -16,6 +16,40 @@ export const OAuthAuthorizationModal = ({
   const popupRef = useRef<Window | null>(null);
   const hasOpenedRef = useRef(false);
 
+  const openAuthorizationPopup = () => {
+    const width = 600;
+    const height = 700;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+
+    // Use unique window name each time to prevent reusing old popup with stale auth code
+    const uniqueWindowName = `oauth_authorization_${Date.now()}`;
+    popupRef.current = window.open(
+      authorizationUrl,
+      uniqueWindowName,
+      `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`,
+    );
+
+    if (!popupRef.current) {
+      onOpenChange(false);
+      hasOpenedRef.current = false;
+      return () => {};
+    }
+
+    // Monitor popup closure
+    const checkPopupClosed = setInterval(() => {
+      if (popupRef.current?.closed) {
+        clearInterval(checkPopupClosed);
+        onOpenChange(false);
+        hasOpenedRef.current = false;
+      }
+    }, 500);
+
+    return () => {
+      clearInterval(checkPopupClosed);
+    };
+  };
+
   // Listen for OAuth callback messages from popup
   useEffect(() => {
     // Method 1: Listen via window.postMessage (standard approach)
@@ -63,33 +97,38 @@ export const OAuthAuthorizationModal = ({
   useEffect(() => {
     if (open && !hasOpenedRef.current) {
       hasOpenedRef.current = true;
+      let cleanup: (() => void) | undefined;
+      let cancelled = false;
 
-      const width = 600;
-      const height = 700;
-      const left = window.screenX + (window.outerWidth - width) / 2;
-      const top = window.screenY + (window.outerHeight - height) / 2;
+      const openExternal = window.electronAPI?.app?.openExternal;
+      if (window.isElectron && openExternal) {
+        void (async () => {
+          try {
+            await openExternal(authorizationUrl);
+            if (cancelled) return;
+            onOpenChange(false);
+            hasOpenedRef.current = false;
+          } catch (error) {
+            console.error(
+              "[OAuth Popup] Failed to open system browser:",
+              error,
+            );
+            if (cancelled) return;
+            cleanup = openAuthorizationPopup();
+          }
+        })();
 
-      // Use unique window name each time to prevent reusing old popup with stale auth code
-      const uniqueWindowName = `oauth_authorization_${Date.now()}`;
-      console.log("authorizationUrl", authorizationUrl);
-      popupRef.current = window.open(
-        authorizationUrl,
-        uniqueWindowName,
-        `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`,
-      );
+        return () => {
+          cancelled = true;
+          cleanup?.();
+        };
+      }
 
-      // Monitor popup closure
-      const checkPopupClosed = setInterval(() => {
-        if (popupRef.current?.closed) {
-          clearInterval(checkPopupClosed);
-          onOpenChange(false);
-          hasOpenedRef.current = false;
-        }
-      }, 500);
+      cleanup = openAuthorizationPopup();
 
-      // Cleanup
       return () => {
-        clearInterval(checkPopupClosed);
+        cancelled = true;
+        cleanup?.();
       };
     }
 

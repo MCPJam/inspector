@@ -18,7 +18,6 @@ const mockUIPlaygroundStore = {
   isExecuting: false,
   deviceType: "mobile",
   isSidebarVisible: true,
-  selectedProtocol: null,
   setTools: vi.fn(),
   setSelectedTool: vi.fn(),
   setFormFields: vi.fn(),
@@ -31,7 +30,6 @@ const mockUIPlaygroundStore = {
   setWidgetState: vi.fn(),
   setDeviceType: vi.fn(),
   toggleSidebar: vi.fn(),
-  setSelectedProtocol: vi.fn(),
   reset: vi.fn(),
   setSidebarVisible: vi.fn(),
 };
@@ -42,6 +40,7 @@ const mockOnboarding = {
   isResolvingRemoteCompletion: false,
   isBootstrappingFirstRunConnection: false,
   connectExcalidraw: vi.fn(),
+  markOnboardingShown: vi.fn(),
   completeOnboarding: vi.fn(),
   connectError: null as string | null,
   retryConnect: vi.fn(),
@@ -51,6 +50,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("sonner", () => ({
@@ -210,7 +210,6 @@ describe("AppBuilderTab shell sidebar", () => {
       isExecuting: false,
       deviceType: "mobile",
       isSidebarVisible: true,
-      selectedProtocol: null,
     });
 
     Object.assign(mockOnboarding, {
@@ -219,6 +218,7 @@ describe("AppBuilderTab shell sidebar", () => {
       isResolvingRemoteCompletion: false,
       isBootstrappingFirstRunConnection: false,
       connectError: null,
+      markOnboardingShown: vi.fn(),
     });
   });
 

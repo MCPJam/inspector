@@ -15,7 +15,7 @@ mcpjam oauth login --url https://your-server.com/mcp \
   --registration dcr
 ```
 
-On success, the command prints credentials (access token, refresh token, client ID) that you can pass to other commands via `--oauth-access-token` or `--access-token`.
+On success, the command prints credentials such as an access token, refresh token, client ID, and sometimes client secret. You can pass access tokens to other commands via `--oauth-access-token` or `--access-token`.
 
 ## Commands
 
@@ -47,6 +47,17 @@ mcpjam oauth login --url https://your-server.com/mcp \
   Prefer environment variables for `--client-secret`. Passing it inline leaks
   to shell history and process listings.
 </Warning>
+
+The `--credentials-out <path>` flag saves OAuth credentials to a file with `0600` permissions. Depending on the flow, the file may include an access token, refresh token, client ID, and client secret. Secret fields are redacted from stdout output. Use the saved file with `--credentials-file` on other commands.
+
+```bash
+mcpjam oauth login --url https://your-server.com/mcp \
+  --credentials-out creds.json
+
+# Then reuse across commands
+mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam server doctor --url https://your-server.com/mcp --credentials-file creds.json
+```
 
 The `--debug-out <path>` flag captures a structured debug artifact with full HTTP traces — useful for filing bug reports or handing off to another engineer.
 
@@ -103,6 +114,7 @@ Same as `oauth proxy` but routes through the debug proxy path. Use when testing 
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After login, connect and list tools |
 | `--verify-call-tool <name>` | No | | After listing, also call a named tool |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout output has secret fields redacted |
 | `--debug-out <path>` | No | | Write debug artifact to file |
 
 <Note>
@@ -113,15 +125,45 @@ Same as `oauth proxy` but routes through the debug proxy path. Use when testing 
 
 ## Using tokens from login
 
-After a successful `oauth login`, use the printed access token with other commands:
+### Credentials file (interactive & agent workflows)
+
+For interactive or agent workflows where you login once and run multiple commands, save credentials to a file:
 
 ```bash
-# Capture the token
+# Login and save credentials
+mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json
+
+# Reuse across commands
+mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam server doctor --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam protocol conformance --url https://your-server.com/mcp --credentials-file creds.json
+```
+
+The credentials file includes the server URL and any reusable OAuth credentials returned by the login flow. The CLI validates that the file's server URL matches the target and checks token expiry before use.
+
+Connected commands such as `tools list`, `resources list`, `prompts list`, and `server doctor` can use refresh-token credentials from the file when the saved access token is expired. `protocol conformance` and `server probe` only read a non-expired access token from the file; if the access token is expired, run `oauth login --credentials-out` again or pass a fresh token directly.
+
+<Note>
+  `--credentials-file` cannot be combined with `--access-token`, `--oauth-access-token`, `--refresh-token`, `--client-id`, or `--client-secret`. The CLI rejects conflicting auth sources upfront.
+</Note>
+
+### Direct token passing (CI/CD & M2M)
+
+When you already have a token from an environment variable, a secret store, or a `client_credentials` flow, pass it directly:
+
+```bash
+# From an environment variable or secret store
+mcpjam tools list --url https://your-server.com/mcp --access-token "$TOKEN"
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token "$TOKEN"
+
+# M2M: preregistered client_credentials — token comes back on stdout
 TOKEN=$(mcpjam oauth login --url https://your-server.com/mcp \
-  --protocol-version 2025-11-25 --registration dcr \
+  --protocol-version 2025-11-25 --registration preregistered \
+  --auth-mode client_credentials \
+  --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
   --format json | jq -r '.credentials.accessToken')
 
-# Use it
-mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token "$TOKEN"
 mcpjam tools list --url https://your-server.com/mcp --access-token "$TOKEN"
 ```
+
+You can also use `--refresh-token` with `--client-id` (and optionally `--client-secret`) for commands that support automatic token refresh.

@@ -12,15 +12,28 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import {
+  loadSuiteHostConfig,
+  resolveOpenAiCompatForHostConfig,
+} from "../../services/evals/compat-runtime";
+import {
   runEvalSuiteWithAiSdk,
   streamTestCase,
 } from "../../services/evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  resolveOrgModelConfig,
+  type ResolvedOrgModelConfig,
+} from "../../utils/org-model-config";
 import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import { type PromptTurn } from "@/shared/prompt-turns";
+import {
+  matchOptionsSchema,
+  resolveMatchOptions,
+  type MatchOptionsDTO,
+} from "@/shared/eval-matching";
 
 const toolChoiceSchema = z.union([
   z.enum(["auto", "none", "required"]),
@@ -43,7 +56,7 @@ const promptTurnSchema = z.object({
 });
 
 export const RunEvalsRequestSchema = z.object({
-  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
@@ -51,7 +64,7 @@ export const RunEvalsRequestSchema = z.object({
     z.object({
       title: z.string(),
       query: z.string(),
-      runs: z.number().int().positive(),
+      runs: z.number().int().positive().max(10),
       model: z.string(),
       provider: z.string(),
       expectedToolCalls: z.array(
@@ -72,12 +85,15 @@ export const RunEvalsRequestSchema = z.object({
         })
         .passthrough()
         .optional(),
+      matchOptions: matchOptionsSchema.optional(),
     }),
   ),
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   serverNames: z.array(z.string()).optional(),
+  chatboxId: z.string().optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -87,9 +103,40 @@ export const RunEvalsRequestSchema = z.object({
       minimumPassRate: z.number(),
     })
     .optional(),
+  /**
+   * When true, the request is a rerun of an already-persisted suite — skip
+   * the per-test-case upsert. Without this, derived wire fields (suite
+   * default model substituted in for model-less cases, merged advancedConfig)
+   * get baked into per-case overrides on first rerun, breaking later edits
+   * to the suite default.
+   */
+  suiteRerun: z.boolean().optional(),
+  /**
+   * Transient per-run iteration count (1-10). Overlays `runs` on every
+   * test case in the run snapshot without mutating the persisted
+   * `EvalCase.runs` default. Cap-math counts this against
+   * MAX_TOTAL_LLM_CALLS.
+   */
+  iterationOverride: z.number().int().min(1).max(10).optional(),
+  /**
+   * One-off match-option override for this run only. Resolved on top of
+   * suite defaults + case overrides into each iteration's snapshot;
+   * does NOT mutate persisted suite/case records.
+   */
+  matchOptionsOverride: matchOptionsSchema.optional(),
+  /**
+   * Scope this run to a single host attached to the suite. The Convex
+   * `startTestSuiteRun` mutation snapshots the host's current config and
+   * derives the run's server environment from it. When the suite has
+   * multiple host attachments, the client makes one request per host.
+   */
+  namedHostId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
+type RunEvalsWithManagerRequest = RunEvalsRequest & {
+  orgModelConfig?: ResolvedOrgModelConfig;
+};
 
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
@@ -100,6 +147,8 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  chatboxId: z.string().optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   testCaseOverrides: z
@@ -107,7 +156,7 @@ export const RunTestCaseRequestSchema = z.object({
       query: z.string().optional(),
       expectedToolCalls: z.array(z.any()).optional(),
       isNegativeTest: z.boolean().optional(),
-      runs: z.number().optional(),
+      runs: z.number().int().positive().max(10).optional(),
       expectedOutput: z.string().optional(),
       promptTurns: z.array(promptTurnSchema).optional(),
       advancedConfig: z
@@ -118,11 +167,94 @@ export const RunTestCaseRequestSchema = z.object({
         })
         .passthrough()
         .optional(),
+      matchOptions: matchOptionsSchema.optional(),
+    })
+    .optional(),
+  /**
+   * One-off match-option override for this single-case run only. Does
+   * NOT mutate the persisted case's `matchOptions`.
+   */
+  matchOptionsOverride: matchOptionsSchema.optional(),
+  /**
+   * One-off hostConfig override for this single-case run. Subset of
+   * `HostConfigInputV2`; recorded on the iteration snapshot so the trace
+   * shows which config the run actually used. Does NOT mutate the suite
+   * hostConfig.
+   */
+  hostConfigOverride: z
+    .object({
+      hostStyle: z.string().optional(),
+      hostContext: z.record(z.string(), z.unknown()).optional(),
+      clientCapabilities: z.record(z.string(), z.unknown()).optional(),
+      hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
+      chatUiOverride: z.record(z.string(), z.unknown()).optional(),
+      mcpProfile: z.record(z.string(), z.unknown()).optional(),
+      connectionDefaults: z
+        .object({
+          headers: z.record(z.string(), z.string()).optional(),
+          requestTimeout: z.number().optional(),
+        })
+        .optional(),
     })
     .optional(),
 });
 
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
+type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
+  orgModelConfig?: ResolvedOrgModelConfig;
+};
+
+export const MAX_TOTAL_LLM_CALLS = 300;
+
+export function assertSuiteRunWithinCap(
+  request: RunEvalsRequest,
+  configCount = 1,
+) {
+  const override = request.iterationOverride;
+  // Each iteration issues one model call per prompt turn; counting only `runs`
+  // lets a multi-turn save-from-chat case bypass the cap.
+  const totalCalls =
+    request.tests.reduce((sum, t) => {
+      const iterations = override ?? t.runs ?? 0;
+      const turns = Math.max(t.promptTurns?.length ?? 0, 1);
+      return sum + iterations * turns;
+    }, 0) * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Suite run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}. Reduce iterations or test count.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
+
+/**
+ * Counts override prompt-turns when present, then falls back to the
+ * persisted case's prompt-turns count. Callers that have already loaded
+ * the persisted test case should pass it via `resolved` — without it, a
+ * multi-turn saved case can slip past the cap because we'd count it as a
+ * single-turn run.
+ */
+export function assertTestCaseRunWithinCap(
+  request: RunTestCaseRequest,
+  configCount = 1,
+  resolved?: { promptTurnsLength?: number },
+) {
+  const iterations = request.testCaseOverrides?.runs ?? 1;
+  const overrideTurns = request.testCaseOverrides?.promptTurns?.length;
+  const resolvedTurns = resolved?.promptTurnsLength;
+  const turns = Math.max(overrideTurns ?? resolvedTurns ?? 0, 1);
+  const totalCalls = iterations * turns * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Test case run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
 
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
@@ -143,6 +275,28 @@ export const GenerateNegativeTestsRequestSchema = z.object({
 export type GenerateNegativeTestsRequest = z.infer<
   typeof GenerateNegativeTestsRequestSchema
 >;
+
+/**
+ * Best-effort fetch of a suite's `defaultMatchOptions` so single-case
+ * runs resolve the same suite → case → override precedence chain that
+ * `precreateIterationsForRun` applies for suite-level runs.
+ * Returns undefined on any error; defaults still apply downstream.
+ */
+async function loadSuiteDefaultMatchOptions(
+  convexClient: ConvexHttpClient,
+  suiteId?: string,
+): Promise<MatchOptionsDTO | undefined> {
+  if (!suiteId) return undefined;
+  try {
+    const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+      suiteId,
+    });
+    return (suite?.defaultMatchOptions as MatchOptionsDTO | undefined) ??
+      undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function createConvexClients(convexAuthToken: string) {
   const convexUrl = process.env.CONVEX_URL;
@@ -251,7 +405,7 @@ function buildPersistedSuiteEnvironment(args: {
     args.serverNames.length === args.resolvedServerIds.length
       ? args.serverNames.map((serverName, index) => ({
           serverName,
-          workspaceServerId: args.resolvedServerIds[index],
+          projectServerId: args.resolvedServerIds[index],
         }))
       : undefined;
 
@@ -263,21 +417,28 @@ function buildPersistedSuiteEnvironment(args: {
 
 export async function runEvalsWithManager(
   clientManager: MCPClientManager,
-  request: RunEvalsRequest,
+  request: RunEvalsWithManagerRequest,
 ) {
   const {
     suiteId,
-    workspaceId,
+    projectId,
     suiteName,
     suiteDescription,
     tests,
     serverIds,
     serverNames,
+    chatboxId,
+    accessVersion,
     storageServerIds,
     modelApiKeys,
+    orgModelConfig,
     convexAuthToken,
     notes,
     passCriteria,
+    suiteRerun,
+    iterationOverride,
+    matchOptionsOverride,
+    namedHostId,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -287,13 +448,15 @@ export async function runEvalsWithManager(
       "Provide suiteId or suiteName",
     );
   }
-  if (!suiteId && !workspaceId) {
+  if (!suiteId && !projectId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "workspaceId is required when creating a new eval suite",
+      "projectId is required when creating a new eval suite",
     );
   }
+
+  assertSuiteRunWithinCap(request);
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const persistedServerRefs =
@@ -331,6 +494,7 @@ export async function runEvalsWithManager(
       promptTurns?: PromptTurn[];
       judgeRequirement?: string;
       advancedConfig?: any;
+      matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     }
   >();
 
@@ -348,6 +512,7 @@ export async function runEvalsWithManager(
         expectedOutput: test.expectedOutput,
         promptTurns: test.promptTurns,
         advancedConfig: test.advancedConfig,
+        matchOptions: test.matchOptions,
       });
     }
     testCaseMap.get(key)!.models.push({
@@ -364,6 +529,14 @@ export async function runEvalsWithManager(
       environment: persistedEnvironment,
     });
 
+    // On a suite rerun, do NOT upsert per-case fields. The wire payload
+    // contains values derived from suite.defaultConfig (model substituted in
+    // for model-less cases, etc.); writing them back would bake the current
+    // suite default into per-case overrides and stop later default changes
+    // from propagating. Cases are already persisted; rerun just runs them.
+    if (suiteRerun) {
+      // skip upsert
+    } else {
     const existingTestCases = await convexClient.query(
       "testSuites:listTestCases" as any,
       { suiteId: resolvedSuiteId },
@@ -417,6 +590,11 @@ export async function runEvalsWithManager(
             normalizeForComparison(existingTestCase.advancedConfig),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
+        const matchOptionsChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.matchOptions),
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.matchOptions));
 
         const hasChanges =
           modelsChanged ||
@@ -427,7 +605,8 @@ export async function runEvalsWithManager(
           expectedOutputChanged ||
           promptTurnsChanged ||
           judgeRequirementChanged ||
-          advancedConfigChanged;
+          advancedConfigChanged ||
+          matchOptionsChanged;
 
         if (hasChanges) {
           await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -444,6 +623,7 @@ export async function runEvalsWithManager(
             advancedConfig: sanitizeForConvexTransport(
               testCaseData.advancedConfig,
             ),
+            matchOptions: testCaseData.matchOptions,
           });
         }
       } else {
@@ -464,14 +644,16 @@ export async function runEvalsWithManager(
           advancedConfig: sanitizeForConvexTransport(
             testCaseData.advancedConfig,
           ),
+          matchOptions: testCaseData.matchOptions,
         });
       }
+    }
     }
   } else {
     const createdSuite = await convexClient.mutation(
       "testSuites:createTestSuite" as any,
       {
-        workspaceId,
+        projectId,
         name: suiteName!,
         description: suiteDescription,
         environment: persistedEnvironment,
@@ -501,11 +683,17 @@ export async function runEvalsWithManager(
         promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
         judgeRequirement: testCaseData.judgeRequirement,
         advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
+        matchOptions: testCaseData.matchOptions,
       });
     }
   }
 
-  const { runId, config, recorder } = await startSuiteRunWithRecorder({
+  const {
+    runId,
+    config,
+    recorder,
+    hostConfig: runHostConfigSnapshot,
+  } = await startSuiteRunWithRecorder({
     convexClient,
     suiteId: resolvedSuiteId,
     notes,
@@ -513,7 +701,15 @@ export async function runEvalsWithManager(
     serverIds: resolvedServerIds,
     toolSnapshot,
     toolSnapshotDebug,
+    iterationOverride,
+    matchOptionsOverride,
+    namedHostId,
   });
+  const suiteHostConfig =
+    runHostConfigSnapshot ??
+    (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
+  const suiteInjectOpenAiCompat =
+    resolveOpenAiCompatForHostConfig(suiteHostConfig);
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
@@ -531,16 +727,68 @@ export async function runEvalsWithManager(
     }
   }
 
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys" so org fallback still runs.
+  // For reruns, projectId may not be in the request — derive it from the
+  // suite record so org BYOK keeps working.
+  const hasClientKeys =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+  let resolvedOrgModelConfig = orgModelConfig;
+  let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
+  let projectIdForOrgConfig: string | undefined = projectId;
+  if (!projectIdForOrgConfig && resolvedSuiteId) {
+    try {
+      const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+        suiteId: resolvedSuiteId,
+      });
+      if (suite?.projectId) {
+        projectIdForOrgConfig = String(suite.projectId);
+      }
+    } catch (error) {
+      logger.warn("[evals] Failed to load suite for projectId fallback", {
+        suiteId: resolvedSuiteId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  const orgConfigTarget = projectIdForOrgConfig
+    ? { projectId: projectIdForOrgConfig }
+    : undefined;
+  resolvedOrgModelConfigTarget = orgConfigTarget;
+
+  if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
+    if (orgConfigTarget) {
+      try {
+        const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
+          bearerToken: convexAuthToken,
+          chatboxId,
+          accessVersion,
+          serverIds: resolvedServerIds,
+        });
+        resolvedOrgModelConfig = orgConfig;
+      } catch (error) {
+        logger.warn("[evals] Failed to resolve org model config", {
+          projectId: projectIdForOrgConfig,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
   await runEvalSuiteWithAiSdk({
     suiteId: resolvedSuiteId,
     runId,
     config,
-    modelApiKeys: modelApiKeys ?? undefined,
+    modelApiKeys: resolvedModelApiKeys ?? undefined,
+    orgModelConfig: resolvedOrgModelConfig,
+    orgModelConfigTarget: resolvedOrgModelConfigTarget,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
     mcpClientManager: clientManager,
     recorder,
+    suiteInjectOpenAiCompat,
   });
 
   return {
@@ -558,7 +806,7 @@ export type RunEvalTestCaseWithManagerOptions = {
 
 export async function runEvalTestCaseWithManager(
   clientManager: MCPClientManager,
-  request: RunTestCaseRequest,
+  request: RunTestCaseWithManagerRequest,
   options?: RunEvalTestCaseWithManagerOptions,
 ) {
   const {
@@ -567,10 +815,15 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
+    chatboxId,
+    accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
+    orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
+    matchOptionsOverride,
+    hostConfigOverride,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -584,6 +837,22 @@ export async function runEvalTestCaseWithManager(
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
 
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
+
+  const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteHostConfig = await loadSuiteHostConfig(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
+    suiteHostConfig,
+    hostConfigOverride as Record<string, unknown> | undefined,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -601,8 +870,50 @@ export async function runEvalTestCaseWithManager(
       testCase.promptTurns,
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
+    matchOptions: resolveMatchOptions(
+      suiteDefaultMatchOptions,
+      (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
+        | MatchOptionsDTO
+        | undefined,
+      matchOptionsOverride,
+    ),
+    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
+
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys".
+  const hasClientKeysForCase =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const resolvedModelApiKeys = hasClientKeysForCase ? modelApiKeys : undefined;
+  let resolvedOrgModelConfig = orgModelConfig;
+  const testCaseProjectId =
+    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
+  const testCaseOrgConfigTarget = testCaseProjectId
+    ? { projectId: testCaseProjectId }
+    : undefined;
+  if (
+    !resolvedModelApiKeys &&
+    !resolvedOrgModelConfig &&
+    testCaseOrgConfigTarget
+  ) {
+    try {
+      resolvedOrgModelConfig = await resolveOrgModelConfig(
+        testCaseOrgConfigTarget,
+        {
+          bearerToken: convexAuthToken,
+          chatboxId,
+          accessVersion,
+          serverIds: resolvedServerIds,
+        },
+      );
+    } catch (error) {
+      logger.warn("[evals] Failed to resolve org model config for test case", {
+        testCaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   const quickResult = await runEvalSuiteWithAiSdk({
     suiteId: testCase.evalTestSuiteId,
@@ -611,7 +922,9 @@ export async function runEvalTestCaseWithManager(
       tests: [test],
       environment: { servers: resolvedServerIds },
     },
-    modelApiKeys: modelApiKeys ?? undefined,
+    modelApiKeys: resolvedModelApiKeys ?? undefined,
+    orgModelConfig: resolvedOrgModelConfig,
+    orgModelConfigTarget: testCaseOrgConfigTarget,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -619,6 +932,7 @@ export async function runEvalTestCaseWithManager(
     recorder: null,
     testCaseId,
     compareRunId,
+    suiteInjectOpenAiCompat,
   });
 
   const expectedIterationId =
@@ -744,7 +1058,7 @@ export async function generateNegativeEvalTestsWithManager(
 
 export async function streamEvalTestCaseWithManager(
   clientManager: MCPClientManager,
-  request: RunTestCaseRequest,
+  request: RunTestCaseWithManagerRequest,
   options?: {
     skipLastMessageRunUpdate?: boolean;
     onStreamComplete?: () => void;
@@ -756,10 +1070,15 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
+    chatboxId,
+    accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
+    orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
+    matchOptionsOverride,
+    hostConfigOverride,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -773,6 +1092,22 @@ export async function streamEvalTestCaseWithManager(
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
 
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
+
+  const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteHostConfig = await loadSuiteHostConfig(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
+    suiteHostConfig,
+    hostConfigOverride as Record<string, unknown> | undefined,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -790,8 +1125,55 @@ export async function streamEvalTestCaseWithManager(
       testCase.promptTurns,
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
+    matchOptions: resolveMatchOptions(
+      suiteDefaultMatchOptions,
+      (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
+        | MatchOptionsDTO
+        | undefined,
+      matchOptionsOverride,
+    ),
+    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
+
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys".
+  const hasClientStreamKeys =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const resolvedStreamModelApiKeys = hasClientStreamKeys
+    ? modelApiKeys
+    : undefined;
+  let resolvedStreamOrgModelConfig = orgModelConfig;
+  const streamTestCaseProjectId =
+    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
+  const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
+    ? { projectId: streamTestCaseProjectId }
+    : undefined;
+  if (
+    !resolvedStreamModelApiKeys &&
+    !resolvedStreamOrgModelConfig &&
+    streamTestCaseOrgConfigTarget
+  ) {
+    try {
+      resolvedStreamOrgModelConfig = await resolveOrgModelConfig(
+        streamTestCaseOrgConfigTarget,
+        {
+          bearerToken: convexAuthToken,
+          chatboxId,
+          accessVersion,
+          serverIds: resolvedServerIds,
+        },
+      );
+    } catch (error) {
+      logger.warn(
+        "[evals] Failed to resolve org model config for stream test case",
+        {
+          testCaseId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
 
   const tools = (await clientManager.getToolsForAiSdk(
     resolvedServerIds,
@@ -809,7 +1191,9 @@ export async function streamEvalTestCaseWithManager(
           tools,
           mcpClientManager: clientManager,
           recorder: null,
-          modelApiKeys: modelApiKeys ?? undefined,
+          modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
+          orgModelConfig: resolvedStreamOrgModelConfig,
+          orgModelConfigTarget: streamTestCaseOrgConfigTarget,
           convexHttpUrl,
           convexAuthToken,
           convexClient,
@@ -817,6 +1201,7 @@ export async function streamEvalTestCaseWithManager(
           suiteId: testCase.evalTestSuiteId,
           runId: null,
           compareRunId,
+          injectOpenAiCompat: suiteInjectOpenAiCompat,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));

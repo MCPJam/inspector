@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("convex/react", () => ({
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 vi.mock("../use-suite-data", () => ({

@@ -4,7 +4,6 @@ import {
   ChevronRight,
   TrendingUp,
   TrendingDown,
-  Minus,
   Search,
   AlertCircle,
 } from "lucide-react";
@@ -407,19 +406,16 @@ export function TagAggregationPanel({
                 />
                 <ChartTooltip
                   cursor={false}
-                  content={({
-                    active,
-                    payload,
-                    label,
-                  }: {
+                  content={(props: {
                     active?: boolean;
                     payload?: Array<{
-                      dataKey: string;
-                      value: number;
-                      color: string;
+                      dataKey?: string | number;
+                      value?: number;
+                      color?: string;
                     }>;
                     label?: string;
                   }) => {
+                    const { active, payload, label } = props;
                     if (!active || !payload || payload.length === 0)
                       return null;
                     return (
@@ -430,7 +426,7 @@ export function TagAggregationPanel({
                           </span>
                           {payload.map((p) => (
                             <div
-                              key={p.dataKey}
+                              key={String(p.dataKey ?? "")}
                               className="flex items-center gap-2"
                             >
                               <div
@@ -438,7 +434,7 @@ export function TagAggregationPanel({
                                 style={{ backgroundColor: p.color }}
                               />
                               <span className="text-xs">
-                                {p.dataKey}: {p.value}%
+                                {String(p.dataKey ?? "")}: {p.value ?? 0}%
                               </span>
                             </div>
                           ))}
@@ -506,18 +502,17 @@ export function TagAggregationPanel({
                 />
                 <ChartTooltip
                   cursor={false}
-                  content={({
-                    active,
-                    payload,
-                  }: {
+                  content={(props: {
                     active?: boolean;
                     payload?: Array<{
-                      payload: (typeof passRateBarData)[number];
+                      payload?: (typeof passRateBarData)[number];
                     }>;
                   }) => {
+                    const { active, payload } = props;
                     if (!active || !payload || payload.length === 0)
                       return null;
-                    const data = payload[0].payload;
+                    const data = payload[0]?.payload;
+                    if (!data) return null;
                     return (
                       <div className="rounded-lg border bg-background p-2 shadow-sm">
                         <div className="grid gap-1">

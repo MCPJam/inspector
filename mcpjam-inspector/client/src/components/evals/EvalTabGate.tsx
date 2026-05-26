@@ -9,7 +9,7 @@ export function EvalTabGate({
   isLoading,
   isAuthenticated,
   user,
-  workspaceId,
+  projectId,
   isDirectGuest = false,
   children,
 }: {
@@ -17,10 +17,10 @@ export function EvalTabGate({
   isLoading: boolean;
   isAuthenticated: boolean;
   user: unknown;
-  workspaceId: string | null | undefined;
+  projectId: string | null | undefined;
   /**
    * True when the caller has classified this session as a hosted direct guest
-   * (no workspace, no share/sandbox token). Direct guests bypass the sign-in
+   * (no project, no share/sandbox token). Direct guests bypass the sign-in
    * wall for the Playground variant only.
    */
   isDirectGuest?: boolean;
@@ -48,7 +48,7 @@ export function EvalTabGate({
       return <>{children}</>;
     }
 
-    if (!isAuthenticated || !user) {
+    if (!isAuthenticated || (!user && !projectId)) {
       return (
         <div className="p-6">
           <EmptyState
@@ -61,13 +61,13 @@ export function EvalTabGate({
       );
     }
 
-    if (!workspaceId) {
+    if (!projectId) {
       return (
         <div className="p-6">
           <EmptyState
             icon={Icon}
-            title="Select a workspace"
-            description="Choose a workspace before creating or viewing workspace-bound testing suites."
+            title="Select a project"
+            description="Choose a project before creating or viewing project-bound testing suites."
             className="h-[calc(100vh-200px)]"
           />
         </div>

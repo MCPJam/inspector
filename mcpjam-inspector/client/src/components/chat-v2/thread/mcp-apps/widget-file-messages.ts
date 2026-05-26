@@ -42,8 +42,8 @@ function buildWidgetDownloadUrl(fileId: string): string {
   const loc = window.location;
   const widgetHost = loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
   const basePath = HOSTED_MODE
-    ? "/api/web/apps/chatgpt-apps/file"
-    : "/api/apps/chatgpt-apps/file";
+    ? "/api/web/apps/files/file"
+    : "/api/apps/files/file";
   return `${loc.protocol}//${widgetHost}:${loc.port}${basePath}/${fileId}`;
 }
 
@@ -62,7 +62,7 @@ export async function handleUploadFileMessage(
   }
 
   try {
-    const resp = await authFetch("/api/apps/chatgpt-apps/upload-file", {
+    const resp = await authFetch("/api/apps/files/upload-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

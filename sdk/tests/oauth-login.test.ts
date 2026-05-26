@@ -120,6 +120,96 @@ describe("runOAuthLogin", () => {
     expect(result.authorizationUrl).toContain(`${authServerUrl}/authorize`);
   });
 
+  it("auto-resolves the login flow from probe metadata before running OAuth", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+          scopes_supported: ["openid", "profile", "mcp"],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          client_id_metadata_document_supported: true,
+          scopes_supported: ["openid", "profile", "mcp"],
+        });
+      }
+
+      if (url === DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL) {
+        return jsonResponse({
+          client_id: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+          client_name: "MCPJam SDK OAuth Login",
+          redirect_uris: ["http://127.0.0.1:3333/callback"],
+        });
+      }
+
+      if (url === `${authServerUrl}/token`) {
+        return jsonResponse({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+
+      if (
+        url === serverUrl &&
+        headers.get("Authorization") === "Bearer access-token"
+      ) {
+        return createMcpInitializeResponse("2025-11-25");
+      }
+
+      return jsonResponse({ error: "unexpected" }, 404);
+    }) as typeof fetch;
+
+    const result = await runOAuthLogin(
+      {
+        serverUrl,
+        auth: { mode: "headless" },
+        fetchFn,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      },
+    );
+
+    expect(result.completed).toBe(true);
+    expect(result.protocolMode).toBe("auto");
+    expect(result.registrationMode).toBe("auto");
+    expect(result.protocolVersion).toBe("2025-11-25");
+    expect(result.registrationStrategy).toBe("cimd");
+    expect(result.authorizationPlan.status).toBe("ready");
+    expect(result.authorizationPlan.registrationStrategy).toBe("cimd");
+  });
+
   it("returns a structured failure when authorization cannot complete", async () => {
     const serverUrl = "https://mcp.example.com/mcp";
     const resourceMetadataUrl =

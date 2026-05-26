@@ -18,14 +18,87 @@
 
 export {};
 
+/**
+ * Per-method capability surface for the `window.openai` shim. Mirror of
+ * the client's `ResolvedOpenAiAppsCapabilities`
+ * (`client/src/lib/client-styles/types.ts`) — defined inline here because
+ * the SDK can't import client types.
+ *
+ * Methods absent on the resolved capabilities are NOT defined on
+ * `window.openai`; widgets that feature-detect (`if (window.openai.foo)`)
+ * see `undefined` and take their fallback path. Defining a no-op stub
+ * would defeat feature detection — see plan §3.
+ *
+ * `selectFiles` and `setOpenInAppUrl` are present here for type
+ * completeness (Copilot's published table lists them) but the runtime
+ * NEVER installs them — implementation TBD.
+ */
+type RuntimeCapabilities = {
+  callTool: boolean;
+  sendFollowUpMessage: boolean;
+  setWidgetState: boolean;
+  requestDisplayMode: "all" | "fullscreen-only" | "none";
+  notifyIntrinsicHeight: boolean;
+  openExternal: boolean;
+  setOpenInAppUrl: boolean;
+  requestModal: boolean;
+  uploadFile: boolean;
+  selectFiles: boolean;
+  getFileDownloadUrl: boolean;
+  requestCheckout: boolean;
+  requestClose: boolean;
+};
+
+/**
+ * Backwards-compat full surface — applied when the config script omits
+ * `capabilities` (legacy injection sites that haven't been updated yet).
+ * Matches `OPENAI_APPS_FULL_SURFACE` in the client; kept in sync by hand.
+ */
+const FULL_SURFACE_DEFAULT: RuntimeCapabilities = {
+  callTool: true,
+  sendFollowUpMessage: true,
+  setWidgetState: true,
+  requestDisplayMode: "all",
+  notifyIntrinsicHeight: true,
+  openExternal: true,
+  setOpenInAppUrl: true,
+  requestModal: true,
+  uploadFile: true,
+  selectFiles: true,
+  getFileDownloadUrl: true,
+  requestCheckout: true,
+  requestClose: true,
+};
+
 type OpenAICompatConfig = {
   toolId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
+  /**
+   * Tool response `_meta` (per the Apps SDK contract — exposed to widgets
+   * as `window.openai.toolResponseMetadata`, distinct from
+   * `toolOutput` which is the structured result the widget renders).
+   * `null` when no `_meta` was attached to the tool result.
+   */
+  toolResponseMetadata: Record<string, unknown> | null;
+  /**
+   * Persisted widget state from a saved view or fork. Seeds
+   * `window.openai.widgetState` on bootstrap so widgets that read
+   * `widgetState` at first render see the saved value, not `null`.
+   * `null` when the widget should boot with fresh state.
+   */
+  initialWidgetState: unknown;
   theme: string;
   viewMode: string;
   viewParams: Record<string, unknown>;
+  /**
+   * Per-method capability surface this runtime should expose. Optional
+   * for backwards compatibility — legacy injection sites that pre-date
+   * the capability matrix omit this field, and the runtime falls back
+   * to the full ChatGPT surface (matches legacy behavior).
+   */
+  capabilities?: Partial<RuntimeCapabilities>;
 };
 
 type PendingCall = {
@@ -56,7 +129,25 @@ type PendingCall = {
   const config = readConfig();
   if (!config) return;
 
-  const { toolId, toolInput, toolOutput, theme, viewMode, viewParams } = config;
+  const {
+    toolId,
+    toolInput,
+    toolOutput,
+    toolResponseMetadata,
+    initialWidgetState,
+    theme,
+    viewMode,
+    viewParams,
+  } = config;
+
+  // Resolve the per-method capability surface. Sparse `capabilities`
+  // override the FULL surface (legacy default). Per plan §3, methods
+  // whose capability resolves false are NOT defined on `window.openai`
+  // — widgets must feature-detect with `typeof` for fallbacks to work.
+  const capabilities: RuntimeCapabilities = {
+    ...FULL_SURFACE_DEFAULT,
+    ...(config.capabilities ?? {}),
+  };
 
   // JSON-RPC 2.0 call ID counter
   let callId = 0;
@@ -66,6 +157,23 @@ type PendingCall = {
 
   // Pending checkout calls awaiting responses (notification + callId pattern)
   const pendingCheckoutCalls = new Map<number, PendingCall>();
+
+  /**
+   * Dispatch the `openai:set_globals` CustomEvent. Apps SDK widgets (and the
+   * ChatGPT UI guide examples) subscribe to this event to learn about
+   * host-side state changes. The MCP-Apps path translates `ui/*`
+   * notifications into this event so a widget written against the Apps SDK
+   * contract sees the same surface here as it would in production ChatGPT.
+   */
+  const dispatchSetGlobals = (globals: Record<string, unknown>): void => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent("openai:set_globals", { detail: { globals } }),
+      );
+    } catch {
+      // silent — CustomEvent should always succeed in a real DOM
+    }
+  };
 
   // Timeout for pending calls (30 seconds)
   const CALL_TIMEOUT_MS = 30_000;
@@ -165,21 +273,47 @@ type PendingCall = {
   };
 
   // ── Build window.openai ────────────────────────────────────────────
+  //
+  // The shape is built incrementally so disabled methods are LITERALLY
+  // ABSENT from the final object — not present-and-rejecting. Widgets
+  // feature-detect with `if (window.openai.foo)` or
+  // `typeof window.openai.foo === "function"`; rejecting stubs would
+  // silently break those fallbacks. See plan §3 and the
+  // feedback_feature_detection_over_rejection memory.
+  //
+  // Statics (toolInput, theme, etc.) are always present — they're data,
+  // not methods, and feature-detecting against them doesn't make sense.
 
-  const openaiAPI = {
+  const openaiAPI: Record<string, unknown> = {
     toolInput: toolInput ?? {},
     toolOutput: toolOutput ?? null,
+    toolResponseMetadata: toolResponseMetadata ?? null,
     theme: theme ?? "dark",
     displayMode: "inline",
     viewMode: viewMode ?? "inline",
     viewParams: viewParams ?? {},
-    widgetState: null as unknown,
+    // Seeded with the persisted widgetState from a saved view / fork
+    // (when present) so widgets that read window.openai.widgetState on
+    // first render see the previously-saved state instead of null.
+    widgetState: (initialWidgetState ?? null) as unknown,
+  };
 
+  // _fileCallId / _pendingFileCalls are only installed when at least
+  // one file-op method is enabled — saves a dead Map allocation and
+  // message-listener registration in the common (non-file) case.
+  const fileOpsEnabled =
+    capabilities.uploadFile || capabilities.getFileDownloadUrl;
+  if (fileOpsEnabled) {
+    openaiAPI._fileCallId = 0;
+    openaiAPI._pendingFileCalls = new Map<number, PendingCall>();
+  }
+
+  if (capabilities.callTool) {
     /**
      * Call an MCP tool by name. Returns a Promise resolved when the
      * host sends back the JSON-RPC response with the matching id.
      */
-    callTool(
+    openaiAPI.callTool = function (
       name: string,
       args: Record<string, unknown> = {},
     ): Promise<unknown> {
@@ -198,85 +332,123 @@ type PendingCall = {
           }
         }, CALL_TIMEOUT_MS);
       });
-    },
+    };
+  }
 
+  if (capabilities.sendFollowUpMessage) {
     /**
      * Send a follow-up message to the host chat.
      * Uses sendRequest (not notification) because ui/message is a JSON-RPC
      * request in the MCP Apps spec — the AppBridge only dispatches requests
      * (messages with an id) to its onmessage handler.
      */
-    sendFollowUpMessage(opts: unknown): void {
+    const sendFollowUpMessage = (opts: unknown): void => {
       const prompt =
         typeof opts === "string" ? opts : ((opts as any)?.prompt ?? "");
       sendRequest("ui/message", {
         role: "user",
         content: [{ type: "text", text: prompt }],
       });
-    },
+    };
+    openaiAPI.sendFollowUpMessage = sendFollowUpMessage;
+    // ChatGPT compat alias — only present when the underlying method is.
+    openaiAPI.sendFollowupTurn = sendFollowUpMessage;
+  }
 
-    /**
-     * Alias for sendFollowUpMessage (ChatGPT compat).
-     */
-    sendFollowupTurn(message: unknown): void {
-      this.sendFollowUpMessage(message);
-    },
-
+  if (capabilities.notifyIntrinsicHeight) {
     /**
      * Notify the host of the widget's intrinsic height.
      */
-    notifyIntrinsicHeight(height: unknown): void {
+    openaiAPI.notifyIntrinsicHeight = (height: unknown): void => {
       const n = Number(height);
       if (Number.isFinite(n) && n > 0) postHeight(n);
-    },
+    };
+  }
 
+  if (capabilities.openExternal) {
     /**
      * Open an external URL in a new tab.
      * ui/open-link is a request in the spec; param is `url` (not `href`).
      */
-    openExternal(options: { href: string } | string): void {
+    openaiAPI.openExternal = (options: { href: string } | string): void => {
       const href = typeof options === "string" ? options : options?.href;
       if (!href) throw new Error("href is required for openExternal");
       sendRequest("ui/open-link", { url: href });
-    },
+    };
+  }
 
+  if (capabilities.requestDisplayMode !== "none") {
     /**
      * Request a display mode change (inline, fullscreen, pip).
-     * ui/request-display-mode is a request in the spec.
+     *
+     * Enforcement is at the runtime layer (NOT just host-side) because
+     * this method returns synchronously — host-side rejection would
+     * arrive too late to prevent the widget from acting on the wrong
+     * mode. When the requested mode is denied by the capability
+     * (e.g. `pip` on a "fullscreen-only" host like Copilot), the
+     * runtime returns the CURRENT mode and does NOT send the
+     * `ui/request-display-mode` request, so the host never sees a
+     * denied attempt.
      */
-    requestDisplayMode(
+    const displayModeMode = capabilities.requestDisplayMode;
+    openaiAPI.requestDisplayMode = function (
       options: { mode?: string; maxHeight?: number | null } = {},
     ): { mode: string } {
-      const mode = options.mode || "inline";
-      this.displayMode = mode;
-      sendRequest("ui/request-display-mode", { mode });
-      return { mode };
-    },
+      const requested = options.mode || "inline";
+      // `fullscreen-only` is the Copilot intent: fullscreen is the
+      // sole opt-in escalation, but `inline` must remain reachable —
+      // it's the default rendering mode AND the exit from fullscreen.
+      // Denying it would trap widgets in fullscreen after their
+      // first `requestDisplayMode({ mode: "fullscreen" })` call.
+      // `pip` and unknown modes stay denied.
+      const allowed =
+        displayModeMode === "all" ||
+        (displayModeMode === "fullscreen-only" &&
+          (requested === "fullscreen" || requested === "inline"));
+      if (!allowed) {
+        return { mode: openaiAPI.displayMode as string };
+      }
+      openaiAPI.displayMode = requested;
+      sendRequest("ui/request-display-mode", { mode: requested });
+      return { mode: requested };
+    };
+  }
 
+  if (capabilities.setWidgetState) {
     /**
-     * Store arbitrary widget state for persistence.
-     * Maps to ui/update-model-context which is a request expecting
-     * { content?: ContentBlock[], structuredContent?: Record }.
+     * Store arbitrary widget state for persistence. Mirrors the Apps SDK
+     * contract:
+     *   - update local `window.openai.widgetState`,
+     *   - notify the host so it can persist for replay / saved views,
+     *   - fire the `openai:set_globals` event for widgets that observe it.
+     *
+     * IMPORTANT: this does NOT call `ui/update-model-context`. That
+     * request is a SEP-1865 spec API for explicitly updating the host's
+     * model context (which is consumed by the LLM on the next turn) and
+     * should be opt-in — auto-posting on every state change would leak
+     * widget internals into the LLM prompt. Widgets that want to update
+     * model context must call it themselves.
      */
-    setWidgetState(state: unknown): void {
-      this.widgetState = state;
-      sendRequest("ui/update-model-context", {
-        structuredContent:
-          typeof state === "object" && state !== null
-            ? (state as Record<string, unknown>)
-            : { value: state },
-      });
-    },
+    openaiAPI.setWidgetState = function (state: unknown): void {
+      openaiAPI.widgetState = state;
+      window.parent.postMessage(
+        { type: "openai:setWidgetState", toolId, state },
+        "*",
+      );
+      dispatchSetGlobals({ widgetState: state });
+    };
+  }
 
+  if (capabilities.requestModal) {
     /**
      * Request a modal to be opened (ChatGPT-specific, notification).
      */
-    requestModal(options?: {
+    openaiAPI.requestModal = (options?: {
       title?: string;
       params?: Record<string, unknown>;
       anchor?: string;
       template?: string;
-    }): void {
+    }): void => {
       const opts = options ?? {};
       sendNotification("openai/requestModal", {
         title: opts.title,
@@ -284,28 +456,31 @@ type PendingCall = {
         anchor: opts.anchor,
         template: opts.template,
       });
-    },
+    };
+  }
 
+  if (capabilities.requestClose) {
     /**
      * Request the widget to be closed (ChatGPT-specific, notification).
      */
-    requestClose(): void {
+    openaiAPI.requestClose = (): void => {
       sendNotification("openai/requestClose", { toolId });
-    },
+    };
+  }
 
-    // ── File Upload / Download ────────────────────────────────────────
-    // These use custom (non-JSON-RPC) postMessage types, matching the
-    // ChatGPT widget-runtime.ts protocol. The sandbox proxy and
-    // SandboxedIframe whitelist these message types alongside CSP
-    // violation messages.
+  // ── File Upload / Download ────────────────────────────────────────
+  // These use custom (non-JSON-RPC) postMessage types, matching the
+  // ChatGPT widget-runtime.ts protocol. The sandbox proxy and
+  // SandboxedIframe whitelist these message types alongside CSP
+  // violation messages.
 
-    _fileCallId: 0,
-    _pendingFileCalls: new Map<number, PendingCall>(),
-
+  if (capabilities.uploadFile) {
     /**
      * Upload a file (image) to the host. Returns a fileId for later retrieval.
      */
-    uploadFile(file: File): Promise<{ fileId: string }> {
+    openaiAPI.uploadFile = function (
+      file: File,
+    ): Promise<{ fileId: string }> {
       const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
       const MAX_SIZE = 20 * 1024 * 1024; // 20 MB
 
@@ -327,10 +502,15 @@ type PendingCall = {
         );
       }
 
-      const id = ++this._fileCallId;
+      openaiAPI._fileCallId = (openaiAPI._fileCallId as number) + 1;
+      const id = openaiAPI._fileCallId as number;
+      const pendingFileCalls = openaiAPI._pendingFileCalls as Map<
+        number,
+        PendingCall
+      >;
 
       return new Promise((resolve, reject) => {
-        this._pendingFileCalls.set(id, { resolve, reject });
+        pendingFileCalls.set(id, { resolve, reject });
 
         const reader = new FileReader();
         reader.onload = () => {
@@ -349,34 +529,41 @@ type PendingCall = {
           );
         };
         reader.onerror = () => {
-          this._pendingFileCalls.delete(id);
+          pendingFileCalls.delete(id);
           reject(new Error("Failed to read file"));
         };
         reader.readAsDataURL(file);
 
         setTimeout(() => {
-          if (this._pendingFileCalls.has(id)) {
-            this._pendingFileCalls.delete(id);
+          if (pendingFileCalls.has(id)) {
+            pendingFileCalls.delete(id);
             reject(new Error("Upload timeout"));
           }
         }, 60_000);
       });
-    },
+    };
+  }
 
+  if (capabilities.getFileDownloadUrl) {
     /**
      * Get a download URL for a previously uploaded file.
      */
-    getFileDownloadUrl(options: {
+    openaiAPI.getFileDownloadUrl = function (options: {
       fileId: string;
     }): Promise<{ downloadUrl: string }> {
       if (!options || !options.fileId) {
         return Promise.reject(new Error("fileId is required"));
       }
 
-      const id = ++this._fileCallId;
+      openaiAPI._fileCallId = (openaiAPI._fileCallId as number) + 1;
+      const id = openaiAPI._fileCallId as number;
+      const pendingFileCalls = openaiAPI._pendingFileCalls as Map<
+        number,
+        PendingCall
+      >;
 
       return new Promise((resolve, reject) => {
-        this._pendingFileCalls.set(id, { resolve, reject });
+        pendingFileCalls.set(id, { resolve, reject });
 
         window.parent.postMessage(
           {
@@ -389,20 +576,24 @@ type PendingCall = {
         );
 
         setTimeout(() => {
-          if (this._pendingFileCalls.has(id)) {
-            this._pendingFileCalls.delete(id);
+          if (pendingFileCalls.has(id)) {
+            pendingFileCalls.delete(id);
             reject(new Error("getFileDownloadUrl timeout"));
           }
         }, 30_000);
       });
-    },
+    };
+  }
 
+  if (capabilities.requestCheckout) {
     /**
      * Request a checkout flow (ACP — Agentic Checkout Protocol).
      * Uses notification + callId pattern (same as requestModal) to avoid
      * conflicts with AppBridge's JSON-RPC request handling.
      */
-    requestCheckout(session: Record<string, unknown>): Promise<unknown> {
+    openaiAPI.requestCheckout = (
+      session: Record<string, unknown>,
+    ): Promise<unknown> => {
       const id = ++callId;
       sendNotification("openai/requestCheckout", { ...session, callId: id });
 
@@ -415,8 +606,17 @@ type PendingCall = {
           }
         }, CHECKOUT_TIMEOUT_MS);
       });
-    },
-  };
+    };
+  }
+
+  // selectFiles and setOpenInAppUrl are intentionally NOT installed
+  // regardless of `capabilities.selectFiles` / `capabilities.setOpenInAppUrl`
+  // — the inspector hasn't implemented them yet. Per plan §3, installing
+  // a no-op stub would lie to feature detection (widgets calling
+  // `if (window.openai.selectFiles) … else fallback` would take the
+  // supported path and break). The capability flags exist in the type so
+  // presets/UI can express what real hosts advertise; the runtime stays
+  // honest by leaving the method `undefined`.
 
   // ── Listen for incoming JSON-RPC responses & notifications ─────────
 
@@ -455,22 +655,51 @@ type PendingCall = {
       const params = data.params ?? {};
       switch (data.method) {
         // MCP Apps bridge notification names (SEP-1865)
-        case "ui/notifications/tool-input":
-          openaiAPI.toolInput = params.arguments ?? params;
+        case "ui/notifications/tool-input": {
+          const args = params.arguments ?? params;
+          openaiAPI.toolInput = args;
+          dispatchSetGlobals({ toolInput: args });
           break;
-        case "ui/notifications/tool-input-partial":
-          openaiAPI.toolInput = params.arguments ?? params;
+        }
+        case "ui/notifications/tool-input-partial": {
+          const args = params.arguments ?? params;
+          openaiAPI.toolInput = args;
+          dispatchSetGlobals({ toolInput: args });
           break;
-        case "ui/notifications/tool-result":
+        }
+        case "ui/notifications/tool-result": {
           openaiAPI.toolOutput = params;
+          // Apps SDK exposes the tool result's `_meta` as a separate
+          // `window.openai.toolResponseMetadata` surface (distinct from
+          // toolOutput, which is the structured result the widget renders).
+          // Surface it here when present so widgets can read timestamps,
+          // source IDs, etc. without rummaging in toolOutput.
+          const meta =
+            (params as { _meta?: Record<string, unknown> } | undefined)?._meta;
+          const detail: Record<string, unknown> = { toolOutput: params };
+          if (meta && typeof meta === "object") {
+            openaiAPI.toolResponseMetadata = meta;
+            detail.toolResponseMetadata = meta;
+          }
+          dispatchSetGlobals(detail);
           break;
+        }
         case "ui/notifications/tool-cancelled":
           // Tool was cancelled/errored
           break;
-        case "ui/notifications/host-context-changed":
-          if (params.theme) openaiAPI.theme = params.theme;
-          if (params.displayMode) openaiAPI.displayMode = params.displayMode;
+        case "ui/notifications/host-context-changed": {
+          const changed: Record<string, unknown> = {};
+          if (params.theme) {
+            openaiAPI.theme = params.theme;
+            changed.theme = params.theme;
+          }
+          if (params.displayMode) {
+            openaiAPI.displayMode = params.displayMode;
+            changed.displayMode = params.displayMode;
+          }
+          if (Object.keys(changed).length > 0) dispatchSetGlobals(changed);
           break;
+        }
         case "openai/requestCheckout:response": {
           const pending = pendingCheckoutCalls.get(params.callId as number);
           if (pending) {
@@ -494,29 +723,38 @@ type PendingCall = {
   });
 
   // ── Listen for file operation responses (non-JSON-RPC) ─────────────
+  // Only attach this listener when at least one file-op method is
+  // installed. With file ops disabled the inspector never sends these
+  // response messages, so the listener would be dead weight (and the
+  // `_pendingFileCalls` Map it reads doesn't exist on `openaiAPI`).
+  if (fileOpsEnabled) {
+    window.addEventListener("message", (event: MessageEvent) => {
+      // Only accept messages from our parent (sandbox proxy)
+      if (event.source !== window.parent) return;
 
-  window.addEventListener("message", (event: MessageEvent) => {
-    // Only accept messages from our parent (sandbox proxy)
-    if (event.source !== window.parent) return;
+      const data = event.data;
+      if (!data) return;
 
-    const data = event.data;
-    if (!data) return;
-
-    if (
-      data.type === "openai:uploadFile:response" ||
-      data.type === "openai:getFileDownloadUrl:response"
-    ) {
-      const pending = openaiAPI._pendingFileCalls.get(data.callId);
-      if (pending) {
-        openaiAPI._pendingFileCalls.delete(data.callId);
-        if (data.error) {
-          pending.reject(new Error(data.error));
-        } else {
-          pending.resolve(data.result);
+      if (
+        data.type === "openai:uploadFile:response" ||
+        data.type === "openai:getFileDownloadUrl:response"
+      ) {
+        const pendingFileCalls = openaiAPI._pendingFileCalls as Map<
+          number,
+          PendingCall
+        >;
+        const pending = pendingFileCalls.get(data.callId);
+        if (pending) {
+          pendingFileCalls.delete(data.callId);
+          if (data.error) {
+            pending.reject(new Error(data.error));
+          } else {
+            pending.resolve(data.result);
+          }
         }
       }
-    }
-  });
+    });
+  }
 
   // ── MCP Apps initialization handshake ─────────────────────────────
   // The host AppBridge expects ui/initialize → response → ui/notifications/initialized.
@@ -553,10 +791,33 @@ type PendingCall = {
       }
       // Complete the handshake — this triggers bridge.oninitialized on the host
       sendNotification("ui/notifications/initialized", {});
+      // Initial set_globals dispatch with everything the runtime currently
+      // knows. Apps SDK widgets that subscribe at script load (or via the
+      // standard early-script pattern) will see this on the next tick.
+      dispatchSetGlobals({
+        toolInput: openaiAPI.toolInput,
+        toolOutput: openaiAPI.toolOutput,
+        toolResponseMetadata: openaiAPI.toolResponseMetadata,
+        theme: openaiAPI.theme,
+        displayMode: openaiAPI.displayMode,
+        widgetState: openaiAPI.widgetState,
+      });
     },
     reject: () => {
       // Initialization failed; still try to signal initialized so widget shows
       sendNotification("ui/notifications/initialized", {});
+      // Dispatch initial globals in the failure path too so event-driven
+      // widgets that subscribe to openai:set_globals get their initial
+      // state (toolInput/toolOutput from config + defaults). Mirrors the
+      // success branch above.
+      dispatchSetGlobals({
+        toolInput: openaiAPI.toolInput,
+        toolOutput: openaiAPI.toolOutput,
+        toolResponseMetadata: openaiAPI.toolResponseMetadata,
+        theme: openaiAPI.theme,
+        displayMode: openaiAPI.displayMode,
+        widgetState: openaiAPI.widgetState,
+      });
     },
   });
 

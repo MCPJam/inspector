@@ -1,69 +1,58 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
-  buildSuiteEnvironmentOptions,
-  normalizeServerNames,
-  type WorkspaceServerRecord,
-} from "./suite-environment-utils";
+  ClientAttachmentsEditor,
+  type HostAttachmentDraft,
+} from "./client-attachments-editor";
+
+export type CreateSuitePayload = {
+  name: string;
+  description?: string;
+  /**
+   * Hosts the suite runs against. Each attachment fans out into its own
+   * run on "Run all hosts" — the host's snapshotted config is the source
+   * of truth for model, system prompt, temperature, and servers. There is
+   * no longer a suite-level flat server list or model override.
+   */
+  hostAttachments?: HostAttachmentDraft[];
+};
 
 type CreateSuiteDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  workspaceServers: WorkspaceServerRecord[];
-  connectedServerNames: ReadonlySet<string>;
-  onSubmit: (payload: {
-    name: string;
-    description?: string;
-    selectedServers: string[];
-  }) => Promise<void>;
+  onSubmit: (payload: CreateSuitePayload) => Promise<void>;
+  hostsEnabled?: boolean;
+  projectId?: string | null;
 };
 
 export function CreateSuiteDialog({
   open,
   onOpenChange,
-  workspaceServers,
-  connectedServerNames,
   onSubmit,
+  hostsEnabled = false,
+  projectId = null,
 }: CreateSuiteDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  const [hostAttachments, setHostAttachments] = useState<
+    HostAttachmentDraft[]
+  >([]);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setName("");
       setDescription("");
-      setSelectedServers([]);
+      setHostAttachments([]);
       setIsSaving(false);
     }
   }, [open]);
 
-  const options = useMemo(
-    () =>
-      buildSuiteEnvironmentOptions({
-        configuredServers: [],
-        workspaceServers,
-        connectedServerNames,
-      }),
-    [workspaceServers, connectedServerNames],
-  );
-
   const canSubmit = name.trim().length > 0 && !isSaving;
-
-  const toggleServer = (serverName: string, checked: boolean) => {
-    setSelectedServers((current) => {
-      if (checked) {
-        return current.includes(serverName) ? current : [...current, serverName];
-      }
-      return current.filter((candidate) => candidate !== serverName);
-    });
-  };
 
   const handleSubmit = async () => {
     if (!canSubmit) {
@@ -75,7 +64,7 @@ export function CreateSuiteDialog({
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
-        selectedServers: normalizeServerNames(selectedServers),
+        ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
       });
     } catch {
       // onSubmit surfaces its own error toast; keep the dialog open so the
@@ -91,8 +80,8 @@ export function CreateSuiteDialog({
         <DialogHeader>
           <DialogTitle>Create suite</DialogTitle>
           <DialogDescription>
-            Create a suite first, then attach servers, generate cases, or import
-            a chat transcript into it.
+            Create a suite, attach clients to run it against, then generate cases
+            or import a chat transcript.
           </DialogDescription>
         </DialogHeader>
 
@@ -119,52 +108,24 @@ export function CreateSuiteDialog({
             />
           </div>
 
-          <div className="space-y-2">
-            <div>
-              <h3 className="text-sm font-medium text-foreground">Servers</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Suites own their server environment. You can update this later
-                from suite settings.
-              </p>
+          {hostsEnabled && projectId ? (
+            <div className="space-y-2">
+              <div>
+                <h3 className="text-sm font-medium text-foreground">Clients</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Attach clients to run this suite against. Each attachment fans
+                  out into its own run when you click "Run all clients". You can
+                  attach more clients later from the suite header.
+                </p>
+              </div>
+              <ClientAttachmentsEditor
+                projectId={projectId}
+                value={hostAttachments}
+                onChange={setHostAttachments}
+                disabled={isSaving}
+              />
             </div>
-
-            {options.length === 0 ? (
-              <div className="rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
-                No workspace servers are available yet. You can still create the
-                suite now and configure servers later.
-              </div>
-            ) : (
-              <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border bg-card/60 p-3">
-                {options.map((option) => {
-                  const isSelected = selectedServers.includes(option.name);
-                  return (
-                    <label
-                      key={option.name}
-                      className="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 transition-colors hover:bg-accent/35"
-                    >
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={(checked) =>
-                          toggleServer(option.name, checked === true)
-                        }
-                        className="mt-0.5"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium text-foreground">
-                            {option.name}
-                          </span>
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                            {option.isConnected ? "Connected" : "Disconnected"}
-                          </span>
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          ) : null}
         </div>
 
         <DialogFooter>

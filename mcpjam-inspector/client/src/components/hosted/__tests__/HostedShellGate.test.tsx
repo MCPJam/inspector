@@ -31,20 +31,20 @@ describe("HostedShellGate", () => {
     );
   });
 
-  it("shows workspace loading copy", () => {
+  it("shows project loading copy", () => {
     render(
-      <HostedShellGate state="workspace-loading">
+      <HostedShellGate state="project-loading">
         <div>App Content</div>
       </HostedShellGate>,
     );
 
-    expect(screen.getByText("Preparing workspace...")).toBeInTheDocument();
+    expect(screen.getByText("Preparing project...")).toBeInTheDocument();
   });
 
-  it("shows custom workspace loading copy", () => {
+  it("shows custom project loading copy", () => {
     render(
       <HostedShellGate
-        state="workspace-loading"
+        state="project-loading"
         loadingMessage="Finishing OAuth sign-in for demo-server..."
       >
         <div>App Content</div>

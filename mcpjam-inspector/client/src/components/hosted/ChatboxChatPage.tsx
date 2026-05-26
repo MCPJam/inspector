@@ -1,38 +1,46 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
-import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
+import { useApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getGuestBearerToken } from "@/lib/guest-session";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import { authFetch } from "@/lib/session-token";
 import {
   buildChatboxLink,
   clearChatboxSession,
   extractChatboxTokenFromPath,
+  normalizeChatboxSession,
   readPlaygroundSession,
   readChatboxSurfaceFromUrl,
   readChatboxSession,
   CHATBOX_OAUTH_PENDING_KEY,
   chatboxEnabledOptionalStorageKey,
+  slugify,
   type ChatboxSession,
   writeChatboxSession,
   writeChatboxSignInReturnPath,
 } from "@/lib/chatbox-session";
+import { navigateApp } from "@/lib/app-navigation";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
-import { slugify } from "@/lib/shared-server-session";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import {
+  ChatboxChatUiOverrideProvider,
+  ChatboxHostStyleProvider,
+} from "@/contexts/chatbox-client-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
+import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
+import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 
 interface ChatboxChatPageProps {
   pathToken?: string | null;
@@ -64,21 +72,12 @@ const INVALID_CHATBOX_LINK_MESSAGE =
 const UNEXPECTED_CHATBOX_ERROR_MESSAGE =
   "We couldn't open this chatbox right now. Please try again or open MCPJam.";
 
-async function getHostedBearerHeader(
-  getAccessToken: () => Promise<string | undefined | null>,
-): Promise<string | null> {
-  try {
-    const workOsToken = await getAccessToken();
-    if (workOsToken) {
-      return `Bearer ${workOsToken}`;
-    }
-  } catch {
-    // Fall through to guest auth.
-  }
-
-  const guestToken = await getGuestBearerToken();
-  return guestToken ? `Bearer ${guestToken}` : null;
-}
+type ChatboxBootstrapAuthMode = "workos" | "guest";
+type ChatboxLandingState =
+  | "resolvingAuth"
+  | "bootstrapping"
+  | "ready"
+  | "denied";
 
 function sanitizeChatboxRouteErrorMessage(message: string): string {
   const normalized = message.replace(/\s+/g, " ").trim();
@@ -95,7 +94,7 @@ function sanitizeChatboxRouteErrorMessage(message: string): string {
 function createChatboxRouteError(
   status: number,
   message: string,
-  code?: string,
+  code?: string
 ): ChatboxRouteError {
   const fallbackMessage = `Request failed with status ${status}`;
   const rawMessage = message.trim() || fallbackMessage;
@@ -149,7 +148,7 @@ function isChatboxRouteError(error: unknown): error is ChatboxRouteError {
 }
 
 function getChatboxDisplayError(
-  error: ChatboxRouteError | null,
+  error: ChatboxRouteError | null
 ): ChatboxDisplayError {
   if (!error) {
     return {
@@ -161,7 +160,7 @@ function getChatboxDisplayError(
 
   const normalizedMessage = error.message.toLowerCase();
   const requiresSignIn = normalizedMessage.includes(
-    "sign in to access this chatbox",
+    "sign in to access this chatbox"
   );
   const isAccessDenied = normalizedMessage.includes("don't have access");
   const isGuestBlocked =
@@ -173,7 +172,7 @@ function getChatboxDisplayError(
     normalizedMessage.includes("invalid or has expired") ||
     normalizedMessage.includes("invalid or expired");
   const isPlaygroundExpired = normalizedMessage.includes(
-    "playground session expired",
+    "playground session expired"
   );
 
   if (isPlaygroundExpired) {
@@ -215,13 +214,34 @@ function getChatboxDisplayError(
   };
 }
 
+function getChatboxBootstrapAuthMode(
+  isAuthenticated: boolean
+): ChatboxBootstrapAuthMode {
+  return isAuthenticated ? "workos" : "guest";
+}
+
+function isInteractiveSignInRequired(kind: ChatboxErrorKind): boolean {
+  return kind === "access_denied" || kind === "guest_blocked";
+}
+
 export function ChatboxChatPage({
   pathToken,
   onExitChatboxChat,
 }: ChatboxChatPageProps) {
-  const { getAccessToken, signIn } = useAuth();
+  const {
+    getAccessToken,
+    signIn,
+    user: workOsUser,
+    isLoading: isWorkOsLoading,
+  } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const posthog = usePostHog();
+  const posthogRef = useRef(posthog);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+
+  useEffect(() => {
+    posthogRef.current = posthog;
+  }, [posthog]);
 
   const playgroundParams = useMemo(() => {
     try {
@@ -248,7 +268,7 @@ export function ChatboxChatPage({
 
       writeChatboxSession(nextSession);
     },
-    [playgroundParams],
+    [playgroundParams]
   );
 
   const clearCurrentSession = useCallback(() => {
@@ -260,21 +280,36 @@ export function ChatboxChatPage({
   }, [playgroundParams]);
 
   const [session, setSession] = useState<ChatboxSession | null>(() =>
-    readCurrentSession(),
+    readCurrentSession()
   );
-  const [isResolving, setIsResolving] = useState(
-    Boolean(pathToken || playgroundParams),
+  const [isBootstrapping, setIsBootstrapping] = useState(
+    Boolean(pathToken || playgroundParams)
   );
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
+  const interactiveSignInEventKeyRef = useRef<string | null>(null);
+  const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
+  // Mirror `tokenFromPath` into a ref so async work (the silent re-redeem
+  // below) can detect a mid-flight navigation: when the user switches
+  // chatbox tokens before the in-flight `/api/web/chatboxes/redeem`
+  // response arrives, the resolved-but-stale session must not overwrite
+  // the new token's active session.
+  const tokenFromPathRef = useRef(tokenFromPath);
+  useEffect(() => {
+    tokenFromPathRef.current = tokenFromPath;
+  }, [tokenFromPath]);
+  const isAuthSettling =
+    Boolean(tokenFromPath) &&
+    !playgroundParams &&
+    (isWorkOsLoading || isAuthLoading);
 
   const sessionServersRequired = useMemo(
     () => session?.payload.servers.filter((s) => !s.optional) ?? [],
-    [session],
+    [session]
   );
 
   const sessionServersOptional = useMemo(
     () => session?.payload.servers.filter((s) => s.optional) ?? [],
-    [session],
+    [session]
   );
 
   const [enabledOptionalServerIds, setEnabledOptionalServerIds] = useState<
@@ -282,10 +317,10 @@ export function ChatboxChatPage({
   >([]);
 
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.chatboxId) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxEnabledOptionalStorageKey(session.token),
+        chatboxEnabledOptionalStorageKey(session.chatboxId)
       );
       if (!raw) {
         setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
@@ -294,12 +329,10 @@ export function ChatboxChatPage({
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       const optionalIdSet = new Set(
-        session.payload.servers
-          .filter((s) => s.optional)
-          .map((s) => s.serverId),
+        session.payload.servers.filter((s) => s.optional).map((s) => s.serverId)
       );
       const next = parsed.filter(
-        (id): id is string => typeof id === "string" && optionalIdSet.has(id),
+        (id): id is string => typeof id === "string" && optionalIdSet.has(id)
       );
       setEnabledOptionalServerIds((prev) => {
         if (
@@ -313,39 +346,39 @@ export function ChatboxChatPage({
     } catch {
       setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
     }
-    // Intentionally only re-hydrate when the share token changes — not when
+    // Intentionally only re-hydrate when the chatbox id changes — not when
     // `payload.servers` gets a new array identity on each render.
-  }, [session?.token]);
+  }, [session?.chatboxId]);
 
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.chatboxId) return;
     try {
-      const key = chatboxEnabledOptionalStorageKey(session.token);
+      const key = chatboxEnabledOptionalStorageKey(session.chatboxId);
       const serialized = JSON.stringify(enabledOptionalServerIds);
       if (sessionStorage.getItem(key) === serialized) return;
       sessionStorage.setItem(key, serialized);
     } catch {
       // ignore
     }
-  }, [session?.token, enabledOptionalServerIds]);
+  }, [session?.chatboxId, enabledOptionalServerIds]);
 
   const sessionServersActive = useMemo(() => {
     if (!session) return [];
     const enabled = new Set(enabledOptionalServerIds);
     const optionalActive = session.payload.servers.filter(
-      (s) => s.optional && enabled.has(s.serverId),
+      (s) => s.optional && enabled.has(s.serverId)
     );
     return [...sessionServersRequired, ...optionalActive];
   }, [session, sessionServersRequired, enabledOptionalServerIds]);
 
   const oauthServers = useMemo(
     () => sessionServersActive.map(bootstrapServerToHostedOAuthDescriptor),
-    [sessionServersActive],
+    [sessionServersActive]
   );
 
   const handleEnableChatboxOptionalServer = useCallback((serverId: string) => {
     setEnabledOptionalServerIds((prev) =>
-      prev.includes(serverId) ? prev : [...prev, serverId],
+      prev.includes(serverId) ? prev : [...prev, serverId]
     );
   }, []);
 
@@ -360,7 +393,6 @@ export function ChatboxChatPage({
       }));
   }, [sessionServersOptional, enabledOptionalServerIds]);
   const {
-    oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
@@ -369,8 +401,9 @@ export function ChatboxChatPage({
     surface: "chatbox",
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: oauthServers,
-    workspaceId: session?.payload.workspaceId ?? null,
-    chatboxToken: session?.token,
+    projectId: session?.payload.projectId ?? null,
+    chatboxId: session?.chatboxId,
+    accessVersion: session?.accessVersion,
     isAuthenticated,
   });
 
@@ -390,7 +423,7 @@ export function ChatboxChatPage({
           retryCount: 0,
           enabled: true,
         } satisfies ServerWithName,
-      ]),
+      ])
     );
   }, [session, sessionServersActive]);
 
@@ -401,36 +434,25 @@ export function ChatboxChatPage({
       sessionServersActive.flatMap((server) => [
         [server.serverName, server.serverId],
         [server.serverId, server.serverId],
-      ]),
+      ])
     );
   }, [session, sessionServersActive]);
 
-  const oauthTokensForChat = useMemo(() => {
-    if (!session) return undefined;
-
-    const entries = sessionServersActive
-      .map((server) => {
-        const token = getStoredTokens(server.serverName)?.access_token;
-        return token ? ([server.serverId, token] as const) : null;
-      })
-      .filter((entry): entry is readonly [string, string] =>
-        Array.isArray(entry),
-      );
-
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, session, sessionServersActive]);
-
-  useHostedApiContext({
-    workspaceId: session?.payload.workspaceId ?? null,
-    serverIdsByName: hostedServerIdsByName,
+  useApiContext({
+    projectId: session?.payload.projectId ?? null,
+    serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
-    oauthTokensByServerId: oauthTokensForChat,
-    chatboxToken: session?.token,
-    isAuthenticated,
+    // Resolved chatbox identity from /api/web/chatboxes/redeem. Both
+    // fields live at the top level of the session — the URL token is
+    // never threaded onto the read path.
+    chatboxId: session?.chatboxId,
+    accessVersion: session?.accessVersion,
+    isAuthenticated: !!workOsUser,
+    hasSession: !!workOsUser || isWorkOsLoading,
   });
 
   useEffect(() => {
-    if (isAuthLoading) {
+    if (isAuthSettling) {
       return;
     }
 
@@ -447,48 +469,72 @@ export function ChatboxChatPage({
           setRouteError(
             createChatboxRouteError(
               410,
-              "Playground session expired. Return to the builder to preview.",
-            ),
+              "Playground session expired. Return to the builder to preview."
+            )
           );
         }
-        setIsResolving(false);
+        setIsBootstrapping(false);
         return;
       }
 
-      const tokenFromPath = pathToken?.trim() || null;
-
       if (tokenFromPath) {
-        setIsResolving(true);
+        const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
+        setIsBootstrapping(true);
         setRouteError(null);
+        posthogRef.current.capture("chatbox_bootstrap_started", {
+          surface: "chatbox",
+          auth_mode: authMode,
+          status: "started",
+        });
         try {
-          const authorization = await getHostedBearerHeader(getAccessToken);
-          if (!authorization) {
-            throw new Error(
-              "Unable to create a hosted session for this chatbox.",
+          // /redeem exchanges the URL link token for a `chatboxId` +
+          // `accessVersion` grant plus the bootstrap payload, in one round
+          // trip. Every chatbox-aware backend call then keys on the resolved
+          // identity — the URL token is not threaded onto the read path.
+          const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chatboxToken: tokenFromPath }),
+          });
+
+          if (!redeemResponse.ok) {
+            throw await readRouteError(redeemResponse);
+          }
+
+          const redeemed = (await redeemResponse.json()) as {
+            chatboxId?: unknown;
+            accessVersion?: unknown;
+            bootstrap?: unknown;
+          };
+          if (cancelled) return;
+
+          // The redeem response is treated as untrusted shape until validated
+          // — `normalizeChatboxSession` enforces every field
+          // `ChatboxBootstrapPayload` requires. Without this, a partial
+          // bootstrap (missing projectId/modelId/etc.) would be persisted
+          // and the API context downstream would initialize with `null`s.
+          const nextSession = normalizeChatboxSession({
+            chatboxId:
+              typeof redeemed.chatboxId === "string"
+                ? redeemed.chatboxId
+                : undefined,
+            accessVersion:
+              typeof redeemed.accessVersion === "number"
+                ? redeemed.accessVersion
+                : undefined,
+            payload: redeemed.bootstrap as
+              | ChatboxSession["payload"]
+              | undefined,
+            surface: readChatboxSurfaceFromUrl(window.location.search),
+            shareToken: tokenFromPath ?? undefined,
+          });
+          if (!nextSession) {
+            throw createChatboxRouteError(
+              502,
+              "Chatbox redeem returned an incomplete bootstrap payload."
             );
           }
 
-          const response = await fetch("/api/web/chatboxes/bootstrap", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: authorization,
-            },
-            body: JSON.stringify({ token: tokenFromPath }),
-          });
-
-          if (!response.ok) {
-            throw await readRouteError(response);
-          }
-
-          const payload = (await response.json()) as ChatboxSession["payload"];
-          if (cancelled) return;
-
-          const nextSession: ChatboxSession = {
-            token: tokenFromPath,
-            payload,
-            surface: readChatboxSurfaceFromUrl(window.location.search),
-          };
           writeCurrentSession(nextSession);
           setSession(nextSession);
           setRouteError(null);
@@ -497,6 +543,11 @@ export function ChatboxChatPage({
           if (window.location.hash !== `#${nextSlug}`) {
             window.history.replaceState({}, "", `/#${nextSlug}`);
           }
+          posthogRef.current.capture("chatbox_bootstrap_silent_success", {
+            surface: "chatbox",
+            auth_mode: authMode,
+            status: "success",
+          });
         } catch (error) {
           if (cancelled) return;
           setSession(null);
@@ -508,7 +559,7 @@ export function ChatboxChatPage({
                 500,
                 error instanceof Error
                   ? error.message
-                  : "Unable to open this chatbox.",
+                  : "Unable to open this chatbox."
               );
           const displayError = getChatboxDisplayError(nextError);
 
@@ -522,9 +573,16 @@ export function ChatboxChatPage({
           }
 
           setRouteError(nextError);
+          posthogRef.current.capture("chatbox_bootstrap_silent_failure", {
+            surface: "chatbox",
+            auth_mode: authMode,
+            status: "failure",
+            error_kind: displayError.kind,
+            http_status: nextError.status,
+          });
         } finally {
           if (!cancelled) {
-            setIsResolving(false);
+            setIsBootstrapping(false);
           }
         }
         return;
@@ -543,7 +601,7 @@ export function ChatboxChatPage({
 
       setSession(null);
       setRouteError(
-        createChatboxRouteError(404, "Invalid or expired chatbox link"),
+        createChatboxRouteError(404, "Invalid or expired chatbox link")
       );
     };
 
@@ -554,13 +612,127 @@ export function ChatboxChatPage({
     };
   }, [
     clearCurrentSession,
-    getAccessToken,
-    isAuthLoading,
-    pathToken,
+    isAuthenticated,
+    isAuthSettling,
     playgroundParams,
     readCurrentSession,
+    tokenFromPath,
     writeCurrentSession,
   ]);
+
+  // Silent re-redeem path. The capture hook (or any chatbox-aware caller)
+  // calls this when the backend reports `chatbox_access_stale`. It re-runs
+  // /web/chatbox/redeem against the URL token and updates `session` in
+  // place, which propagates a fresh `accessVersion` to every downstream
+  // consumer. Errors are swallowed — the original error UI is owned by the
+  // primary bootstrap effect above, and a refresh failure should leave the
+  // already-mounted chat alone rather than tearing the UI down.
+  //
+  // The in-flight latch is keyed by *token*, not a plain boolean. A
+  // navigation that swaps `tokenFromPath` from A to B while A's redeem is
+  // still pending must not block B from starting its own refresh — A's
+  // response would be discarded by the token-staleness guards below
+  // anyway, so leaving B with no refresh in flight would strand the
+  // capture hook's queued stale snapshot until an unrelated stale event
+  // or page reload happens to retrigger the callback.
+  const refreshInFlightTokenRef = useRef<string | null>(null);
+  const requestRefreshAccessVersion = useCallback(() => {
+    const token = tokenFromPath;
+    if (!token) return;
+    // Same-token re-entry → drop. Different-token re-entry → allow; the
+    // older fetch will land in storage but its `setSession` is gated by
+    // `tokenFromPathRef`.
+    if (refreshInFlightTokenRef.current === token) return;
+    refreshInFlightTokenRef.current = token;
+    void (async () => {
+      try {
+        const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatboxToken: token }),
+        });
+        if (!redeemResponse.ok) return;
+        if (tokenFromPathRef.current !== token) return;
+        const redeemed = (await redeemResponse.json()) as {
+          chatboxId?: unknown;
+          accessVersion?: unknown;
+          bootstrap?: unknown;
+        };
+        if (tokenFromPathRef.current !== token) return;
+        const nextSession = normalizeChatboxSession({
+          chatboxId:
+            typeof redeemed.chatboxId === "string"
+              ? redeemed.chatboxId
+              : undefined,
+          accessVersion:
+            typeof redeemed.accessVersion === "number"
+              ? redeemed.accessVersion
+              : undefined,
+          payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
+          surface: readChatboxSurfaceFromUrl(window.location.search),
+          shareToken: token,
+        });
+        if (!nextSession) return;
+        // Final guard before mutating shared session state: a navigation
+        // between the JSON parse and now would still race.
+        if (tokenFromPathRef.current !== token) return;
+        writeCurrentSession(nextSession);
+        setSession(nextSession);
+      } catch (error) {
+        console.warn(
+          "[ChatboxChatPage] Silent chatbox re-redeem failed",
+          error
+        );
+      } finally {
+        // Only clear the latch if we're still the active in-flight refresh.
+        // A newer token's refresh may have already overwritten it; don't
+        // stomp on that one.
+        if (refreshInFlightTokenRef.current === token) {
+          refreshInFlightTokenRef.current = null;
+        }
+      }
+    })();
+  }, [tokenFromPath, writeCurrentSession]);
+
+  const displayError = useMemo(
+    () => getChatboxDisplayError(routeError),
+    [routeError]
+  );
+  const landingState: ChatboxLandingState = isAuthSettling
+    ? "resolvingAuth"
+    : isBootstrapping
+    ? "bootstrapping"
+    : session
+    ? "ready"
+    : "denied";
+
+  useEffect(() => {
+    if (
+      landingState !== "denied" ||
+      isAuthenticated ||
+      !isInteractiveSignInRequired(displayError.kind)
+    ) {
+      interactiveSignInEventKeyRef.current = null;
+      return;
+    }
+
+    const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
+    const eventKey = `${displayError.kind}:${authMode}:${
+      routeError?.status ?? 0
+    }`;
+    if (interactiveSignInEventKeyRef.current === eventKey) {
+      return;
+    }
+
+    interactiveSignInEventKeyRef.current = eventKey;
+    posthogRef.current.capture("interactive_signin_required", {
+      surface: "chatbox",
+      auth_mode: authMode,
+      status: "required",
+      error_kind: displayError.kind,
+      http_status: routeError?.status,
+    });
+  }, [displayError.kind, isAuthenticated, landingState, routeError?.status]);
 
   useEffect(() => {
     if (!session) return;
@@ -579,8 +751,14 @@ export function ChatboxChatPage({
     };
   }, [session]);
 
+  const shareableToken = tokenFromPath ?? session?.shareToken?.trim() ?? null;
+
   const handleCopyLink = useCallback(async () => {
-    const token = session?.token?.trim();
+    // Token preference: live URL → persisted `session.shareToken`. After
+    // redeem we strip the token from the address bar via replaceState,
+    // so `session.shareToken` (captured at redeem time) is what makes
+    // Copy link work across reloads.
+    const token = shareableToken;
     if (!session || !token) {
       toast.error("Chatbox link unavailable");
       return;
@@ -593,17 +771,22 @@ export function ChatboxChatPage({
 
     try {
       await navigator.clipboard.writeText(
-        buildChatboxLink(token, session.payload.name),
+        buildChatboxLink(token, session.payload.name)
       );
       toast.success("Chatbox link copied");
     } catch {
       toast.error("Failed to copy chatbox link");
     }
-  }, [session]);
+  }, [session, shareableToken]);
 
   const handleOpenMcpJam = useCallback(() => {
     clearChatboxSession();
-    window.history.replaceState({}, "", "/#chatboxes");
+    // Route via the navigation API so React Router's `useLocation`
+    // (consumed by App's pathname-sync effect) sees the new pathname.
+    // A bare `window.history.replaceState` would leave `locationForRoute`
+    // stale on `/chatbox/...`, and the sync effect would then redirect
+    // back to `/servers` before the hash-migration shim could pivot.
+    navigateApp("/chatboxes", { replace: true });
     onExitChatboxChat?.();
   }, [onExitChatboxChat]);
 
@@ -616,16 +799,16 @@ export function ChatboxChatPage({
     (details?: HostedOAuthRequiredDetails) => {
       markOAuthRequired(details);
     },
-    [markOAuthRequired],
+    [markOAuthRequired]
   );
 
   const hostStyle = session?.payload.hostStyle ?? "claude";
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
-  const displayError = getChatboxDisplayError(routeError);
+  const chatUiOverride = session?.payload.chatUiOverride;
+  const shellStyle = getChatboxShellStyle(hostStyle, themeMode, chatUiOverride);
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
-    (session?.payload.welcomeDialog?.enabled ?? true) &&
-    !!session?.payload.welcomeDialog?.body?.trim();
+    (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
+    !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
     servers: sessionServersRequired,
@@ -639,7 +822,7 @@ export function ChatboxChatPage({
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const renderContent = () => {
-    if (isResolving) {
+    if (landingState === "resolvingAuth" || landingState === "bootstrapping") {
       return (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -647,7 +830,7 @@ export function ChatboxChatPage({
       );
     }
 
-    if (!session) {
+    if (landingState === "denied") {
       const isAccessDenied = displayError.kind === "access_denied";
       const guestBlocked = displayError.kind === "guest_blocked";
 
@@ -680,29 +863,35 @@ export function ChatboxChatPage({
       );
     }
 
+    if (!session) {
+      return null;
+    }
+
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <ChatTabV2
           connectedOrConnectingServerConfigs={chatboxServerConfigs}
           selectedServerNames={sessionServersActive.map(
-            (server) => server.serverName,
+            (server) => server.serverName
           )}
           minimalMode
           reasoningDisplayMode="hidden"
-          loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-            hostStyle,
-          )}
-          hostedWorkspaceIdOverride={session.payload.workspaceId}
-          hostedSelectedServerIdsOverride={sessionServersActive.map(
-            (server) => server.serverId,
-          )}
-          hostedOAuthTokensOverride={oauthTokensForChat}
-          hostedChatboxToken={session.token}
-          hostedChatboxSurface={session.surface ?? "share_link"}
-          initialModelId={session.payload.modelId}
-          initialSystemPrompt={session.payload.systemPrompt}
-          initialTemperature={session.payload.temperature}
-          initialRequireToolApproval={session.payload.requireToolApproval}
+          hostedContext={{
+            chatboxId: session.chatboxId,
+            accessVersion: session.accessVersion,
+            chatboxSurface: session.surface ?? "share_link",
+            projectId: session.payload.projectId,
+            selectedServerIds: sessionServersActive.map(
+              (server) => server.serverId
+            ),
+            requestRefreshAccessVersion,
+          }}
+          executionConfig={{
+            modelId: session.payload.modelId,
+            systemPrompt: session.payload.systemPrompt,
+            temperature: session.payload.temperature,
+            requireToolApproval: session.payload.requireToolApproval,
+          }}
           onOAuthRequired={handleOAuthRequired}
           chatboxComposerBlocked={introGate.composerBlocked}
           chatboxComposerBlockedReason="Get started or authorize to send messages…"
@@ -712,7 +901,7 @@ export function ChatboxChatPage({
         <ChatboxHostOnboardingOverlays
           showWelcome={introGate.showWelcome}
           onGetStarted={introGate.dismissIntro}
-          welcomeBody={session.payload.welcomeDialog?.body}
+          welcomeBody={session.payload.chatUi?.surfaces?.welcome?.body}
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
@@ -724,47 +913,69 @@ export function ChatboxChatPage({
 
   return (
     <ChatboxHostStyleProvider value={hostStyle}>
-      <div
-        className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
-        data-host-style={hostStyle}
-        style={shellStyle}
-      >
-        <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-          <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-              {session?.payload.name || "\u00A0"}
-            </h1>
-            <button
-              onClick={handleOpenMcpJam}
-              className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
+      <ChatboxChatUiOverrideProvider value={chatUiOverride}>
+        <ChatboxHostCapabilitiesOverrideProvider
+          value={session?.payload.hostCapabilitiesOverride}
+        >
+          <ActiveMcpProfileProvider value={session?.payload.mcpProfile}>
+            {/*
+        Hosted bootstrap payload doesn't (yet) carry clientCapabilities —
+        we pass `activeHost={null}` and let the scope fall back to the
+        template seed for `hostStyle`. Correct for unmodified host styles;
+        if a chatbox owner customizes capabilities, that will require a
+        bootstrap-payload extension (out of scope here).
+      */}
+            <ActiveHostCapsResolverScope
+              activeHost={null}
+              hostStyle={hostStyle}
             >
-              <img
-                src={
-                  themeMode === "dark"
-                    ? "/mcp_jam_dark.png"
-                    : "/mcp_jam_light.png"
-                }
-                alt="MCPJam"
-                className="h-4 w-auto object-contain"
-              />
-            </button>
-            <div className="flex flex-1 items-center justify-end gap-1.5">
-              {session ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={handleCopyLink}
+              <ChatboxSurfaceProvider value={true}>
+                <div
+                  className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
+                  data-host-style={hostStyle}
+                  style={shellStyle}
                 >
-                  Copy link
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        </header>
+                  <header className="border-b border-border/50 bg-background/95 backdrop-blur">
+                    <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
+                      <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                        {session?.payload.name || "\u00A0"}
+                      </h1>
+                      <button
+                        onClick={handleOpenMcpJam}
+                        className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
+                      >
+                        <img
+                          src={
+                            themeMode === "dark"
+                              ? "/mcp_jam_dark.png"
+                              : "/mcp_jam_light.png"
+                          }
+                          alt="MCPJam"
+                          className="h-4 w-auto object-contain"
+                        />
+                      </button>
+                      <div className="flex flex-1 items-center justify-end gap-1.5">
+                        {session && shareableToken ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground"
+                            onClick={handleCopyLink}
+                          >
+                            Copy link
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </header>
 
-        {renderContent()}
-      </div>
+                  {renderContent()}
+                </div>
+              </ChatboxSurfaceProvider>
+            </ActiveHostCapsResolverScope>
+          </ActiveMcpProfileProvider>
+        </ChatboxHostCapabilitiesOverrideProvider>
+      </ChatboxChatUiOverrideProvider>
     </ChatboxHostStyleProvider>
   );
 }

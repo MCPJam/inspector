@@ -18,15 +18,6 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import { Separator } from "@mcpjam/design-system/separator";
-import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -37,12 +28,7 @@ import {
   settingsFromChatboxAccessPreset,
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
-import {
-  getChatboxHostLogo,
-  getChatboxHostStyleShortLabel,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+import type { RemoteServer } from "@/hooks/useProjects";
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import type { ChatboxDraftConfig } from "./types";
@@ -158,17 +144,17 @@ function updateSelectedServerIds(
     : currentServerIds;
 }
 
-/** Shared checklist of workspace HTTP(S) servers; used in Setup and on the canvas + control. */
-export function WorkspaceServerPickerList({
-  workspaceServers,
+/** Shared checklist of project HTTP(S) servers; used in Setup and on the canvas + control. */
+export function ProjectServerPickerList({
+  projectServers,
   selectedServerIds,
   onToggleSelection,
 }: {
-  workspaceServers: RemoteServer[];
+  projectServers: RemoteServer[];
   selectedServerIds: string[];
   onToggleSelection: (serverId: string, checked: boolean) => void;
 }) {
-  const availableServers = workspaceServers.filter(
+  const availableServers = projectServers.filter(
     (server) => server.transportType === "http",
   );
   const selectedServerSet = new Set(selectedServerIds);
@@ -176,7 +162,7 @@ export function WorkspaceServerPickerList({
   if (availableServers.length === 0) {
     return (
       <p className="px-2 py-1.5 text-sm text-muted-foreground">
-        No HTTP servers in this workspace. Use Add to create one.
+        No HTTP servers in this project. Use Add to create one.
       </p>
     );
   }
@@ -212,17 +198,17 @@ export function WorkspaceServerPickerList({
 }
 
 export function ServerSelectionEditor({
-  workspaceServers,
+  projectServers,
   selectedServerIds,
   onToggleSelection,
   onOpenAdd,
 }: {
-  workspaceServers: RemoteServer[];
+  projectServers: RemoteServer[];
   selectedServerIds: string[];
   onToggleSelection: (serverId: string, checked: boolean) => void;
   onOpenAdd: () => void;
 }) {
-  const availableServers = workspaceServers.filter(
+  const availableServers = projectServers.filter(
     (server) => server.transportType === "http",
   );
   const selectedServerSet = new Set(selectedServerIds);
@@ -232,7 +218,7 @@ export function ServerSelectionEditor({
 
   const selectionSummary =
     selectedServers.length === 0
-      ? "Choose workspace servers…"
+      ? "Choose project servers…"
       : selectedServers.length === 1
         ? "1 server selected"
         : `${selectedServers.length} servers selected`;
@@ -265,8 +251,8 @@ export function ServerSelectionEditor({
             className="w-[var(--radix-popover-trigger-width)] p-1"
             align="start"
           >
-            <WorkspaceServerPickerList
-              workspaceServers={workspaceServers}
+            <ProjectServerPickerList
+              projectServers={projectServers}
               selectedServerIds={selectedServerIds}
               onToggleSelection={onToggleSelection}
             />
@@ -278,7 +264,7 @@ export function ServerSelectionEditor({
           size="sm"
           className="shrink-0 gap-1.5"
           onClick={onOpenAdd}
-          aria-label="Add MCP server to workspace"
+          aria-label="Add MCP server to project"
         >
           <Plus className="size-4" />
           Add server
@@ -302,7 +288,7 @@ export function ServerSelectionEditor({
                 <div className="min-w-0">
                   <p className="font-medium leading-tight">{server.name}</p>
                   <p className="mt-0.5 font-mono text-xs leading-snug text-muted-foreground">
-                    {server.url ?? "Workspace server"}
+                    {server.url ?? "Project server"}
                   </p>
                 </div>
                 <Button
@@ -324,7 +310,7 @@ export function ServerSelectionEditor({
 
 export function computeSectionStatuses(
   draft: ChatboxDraftConfig,
-  workspaceServers: RemoteServer[],
+  projectServers: RemoteServer[],
 ): Record<SetupSectionId, SectionStatusKind> {
   const nameOk = draft.name.trim().length > 0;
   const modelOk = Boolean(draft.modelId);
@@ -334,7 +320,7 @@ export function computeSectionStatuses(
   const optionalServerSet = new Set(draft.optionalServerIds);
   const validServerCount = draft.selectedServerIds.filter((id) => {
     if (optionalServerSet.has(id)) return false;
-    const s = workspaceServers.find((w) => w._id === id);
+    const s = projectServers.find((w) => w._id === id);
     return s && !isInsecureUrl(s.url);
   }).length;
   const servers: SectionStatusKind =
@@ -342,15 +328,18 @@ export function computeSectionStatuses(
 
   const access: SectionStatusKind = draft.mode ? "complete" : "attention";
 
-  const welcome: SectionStatusKind = draft.welcomeDialog.enabled
+  const welcomeSurface = draft.chatUi.surfaces.welcome;
+  const feedbackSurface = draft.chatUi.surfaces.feedback;
+
+  const welcome: SectionStatusKind = welcomeSurface.enabled
     ? "default_on"
     : "optional";
 
   const feedbackInvalid =
-    draft.feedbackDialog.enabled && draft.feedbackDialog.everyNToolCalls < 1;
+    feedbackSurface.enabled && feedbackSurface.everyNToolCalls < 1;
   const feedback: SectionStatusKind = feedbackInvalid
     ? "attention"
-    : draft.feedbackDialog.enabled
+    : feedbackSurface.enabled
       ? "default_on"
       : "optional";
 
@@ -367,7 +356,7 @@ export function computeSectionStatuses(
 export function SetupChecklistPanel({
   chatboxDraft,
   savedChatbox,
-  workspaceServers,
+  projectServers,
   focusedSection,
   /** True when creating a chatbox that has never been saved (no chatbox id yet). */
   isUnsavedNewDraft,
@@ -377,12 +366,12 @@ export function SetupChecklistPanel({
   onCloseMobile,
   /** When the chatbox is saved, invite by email from the Access section (invite-only draft). */
   inviteChatboxMember,
-  workspaceName,
+  projectName,
 }: {
   chatboxDraft: ChatboxDraftConfig;
   savedChatbox: ChatboxSettings | null;
-  workspaceServers: RemoteServer[];
-  workspaceName?: string | null;
+  projectServers: RemoteServer[];
+  projectName?: string | null;
   focusedSection: SetupSectionId | null;
   isUnsavedNewDraft: boolean;
   onDraftChange: (
@@ -394,8 +383,8 @@ export function SetupChecklistPanel({
   inviteChatboxMember?: (email: string) => Promise<void>;
 }) {
   const statuses = useMemo(
-    () => computeSectionStatuses(chatboxDraft, workspaceServers),
-    [chatboxDraft, workspaceServers],
+    () => computeSectionStatuses(chatboxDraft, projectServers),
+    [chatboxDraft, projectServers],
   );
 
   const sectionRefs = useRef<
@@ -433,13 +422,12 @@ export function SetupChecklistPanel({
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [focusedSection]);
 
-  const hostedModels = useMemo(
-    () =>
-      SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      ),
-    [],
-  );
+  // Model picker moved to the Host detail page's Definition tab — the
+  // imports are kept because other call sites in the panel may still
+  // reference the SUPPORTED_MODELS catalog for validation; see grep
+  // before removing in a future pass.
+  void SUPPORTED_MODELS;
+  void isMCPJamProvidedModel;
 
   const setSectionOpen = (id: SetupSectionId, open: boolean) => {
     setOpenMap((prev) => ({ ...prev, [id]: open }));
@@ -506,77 +494,13 @@ export function SetupChecklistPanel({
                       }
                     />
                   </div>
-
-                  <Separator />
-
-                  <div className="space-y-2">
-                    <Label>Host style</Label>
-                    <div className="grid gap-2">
-                      {(["claude", "chatgpt"] as ChatboxHostStyle[]).map(
-                        (hostStyle) => {
-                          const selected = chatboxDraft.hostStyle === hostStyle;
-                          return (
-                            <button
-                              key={hostStyle}
-                              type="button"
-                              className={`flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
-                                selected
-                                  ? "border-primary/50 bg-primary/10"
-                                  : "border-border/70 bg-card/60 hover:bg-muted/20"
-                              }`}
-                              onClick={() =>
-                                onDraftChange((draft) => ({
-                                  ...draft,
-                                  hostStyle,
-                                }))
-                              }
-                            >
-                              <img
-                                src={getChatboxHostLogo(hostStyle)}
-                                alt=""
-                                className="size-6 rounded-md object-contain"
-                              />
-                              <div>
-                                <p className="font-medium">
-                                  {getChatboxHostStyleShortLabel(hostStyle)}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  Chatbox shell matches this host style.
-                                </p>
-                              </div>
-                            </button>
-                          );
-                        },
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <Select
-                      value={chatboxDraft.modelId}
-                      onValueChange={(value) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          modelId: value,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a model" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {hostedModels.map((model) => (
-                          <SelectItem
-                            key={String(model.id)}
-                            value={String(model.id)}
-                          >
-                            {model.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {/*
+                    Host style + model pickers were removed with the 1:1
+                    host↔chatbox consolidation. They render through the
+                    Host detail page's Definition tab now, which is the
+                    surface that actually persists those edits via
+                    `hosts.updateHost`.
+                  */}
                 </div>
               </CollapsibleContent>
             </Collapsible>
@@ -600,7 +524,7 @@ export function SetupChecklistPanel({
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="rounded-xl border border-border/50 bg-card/40 p-4">
                   <ServerSelectionEditor
-                    workspaceServers={workspaceServers}
+                    projectServers={projectServers}
                     selectedServerIds={chatboxDraft.selectedServerIds}
                     onToggleSelection={onToggleServer}
                     onOpenAdd={onOpenAddServer}
@@ -630,7 +554,7 @@ export function SetupChecklistPanel({
                   {savedChatbox ? (
                     <ChatboxShareSection
                       chatbox={savedChatbox}
-                      workspaceName={workspaceName}
+                      projectName={projectName}
                     />
                   ) : (
                     <>
@@ -651,20 +575,20 @@ export function SetupChecklistPanel({
                           className="grid gap-2"
                         >
                           <label
-                            htmlFor="access-preset-workspace"
+                            htmlFor="access-preset-project"
                             className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
                           >
                             <RadioGroupItem
-                              value="workspace"
-                              id="access-preset-workspace"
+                              value="project"
+                              id="access-preset-project"
                               className="mt-0.5"
                             />
                             <span className="min-w-0">
                               <span className="block text-sm font-medium">
-                                {workspaceName?.trim() || "Workspace"}
+                                {projectName?.trim() || "Project"}
                               </span>
                               <span className="mt-0.5 block text-xs text-muted-foreground">
-                                Signed-in members of this workspace can open the
+                                Signed-in members of this project can open the
                                 chatbox with the link. Guests cannot.
                               </span>
                             </span>
@@ -712,7 +636,7 @@ export function SetupChecklistPanel({
                         {chatboxDraft.mode === "invited_only" ? (
                           <div className="space-y-3 rounded-xl border border-border/70 bg-card/50 p-4">
                             <p className="text-xs text-muted-foreground">
-                              Invite-only is email-based. Workspace membership
+                              Invite-only is email-based. Project membership
                               does not auto-include everyone—you invite each
                               address (or use the section below once the chatbox
                               is saved).
@@ -809,38 +733,50 @@ export function SetupChecklistPanel({
                       </p>
                     </div>
                     <Switch
-                      checked={chatboxDraft.welcomeDialog.enabled}
+                      checked={chatboxDraft.chatUi.surfaces.welcome.enabled}
                       onCheckedChange={(checked) =>
                         onDraftChange((draft) => ({
                           ...draft,
-                          welcomeDialog: {
-                            ...draft.welcomeDialog,
-                            enabled: checked,
+                          chatUi: {
+                            ...draft.chatUi,
+                            surfaces: {
+                              ...draft.chatUi.surfaces,
+                              welcome: {
+                                ...draft.chatUi.surfaces.welcome,
+                                enabled: checked,
+                              },
+                            },
                           },
                         }))
                       }
                     />
                   </div>
-                  {chatboxDraft.welcomeDialog.enabled ? (
+                  {chatboxDraft.chatUi.surfaces.welcome.enabled ? (
                     <div className="space-y-2">
                       <Label htmlFor="welcome-body">Welcome content</Label>
                       <Textarea
                         id="welcome-body"
                         rows={5}
-                        value={chatboxDraft.welcomeDialog.body}
+                        value={chatboxDraft.chatUi.surfaces.welcome.body}
                         onChange={(event) =>
                           onDraftChange((draft) => ({
                             ...draft,
-                            welcomeDialog: {
-                              ...draft.welcomeDialog,
-                              body: event.target.value,
+                            chatUi: {
+                              ...draft.chatUi,
+                              surfaces: {
+                                ...draft.chatUi.surfaces,
+                                welcome: {
+                                  ...draft.chatUi.surfaces.welcome,
+                                  body: event.target.value,
+                                },
+                              },
                             },
                           }))
                         }
                         placeholder="What your audience should know before they start…"
                       />
                       <p className="text-xs text-muted-foreground">
-                        {chatboxDraft.welcomeDialog.body.trim()
+                        {chatboxDraft.chatUi.surfaces.welcome.body.trim()
                           ? "Shown once, the first time someone opens your chatbox link."
                           : "Leave blank to skip — no welcome will be shown."}
                       </p>
@@ -876,19 +812,25 @@ export function SetupChecklistPanel({
                       </p>
                     </div>
                     <Switch
-                      checked={chatboxDraft.feedbackDialog.enabled}
+                      checked={chatboxDraft.chatUi.surfaces.feedback.enabled}
                       onCheckedChange={(checked) =>
                         onDraftChange((draft) => ({
                           ...draft,
-                          feedbackDialog: {
-                            ...draft.feedbackDialog,
-                            enabled: checked,
+                          chatUi: {
+                            ...draft.chatUi,
+                            surfaces: {
+                              ...draft.chatUi.surfaces,
+                              feedback: {
+                                ...draft.chatUi.surfaces.feedback,
+                                enabled: checked,
+                              },
+                            },
                           },
                         }))
                       }
                     />
                   </div>
-                  {chatboxDraft.feedbackDialog.enabled ? (
+                  {chatboxDraft.chatUi.surfaces.feedback.enabled ? (
                     <>
                       <div className="space-y-2">
                         <Label>Every N tool calls</Label>
@@ -901,16 +843,24 @@ export function SetupChecklistPanel({
                           type="number"
                           min={1}
                           step={1}
-                          value={chatboxDraft.feedbackDialog.everyNToolCalls}
+                          value={
+                            chatboxDraft.chatUi.surfaces.feedback.everyNToolCalls
+                          }
                           onChange={(event) => {
                             const n = Number.parseInt(event.target.value, 10);
                             onDraftChange((draft) => ({
                               ...draft,
-                              feedbackDialog: {
-                                ...draft.feedbackDialog,
-                                everyNToolCalls: Number.isFinite(n)
-                                  ? Math.max(1, n)
-                                  : 1,
+                              chatUi: {
+                                ...draft.chatUi,
+                                surfaces: {
+                                  ...draft.chatUi.surfaces,
+                                  feedback: {
+                                    ...draft.chatUi.surfaces.feedback,
+                                    everyNToolCalls: Number.isFinite(n)
+                                      ? Math.max(1, n)
+                                      : 1,
+                                  },
+                                },
                               },
                             }));
                           }}
@@ -921,13 +871,19 @@ export function SetupChecklistPanel({
                         <Textarea
                           id="feedback-hint"
                           rows={3}
-                          value={chatboxDraft.feedbackDialog.promptHint}
+                          value={chatboxDraft.chatUi.surfaces.feedback.promptHint}
                           onChange={(event) =>
                             onDraftChange((draft) => ({
                               ...draft,
-                              feedbackDialog: {
-                                ...draft.feedbackDialog,
-                                promptHint: event.target.value,
+                              chatUi: {
+                                ...draft.chatUi,
+                                surfaces: {
+                                  ...draft.chatUi.surfaces,
+                                  feedback: {
+                                    ...draft.chatUi.surfaces.feedback,
+                                    promptHint: event.target.value,
+                                  },
+                                },
                               },
                             }))
                           }
@@ -940,80 +896,15 @@ export function SetupChecklistPanel({
             </Collapsible>
           </div>
 
-          {/* Advanced */}
-          <div
-            ref={(el) => {
-              sectionRefs.current.advanced = el;
-            }}
-          >
-            <Collapsible
-              open={openMap.advanced ?? false}
-              onOpenChange={(o) => setSectionOpen("advanced", o)}
-            >
-              <SetupSectionCollapsibleTrigger
-                step={6}
-                title="Advanced"
-                statusKind="collapsed"
-              />
-              <CollapsibleContent className="pt-3 pb-1">
-                <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="setup-prompt">System prompt</Label>
-                    <Textarea
-                      id="setup-prompt"
-                      rows={8}
-                      value={chatboxDraft.systemPrompt}
-                      onChange={(event) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          systemPrompt: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label>Temperature</Label>
-                      <span className="text-sm text-muted-foreground">
-                        {chatboxDraft.temperature.toFixed(2)}
-                      </span>
-                    </div>
-                    <Slider
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      value={[chatboxDraft.temperature]}
-                      onValueChange={(values) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          temperature: values[0] ?? 0.7,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4">
-                    <div>
-                      <p className="text-sm font-medium">
-                        Require tool approval
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Visitors must approve tool calls before execution.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={chatboxDraft.requireToolApproval}
-                      onCheckedChange={(checked) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          requireToolApproval: checked,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
+          {/*
+            The "Advanced" section that previously surfaced system prompt
+            / temperature / requireToolApproval / host style / model
+            editors was removed with the 1:1 host↔chatbox consolidation.
+            Those fields are owned by the host's hostConfig; edits flow
+            through the Host detail page's Definition tab (which calls
+            `hosts.updateHost`). The chatbox save path here only persists
+            metadata (name, description, chatUi).
+          */}
         </div>
       </ScrollArea>
     </div>

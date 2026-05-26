@@ -7,12 +7,32 @@ const {
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   emitConstructorRpcLogMock,
+  validateAppToolEntriesMock,
+  AppToolValidationErrorMock,
+  validateWidgetModelContextEntriesMock,
+  buildWidgetModelContextSystemPromptMock,
+  WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   emitConstructorRpcLogMock: vi.fn(),
+  validateAppToolEntriesMock: vi.fn(() => []),
+  AppToolValidationErrorMock: class AppToolValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "AppToolValidationError";
+    }
+  },
+  validateWidgetModelContextEntriesMock: vi.fn(() => []),
+  buildWidgetModelContextSystemPromptMock: vi.fn(() => ""),
+  WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "WidgetModelContextValidationError";
+    }
+  },
 }));
 
 vi.mock("ai", async () => {
@@ -41,16 +61,31 @@ vi.mock("@mcpjam/sdk", async () => {
 
 vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
+  validateAppToolEntries: validateAppToolEntriesMock,
+  AppToolValidationError: AppToolValidationErrorMock,
+  validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
+  buildWidgetModelContextSystemPrompt: buildWidgetModelContextSystemPromptMock,
+  WidgetModelContextValidationError: WidgetModelContextValidationErrorMock,
 }));
 
 vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({
   handleMCPJamFreeChatModel: handleMCPJamFreeChatModelMock,
+  // No-op dev-only diagnostic; tests don't need real signal-missing
+  // logging behavior but must surface the symbol so the route module
+  // can import it without ReferenceError.
+  warnIfChatAbortSignalMissing: () => {},
 }));
 
-vi.mock("../../../utils/chat-ingestion.js", () => ({
-  persistChatSessionToConvex: persistChatSessionToConvexMock,
-  pickEnrichmentHeaders: vi.fn(() => ({})),
-}));
+vi.mock("../../../utils/chat-ingestion.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-ingestion.js")
+  >("../../../utils/chat-ingestion.js");
+  return {
+    ...actual,
+    persistChatSessionToConvex: persistChatSessionToConvexMock,
+    pickEnrichmentHeaders: vi.fn(() => ({})),
+  };
+});
 
 vi.mock("../apps.js", () => ({
   default: new Hono(),
@@ -115,6 +150,11 @@ describe("web routes — chat-v2 hosted mode", () => {
                   role: "member",
                   accessLevel: "shared_chat",
                   permissions: { chatOnly: false },
+                  internalLogContext: {
+                    authType: "signedIn",
+                    userId: "u-alice",
+                    projectId: payload.projectId ?? null,
+                  },
                   serverConfig: {
                     transportType: "http",
                     url: `https://${serverId}.example.com/mcp`,
@@ -152,9 +192,10 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxToken: "chatbox-token",
+        chatboxId: "cbx_1",
+        accessVersion: 1,
         surface: "preview",
         chatSessionId: "chat-session-1",
         messages: [{ role: "user", content: "preview request" }],
@@ -177,14 +218,19 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-1",
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         sourceType: "chatbox",
-        chatboxToken: "chatbox-token",
+        chatboxId: "cbx_1",
+        accessVersion: 1,
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
       })
     );
+    // Non-direct flows must NOT send hostConfig — backend skips with
+    // missing_field, which is the desired behavior for chatbox/serverShare.
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.hostConfig).toBeUndefined();
   });
 
   it("passes shared chatbox link context into the hosted model handler", async () => {
@@ -194,9 +240,10 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxToken: "chatbox-shared-token",
+        chatboxId: "cbx_shared",
+        accessVersion: 2,
         surface: "share_link",
         chatSessionId: "chat-session-shared",
         messages: [{ role: "user", content: "hello from guest" }],
@@ -212,8 +259,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(response.status).toBe(200);
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        chatboxToken: "chatbox-shared-token",
-        workspaceId: "workspace-1",
+        chatboxId: "cbx_shared",
+        accessVersion: 2,
+        projectId: "project-1",
       })
     );
   });
@@ -225,7 +273,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1", "server-2", "server-1"],
         chatSessionId: "chat-session-batch",
         messages: [{ role: "user", content: "hello" }],
@@ -240,14 +288,16 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(global.fetch).toHaveBeenCalledTimes(1);
+    // Membership chat (no share/chatbox token) sends no accessScope — the
+    // backend authorizes via project ownership for both guest and authed
+    // users uniformly. accessScope is only set when a token is in play.
     expect(global.fetch).toHaveBeenCalledWith(
       "https://example.convex.site/web/authorize-batch",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverIds: ["server-1", "server-2"],
-          accessScope: "chat_v2",
         }),
       })
     );
@@ -260,11 +310,11 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Asana"],
         chatSessionId: "chat-session-direct",
-        directVisibility: "workspace",
+        directVisibility: "project",
         messages: [{ role: "user", content: "hello" }],
         model: {
           id: "openai/gpt-5-mini",
@@ -280,14 +330,132 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-direct",
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         sourceType: "direct",
-        directVisibility: "workspace",
+        directVisibility: "project",
         resumeConfig: expect.objectContaining({
           selectedServers: ["Asana"],
         }),
+        hostConfig: expect.objectContaining({
+          // Phase 3: hostStyle defaults to 'claude' when omitted —
+          // no more legacy 'direct' on the wire.
+          hostStyle: "claude",
+          modelId: "openai/gpt-5-mini",
+          selectedServerIds: ["server-1"],
+          // resolvedTemperature from prepareChatV2Mock default (0.7)
+          temperature: 0.7,
+        }),
       })
     );
+  });
+
+  it("attaches a numeric hostConfig.temperature when resolvedTemperature is undefined (GPT-5 path)", async () => {
+    prepareChatV2Mock.mockResolvedValueOnce({
+      allTools: {},
+      enhancedSystemPrompt: "system",
+      // GPT-5 paths leave resolvedTemperature undefined; the helper must coerce
+      // to a numeric fallback so the backend's HostConfigPayload guard accepts it.
+      resolvedTemperature: undefined,
+    });
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-gpt5",
+        temperature: 0.3,
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(typeof persistArgs.hostConfig.temperature).toBe("number");
+    expect(persistArgs.hostConfig.temperature).toBe(0.3);
+  });
+
+  it("carries outgoing sender metadata into persisted direct session messages", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-senders",
+        directVisibility: "project",
+        messages: [
+          {
+            role: "user",
+            content: "hello from alice",
+            metadata: { senderUserId: "u-alice" },
+          },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.sessionMessages).toEqual([
+      {
+        role: "user",
+        content: "preview request",
+        senderUserId: "u-alice",
+      },
+    ]);
+  });
+
+  it("does not persist spoofed sender metadata from the client", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-spoofed-sender",
+        directVisibility: "project",
+        messages: [
+          {
+            role: "user",
+            content: "hello from alice",
+            metadata: { senderUserId: "u-bob" },
+          },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.sessionMessages).toEqual([
+      {
+        role: "user",
+        content: "preview request",
+      },
+    ]);
   });
 
   it("returns server names in hosted oauth-required chat errors", async () => {
@@ -333,7 +501,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Asana"],
         messages: [{ role: "user", content: "hello" }],
@@ -382,7 +550,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       app,
       "/api/web/chat-v2",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Notion"],
         messages: [{ role: "user", content: "hello" }],

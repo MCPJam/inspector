@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   MCPJAM_HOSTED_APP_ORIGIN,
+  getRedirectUri,
   resolveBrowserOAuthRedirectOrigin,
 } from "../constants";
 
@@ -39,5 +40,21 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
         new URL("https://www.mcpjam.com/oauth/callback")
       )
     ).toBe(MCPJAM_HOSTED_APP_ORIGIN);
+  });
+});
+
+describe("getRedirectUri", () => {
+  afterEach(() => {
+    delete window.isElectron;
+  });
+
+  it("uses the browser callback route when the Electron preload flag is present", () => {
+    window.isElectron = true;
+
+    expect(getRedirectUri()).toBe(`${window.location.origin}/oauth/callback`);
+  });
+
+  it("uses the browser callback route outside Electron", () => {
+    expect(getRedirectUri()).toBe(`${window.location.origin}/oauth/callback`);
   });
 });

@@ -11,8 +11,6 @@ import {
 } from "../../utils/export-helpers.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 
-const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
-
 export type ReplayConfig = {
   runId: string;
   suiteId: string;
@@ -64,10 +62,6 @@ export async function fetchReplayConfig(
   userAuthToken: string,
 ): Promise<ReplayConfig | null> {
   const convexHttpUrl = requireConvexHttpUrl();
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -77,13 +71,12 @@ export async function fetchReplayConfig(
   let response: Response;
   try {
     response = await fetch(
-      `${convexHttpUrl}/internal/v1/evals/runs/replay-config`,
+      `${convexHttpUrl}/v1/evals/runs/replay-config`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${userAuthToken}`,
-          [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
         },
         body: JSON.stringify({ runId }),
         signal: controller.signal,
@@ -120,10 +113,6 @@ export async function storeReplayConfig(
   userAuthToken: string,
 ): Promise<void> {
   const convexHttpUrl = requireConvexHttpUrl();
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -133,13 +122,12 @@ export async function storeReplayConfig(
   let response: Response;
   try {
     response = await fetch(
-      `${convexHttpUrl}/internal/v1/evals/runs/store-replay-config`,
+      `${convexHttpUrl}/v1/evals/runs/store-replay-config`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${userAuthToken}`,
-          [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
         },
         body: JSON.stringify({ runId, serverReplayConfigs }),
         signal: controller.signal,

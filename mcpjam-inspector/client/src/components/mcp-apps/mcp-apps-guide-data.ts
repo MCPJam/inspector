@@ -28,9 +28,9 @@ export const MCP_APPS_GUIDE_METADATA: Record<McpAppsStep, McpAppsStepGuide> = {
   },
 
   host_client: {
-    title: "Host and AI client",
+    title: "Client app",
     summary:
-      "The host finds the tool, loads the UI in a sandboxed iframe, and passes data between the model, server, and widget.",
+      "The client finds the tool, loads the UI in a sandboxed iframe, and passes data between the model, server, and widget.",
     category: "architecture",
     teachableMoments: [
       "The iframe is isolated, so widget code does not directly control the host page.",
@@ -85,7 +85,7 @@ export const MCP_APPS_GUIDE_METADATA: Record<McpAppsStep, McpAppsStepGuide> = {
   iframe_view: {
     title: "Iframe view and postMessage",
     summary:
-      "Hosts often use a hardened iframe setup so widget code stays isolated from the main app.",
+      "Clients often use a hardened iframe setup so widget code stays isolated from the main app.",
     category: "architecture",
     teachableMoments: [
       "Messages go both ways: widget to host, and host back to widget.",

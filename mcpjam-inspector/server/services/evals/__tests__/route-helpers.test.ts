@@ -21,12 +21,10 @@ import {
 } from "../route-helpers";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
-const ORIGINAL_INSPECTOR_SERVICE_TOKEN = process.env.INSPECTOR_SERVICE_TOKEN;
 
 describe("fetchReplayConfig", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
-    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -37,14 +35,9 @@ describe("fetchReplayConfig", () => {
     } else {
       process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
-    if (ORIGINAL_INSPECTOR_SERVICE_TOKEN === undefined) {
-      delete process.env.INSPECTOR_SERVICE_TOKEN;
-    } else {
-      process.env.INSPECTOR_SERVICE_TOKEN = ORIGINAL_INSPECTOR_SERVICE_TOKEN;
-    }
   });
 
-  it("sends both the user bearer token and inspector service token", async () => {
+  it("sends the user bearer token to the public replay-config route", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
       new Response(
@@ -66,23 +59,26 @@ describe("fetchReplayConfig", () => {
     await fetchReplayConfig("run_123", "user-token");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://convex.example/internal/v1/evals/runs/replay-config",
+      "https://convex.example/v1/evals/runs/replay-config",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
           Authorization: "Bearer user-token",
-          "X-Inspector-Service-Token": "service-token",
         }),
         signal: expect.any(AbortSignal),
       }),
     );
+    expect(
+      new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get(
+        "X-Inspector-Service-Token",
+      ),
+    ).toBeNull();
   });
 });
 
 describe("storeReplayConfig", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
-    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -93,14 +89,9 @@ describe("storeReplayConfig", () => {
     } else {
       process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
-    if (ORIGINAL_INSPECTOR_SERVICE_TOKEN === undefined) {
-      delete process.env.INSPECTOR_SERVICE_TOKEN;
-    } else {
-      process.env.INSPECTOR_SERVICE_TOKEN = ORIGINAL_INSPECTOR_SERVICE_TOKEN;
-    }
   });
 
-  it("sends both the user bearer token and inspector service token", async () => {
+  it("sends the user bearer token to the public store-replay-config route", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
       new Response(
@@ -127,16 +118,20 @@ describe("storeReplayConfig", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://convex.example/internal/v1/evals/runs/store-replay-config",
+      "https://convex.example/v1/evals/runs/store-replay-config",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
           Authorization: "Bearer user-token",
-          "X-Inspector-Service-Token": "service-token",
         }),
         signal: expect.any(AbortSignal),
       }),
     );
+    expect(
+      new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get(
+        "X-Inspector-Service-Token",
+      ),
+    ).toBeNull();
   });
 });
 

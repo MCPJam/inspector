@@ -31,7 +31,7 @@ describe("useChatStopControls", () => {
     const { result } = renderHook(() => {
       const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
       const controls = useChatStopControls({
-        isMultiModelMode: false,
+        isCompareMode: false,
         isStreaming: true,
         multiModelSummaries: {},
         setStopBroadcastRequestId,
@@ -61,7 +61,7 @@ describe("useChatStopControls", () => {
     const { result } = renderHook(() => {
       const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
       const controls = useChatStopControls({
-        isMultiModelMode: true,
+        isCompareMode: true,
         isStreaming: false,
         multiModelSummaries: {
           "model-1": createSummary("running"),
@@ -95,7 +95,7 @@ describe("useChatStopControls", () => {
         const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
 
         return useChatStopControls({
-          isMultiModelMode: false,
+          isCompareMode: false,
           isStreaming,
           multiModelSummaries: {},
           setStopBroadcastRequestId,

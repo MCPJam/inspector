@@ -1,5 +1,6 @@
 import {
-  matchToolCalls,
+  evaluateToolCalls,
+  type EvalMatchOptions,
   type ToolCall,
   type ArgumentMismatch,
 } from "@/shared/eval-matching";
@@ -45,25 +46,25 @@ export const evaluateResults = (
   expectedToolCalls: ToolCall[],
   toolsCalled: ToolCall[],
   isNegativeTest?: boolean,
+  matchOptions?: EvalMatchOptions,
 ): EvaluationResult => {
   const normalizedExpected = Array.isArray(expectedToolCalls)
     ? expectedToolCalls
     : [];
   const normalizedCalled = Array.isArray(toolsCalled) ? toolsCalled : [];
 
-  const matchResult = matchToolCalls(
-    normalizedExpected,
-    normalizedCalled,
+  const result = evaluateToolCalls(normalizedExpected, normalizedCalled, {
+    ...matchOptions,
     isNegativeTest,
-  );
+  });
 
   return {
     expectedToolCalls: normalizedExpected,
     toolsCalled: normalizedCalled,
-    missing: matchResult.missing,
-    unexpected: matchResult.unexpected,
-    argumentMismatches: matchResult.argumentMismatches,
-    passed: matchResult.passed,
+    missing: result.missing,
+    unexpected: result.extra,
+    argumentMismatches: result.argumentMismatches,
+    passed: result.passed,
   };
 };
 
@@ -71,6 +72,7 @@ export const evaluateMultiTurnResults = (
   promptTurns: PromptTurn[],
   toolsCalledByPrompt: ToolCall[][],
   isNegativeTest?: boolean,
+  matchOptions?: EvalMatchOptions,
 ): MultiTurnEvaluationResult => {
   const normalizedTurns = Array.isArray(promptTurns) ? promptTurns : [];
   const promptSummaries: PromptTurnEvaluation[] = normalizedTurns.map(
@@ -80,7 +82,12 @@ export const evaluateMultiTurnResults = (
         : [];
 
       if (isNegativeTest) {
-        const evaluation = evaluateResults([], actualToolCalls, true);
+        const evaluation = evaluateResults(
+          [],
+          actualToolCalls,
+          true,
+          matchOptions,
+        );
         return {
           promptIndex,
           prompt: turn.prompt,
@@ -95,6 +102,28 @@ export const evaluateMultiTurnResults = (
       }
 
       if (turn.expectedToolCalls.length === 0) {
+        // A turn with no expectations should normally pass. The one exception
+        // is strict extras (`allowExtraToolCalls === false`) when the model
+        // *did* make calls on this turn — those calls are unexpected extras
+        // and must fail. We can't route through `evaluateResults` for the
+        // empty-actual case because the SDK matcher fails positive
+        // both-empty by design.
+        if (
+          matchOptions?.allowExtraToolCalls === false &&
+          actualToolCalls.length > 0
+        ) {
+          return {
+            promptIndex,
+            prompt: turn.prompt,
+            expectedToolCalls: turn.expectedToolCalls,
+            actualToolCalls,
+            expectedOutput: turn.expectedOutput,
+            missing: [],
+            unexpected: actualToolCalls,
+            argumentMismatches: [],
+            passed: false,
+          };
+        }
         return {
           promptIndex,
           prompt: turn.prompt,
@@ -111,6 +140,8 @@ export const evaluateMultiTurnResults = (
       const evaluation = evaluateResults(
         turn.expectedToolCalls,
         actualToolCalls,
+        undefined,
+        matchOptions,
       );
       return {
         promptIndex,
@@ -128,14 +159,18 @@ export const evaluateMultiTurnResults = (
 
   const assertedSummaries = isNegativeTest
     ? promptSummaries
-    : promptSummaries.filter((summary) => summary.expectedToolCalls.length > 0);
+    : promptSummaries.filter(
+        // Include turns that either declared expectations OR failed at
+        // evaluation time (e.g. strict-extras turn with 0 expected calls but
+        // actual calls present). The latter would otherwise be silently
+        // dropped from the aggregate pass/fail roll-up.
+        (summary) => summary.expectedToolCalls.length > 0 || !summary.passed,
+      );
   const failedSummaries = assertedSummaries.filter(
     (summary) => !summary.passed,
   );
-  const firstFailedTurn = promptSummaries.find((summary) =>
-    isNegativeTest
-      ? !summary.passed
-      : summary.expectedToolCalls.length > 0 && !summary.passed,
+  const firstFailedTurn = promptSummaries.find(
+    (summary) => !summary.passed,
   );
 
   return {

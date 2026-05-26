@@ -1,0 +1,39 @@
+diff --git a/.changeset/outer-wrapper-tool-streamer.md b/.changeset/outer-wrapper-tool-streamer.md
+deleted file mode 100644
+index eeca6e561..000000000
+--- a/.changeset/outer-wrapper-tool-streamer.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Host-controlled width for MCP App surfaces** (#2275): the inline renderer no longer applies `size-changed` width to the outer container — the host owns width, the iframe reports height. Prevents apps from resizing their own wrapper.
+-- **Streaming reveal fallback actually reveals**: `useToolInputStreaming` now flips `canRenderStreamingInput` to `true` when the fallback timer fires without parseable partial args, instead of leaving streaming apps hidden indefinitely.
+diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
+index f54d1bd26..b8e753362 100644
+--- a/mcpjam-inspector/package.json
++++ b/mcpjam-inspector/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "@mcpjam/inspector",
+   "productName": "MCPJam Inspector",
+-  "version": "2.6.0",
++  "version": "2.6.1",
+   "type": "module",
+   "engines": {
+     "node": ">=22.0.0"
+diff --git a/package-lock.json b/package-lock.json
+index bdca212c2..fdb9311ec 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -289,7 +289,7 @@
+     },
+     "mcpjam-inspector": {
+       "name": "@mcpjam/inspector",
+-      "version": "2.6.0",
++      "version": "2.6.1",
+       "license": "Apache-2.0",
+       "dependencies": {
+         "@ai-sdk/anthropic": "^3.0.36",

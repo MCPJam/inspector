@@ -16,7 +16,6 @@ import { SourceUrlPart } from "./parts/source-url-part";
 import { SourceDocumentPart } from "./parts/source-document-part";
 import { JsonPart } from "./parts/json-part";
 import { TextPart } from "./parts/text-part";
-import { MCPUIResourcePart } from "./parts/mcp-ui-resource-part";
 import { useViewQueries } from "@/hooks/useViews";
 import { useSaveView, type ToolDataForSave } from "@/hooks/useSaveView";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -32,7 +31,6 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   AnyPart,
-  extractUIResource,
   getDataLabel,
   getToolInfo,
   isDataPart,
@@ -40,6 +38,8 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { WidgetReplay } from "./widget-replay";
@@ -49,11 +49,10 @@ import {
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
 
-const NOOP_SEND_FOLLOW_UP = () => {};
-
 export function PartSwitch({
   part,
   role,
+  chatSessionId,
   onSendFollowUp,
   toolsMetadata,
   toolServerMap,
@@ -65,9 +64,10 @@ export function PartSwitch({
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
   onToolApprovalResponse,
   messageParts,
   toolRenderOverrides,
@@ -78,6 +78,7 @@ export function PartSwitch({
 }: {
   part: AnyPart;
   role: UIMessage["role"];
+  chatSessionId?: string;
   onSendFollowUp: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
@@ -87,7 +88,7 @@ export function PartSwitch({
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
@@ -95,9 +96,10 @@ export function PartSwitch({
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   messageParts?: AnyPart[];
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -115,11 +117,12 @@ export function PartSwitch({
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
+  const resolveHostCaps = useActiveHostCapsResolver();
   const savingEnabled = isAuthenticated && !minimalMode && interactive;
 
-  // Get the Convex workspace ID (sharedWorkspaceId) from the active workspace
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  // Get the Convex project ID (sharedProjectId) from the active project
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
 
   const toolInfoFromPart =
     isToolPart(part) || isDynamicTool(part)
@@ -137,17 +140,17 @@ export function PartSwitch({
   // Get existing view names for duplicate handling
   const { sortedViews } = useViewQueries({
     isAuthenticated: savingEnabled,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
   const existingViewNames = useMemo(
     () => new Set(sortedViews.map((v) => v.name)),
-    [sortedViews],
+    [sortedViews]
   );
 
   // Instant save hook
   const { saveViewInstant, isSaving } = useSaveView({
     isAuthenticated: savingEnabled,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
     serverName: currentServerName,
     existingViewNames,
   });
@@ -158,7 +161,7 @@ export function PartSwitch({
       ? ((part as any).toolCallId as string | undefined)
       : undefined;
   const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined,
+    toolCallId ? s.widgets.get(toolCallId) : undefined
   );
 
   // Create save view handler for a specific tool (instant save)
@@ -172,7 +175,7 @@ export function PartSwitch({
       uiType: UIType,
       resourceUri?: string,
       outputTemplate?: string,
-      toolMetadata?: Record<string, unknown>,
+      toolMetadata?: Record<string, unknown>
     ) => {
       return async () => {
         posthog.capture("save_as_view_clicked", {
@@ -201,12 +204,20 @@ export function PartSwitch({
           toolMetadata,
           // Include cached widget HTML for offline rendering (MCP Apps only)
           widgetHtml: widgetDebugInfo?.widgetHtml,
+          // Compat provenance — the renderer stamps these onto the
+          // debug-store entry at fetch time. Persisting them with
+          // the saved view lets replay reproduce the original
+          // `window.openai` API surface even when the live host
+          // config has since changed.
+          injectedOpenAiCompat: widgetDebugInfo?.injectedOpenAiCompat,
+          injectedOpenAiCompatCapabilities:
+            widgetDebugInfo?.injectedOpenAiCompatCapabilities,
         };
 
         await saveViewInstant(data);
       };
     },
-    [toolCallId, widgetDebugInfo, saveViewInstant, posthog],
+    [toolCallId, widgetDebugInfo, saveViewInstant, posthog]
   );
 
   if (isToolPart(part) || isDynamicTool(part)) {
@@ -234,8 +245,10 @@ export function PartSwitch({
     const uiResourceUri =
       renderOverride?.resourceUri ??
       getUIResourceUri(uiType, effectiveToolMeta);
-    const uiResource =
-      uiType === UIType.MCP_UI ? extractUIResource(toolInfo.rawOutput) : null;
+    // MCP-UI legacy (inline ui:// resources via @mcp-ui/client) was
+    // removed during the renderer consolidation. Inline resources are no
+    // longer rendered; tools that want a widget must declare it via
+    // `_meta.ui.resourceUri` or `openai/outputTemplate`.
     const serverId =
       renderOverride?.serverId ??
       getToolServerId(toolInfo.toolName, toolServerMap) ??
@@ -245,7 +258,7 @@ export function PartSwitch({
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
     const resolvedToolOutput = hasRenderOverrideToolOutput
       ? renderOverride.toolOutput
-      : (toolInfo.output ?? toolInfo.rawOutput);
+      : toolInfo.output ?? toolInfo.rawOutput;
 
     // Determine why save might be disabled
     const hasOutput =
@@ -259,7 +272,7 @@ export function PartSwitch({
       interactive &&
       !minimalMode &&
       isAuthenticated &&
-      !!convexWorkspaceId &&
+      !!convexProjectId &&
       hasOutput;
     const allowSaveView = interactive && showSaveViewButton && !minimalMode;
 
@@ -267,8 +280,8 @@ export function PartSwitch({
     let saveDisabledReason: string | undefined;
     if (!isAuthenticated) {
       saveDisabledReason = "Sign in to save views";
-    } else if (!convexWorkspaceId) {
-      saveDisabledReason = "Select a shared workspace to save views";
+    } else if (!convexProjectId) {
+      saveDisabledReason = "Select a shared project to save views";
     } else if (!hasOutput) {
       saveDisabledReason = "No output to save";
     }
@@ -291,39 +304,42 @@ export function PartSwitch({
       uiType || UIType.MCP_APPS,
       uiResourceUri ?? undefined,
       outputTemplate,
-      effectiveToolMeta as Record<string, unknown> | undefined,
+      effectiveToolMeta as Record<string, unknown> | undefined
     );
 
-    if (uiResource) {
-      return (
-        <>
-          <ToolPart
-            part={toolPart}
-            uiType={uiType}
-            onSaveView={allowSaveView ? handleSaveView : undefined}
-            canSaveView={allowSaveView ? canSaveView : undefined}
-            saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
-            isSaving={isSaving}
-            minimalMode={minimalMode}
-            {...approvalProps}
-          />
-          <MCPUIResourcePart
-            resource={uiResource.resource}
-            onSendFollowUp={interactive ? onSendFollowUp : NOOP_SEND_FOLLOW_UP}
-          />
-        </>
-      );
-    }
+    // Gate widget render on the active host's advertised capabilities for
+    // this tool's server. Hosts that don't advertise the MCP UI extension
+    // (Codex — elicitation-only client) fall through to the plain
+    // ToolPart result row, even when the tool itself declares
+    // `_meta.ui.resourceUri` / `openai/outputTemplate`. This mirrors what
+    // real CLI clients do: tool runs, JSON result is shown, no iframe.
+    //
+    // `serverId` (computed above for save-view routing) is passed through
+    // so the resolver picks up any per-server `clientCapabilities`
+    // override — keeping the renderer in lockstep with `initialize`,
+    // which uses the same `resolveEffectiveClientCapabilities` function.
+    //
+    // Note on Apps SDK hosts (ChatGPT, Copilot): their templates KEEP the
+    // SDK-default MCP UI extension in `clientCapabilities`, so they pass
+    // this gate today. A future explicit "window.openai" flag on
+    // HostConfigInputV2 will be OR-ed here to cover Apps-SDK hosts that
+    // choose to strip the MCP UI extension.
+    const isWidgetTornDown =
+      typeof toolInfo.toolCallId === "string" &&
+      tornDownWidgetIds?.has(toolInfo.toolCallId);
     const shouldRenderWidget =
-      uiType === UIType.OPENAI_SDK ||
-      uiType === UIType.MCP_APPS ||
-      uiType === UIType.OPENAI_SDK_AND_MCP_APPS;
+      !isWidgetTornDown &&
+      hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
+      (uiType === UIType.OPENAI_SDK ||
+        uiType === UIType.MCP_APPS ||
+        uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
     if (shouldRenderWidget) {
       return (
         <>
           <ToolPart
             part={toolPart}
+            chatSessionId={chatSessionId}
             uiType={uiType}
             displayMode={interactive ? displayMode : undefined}
             pipWidgetId={pipWidgetId}
@@ -344,6 +360,7 @@ export function PartSwitch({
             {...approvalProps}
           />
           <WidgetReplay
+            chatSessionId={chatSessionId}
             toolName={toolInfo.toolName}
             toolCallId={toolInfo.toolCallId}
             toolState={toolInfo.toolState}
@@ -372,13 +389,11 @@ export function PartSwitch({
             onExitPip={interactive ? onExitPip : undefined}
             onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
             onExitFullscreen={interactive ? onExitFullscreen : undefined}
+            onRequestTeardown={interactive ? onRequestTeardown : undefined}
             displayMode={interactive ? displayMode : undefined}
             onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
             onAppSupportedDisplayModesChange={
               interactive ? setAppSupportedDisplayModes : undefined
-            }
-            selectedProtocolOverrideIfBothExists={
-              selectedProtocolOverrideIfBothExists
             }
             minimalMode={minimalMode}
           />
@@ -389,6 +404,7 @@ export function PartSwitch({
     return (
       <ToolPart
         part={toolPart}
+        chatSessionId={chatSessionId}
         uiType={uiType}
         onSaveView={allowSaveView ? handleSaveView : undefined}
         canSaveView={allowSaveView ? canSaveView : undefined}

@@ -7,7 +7,9 @@ export type OnboardingPhase =
   | "dismissed";
 
 export interface OnboardingPersistedState {
-  status: "seen" | "dismissed" | "completed";
+  status: "started" | "seen" | "dismissed" | "completed";
+  startedAt?: number;
+  shownAt?: number;
   completedAt?: number;
 }
 
@@ -19,12 +21,17 @@ export function readOnboardingState(): OnboardingPersistedState | null {
   try {
     const parsed = JSON.parse(stored) as Partial<OnboardingPersistedState>;
     if (
+      parsed.status === "started" ||
       parsed.status === "seen" ||
       parsed.status === "dismissed" ||
       parsed.status === "completed"
     ) {
       return {
         status: parsed.status,
+        startedAt:
+          typeof parsed.startedAt === "number" ? parsed.startedAt : undefined,
+        shownAt:
+          typeof parsed.shownAt === "number" ? parsed.shownAt : undefined,
         completedAt:
           typeof parsed.completedAt === "number"
             ? parsed.completedAt
@@ -41,30 +48,71 @@ export function writeOnboardingState(state: OnboardingPersistedState): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+export function markOnboardingStarted(): void {
+  const current = readOnboardingState();
+  if (
+    current?.status === "completed" ||
+    current?.status === "dismissed" ||
+    (current?.status === "seen" && current.shownAt)
+  ) {
+    return;
+  }
+  writeOnboardingState({ status: "started", startedAt: Date.now() });
+}
+
+export function markOnboardingShown(): void {
+  const current = readOnboardingState();
+  if (current?.status === "completed" || current?.status === "dismissed") {
+    return;
+  }
+  writeOnboardingState({ status: "seen", shownAt: Date.now() });
+}
+
 export function clearOnboardingState(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
 
 /**
  * Returns true when the user is eligible for first-run onboarding:
- * - No explicit hash route (empty, "#", "#/", or "#servers" which is the default)
- * - No saved servers
- * - Onboarding has never been started (no localStorage entry)
- * - The user is not already authenticated
+ * - No explicit hash route (empty, "#", "#/", or the default hub hash:
+ *   `#servers`, `#connect`, or legacy `#hosts`)
+ * - No saved servers that block first-run onboarding
+ * - Onboarding has never been shown for the current identity. When a remote
+ *   user row is available, that row is the source of truth; localStorage is
+ *   only a fallback for runtimes without an identity.
+ * - The user is not signed in with WorkOS. Hosted guests may be
+ *   Convex-authenticated, but should still be eligible for first-run NUX.
  */
 export function isFirstRunEligible(
-  hasAnyServers: boolean,
-  currentHash: string,
-  isAuthenticated = false,
+  hasAnyBlockingServers: boolean,
+  currentRouteTab: string,
+  isSignedInWithWorkOs = false,
+  hasSeenRemoteOnboarding?: boolean
 ): boolean {
-  if (hasAnyServers) return false;
-  if (isAuthenticated) return false;
+  if (hasAnyBlockingServers) return false;
+  if (isSignedInWithWorkOs) return false;
 
-  const hash = currentHash.replace(/^#\/?/, "");
-  if (hash && hash !== "servers") return false;
+  // Drop query strings and trailing slashes so `connect?foo=bar` and
+  // `/connect/` still pass the allowlist — both land on the same hub route.
+  const rawRoute = currentRouteTab.replace(/^#?\/?/, "");
+  const [routePath = ""] = rawRoute.split("?");
+  const routeTab = routePath.replace(/\/+$/, "");
+  if (
+    routeTab !== "servers" &&
+    routeTab !== "connect" &&
+    routeTab !== "clients" &&
+    routeTab !== "hosts" &&
+    routeTab
+  )
+    return false;
+
+  if (hasSeenRemoteOnboarding !== undefined) {
+    return hasSeenRemoteOnboarding !== true;
+  }
 
   const persisted = readOnboardingState();
-  if (persisted) return false;
-
-  return true;
+  if (!persisted) return true;
+  if (persisted.status === "started") return true;
+  if (persisted.status === "seen" && !persisted.shownAt) return true;
+  return false;
 }

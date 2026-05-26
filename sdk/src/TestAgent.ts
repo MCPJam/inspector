@@ -60,6 +60,15 @@ export interface TestAgentConfig {
     | Record<string, CustomProvider>;
   /** Optional MCP client manager for capturing MCP App replay snapshots */
   mcpClientManager?: MCPClientManager;
+  /**
+   * When true, the agent injects the OpenAI Apps SDK `window.openai`
+   * shim into captured widget HTML so replays under hosts that expect
+   * that surface (ChatGPT/Copilot or MCPJam's dev surface) render
+   * unchanged. Defaults to `false` — Claude/Cursor/Codex-style hosts
+   * don't expose `window.openai`, and snapshots should match what the
+   * live host would have produced. Tests that need the shim must opt in.
+   */
+  injectOpenAiCompat?: boolean;
 }
 
 // Re-export PromptOptions for backward compatibility
@@ -147,6 +156,7 @@ export class TestAgent implements EvalAgent {
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
+  private readonly injectOpenAiCompat: boolean;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -175,6 +185,7 @@ export class TestAgent implements EvalAgent {
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
     this.mcpClientManager = config.mcpClientManager;
+    this.injectOpenAiCompat = config.injectOpenAiCompat === true;
 
     // Parse the model string once to extract provider/model metadata
     try {
@@ -287,17 +298,22 @@ export class TestAgent implements EvalAgent {
         return;
       }
 
-      // Inject the OpenAI compat runtime so stored blobs are self-contained
-      // (identical to what the server injects for live widgets and Views)
-      snapshot.widgetHtml = injectOpenAICompat(snapshot.widgetHtml ?? "", {
-        toolId: toolCallId,
-        toolName: params.toolName,
-        toolInput: params.toolInput ?? {},
-        toolOutput: params.toolOutput,
-        theme: "dark",
-        viewMode: "inline",
-        viewParams: {},
-      });
+      // Optionally inject the OpenAI Apps SDK `window.openai` shim into
+      // the captured HTML. Default off so snapshots match SEP-1865
+      // honest behavior; callers emulating ChatGPT/Copilot or MCPJam's
+      // dev surface opt in via `TestAgentConfig.injectOpenAiCompat`.
+      if (this.injectOpenAiCompat) {
+        snapshot.widgetHtml = injectOpenAICompat(snapshot.widgetHtml ?? "", {
+          toolId: toolCallId,
+          toolName: params.toolName,
+          toolInput: params.toolInput ?? {},
+          toolOutput: params.toolOutput,
+          theme: "dark",
+          viewMode: "inline",
+          viewParams: {},
+        });
+      }
+      snapshot.injectedOpenAiCompat = this.injectOpenAiCompat;
 
       params.snapshotBuffer.set(toolCallId, snapshot);
     } catch (error) {
@@ -452,16 +468,16 @@ export class TestAgent implements EvalAgent {
    *
    * @example
    * // Single-turn (default)
-   * const result = await agent.prompt("Show me workspaces");
+   * const result = await agent.prompt("Show me projects");
    *
    * @example
    * // Multi-turn with context
-   * const r1 = await agent.prompt("Show me workspaces");
+   * const r1 = await agent.prompt("Show me projects");
    * const r2 = await agent.prompt("Now show tasks", { context: r1 });
    *
    * @example
    * // Multi-turn with multiple context results
-   * const r1 = await agent.prompt("Show workspaces");
+   * const r1 = await agent.prompt("Show projects");
    * const r2 = await agent.prompt("Pick the first", { context: r1 });
    * const r3 = await agent.prompt("Show tasks", { context: [r1, r2] });
    */
@@ -708,6 +724,8 @@ export class TestAgent implements EvalAgent {
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
+      injectOpenAiCompat:
+        options.injectOpenAiCompat ?? this.injectOpenAiCompat,
     });
   }
 

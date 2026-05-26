@@ -1,6 +1,7 @@
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/prompt-turns";
 import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export type EvalSuiteConfigTest = {
@@ -18,13 +19,15 @@ export type EvalSuiteConfigTest = {
   expectedOutput?: string; // The output or experience expected from the MCP server
   promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
+  /** Effective validator options for this entry, resolved at run-start. */
+  matchOptions?: EvalMatchOptions;
   testCaseId?: string;
 };
 
 export type EvalSuite = {
   _id: string;
   createdBy: string;
-  workspaceId?: string;
+  projectId?: string;
   name: string;
   description: string;
   configRevision: string;
@@ -32,7 +35,7 @@ export type EvalSuite = {
     servers: string[];
     serverBindings?: Array<{
       serverName: string;
-      workspaceServerId?: string;
+      projectServerId?: string;
     }>;
   };
   createdAt: number;
@@ -43,15 +46,36 @@ export type EvalSuite = {
   defaultPassCriteria?: {
     minimumPassRate: number;
   };
+  /** Suite-level default validator options (used unless a case overrides). */
+  defaultMatchOptions?: EvalMatchOptions;
   _creationTime?: number; // Convex auto field
   tags?: string[];
+  defaultConfig?: {
+    modelId: string;
+    provider?: string;
+    systemPrompt: string;
+    temperature: number;
+  };
+  /**
+   * Multi-host fan-out. When non-empty, "Run all hosts" fires one run per
+   * attachment with that host's snapshot. Server names are resolved at
+   * read time so the UI doesn't have to fetch each host's config to fan
+   * out. Legacy suites (no attachments) keep the flat `environment.servers`
+   * path.
+   */
+  hostAttachments?: Array<{
+    namedHostId: string;
+    enabledOptionalServerIds: string[];
+    hostName: string | null;
+    resolvedServerNames: string[];
+  }>;
 };
 
 export type EvalCase = {
   _id: string;
   testSuiteId: string;
   createdBy: string;
-  workspaceId?: string;
+  projectId?: string;
   caseKey?: string;
   title: string;
   query: string;
@@ -69,6 +93,8 @@ export type EvalCase = {
   expectedOutput?: string; // The output or experience expected from the MCP server
   promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
+  /** Case-level validator override; merged on top of suite defaults. */
+  matchOptions?: EvalMatchOptions;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
 };
@@ -76,7 +102,7 @@ export type EvalCase = {
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
-  workspaceId?: string;
+  projectId?: string;
   testCaseSnapshot?: {
     caseKey?: string;
     title: string;
@@ -93,6 +119,8 @@ export type EvalIteration = {
     expectedOutput?: string; // The output or experience expected from the MCP server
     promptTurns?: PromptTurn[];
     advancedConfig?: Record<string, unknown>;
+    /** Effective validator options used for this iteration's pass/fail. */
+    matchOptions?: EvalMatchOptions;
   };
   suiteRunId?: string;
   configRevision?: string;
@@ -186,7 +214,7 @@ export type EvalSuiteRun = {
   _id: string;
   suiteId: string;
   createdBy: string;
-  workspaceId?: string;
+  projectId?: string;
   runNumber: number;
   configRevision: string;
   configSnapshot: {
@@ -195,7 +223,7 @@ export type EvalSuiteRun = {
       servers: string[];
       serverBindings?: Array<{
         serverName: string;
-        workspaceServerId?: string;
+        projectServerId?: string;
       }>;
     };
   };
@@ -204,6 +232,8 @@ export type EvalSuiteRun = {
   passCriteria?: {
     minimumPassRate: number;
   };
+  /** One-off validator override applied to all iterations in this run. */
+  matchOptionsOverride?: EvalMatchOptions;
   result?: "pending" | "passed" | "failed" | "cancelled";
   source?: "ui" | "sdk";
   replayedFromRunId?: string;
@@ -226,6 +256,13 @@ export type EvalSuiteRun = {
   /** Legacy field from Convex; no longer used for UI gating or trends. */
   isActive?: boolean;
   expectedIterations?: number;
+  /**
+   * The named host this run was triggered against, when the suite has
+   * host attachments. Absent for legacy single-environment runs. Used by
+   * the run list / run-detail UI to group concurrent host fan-out into a
+   * "host matrix" view.
+   */
+  namedHostId?: string;
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";

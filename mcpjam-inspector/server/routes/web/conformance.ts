@@ -6,8 +6,7 @@ import {
 } from "@mcpjam/sdk";
 import {
   handleRoute,
-  workspaceServerSchema,
-  guestServerInputSchema,
+  projectServerSchema,
 } from "./auth.js";
 import {
   ErrorCode,
@@ -16,7 +15,6 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
@@ -34,64 +32,34 @@ const conformanceWeb = new Hono();
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** Detect guest vs workspace request by body shape. */
-function isGuestRequest(body: Record<string, unknown>): boolean {
-  return typeof body.serverUrl === "string" && !body.workspaceId;
-}
-
 /** Resolve HTTP server URL and headers for conformance from authorized config. */
 async function resolveHostedHttpConfig(
+  c: any,
   bearerToken: string,
-  body: Record<string, unknown>,
+  body: Record<string, unknown>
 ): Promise<{
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
 }> {
-  if (isGuestRequest(body)) {
-    // Guest: direct server URL
-    const guestInput = parseWithSchema(guestServerInputSchema, body);
-    try {
-      await validateUrl(guestInput.serverUrl, true);
-    } catch (err) {
-      if (err instanceof OAuthProxyError) {
-        throw new WebRouteError(
-          err.status,
-          ErrorCode.VALIDATION_ERROR,
-          err.message,
-        );
-      }
-      throw err;
-    }
-    const oauthToken =
-      typeof body.oauthAccessToken === "string"
-        ? body.oauthAccessToken
-        : undefined;
-    return {
-      serverUrl: guestInput.serverUrl,
-      accessToken: oauthToken,
-      customHeaders: guestInput.serverHeaders,
-    };
-  }
-
-  // Workspace: authorize via Convex
-  const wsBody = parseWithSchema(workspaceServerSchema, body);
+  const wsBody = parseWithSchema(projectServerSchema, body);
   const auth = await authorizeServer(
+    c,
     bearerToken,
-    wsBody.workspaceId,
+    wsBody.projectId,
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      shareToken: wsBody.shareToken,
-      sandboxToken: wsBody.sandboxToken,
-    },
+      chatboxId: wsBody.chatboxId,
+      accessVersion: wsBody.accessVersion,
+    }
   );
 
   if (auth.serverConfig.transportType !== "http") {
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "Protocol conformance requires HTTP transport",
+      "Protocol conformance requires HTTP transport"
     );
   }
 
@@ -99,7 +67,7 @@ async function resolveHostedHttpConfig(
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Authorized server is missing URL",
+      "Authorized server is missing URL"
     );
   }
 
@@ -123,51 +91,21 @@ async function resolveHostedHttpConfig(
 
 /** Resolve any-transport server config for Apps conformance on hosted. */
 async function resolveHostedServerConfig(
+  c: any,
   bearerToken: string,
-  body: Record<string, unknown>,
+  body: Record<string, unknown>
 ): Promise<MCPAppsConformanceConfig> {
-  if (isGuestRequest(body)) {
-    const guestInput = parseWithSchema(guestServerInputSchema, body);
-    try {
-      await validateUrl(guestInput.serverUrl, true);
-    } catch (err) {
-      if (err instanceof OAuthProxyError) {
-        throw new WebRouteError(
-          err.status,
-          ErrorCode.VALIDATION_ERROR,
-          err.message,
-        );
-      }
-      throw err;
-    }
-    const oauthToken =
-      typeof body.oauthAccessToken === "string"
-        ? body.oauthAccessToken
-        : undefined;
-    const headers: Record<string, string> = {
-      ...(guestInput.serverHeaders ?? {}),
-    };
-    if (oauthToken) {
-      headers["Authorization"] = `Bearer ${oauthToken}`;
-    }
-    return {
-      url: guestInput.serverUrl,
-      requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
-      timeout: WEB_CALL_TIMEOUT_MS,
-    } as MCPAppsConformanceConfig;
-  }
-
-  // Workspace: authorize via Convex
-  const wsBody = parseWithSchema(workspaceServerSchema, body);
+  const wsBody = parseWithSchema(projectServerSchema, body);
   const auth = await authorizeServer(
+    c,
     bearerToken,
-    wsBody.workspaceId,
+    wsBody.projectId,
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      shareToken: wsBody.shareToken,
-      sandboxToken: wsBody.sandboxToken,
-    },
+      chatboxId: wsBody.chatboxId,
+      accessVersion: wsBody.accessVersion,
+    }
   );
 
   const httpConfig = toHttpConfig(
@@ -176,7 +114,7 @@ async function resolveHostedServerConfig(
     typeof wsBody.oauthAccessToken === "string"
       ? wsBody.oauthAccessToken
       : undefined,
-    wsBody.clientCapabilities as Record<string, unknown> | undefined,
+    wsBody.clientCapabilities as Record<string, unknown> | undefined
   );
 
   return httpConfig as MCPAppsConformanceConfig;
@@ -188,7 +126,7 @@ function toWebError(error: unknown): WebRouteError {
     return new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      error.message,
+      error.message
     );
   }
   if (error instanceof OAuthConformanceSessionNotFoundError) {
@@ -200,7 +138,7 @@ function toWebError(error: unknown): WebRouteError {
   return new WebRouteError(
     500,
     ErrorCode.INTERNAL_ERROR,
-    error instanceof Error ? error.message : "Unknown error",
+    error instanceof Error ? error.message : "Unknown error"
   );
 }
 
@@ -210,7 +148,7 @@ conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
 
     try {
       const { result } = await runProtocolConformance(resolved);
@@ -218,7 +156,7 @@ conformanceWeb.post("/protocol", async (c) =>
     } catch (error) {
       throw toWebError(error);
     }
-  }),
+  })
 );
 
 // ── POST /apps ──────────────────────────────────────────────────────────
@@ -227,7 +165,7 @@ conformanceWeb.post("/apps", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const config = await resolveHostedServerConfig(bearerToken, body);
+    const config = await resolveHostedServerConfig(c, bearerToken, body);
 
     try {
       const { result } = await runAppsConformance(config);
@@ -235,7 +173,7 @@ conformanceWeb.post("/apps", async (c) =>
     } catch (error) {
       throw toWebError(error);
     }
-  }),
+  })
 );
 
 // ── POST /oauth/start ───────────────────────────────────────────────────
@@ -246,20 +184,20 @@ const oauthStartSchema = z
     runNegativeChecks: z.boolean().optional(),
     callbackOrigin: z.string().optional(),
   })
-  .passthrough(); // workspace/guest fields pass through to resolveHostedHttpConfig
+  .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
 conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
     const parsed = parseWithSchema(oauthStartSchema, body);
 
     if (!parsed.callbackOrigin) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "callbackOrigin is required to run OAuth conformance",
+        "callbackOrigin is required to run OAuth conformance"
       );
     }
 
@@ -267,14 +205,17 @@ conformanceWeb.post("/oauth/start", async (c) =>
       return await startOAuthConformance({
         defaultServerUrl: resolved.serverUrl,
         defaultCustomHeaders: resolved.customHeaders,
-        redirectUrl: `${parsed.callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
+        redirectUrl: `${parsed.callbackOrigin.replace(
+          /\/$/,
+          ""
+        )}/oauth/callback/debug`,
         oauthProfile: parsed.oauthProfile,
         runNegativeChecks: parsed.runNegativeChecks,
       });
     } catch (error) {
       throw toWebError(error);
     }
-  }),
+  })
 );
 
 // ── POST /oauth/authorize ───────────────────────────────────────────────
@@ -295,11 +236,11 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        "Session not found or not waiting for authorization",
+        "Session not found or not waiting for authorization"
       );
     }
     return { success: true };
-  }),
+  })
 );
 
 // ── POST /oauth/complete ────────────────────────────────────────────────
@@ -317,7 +258,7 @@ conformanceWeb.post("/oauth/complete", async (c) =>
     } catch (error) {
       throw toWebError(error);
     }
-  }),
+  })
 );
 
 export default conformanceWeb;

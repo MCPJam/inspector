@@ -4,12 +4,19 @@ import {
   getConformanceAuthCodeDynamicRegistrationMetadata,
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "./oauth/client-identity.js";
+import {
+  resolveAuthorizationPlan,
+  type OAuthProtocolMode,
+  type OAuthRegistrationMode,
+  type ResolvedAuthorizationPlan,
+} from "./oauth/authorization-plan.js";
 import { createOAuthStateMachine } from "./oauth/state-machines/factory.js";
 import { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 import {
   EMPTY_OAUTH_FLOW_STATE,
   type OAuthFlowState,
   type OAuthHttpRequest,
+  type OAuthProtocolVersion,
 } from "./oauth/state-machines/types.js";
 import { canonicalizeResourceUrl } from "./oauth/state-machines/shared/urls.js";
 import { performClientCredentialsGrant } from "./oauth-conformance/auth-strategies/client-credentials.js";
@@ -31,18 +38,35 @@ import type {
 } from "./oauth-conformance/types.js";
 import type { HttpServerConfig } from "./mcp-client-manager/index.js";
 import { listTools, withEphemeralClient } from "./operations.js";
+import { probeMcpServer } from "./server-probe.js";
 
-export type OAuthLoginConfig = OAuthConformanceConfig;
+export interface OAuthLoginConfig
+  extends Omit<
+    OAuthConformanceConfig,
+    "protocolVersion" | "registrationStrategy"
+  > {
+  protocolVersion?: OAuthProtocolVersion;
+  registrationStrategy?:
+    | NormalizedOAuthConformanceConfig["registrationStrategy"]
+    | undefined;
+  protocolMode?: OAuthProtocolMode;
+  registrationMode?: OAuthRegistrationMode;
+}
 
 export interface OAuthLoginResult {
   completed: boolean;
   serverUrl: string;
   protocolVersion: NormalizedOAuthConformanceConfig["protocolVersion"];
-  registrationStrategy: NormalizedOAuthConformanceConfig["registrationStrategy"];
+  registrationStrategy?:
+    | NormalizedOAuthConformanceConfig["registrationStrategy"]
+    | undefined;
+  protocolMode: OAuthProtocolMode;
+  registrationMode: OAuthRegistrationMode;
   authMode: NormalizedOAuthConformanceConfig["auth"]["mode"];
   redirectUrl: string;
   currentStep: OAuthFlowState["currentStep"];
   authorizationUrl?: string;
+  authorizationPlan: ResolvedAuthorizationPlan;
   credentials: {
     clientId?: string;
     clientSecret?: string;
@@ -64,6 +88,8 @@ export interface OAuthLoginDependencies {
   performClientCredentialsGrant?: typeof performClientCredentialsGrant;
   createDefaultRedirectUrl?: () => string;
 }
+
+const DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS = 30_000;
 
 function cloneEmptyFlowState(): OAuthFlowState {
   return {
@@ -141,6 +167,80 @@ function serializeRequestBody(
   }
 
   return JSON.stringify(body);
+}
+
+function normalizeLoginAuthConfig(
+  auth: OAuthLoginConfig["auth"],
+) : NonNullable<OAuthConformanceConfig["auth"]> {
+  return auth ?? { mode: "interactive" };
+}
+
+function normalizeLoginClientConfig(
+  client: OAuthLoginConfig["client"],
+): NonNullable<OAuthConformanceConfig["client"]> {
+  return client ?? {};
+}
+
+function resolveRequestedProtocolMode(
+  input: Pick<OAuthLoginConfig, "protocolMode" | "protocolVersion">,
+): OAuthProtocolMode {
+  if (input.protocolMode) {
+    return input.protocolMode;
+  }
+
+  return input.protocolVersion ?? "auto";
+}
+
+function resolveRequestedRegistrationMode(
+  input: Pick<OAuthLoginConfig, "registrationMode" | "registrationStrategy">,
+): OAuthRegistrationMode {
+  if (input.registrationMode) {
+    return input.registrationMode;
+  }
+
+  return input.registrationStrategy ?? "auto";
+}
+
+function toAuthorizationPlanInput(
+  input: OAuthLoginConfig,
+): Parameters<typeof resolveAuthorizationPlan>[0] {
+  const auth = normalizeLoginAuthConfig(input.auth);
+  const client = normalizeLoginClientConfig(input.client);
+
+  return {
+    serverUrl: input.serverUrl,
+    protocolMode: resolveRequestedProtocolMode(input),
+    protocolVersion: input.protocolVersion,
+    registrationMode: resolveRequestedRegistrationMode(input),
+    registrationStrategy: input.registrationStrategy,
+    clientId: client.preregistered?.clientId,
+    clientSecret: client.preregistered?.clientSecret,
+    clientIdMetadataUrl: client.clientIdMetadataUrl,
+    authMode: auth.mode,
+  };
+}
+
+async function resolveOAuthLoginAuthorizationPlan(
+  input: OAuthLoginConfig,
+): Promise<ResolvedAuthorizationPlan> {
+  const basePlan = resolveAuthorizationPlan(toAuthorizationPlanInput(input));
+
+  if (basePlan.status !== "discovery_required") {
+    return basePlan;
+  }
+
+  const probe = await probeMcpServer({
+    url: input.serverUrl,
+    protocolVersion: basePlan.protocolVersion,
+    headers: input.customHeaders,
+    timeoutMs: input.stepTimeout ?? DEFAULT_OAUTH_LOGIN_STEP_TIMEOUT_MS,
+    fetchFn: input.fetchFn,
+  });
+
+  return resolveAuthorizationPlan({
+    ...toAuthorizationPlanInput(input),
+    discovery: probe.oauth,
+  });
 }
 
 function mergeDynamicRegistration(
@@ -256,6 +356,7 @@ async function runVerification(
 
 function buildResult(
   config: NormalizedOAuthConformanceConfig,
+  authorizationPlan: ResolvedAuthorizationPlan,
   redirectUrl: string,
   state: OAuthFlowState,
   verification?: VerificationResult,
@@ -266,10 +367,13 @@ function buildResult(
     serverUrl: config.serverUrl,
     protocolVersion: config.protocolVersion,
     registrationStrategy: config.registrationStrategy,
+    protocolMode: authorizationPlan.protocolMode,
+    registrationMode: authorizationPlan.registrationMode,
     authMode: config.auth.mode,
     redirectUrl,
     currentStep: state.currentStep,
     authorizationUrl: state.authorizationUrl,
+    authorizationPlan,
     credentials: {
       clientId: state.clientId,
       clientSecret: state.clientSecret,
@@ -284,17 +388,41 @@ function buildResult(
   };
 }
 
+function buildBlockedPlanResult(
+  input: OAuthLoginConfig,
+  authorizationPlan: ResolvedAuthorizationPlan,
+  state: OAuthFlowState,
+): OAuthLoginResult {
+  const auth = normalizeLoginAuthConfig(input.auth);
+
+  return {
+    completed: false,
+    serverUrl: input.serverUrl.trim(),
+    protocolVersion: authorizationPlan.protocolVersion,
+    registrationStrategy: authorizationPlan.registrationStrategy,
+    protocolMode: authorizationPlan.protocolMode,
+    registrationMode: authorizationPlan.registrationMode,
+    authMode: auth.mode,
+    redirectUrl: input.redirectUrl?.trim() || "",
+    currentStep: state.currentStep,
+    authorizationPlan,
+    credentials: {},
+    error: {
+      message:
+        authorizationPlan.blockers[0] ?? authorizationPlan.summary,
+    },
+    state,
+  };
+}
+
 export async function runOAuthLogin(
   input: OAuthLoginConfig,
   deps: OAuthLoginDependencies = {},
 ): Promise<OAuthLoginResult> {
-  const config = normalizeOAuthConformanceConfig({
-    ...input,
-    oauthConformanceChecks: false,
-  });
   let state = cloneEmptyFlowState();
   let redirectUrl =
-    config.redirectUrl ?? (deps.createDefaultRedirectUrl ?? createDefaultRedirectUrl)();
+    input.redirectUrl ??
+    (deps.createDefaultRedirectUrl ?? createDefaultRedirectUrl)();
   let interactiveSession: InteractiveAuthorizationSession | undefined;
 
   const updateState = (updates: Partial<OAuthFlowState>) => {
@@ -303,6 +431,27 @@ export async function runOAuthLogin(
   const getState = () => state;
 
   try {
+    const authorizationPlan = await resolveOAuthLoginAuthorizationPlan(input);
+    if (
+      authorizationPlan.status !== "ready" ||
+      !authorizationPlan.registrationStrategy
+    ) {
+      return buildBlockedPlanResult(input, authorizationPlan, state);
+    }
+
+    const config = normalizeOAuthConformanceConfig({
+      ...input,
+      protocolVersion: authorizationPlan.protocolVersion,
+      registrationStrategy: authorizationPlan.registrationStrategy,
+      client: {
+        ...normalizeLoginClientConfig(input.client),
+        ...(authorizationPlan.clientIdMetadataUrl
+          ? { clientIdMetadataUrl: authorizationPlan.clientIdMetadataUrl }
+          : {}),
+      },
+      oauthConformanceChecks: false,
+    });
+
     if (config.auth.mode === "interactive") {
       interactiveSession = await (
         deps.createInteractiveAuthorizationSession ??
@@ -425,6 +574,7 @@ export async function runOAuthLogin(
             : flowResult.state;
         return buildResult(
           config,
+          authorizationPlan,
           redirectUrl,
           resultState,
           undefined,
@@ -437,7 +587,13 @@ export async function runOAuthLogin(
         flowResult.state,
         config.verification,
       );
-      return buildResult(config, redirectUrl, flowResult.state, verification);
+      return buildResult(
+        config,
+        authorizationPlan,
+        redirectUrl,
+        flowResult.state,
+        verification,
+      );
     }
 
     const machine = createOAuthStateMachine(machineConfig);
@@ -453,6 +609,7 @@ export async function runOAuthLogin(
         if (!state.authorizationServerMetadata?.token_endpoint) {
           return buildResult(
             config,
+            authorizationPlan,
             redirectUrl,
             state,
             undefined,
@@ -466,6 +623,7 @@ export async function runOAuthLogin(
         ) {
           return buildResult(
             config,
+            authorizationPlan,
             redirectUrl,
             state,
             undefined,
@@ -505,6 +663,7 @@ export async function runOAuthLogin(
         } catch (error) {
           return buildResult(
             config,
+            authorizationPlan,
             redirectUrl,
             state,
             undefined,
@@ -519,6 +678,7 @@ export async function runOAuthLogin(
       } catch (error) {
         return buildResult(
           config,
+          authorizationPlan,
           redirectUrl,
           state,
           undefined,
@@ -529,6 +689,7 @@ export async function runOAuthLogin(
       if (state.currentStep === startStep) {
         return buildResult(
           config,
+          authorizationPlan,
           redirectUrl,
           state,
           undefined,
@@ -540,6 +701,7 @@ export async function runOAuthLogin(
     if (guard >= 40 && state.currentStep !== "complete") {
       return buildResult(
         config,
+        authorizationPlan,
         redirectUrl,
         state,
         undefined,
@@ -555,7 +717,13 @@ export async function runOAuthLogin(
       state,
       config.verification,
     );
-    return buildResult(config, redirectUrl, state, verification);
+    return buildResult(
+      config,
+      authorizationPlan,
+      redirectUrl,
+      state,
+      verification,
+    );
   } finally {
     await interactiveSession?.stop().catch(() => undefined);
   }

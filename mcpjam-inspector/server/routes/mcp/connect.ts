@@ -1,97 +1,17 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { HOSTED_MODE } from "../../config";
+import {
+  executeLocalServerConnect,
+  parseLocalConnectRequestBody,
+  respondWithLocalRouteError,
+} from "../../utils/local-server-resolver.js";
 
 const connect = new Hono();
 
 connect.post("/", async (c) => {
+  let body: unknown;
   try {
-    const { serverConfig, serverId } = await c.req.json();
-
-    if (!serverConfig) {
-      return c.json(
-        {
-          success: false,
-          error: "serverConfig is required",
-        },
-        400,
-      );
-    }
-
-    if (!serverId) {
-      return c.json(
-        {
-          success: false,
-          error: "serverId is required",
-        },
-        400,
-      );
-    }
-
-    if (serverConfig.url) {
-      if (typeof serverConfig.url === "string") {
-        serverConfig.url = new URL(serverConfig.url);
-      } else if (
-        typeof serverConfig.url === "object" &&
-        serverConfig.url.href
-      ) {
-        serverConfig.url = new URL(serverConfig.url.href);
-      }
-    }
-
-    // Block STDIO connections in hosted mode (security: prevents RCE)
-    if (HOSTED_MODE && serverConfig.command) {
-      return c.json(
-        {
-          success: false,
-          error: "STDIO transport is disabled in the web app",
-        },
-        403,
-      );
-    }
-
-    // Enforce HTTPS in hosted mode
-    if (HOSTED_MODE && serverConfig.url) {
-      if (serverConfig.url.protocol !== "https:") {
-        return c.json(
-          {
-            success: false,
-            error:
-              "HTTPS is required in the web app. Please use an https:// URL.",
-          },
-          400,
-        );
-      }
-    }
-
-    const mcpClientManager = c.mcpClientManager;
-    try {
-      // Disconnect first if already connected to avoid "already connected" errors
-      await mcpClientManager.disconnectServer(serverId);
-      await mcpClientManager.connectToServer(serverId, serverConfig);
-      return c.json({
-        success: true,
-        status: "connected",
-      });
-    } catch (error) {
-      try {
-        await mcpClientManager.removeServer(serverId);
-      } catch (cleanupError) {
-        console.debug(
-          `Failed to remove MCP server ${serverId} after connection failure`,
-          cleanupError,
-        );
-      }
-
-      return c.json(
-        {
-          success: false,
-          error: `Connection failed for server ${serverId}: ${error instanceof Error ? error.message : "Unknown error"}`,
-          details: error instanceof Error ? error.message : "Unknown error",
-        },
-        500,
-      );
-    }
+    body = await c.req.json();
   } catch (error) {
     return c.json(
       {
@@ -102,6 +22,15 @@ connect.post("/", async (c) => {
       400,
     );
   }
+
+  const parsed = parseLocalConnectRequestBody(c, body);
+  if (!parsed.ok) {
+    return respondWithLocalRouteError(c, parsed.error);
+  }
+
+  // First-time connects: clean up the manager entry on failure so a doomed
+  // entry doesn't shadow subsequent connects under the same display name.
+  return executeLocalServerConnect(c, parsed.params, { removeOnFailure: true });
 });
 
 export default connect;

@@ -88,18 +88,23 @@ export function PromptsPopover({
   const [isSkillUploadDialogOpen, setIsSkillUploadDialogOpen] = useState(false);
   const skillsEnabled = Boolean(onSkillSelected);
 
+  // Depend on a stable signature so reference-only changes from the parent
+  // don't refire this fetch (each fetch spins up a per-request MCPClientManager
+  // on the hosted backend → fresh handshake).
+  const selectedServersSignature = (selectedServers ?? []).join("\u0000");
   useEffect(() => {
-    // In shared/minimal mode, skip prompts fetch (workspace-member-only endpoint)
+    // In shared/minimal mode, skip prompts fetch (project-member-only endpoint)
     if (minimalMode) return;
 
-    // Fetch prompts for selected servers
+    const servers = selectedServersSignature
+      ? selectedServersSignature.split("\u0000")
+      : [];
+    if (servers.length === 0) return;
+
     let active = true;
     (async () => {
       try {
-        if (!selectedServers || selectedServers.length === 0) {
-          return;
-        }
-        const { prompts } = await listPromptsForServers(selectedServers);
+        const { prompts } = await listPromptsForServers(servers);
         const promptListItems: PromptListItem[] = [];
         for (const serverId of Object.keys(prompts)) {
           const serverPrompts = prompts[serverId];
@@ -122,7 +127,7 @@ export function PromptsPopover({
     return () => {
       active = false;
     };
-  }, [selectedServers, minimalMode]);
+  }, [selectedServersSignature, minimalMode]);
 
   // Fetch skills count for navigation (only when skills UI is enabled)
   useEffect(() => {

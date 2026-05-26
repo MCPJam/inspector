@@ -1,30 +1,80 @@
-import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
-import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
+import { HOSTED_MODE } from "@/lib/config";
+import type { ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
 import type { PromptTurn } from "@/shared/prompt-turns";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 
-type TestCaseRunOverrides = Pick<
-  EvalCase,
-  | "query"
-  | "expectedToolCalls"
-  | "isNegativeTest"
-  | "runs"
-  | "expectedOutput"
-  | "advancedConfig"
+/**
+ * Per-Run hostConfig override shape sent in the request. Subset of
+ * `HostConfigInputV2` — only fields the server records on the iteration
+ * snapshot. Model / system / temperature stay on `advancedConfig`.
+ */
+export type HostConfigRunOverride = {
+  hostStyle?: string;
+  hostContext?: Record<string, unknown>;
+  clientCapabilities?: Record<string, unknown>;
+  hostCapabilitiesOverride?: Record<string, unknown>;
+  chatUiOverride?: Record<string, unknown>;
+  mcpProfile?: Record<string, unknown>;
+  connectionDefaults?: {
+    headers?: Record<string, string>;
+    requestTimeout?: number;
+  };
+};
+
+/**
+ * Project a `HostConfigInputV2` into the request-shape subset. Strips
+ * model / system / temperature / requireToolApproval / serverIds because
+ * those are routed through `advancedConfig` and the suite environment.
+ */
+export function projectHostConfigRunOverride(
+  input: HostConfigInputV2,
+): HostConfigRunOverride {
+  return {
+    hostStyle: input.hostStyle,
+    hostContext: input.hostContext,
+    clientCapabilities: input.clientCapabilities,
+    hostCapabilitiesOverride: input.hostCapabilitiesOverride,
+    chatUiOverride: input.chatUiOverride as
+      | Record<string, unknown>
+      | undefined,
+    mcpProfile: input.mcpProfile as Record<string, unknown> | undefined,
+    connectionDefaults: input.connectionDefaults,
+  };
+}
+
+type TestCaseRunOverrides = Partial<
+  Pick<
+    EvalCase,
+    | "query"
+    | "expectedToolCalls"
+    | "isNegativeTest"
+    | "runs"
+    | "expectedOutput"
+    | "advancedConfig"
+    | "matchOptions"
+  >
 >;
 type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
   promptTurns?: PromptTurn[];
 };
 
 interface PrepareSingleTestCaseRunParams {
-  workspaceId: string | null;
+  projectId: string | null;
   suite: Pick<EvalSuite, "environment">;
   testCase: Pick<EvalCase, "_id" | "models">;
   getAccessToken: () => Promise<string | null>;
-  getToken: (provider: keyof ProviderTokens) => string | null | undefined;
-  hasToken: (provider: keyof ProviderTokens) => boolean;
   selectedModel?: string | null;
   testCaseOverrides?: TestCaseRunOverridesWithTurns;
+  /** One-off run override; does not persist on the case. */
+  matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * One-off hostConfig override for this Run. Edited via the test case
+   * host header; recorded on the iteration snapshot. Subset of
+   * `HostConfigInputV2` — see `projectHostConfigRunOverride`.
+   */
+  hostConfigOverride?: HostConfigRunOverride;
 }
 
 export interface TestCaseModelOption {
@@ -32,6 +82,7 @@ export interface TestCaseModelOption {
   label: string;
   provider: string;
   model: string;
+  customProviderName?: string;
 }
 
 const TEST_CASE_MODEL_SELECTION_STORAGE_PREFIX =
@@ -62,6 +113,9 @@ export function buildTestCaseModelOptions(
       label: availableModel.name,
       provider: availableModel.provider,
       model: String(availableModel.id),
+      ...(availableModel.customProviderName
+        ? { customProviderName: availableModel.customProviderName }
+        : {}),
     });
   }
 
@@ -142,14 +196,14 @@ export function resolveSelectedTestCaseModelValue(params: {
 }
 
 export async function prepareSingleTestCaseRun({
-  workspaceId,
+  projectId,
   suite,
   testCase,
   getAccessToken,
-  getToken,
-  hasToken,
   selectedModel,
   testCaseOverrides,
+  matchOptionsOverride,
+  hostConfigOverride,
 }: PrepareSingleTestCaseRunParams) {
   const modelValue =
     selectedModel ?? getDefaultTestCaseModelValue(testCase) ?? null;
@@ -165,34 +219,20 @@ export async function prepareSingleTestCaseRun({
     throw new Error("Invalid model selection");
   }
 
-  const modelApiKeys: Record<string, string> = {};
-
-  if (!isMCPJamProvidedModel(model, provider)) {
-    const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-    if (!hasToken(tokenKey)) {
-      throw new Error(
-        `Please add your ${provider} API key in Settings before running this test`,
-      );
-    }
-
-    const key = getToken(tokenKey);
-    if (key) {
-      modelApiKeys[provider] = key;
-    }
-  }
+  const convexAuthToken = HOSTED_MODE ? null : await getAccessToken();
 
   return {
     modelValue,
     request: {
-      workspaceId,
+      projectId,
       testCaseId: testCase._id,
       model,
       provider,
       serverIds: suite.environment?.servers || [],
-      modelApiKeys:
-        Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-      convexAuthToken: await getAccessToken(),
+      convexAuthToken,
       testCaseOverrides,
+      matchOptionsOverride,
+      hostConfigOverride,
     },
   };
 }

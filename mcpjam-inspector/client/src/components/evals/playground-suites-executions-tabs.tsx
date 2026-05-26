@@ -1,17 +1,17 @@
 import { cn } from "@/lib/utils";
 
-export type PlaygroundWorkspaceBrowse = "suites" | "executions";
+export type PlaygroundProjectBrowse = "suites" | "executions";
 
 export function PlaygroundSuitesExecutionsTabs({
   value,
   onChange,
   className,
 }: {
-  value: PlaygroundWorkspaceBrowse;
-  onChange: (value: PlaygroundWorkspaceBrowse) => void;
+  value: PlaygroundProjectBrowse;
+  onChange: (value: PlaygroundProjectBrowse) => void;
   className?: string;
 }) {
-  const item = (next: PlaygroundWorkspaceBrowse, label: string) => {
+  const item = (next: PlaygroundProjectBrowse, label: string) => {
     const active = value === next;
     return (
       <button

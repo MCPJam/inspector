@@ -6,7 +6,6 @@ import {
   DynamicToolUIPart,
 } from "ai";
 import type { UIMessage } from "@ai-sdk/react";
-import { isUIResource } from "@mcp-ui/client";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -46,9 +45,20 @@ type ToolStateMeta = {
   className: string;
 };
 
+// Hidden internal messages: widget-state-* and model-context-* are injected
+// for the model but never rendered. Both `MessageView` and the sender-avatar
+// coalescing scan in `TranscriptThread` must skip them so an injected
+// `model-context-*` (role: "user") between two visible prompts from the same
+// person doesn't break coalescing.
+export function isHiddenInternalMessage(message: UIMessage): boolean {
+  return (
+    message.id?.startsWith("widget-state-") === true ||
+    message.id?.startsWith("model-context-") === true
+  );
+}
+
 export function isRenderableConversationMessage(message: UIMessage): boolean {
-  if (message.id?.startsWith("widget-state-")) return false;
-  if (message.id?.startsWith("model-context-")) return false;
+  if (isHiddenInternalMessage(message)) return false;
   return message.role === "user" || message.role === "assistant";
 }
 
@@ -148,17 +158,6 @@ export function getToolInfo(
     rawOutput,
     errorText: toolPart.errorText ?? toolPart.error,
   };
-}
-
-export function extractUIResource(
-  toolResult: unknown,
-): { resource: McpResource } | null {
-  const content =
-    (toolResult as { value?: { content?: unknown[] } })?.value?.content ??
-    (toolResult as { content?: unknown[] })?.content;
-  if (!Array.isArray(content)) return null;
-  const found = content.find((item) => isUIResource(item as any));
-  return (found as { resource: McpResource } | undefined) ?? null;
 }
 
 export function isDataPart(part: AnyPart): boolean {

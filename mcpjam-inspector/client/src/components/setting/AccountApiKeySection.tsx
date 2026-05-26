@@ -34,7 +34,6 @@ type CopyFieldProps = {
   value: string;
   isCopied: boolean;
   onCopy: () => void;
-  copyLabel: string;
   tooltip?: string;
 };
 
@@ -42,7 +41,6 @@ function ApiKeyCopyField({
   value,
   isCopied,
   onCopy,
-  copyLabel,
   tooltip = "Copy to clipboard",
 }: CopyFieldProps) {
   return (
@@ -78,13 +76,13 @@ function ApiKeyCopyField({
 }
 
 type AccountApiKeySectionProps = {
-  workspaceId: string | null;
-  workspaceName: string | null;
+  projectId: string | null;
+  projectName: string | null;
 };
 
 export function AccountApiKeySection({
-  workspaceId,
-  workspaceName,
+  projectId,
+  projectName,
 }: AccountApiKeySectionProps) {
   const [apiKeyPlaintext, setApiKeyPlaintext] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -98,11 +96,11 @@ export function AccountApiKeySection({
 
   const maybeApiKey = useQuery(
     "apiKeys:list" as any,
-    workspaceId ? ({ workspaceId } as any) : "skip",
+    projectId ? ({ projectId } as any) : "skip",
   ) as
     | {
         _id: string;
-        workspaceId?: string;
+        projectId?: string;
         name: string;
         prefix: string;
         createdAt: number;
@@ -113,11 +111,11 @@ export function AccountApiKeySection({
 
   const regenerateAndGet = useMutation(
     "apiKeys:regenerateAndGet" as any,
-  ) as unknown as (args: { workspaceId?: string }) => Promise<{
+  ) as unknown as (args: { projectId?: string }) => Promise<{
     apiKey: string;
     key: {
       _id: string;
-      workspaceId?: string;
+      projectId?: string;
       prefix: string;
       name: string;
       createdAt: number;
@@ -140,11 +138,11 @@ export function AccountApiKeySection({
   };
 
   const handleGenerate = async () => {
-    if (!isAuthenticated || !workspaceId) return false;
+    if (!isAuthenticated || !projectId) return false;
     try {
       setIsGenerating(true);
       setIsCopied(false);
-      const result = await regenerateAndGet({ workspaceId });
+      const result = await regenerateAndGet({ projectId });
       setApiKeyPlaintext(result.apiKey);
       setIsApiKeyModalOpen(true);
       return true;
@@ -159,7 +157,7 @@ export function AccountApiKeySection({
   if (isAuthLoading) {
     return (
       <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
-        <span className="text-sm text-muted-foreground">Workspace API Key</span>
+        <span className="text-sm text-muted-foreground">Project API Key</span>
         <span className="text-sm text-muted-foreground">Checking…</span>
       </div>
     );
@@ -168,7 +166,7 @@ export function AccountApiKeySection({
   if (!isAuthenticated) {
     return (
       <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
-        <span className="text-sm text-muted-foreground">Workspace API Key</span>
+        <span className="text-sm text-muted-foreground">Project API Key</span>
         <Button
           type="button"
           onClick={() => {
@@ -187,11 +185,11 @@ export function AccountApiKeySection({
     );
   }
 
-  if (!workspaceId) {
+  if (!projectId) {
     return (
       <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
         <span className="text-sm text-muted-foreground">
-          Select a workspace to manage API keys.
+          Select a project to manage API keys.
         </span>
       </div>
     );
@@ -244,7 +242,7 @@ export function AccountApiKeySection({
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle className="text-lg font-semibold">
-                Regenerate Workspace API Key?
+                Regenerate Project API Key?
               </AlertDialogTitle>
               <AlertDialogDescription className="text-sm text-muted-foreground leading-relaxed">
                 This will immediately invalidate your current API key. Any
@@ -284,11 +282,11 @@ export function AccountApiKeySection({
       <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
         <div className="flex flex-col">
           <span className="text-sm text-muted-foreground">
-            Workspace API Key
-            {workspaceName ? ` · ${workspaceName}` : ""}
+            Project API Key
+            {projectName ? ` · ${projectName}` : ""}
           </span>
           <span className="text-muted-foreground text-xs">
-            Shared with all workspace members.
+            Shared with all project members.
           </span>
         </div>
         <span className="text-sm">{rightSide}</span>
@@ -307,8 +305,8 @@ export function AccountApiKeySection({
           <DialogHeader>
             <DialogTitle>API Key</DialogTitle>
             <DialogDescription>
-              {workspaceName
-                ? `This key belongs to ${workspaceName}. Copy and store it securely. You will not be able to view it again.`
+              {projectName
+                ? `This key belongs to ${projectName}. Copy and store it securely. You will not be able to view it again.`
                 : "Copy and store this key securely. You will not be able to view it again."}
             </DialogDescription>
           </DialogHeader>
@@ -316,7 +314,6 @@ export function AccountApiKeySection({
             value={apiKeyPlaintext ?? ""}
             isCopied={isCopied}
             onCopy={handleCopyPlaintext}
-            copyLabel="Copy"
           />
         </DialogContent>
       </Dialog>

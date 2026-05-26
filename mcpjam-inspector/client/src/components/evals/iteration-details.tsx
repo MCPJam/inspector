@@ -1,6 +1,8 @@
 import { useAction } from "convex/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
+import { evaluateToolCalls } from "@/shared/eval-matching";
+import { ToolCallDiff } from "./tool-call-diff";
 import { TraceViewer } from "./trace-viewer";
 import {
   MessageSquare,
@@ -11,7 +13,11 @@ import {
   AlertCircle,
   Loader2,
 } from "lucide-react";
-import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
+import {
+  ToolServerMap,
+  listTools,
+  type ListToolsResultWithMetadata,
+} from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
   Collapsible,
@@ -324,12 +330,7 @@ export function IterationDetails({
     serverNames.forEach((serverId) => {
       void listTools({ serverId })
         .then(
-          (
-            result: ToolServerMap & {
-              tools?: Array<{ name: string; inputSchema?: any }>;
-              toolsMetadata?: Record<string, unknown>;
-            },
-          ) => {
+          (result: ListToolsResultWithMetadata) => {
             if (cancelled) return;
 
             setConnectedServerIds((prev) =>
@@ -593,6 +594,23 @@ export function IterationDetails({
     actualToolCalls,
   );
 
+  /**
+   * Categorized diff rendered above the raw Expected/Actual grids. We only
+   * render the component when it would have something to say (mismatches /
+   * extras / out-of-order) — `ToolCallDiff` itself returns null otherwise.
+   */
+  const toolCallDiffResult = useMemo(
+    () =>
+      evaluateToolCalls(expectedToolCalls, actualToolCalls, {
+        isNegativeTest: iteration.testCaseSnapshot?.isNegativeTest,
+      }),
+    [
+      expectedToolCalls,
+      actualToolCalls,
+      iteration.testCaseSnapshot?.isNegativeTest,
+    ],
+  );
+
   const toolCallsGrids =
     toolViewMode === "raw" ? (
       <div className="grid gap-3 md:grid-cols-2">
@@ -738,6 +756,11 @@ export function IterationDetails({
                 className="space-y-2"
                 data-testid="iteration-tool-calls-grid"
               >
+                <ToolCallDiff
+                  result={toolCallDiffResult}
+                  expectedToolCalls={expectedToolCalls}
+                  actualToolCalls={actualToolCalls}
+                />
                 {toolCallsGrids}
               </div>
             </CollapsibleContent>
@@ -749,7 +772,14 @@ export function IterationDetails({
             <div className="text-xs font-semibold">Tool Calls</div>
             {formattedRawToggle}
           </div>
-          <div data-testid="iteration-tool-calls-grid">{toolCallsGrids}</div>
+          <div data-testid="iteration-tool-calls-grid">
+            <ToolCallDiff
+              result={toolCallDiffResult}
+              expectedToolCalls={expectedToolCalls}
+              actualToolCalls={actualToolCalls}
+            />
+            {toolCallsGrids}
+          </div>
         </div>
       )
     ) : null;

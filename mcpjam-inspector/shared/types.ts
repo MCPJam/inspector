@@ -126,6 +126,8 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-pro",
   "openai/gpt-5.4-nano",
+  "openai/gpt-5.5",
+  "openai/gpt-5.5-pro",
   "openai/gpt-5.3-codex",
   "openai/gpt-5.3-chat",
   "moonshotai/kimi-k2-thinking",
@@ -137,6 +139,8 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "google/gemma-4-31b-it",
   "x-ai/grok-code-fast-1",
   "deepseek/deepseek-v3.2",
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash",
   "google/gemini-3-flash-preview",
   "meta-llama/llama-4-scout",
   "moonshotai/kimi-k2.5",
@@ -162,6 +166,10 @@ const MCPJAM_GUEST_GATED_MODEL_IDS = [
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
   "openai/gpt-5.4-pro",
+  "openai/gpt-5.5",
+  "openai/gpt-5.5-pro",
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash",
   "anthropic/claude-opus-4.6-fast",
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-opus-4.6",
@@ -532,6 +540,8 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   freeModel("openai/gpt-5.4-mini", "GPT-5.4 Mini", "openai"),
   freeModel("openai/gpt-5.4-pro", "GPT-5.4 Pro", "openai"),
   freeModel("openai/gpt-5.4-nano", "GPT-5.4 Nano", "openai"),
+  freeModel("openai/gpt-5.5", "GPT-5.5", "openai"),
+  freeModel("openai/gpt-5.5-pro", "GPT-5.5 Pro", "openai"),
   freeModel("openai/gpt-5.3-codex", "GPT-5.3 Codex", "openai"),
   freeModel("openai/gpt-5.3-chat", "GPT-5.3 Chat", "openai"),
   {
@@ -576,6 +586,8 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "deepseek",
     contextLength: 128000,
   },
+  freeModel("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek"),
+  freeModel("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek"),
   {
     id: "google/gemini-3-flash-preview",
     name: "Gemini 3 Flash Preview (Free)",
@@ -727,6 +739,18 @@ export const isModelSupported = (id: string): boolean => {
   return SUPPORTED_MODELS.some((model) => model.id === id);
 };
 
+export type ServerFormOAuthProtocolMode =
+  | "auto"
+  | "2025-03-26"
+  | "2025-06-18"
+  | "2025-11-25";
+
+export type ServerFormOAuthRegistrationMode =
+  | "auto"
+  | "cimd"
+  | "dcr"
+  | "preregistered";
+
 export interface ServerFormData {
   name: string;
   type: "stdio" | "http";
@@ -735,16 +759,21 @@ export interface ServerFormData {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
+  clientCapabilities?: Record<string, unknown>;
   useOAuth?: boolean;
+  oauthProtocolMode?: ServerFormOAuthProtocolMode;
+  oauthRegistrationMode?: ServerFormOAuthRegistrationMode;
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret?: boolean;
+  clearClientSecret?: boolean;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */
   useRegistryOAuthProxy?: boolean;
   requestTimeout?: number;
-  /** Convex _id of the registry server for workspace/registry bookkeeping */
+  /** Convex _id of the registry server for project/registry bookkeeping */
   registryServerId?: string;
 }
 

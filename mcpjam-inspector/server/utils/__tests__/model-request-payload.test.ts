@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { buildResolvedModelRequestPayload } from "../model-request-payload";
+import {
+  buildResolvedModelRequestPayload,
+  normalizeSystemPromptForProvider,
+} from "../model-request-payload";
 
 describe("buildResolvedModelRequestPayload", () => {
   it("returns the normalized request payload shape", () => {
@@ -169,5 +172,19 @@ describe("buildResolvedModelRequestPayload", () => {
         },
       },
     });
+  });
+});
+
+describe("normalizeSystemPromptForProvider", () => {
+  it("omits empty or whitespace-only system prompts", () => {
+    expect(normalizeSystemPromptForProvider("")).toBeUndefined();
+    expect(normalizeSystemPromptForProvider("   \n\t")).toBeUndefined();
+    expect(normalizeSystemPromptForProvider(undefined)).toBeUndefined();
+  });
+
+  it("preserves non-empty system prompts without trimming content", () => {
+    expect(normalizeSystemPromptForProvider("  You are helpful.  ")).toBe(
+      "  You are helpful.  "
+    );
   });
 });

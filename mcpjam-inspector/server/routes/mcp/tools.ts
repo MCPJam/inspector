@@ -134,19 +134,27 @@ tools.post("/list", async (c) => {
       return c.json({ error: "serverId is required" }, 400);
     }
 
-    // Normalize serverId - try to find a case-insensitive match if exact match fails
+    // Normalize serverId - try to find a case-insensitive match if exact match
+    // fails. Match against all registered servers (not just live-clients) so
+    // a server that's still mid-connect can still be resolved.
     let normalizedServerId = serverId;
-    const availableServers = c.mcpClientManager
-      .listServers()
-      .filter((id: string) => Boolean(c.mcpClientManager.getClient(id)));
+    const registeredServers = c.mcpClientManager.listServers();
 
-    if (!availableServers.includes(serverId)) {
-      const match = availableServers.find(
+    if (!registeredServers.includes(serverId)) {
+      const match = registeredServers.find(
         (name: string) => name.toLowerCase() === serverId.toLowerCase(),
       );
       if (match) {
         normalizedServerId = match;
       }
+    }
+
+    // Only bail out for truly unknown ids (e.g. stale chatbox refs) so we
+    // don't 500 the metadata fetch. Registered-but-still-connecting ids fall
+    // through to the SDK path, which awaits the in-flight connectPromise and
+    // returns the real tools.
+    if (!registeredServers.includes(normalizedServerId)) {
+      return c.json({ tools: [], toolsMetadata: {}, tokenCount: undefined });
     }
 
     return c.json(
@@ -178,8 +186,14 @@ tools.post("/execute", async (c) => {
   if (!toolName) return c.json({ error: "toolName is required" }, 400);
 
   const manager = c.mcpClientManager;
-  const client = manager.getClient(serverId);
-  if (!client) {
+  // `getClient()` is legacy-only — it returns the unwrapped upstream
+  // `Client` (or `undefined` for stateless preview connections, which
+  // wrap their own fetch instead of an upstream Client). Use
+  // `getManagedClient()` here so the guard works for both adapters; the
+  // actual execution at `manager.executeTool` already goes through
+  // `getClientOrThrow` which reads from the same managed-client map.
+  const managedClient = manager.getManagedClient(serverId);
+  if (!managedClient) {
     return c.json({ error: `Server '${serverId}' is not connected` }, 400);
   }
 

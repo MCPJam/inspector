@@ -5,7 +5,7 @@ import { AGENT_SYSTEM_PROMPT as NEGATIVE_TEST_AGENT_SYSTEM_PROMPT } from "../neg
 describe("eval prompt policy", () => {
   it("keeps normal test generation attributable and discovery-backed", () => {
     expect(EVAL_AGENT_SYSTEM_PROMPT).toContain(
-      "Do not write long tests that rely on fake names, ids, places, premium-only assumptions, or other unestablished workspace fixtures",
+      "Do not write long tests that rely on fake names, ids, places, premium-only assumptions, or other unestablished project fixtures",
     );
     expect(EVAL_AGENT_SYSTEM_PROMPT).toContain(
       "Prefer shorter tests that first resolve the live entity they act on",
@@ -32,7 +32,7 @@ describe("eval prompt policy", () => {
       "Prefer short, clearly non-actionable prompts over long synthetic workflows",
     );
     expect(NEGATIVE_TEST_AGENT_SYSTEM_PROMPT).toContain(
-      "Do not make a case negative merely because it depends on fake workspace entities",
+      "Do not make a case negative merely because it depends on fake project entities",
     );
   });
 });

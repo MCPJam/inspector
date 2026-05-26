@@ -3,7 +3,7 @@ import { createWebTestApp, expectJson, postJson } from "./helpers/test-app.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
-describe("web routes — chatboxes bootstrap", () => {
+describe("web routes — chatboxes redeem", () => {
   const { app, token } = createWebTestApp();
 
   beforeEach(() => {
@@ -24,19 +24,17 @@ describe("web routes — chatboxes bootstrap", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        new Response("No matching routes found", {
+        new Response(JSON.stringify({ ok: false, error: "missing route" }), {
           status: 404,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-          },
+          headers: { "Content-Type": "application/json" },
         }),
       ),
     );
 
     const response = await postJson(
       app,
-      "/api/web/chatboxes/bootstrap",
-      { token: "chatbox-link-token" },
+      "/api/web/chatboxes/redeem",
+      { chatboxToken: "chatbox-link-token" },
       token,
     );
     const { status, data } = await expectJson<{
@@ -46,21 +44,23 @@ describe("web routes — chatboxes bootstrap", () => {
 
     expect(status).toBe(404);
     expect(data.code).toBe("NOT_FOUND");
-    expect(data.message).toContain("does not expose /chatbox/bootstrap");
   });
 
-  it("returns a timeout error when chatbox bootstrap aborts", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(
-      Object.assign(new Error("The operation was aborted"), {
-        name: "AbortError",
-      }),
+  it("maps an upstream 429 to RATE_LIMITED (not UNAUTHORIZED)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: false, error: "slow down" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
     );
-    vi.stubGlobal("fetch", fetchMock);
 
     const response = await postJson(
       app,
-      "/api/web/chatboxes/bootstrap",
-      { token: "chatbox-link-token" },
+      "/api/web/chatboxes/redeem",
+      { chatboxToken: "chatbox-link-token" },
       token,
     );
     const { status, data } = await expectJson<{
@@ -68,34 +68,59 @@ describe("web routes — chatboxes bootstrap", () => {
       message: string;
     }>(response);
 
-    expect(status).toBe(504);
-    expect(data).toEqual({
-      code: "SERVER_UNREACHABLE",
-      message: "Chatbox bootstrap service timed out",
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://test-deployment.convex.site/chatbox/bootstrap",
-      expect.objectContaining({
-        signal: expect.any(AbortSignal),
-      }),
-    );
+    expect(status).toBe(429);
+    expect(data.code).toBe("RATE_LIMITED");
   });
 
-  it("returns the chatbox bootstrap payload on success", async () => {
+  it("coerces 2xx with ok:false to a 502 instead of leaking a misleading 200", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ ok: false, error: "upstream contract violation" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/chatboxes/redeem",
+      { chatboxToken: "chatbox-link-token" },
+      token,
+    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(502);
+    expect(data.code).toBe("SERVER_UNREACHABLE");
+  });
+
+  it("returns the redeem payload on success", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
             ok: true,
-            payload: {
-              workspaceId: "ws_1",
+            chatboxId: "sbx_1",
+            role: "chat",
+            mode: "invited_only",
+            projectId: "ws_1",
+            accessVersion: 3,
+            bootstrap: {
+              projectId: "ws_1",
               chatboxId: "sbx_1",
               name: "Host Styled Chatbox",
               hostStyle: "chatgpt",
               mode: "invited_only",
               allowGuestAccess: false,
-              viewerIsWorkspaceMember: true,
+              viewerIsProjectMember: true,
               systemPrompt: "You are helpful.",
               modelId: "openai/gpt-5-mini",
               temperature: 0.4,
@@ -105,9 +130,7 @@ describe("web routes — chatboxes bootstrap", () => {
           }),
           {
             status: 200,
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
           },
         ),
       ),
@@ -115,23 +138,27 @@ describe("web routes — chatboxes bootstrap", () => {
 
     const response = await postJson(
       app,
-      "/api/web/chatboxes/bootstrap",
-      { token: "chatbox-link-token" },
+      "/api/web/chatboxes/redeem",
+      { chatboxToken: "chatbox-link-token" },
       token,
     );
     const { status, data } = await expectJson<{
-      workspaceId: string;
       chatboxId: string;
-      name: string;
-      hostStyle: string;
+      role: string;
+      mode: string;
+      projectId: string;
+      accessVersion: number;
+      bootstrap: { name: string };
     }>(response);
 
     expect(status).toBe(200);
     expect(data).toMatchObject({
-      workspaceId: "ws_1",
       chatboxId: "sbx_1",
-      name: "Host Styled Chatbox",
-      hostStyle: "chatgpt",
+      role: "chat",
+      mode: "invited_only",
+      projectId: "ws_1",
+      accessVersion: 3,
+      bootstrap: expect.objectContaining({ name: "Host Styled Chatbox" }),
     });
   });
 });

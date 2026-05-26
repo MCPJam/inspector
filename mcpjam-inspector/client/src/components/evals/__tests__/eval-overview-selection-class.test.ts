@@ -6,7 +6,7 @@ function entryWithRun(
   run: NonNullable<EvalSuiteOverviewEntry["latestRun"]>,
 ): EvalSuiteOverviewEntry {
   return {
-    suite: { _id: "s", name: "n", createdBy: "u", workspaceId: "w" } as any,
+    suite: { _id: "s", name: "n", createdBy: "u", projectId: "w" } as any,
     latestRun: run,
     recentRuns: [],
     passRateTrend: [],

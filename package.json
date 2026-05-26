@@ -15,8 +15,9 @@
     "build:inspector": "npm run build -w @mcpjam/inspector",
     "typecheck": "npm run typecheck -w @mcpjam/sdk && npm run build -w @mcpjam/sdk && npm run typecheck -w @mcpjam/cli && npm run typecheck -w @mcpjam/design-system && npm run typecheck -w @mcpjam/mcp",
     "check:mcp-v1-runtime-imports": "! rg -n '@modelcontextprotocol/sdk' sdk/src cli/src mcpjam-inspector/client/src mcpjam-inspector/server -g '!**/dist/**'",
-    "test": "npm run check:mcp-v1-runtime-imports && npm run test:ordered",
-    "test:ordered": "npm run test -w @mcpjam/sdk && npm run test:packaging -w @mcpjam/sdk && npm run test -w @mcpjam/cli && npm run test -w @mcpjam/design-system && npm run test -w @mcpjam/inspector && npm run typecheck -w @mcpjam/mcp",
+    "test": "npm run check:mcp-v1-runtime-imports && npm run build -w @mcpjam/sdk && npm run test:parallel && npm run test:packaging -w @mcpjam/sdk",
+    "test:parallel": "concurrently -n sdk,cli,design,inspector,mcp -c blue,green,yellow,magenta,cyan --kill-others-on-fail \"npm run test -w @mcpjam/sdk\" \"npm run test -w @mcpjam/cli\" \"npm run test -w @mcpjam/design-system\" \"npm run test -w @mcpjam/inspector\" \"npm run test:fast -w @mcpjam/mcp && npm run typecheck:fast -w @mcpjam/mcp\"",
+    "test:ordered": "npm run test -w @mcpjam/sdk && npm run test:packaging -w @mcpjam/sdk && npm run test -w @mcpjam/cli && npm run test -w @mcpjam/design-system && npm run test -w @mcpjam/inspector && npm run test -w @mcpjam/mcp && npm run typecheck -w @mcpjam/mcp",
     "verify": "npm run typecheck && npm run test && npm run build:inspector",
     "release:status": "changeset status",
     "release:version": "changeset version",
@@ -24,7 +25,8 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
-    "@types/dagre": "^0.7.54"
+    "@types/dagre": "^0.7.54",
+    "concurrently": "^9.1.0"
   },
   "dependencies": {
     "react-force-graph-2d": "^1.29.1"
