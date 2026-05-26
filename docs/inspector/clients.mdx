@@ -34,6 +34,14 @@ These map directly to fields the inspector sends during the standard MCP `initia
 
 You can override the request timeout and headers **per server attached to the Client**. This lets a single Client talk to one server with a long timeout and an auth header while keeping defaults for the others.
 
+### Agent behavior
+
+These settings control how the model interacts with tools during a chat session. They appear in the **Agent → Behavior** tab of the Client focus panel.
+
+- **Require tool approval** — When on, the model pauses before each tool call so you can approve or deny it manually. Useful for auditing what your server does before committing to a side effect.
+- **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field on tools. When **on** (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list — only the app can call them. When **off**, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20). The Cursor template sets this to **off** by default so the inspector faithfully mirrors that host's behavior.
+- **Progressive tool discovery** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size and context thresholds.
+
 ### MCP App settings (SEP-1865)
 
 When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
