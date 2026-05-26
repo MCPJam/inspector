@@ -45,6 +45,13 @@ export interface ChatV2Request {
    */
   progressiveToolDiscovery?: boolean;
   /**
+   * SEP-1865 visibility filter switch (see HostConfigInputV2.respectToolVisibility).
+   * Optional — `undefined` means "use the spec default" (filter app-only
+   * tools). The server re-resolves from the persisted host config when
+   * the request is chatbox-bound, so the host value wins.
+   */
+  respectToolVisibility?: boolean;
+  /**
    * Phase 3 read switch: real host style for direct chat traces. When
    * unset, the backend's chatIngestion path defaults to `'claude'` —
    * so existing call sites that don't yet thread this through still

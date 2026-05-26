@@ -60,7 +60,7 @@ class ControlledResizeObserver {
 
   trigger(elements?: Element[]) {
     const targets = (elements ?? Array.from(this.observed)).filter((element) =>
-      this.observed.has(element),
+      this.observed.has(element)
     );
     if (targets.length === 0) return;
 
@@ -73,9 +73,9 @@ class ControlledResizeObserver {
             borderBoxSize: [],
             contentBoxSize: [],
             devicePixelContentBoxSize: [],
-          }) as ResizeObserverEntry,
+          } as ResizeObserverEntry)
       ),
-      this as unknown as ResizeObserver,
+      this as unknown as ResizeObserver
     );
   }
 
@@ -142,7 +142,7 @@ function mockElementRect(
     height: number;
     left?: number;
     width?: number;
-  },
+  }
 ) {
   Object.defineProperty(element, "getBoundingClientRect", {
     configurable: true,
@@ -249,11 +249,11 @@ describe("TranscriptThread", () => {
         {...defaultProps}
         focusMessageId="assistant-1"
         highlightedMessageIds={["assistant-1"]}
-      />,
+      />
     );
 
     const wrapper = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement | null;
     expect(wrapper).not.toBeNull();
     expect(wrapper).toHaveAttribute("data-focused", "true");
@@ -268,20 +268,118 @@ describe("TranscriptThread", () => {
     render(<TranscriptThread {...defaultProps} />);
 
     const wrapper = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement | null;
     expect(wrapper).not.toBeNull();
     expect(wrapper?.style.contentVisibility).toBe("auto");
     expect(wrapper?.style.containIntrinsicSize).toBe("0 160px");
   });
 
+  it("renders app-initiated tool invocations under the owning tool message", () => {
+    render(
+      <TranscriptThread
+        {...defaultProps}
+        messages={[
+          {
+            id: "assistant-tool",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-transparency-test",
+                toolCallId: "call-1",
+                state: "output-available",
+              } as any,
+            ],
+          },
+        ]}
+        appToolInvocations={[
+          {
+            id: "call-1:app-tool:0",
+            parentToolCallId: "call-1",
+            toolName: "transparency-test",
+            input: { value: 1 },
+            output: { content: [{ type: "text", text: "ok" }] },
+            status: "success",
+            startedAt: 1,
+            completedAt: 2,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText("transparency-test")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Data" })).toBeInTheDocument();
+  });
+
+  it("does not render app-initiated tool invocations after their owning tool message is gone", () => {
+    const { rerender } = render(
+      <TranscriptThread
+        {...defaultProps}
+        messages={[
+          {
+            id: "assistant-tool",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-transparency-test",
+                toolCallId: "call-1",
+                state: "output-available",
+              } as any,
+            ],
+          },
+        ]}
+        appToolInvocations={[
+          {
+            id: "call-1:app-tool:0",
+            parentToolCallId: "call-1",
+            toolName: "transparency-test",
+            status: "success",
+            startedAt: 1,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText("transparency-test")).toBeInTheDocument();
+
+    rerender(
+      <TranscriptThread
+        {...defaultProps}
+        messages={[
+          {
+            id: "assistant-other",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-other",
+                toolCallId: "call-2",
+                state: "output-available",
+              } as any,
+            ],
+          },
+        ]}
+        appToolInvocations={[
+          {
+            id: "call-1:app-tool:0",
+            parentToolCallId: "call-1",
+            toolName: "transparency-test",
+            status: "success",
+            startedAt: 1,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.queryByText("transparency-test")).not.toBeInTheDocument();
+  });
+
   it("disables content-visibility containment while a fullscreen widget is active", () => {
     render(
-      <TranscriptThread {...defaultProps} fullscreenWidgetId="tool-call-1" />,
+      <TranscriptThread {...defaultProps} fullscreenWidgetId="tool-call-1" />
     );
 
     const wrapper = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement | null;
     expect(wrapper).not.toBeNull();
     expect(wrapper?.style.contentVisibility).toBe("");
@@ -292,7 +390,7 @@ describe("TranscriptThread", () => {
     render(<TranscriptThread {...defaultProps} pipWidgetId="tool-call-1" />);
 
     const wrapper = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement | null;
     expect(wrapper).not.toBeNull();
     expect(wrapper?.style.contentVisibility).toBe("");
@@ -307,20 +405,20 @@ describe("TranscriptThread", () => {
           isLoading={true}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "assistant-1" }),
         claudeFooterMode: "animated",
-      }),
+      })
     );
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "user-1" }),
         claudeFooterMode: "none",
-      }),
+      })
     );
   });
 
@@ -332,14 +430,14 @@ describe("TranscriptThread", () => {
           isLoading={false}
           lastRenderableMessageId="assistant-1"
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "assistant-1" }),
         claudeFooterMode: "static",
-      }),
+      })
     );
   });
 
@@ -352,11 +450,11 @@ describe("TranscriptThread", () => {
         focusMessageId="assistant-1"
         highlightedMessageIds={["assistant-1"]}
         navigationKey={1}
-      />,
+      />
     );
 
     const target = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement;
     mockElementRect(target, { top: 520, height: 40 });
 
@@ -368,7 +466,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 340,
         behavior: "smooth",
-      }),
+      })
     );
   });
 
@@ -384,13 +482,13 @@ describe("TranscriptThread", () => {
         navigationKey={1}
         viewportRef={viewportRef}
       />,
-      { overflowY: "visible" },
+      { overflowY: "visible" }
     );
 
     viewportRef.current = scrollHost;
 
     const target = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement;
     mockElementRect(target, { top: 520, height: 40 });
 
@@ -403,7 +501,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 340,
         behavior: "smooth",
-      }),
+      })
     );
 
     mockElementRect(target, { top: 420, height: 40 });
@@ -414,7 +512,7 @@ describe("TranscriptThread", () => {
         highlightedMessageIds={["assistant-1"]}
         navigationKey={2}
         viewportRef={viewportRef}
-      />,
+      />
     );
 
     act(() => {
@@ -426,7 +524,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 240,
         behavior: "smooth",
-      }),
+      })
     );
   });
 
@@ -439,11 +537,11 @@ describe("TranscriptThread", () => {
         focusMessageId="assistant-1"
         highlightedMessageIds={["assistant-1"]}
         navigationKey={1}
-      />,
+      />
     );
 
     const target = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement;
     mockElementRect(target, { top: 520, height: 120 });
 
@@ -455,7 +553,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 404,
         behavior: "smooth",
-      }),
+      })
     );
   });
 
@@ -473,11 +571,11 @@ describe("TranscriptThread", () => {
         focusMessageId="assistant-1"
         highlightedMessageIds={["assistant-1"]}
         navigationKey={1}
-      />,
+      />
     );
 
     const target = document.querySelector(
-      '[data-message-id="assistant-1"]',
+      '[data-message-id="assistant-1"]'
     ) as HTMLElement;
     mockElementRect(target, { top: 520, height: 40 });
 
@@ -490,7 +588,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 340,
         behavior: "smooth",
-      }),
+      })
     );
 
     const resizeObserver = ControlledResizeObserver.latest();
@@ -509,7 +607,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 80,
         behavior: "auto",
-      }),
+      })
     );
 
     mockElementRect(target, { top: 300, height: 40 });
@@ -535,7 +633,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 120,
         behavior: "auto",
-      }),
+      })
     );
 
     act(() => {
@@ -550,7 +648,7 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         top: 120,
         behavior: "auto",
-      }),
+      })
     );
 
     act(() => {

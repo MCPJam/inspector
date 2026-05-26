@@ -532,6 +532,19 @@ describe("buildDirectHostConfig", () => {
     expect(undef.requireToolApproval).toBe(false);
   });
 
+  it("includes respectToolVisibility in Convex hostConfig payloads", () => {
+    const config = buildDirectHostConfig({
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "p",
+      resolvedTemperature: 0.7,
+      selectedServerIds: ["x"],
+      requireToolApproval: false,
+      respectToolVisibility: false,
+    });
+
+    expect(config.respectToolVisibility).toBe(false);
+  });
+
   it("defaults hostStyle to 'claude' when omitted (Phase 3 read switch)", () => {
     // Phase 3: legacy `'direct'` is no longer the default. Callers
     // that used to omit hostStyle now get 'claude' so new direct chat

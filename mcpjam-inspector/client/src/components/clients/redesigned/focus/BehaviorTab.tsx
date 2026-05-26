@@ -139,6 +139,19 @@ export function BehaviorTab({
         />
 
         <FieldRow
+          label="Respect tool visibility"
+          control={
+            <Switch
+              checked={draft.respectToolVisibility}
+              onCheckedChange={(checked) =>
+                update({ respectToolVisibility: checked })
+              }
+              aria-label="Respect tool visibility"
+            />
+          }
+        />
+
+        <FieldRow
           label={
             <span className="inline-flex items-center gap-1.5">
               Progressive tools
@@ -166,10 +179,12 @@ export function BehaviorTab({
               </Tooltip>
             </span>
           }
-          // 3-state, not 2-state: the backend reads `undefined` as
-          // "auto" and may enable progressive discovery above catalog/
-          // context thresholds even with no user opt-in. A Switch would
-          // hide that — "Auto" makes the auto-policy state explicit.
+          /**
+           * 3-state, not 2-state: the backend reads `undefined` as
+           * "auto" and may enable progressive discovery above catalog/
+           * context thresholds even with no user opt-in. A Switch would
+           * hide that, so "Auto" makes the auto-policy state explicit.
+           */
           control={
             <ToggleGroup
               type="single"
@@ -199,6 +214,19 @@ export function BehaviorTab({
                 Off
               </ToggleGroupItem>
             </ToggleGroup>
+          }
+        />
+
+        <FieldRow
+          label="Respect tool visibility"
+          control={
+            <Switch
+              checked={draft.respectToolVisibility}
+              onCheckedChange={(checked) =>
+                update({ respectToolVisibility: checked })
+              }
+              aria-label="Respect tool visibility"
+            />
           }
         />
       </FocusBlock>

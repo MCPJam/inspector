@@ -308,6 +308,7 @@ export function MultiModelPlaygroundCard({
     // `undefined` pass through to fall back to the orchestrator's auto
     // policy in that case.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
+    respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);

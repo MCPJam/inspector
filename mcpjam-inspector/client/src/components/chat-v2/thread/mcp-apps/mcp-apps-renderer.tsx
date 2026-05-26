@@ -77,6 +77,7 @@ import { readToolResultMeta } from "@/lib/tool-result-utils";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
+import type { AppToolInvocationUpdate } from "../app-tool-invocations";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
@@ -98,9 +99,7 @@ import {
 } from "@/lib/client-config-v2";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
-import {
-  useWidgetSurfaceStore,
-} from "./widget-surface-store";
+import { useWidgetSurfaceStore } from "./widget-surface-store";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -196,6 +195,7 @@ export interface MCPAppsRendererProps {
     toolName: string,
     params: Record<string, unknown>
   ) => Promise<unknown>;
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   pipWidgetId?: string | null;
   fullscreenWidgetId?: string | null;
@@ -527,6 +527,7 @@ export function MCPAppsRendererSurface({
   toolsMetadata,
   onSendFollowUp,
   onCallTool,
+  onAppToolInvocationChange,
   onWidgetStateChange,
   pipWidgetId,
   fullscreenWidgetId,
@@ -876,8 +877,7 @@ export function MCPAppsRendererSurface({
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
   const displayWidgetId = persistentSurfaceId ?? toolCallId;
   const ownsFullscreenDisplayMode =
-    fullscreenWidgetId === displayWidgetId ||
-    fullscreenWidgetId === toolCallId;
+    fullscreenWidgetId === displayWidgetId || fullscreenWidgetId === toolCallId;
   const ownsPipDisplayMode =
     pipWidgetId === displayWidgetId || pipWidgetId === toolCallId;
   const requestedDisplayMode = useMemo<DisplayMode>(() => {
@@ -887,7 +887,12 @@ export function MCPAppsRendererSurface({
     }
     if (displayMode === "pip" && ownsPipDisplayMode) return "pip";
     return "inline";
-  }, [displayMode, isControlled, ownsFullscreenDisplayMode, ownsPipDisplayMode]);
+  }, [
+    displayMode,
+    isControlled,
+    ownsFullscreenDisplayMode,
+    ownsPipDisplayMode,
+  ]);
   // Clamp the requested display mode against the same intersection
   // that gets advertised in `HostContext.availableDisplayModes` so
   // the runtime mode is always a member of the advertised set. A
@@ -1137,11 +1142,7 @@ export function MCPAppsRendererSurface({
     setWidgetPermissions(undefined);
     setWidgetPermissive(isCachedReplay ? true : false);
     setPrefersBorder(cachedReplayPrefersBorder ?? true);
-  }, [
-    cachedReplayWidgetHtmlUrl,
-    cachedReplayPrefersBorder,
-    isCachedReplay,
-  ]);
+  }, [cachedReplayWidgetHtmlUrl, cachedReplayPrefersBorder, isCachedReplay]);
 
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
@@ -1216,6 +1217,8 @@ export function MCPAppsRendererSurface({
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
+  const onAppToolInvocationChangeRef = useRef(onAppToolInvocationChange);
+  const appToolInvocationSequenceRef = useRef(0);
   const onRequestPipRef = useRef(onRequestPip);
   const onExitPipRef = useRef(onExitPip);
   const onRequestTeardownRef = useRef(onRequestTeardown);
@@ -2619,6 +2622,7 @@ export function MCPAppsRendererSurface({
   useLayoutEffect(() => {
     onSendFollowUpRef.current = onSendFollowUp;
     onCallToolRef.current = onCallTool;
+    onAppToolInvocationChangeRef.current = onAppToolInvocationChange;
     onRequestPipRef.current = onRequestPip;
     onExitPipRef.current = onExitPip;
     setDisplayModeRef.current = setDisplayMode;
@@ -2638,6 +2642,7 @@ export function MCPAppsRendererSurface({
   }, [
     onSendFollowUp,
     onCallTool,
+    onAppToolInvocationChange,
     onRequestPip,
     onExitPip,
     setDisplayMode,
@@ -2816,23 +2821,64 @@ export function MCPAppsRendererSurface({
             throw error;
           }
 
+          const invocationInput = (args ?? {}) as Record<string, unknown>;
+          const invocationId = `${
+            toolCallIdRef.current
+          }:app-tool:${appToolInvocationSequenceRef.current++}`;
+          const startedAt = Date.now();
+          onAppToolInvocationChangeRef.current?.({
+            id: invocationId,
+            parentToolCallId: toolCallIdRef.current,
+            toolName: name,
+            input: invocationInput,
+            status: "running",
+            startedAt,
+          });
+
           if (!onCallToolRef.current) {
             const error = new Error("Tool calls not supported");
+            onAppToolInvocationChangeRef.current?.({
+              id: invocationId,
+              parentToolCallId: toolCallIdRef.current,
+              toolName: name,
+              input: invocationInput,
+              errorText: error.message,
+              status: "error",
+              startedAt,
+              completedAt: Date.now(),
+            });
             sendToolCancelledIfAllowed(error.message);
             throw error;
           }
 
           try {
-            const result = await onCallToolRef.current(
-              name,
-              (args ?? {}) as Record<string, unknown>
-            );
+            const result = await onCallToolRef.current(name, invocationInput);
+            onAppToolInvocationChangeRef.current?.({
+              id: invocationId,
+              parentToolCallId: toolCallIdRef.current,
+              toolName: name,
+              input: invocationInput,
+              output: result,
+              status: "success",
+              startedAt,
+              completedAt: Date.now(),
+            });
             return result as CallToolResult;
           } catch (error) {
+            const errorText =
+              error instanceof Error ? error.message : String(error);
+            onAppToolInvocationChangeRef.current?.({
+              id: invocationId,
+              parentToolCallId: toolCallIdRef.current,
+              toolName: name,
+              input: invocationInput,
+              errorText,
+              status: "error",
+              startedAt,
+              completedAt: Date.now(),
+            });
             // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
-            sendToolCancelledIfAllowed(
-              error instanceof Error ? error.message : String(error)
-            );
+            sendToolCancelledIfAllowed(errorText);
             throw error;
           }
         };
