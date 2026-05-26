@@ -121,9 +121,8 @@ export function AdvancedConnectionSettingsSection({
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
-  const showProtocolVersionControl =
-    showMcpProtocolVersionOverride &&
-    onMcpProtocolVersionOverrideChange !== undefined;
+  const showProtocolVersionControl = showMcpProtocolVersionOverride;
+  const canEditProtocolVersion = onMcpProtocolVersionOverrideChange !== undefined;
   // "Draft" is Streamable HTTP POST only — picking it on stdio / sse
   // would fail at construction with `StatelessRequiresHttpTransport`.
   // Hide it on non-HTTP transports as the user-friendly safety net.
@@ -132,9 +131,8 @@ export function AdvancedConnectionSettingsSection({
     if (opt.value === "draft" && !isHttp) return false;
     return true;
   });
-  // Any stored stateful literal (legacy carry-over from a previous
-  // schema) reads as "Latest" — same code path, and saving normalizes
-  // it back to `undefined`.
+  // "Draft" → DRAFT-2026-v1; everything else (2025-11-25, undefined,
+  // legacy carry-over) reads as "Latest".
   const selectedDropdownValue: DropdownValue =
     mcpProtocolVersionOverride === "DRAFT-2026-v1" ? "draft" : "latest";
 
@@ -288,10 +286,11 @@ export function AdvancedConnectionSettingsSection({
               </label>
               <Select
                 value={selectedDropdownValue}
+                disabled={!canEditProtocolVersion}
                 onValueChange={(next) => {
                   if (!onMcpProtocolVersionOverrideChange) return;
                   onMcpProtocolVersionOverrideChange(
-                    next === "draft" ? "DRAFT-2026-v1" : undefined,
+                    next === "draft" ? "DRAFT-2026-v1" : "2025-11-25",
                   );
                 }}
               >
@@ -310,6 +309,11 @@ export function AdvancedConnectionSettingsSection({
                 <p className="text-xs text-muted-foreground">
                   Draft requires Streamable HTTP — only Latest is
                   selectable for this transport.
+                </p>
+              )}
+              {!canEditProtocolVersion && (
+                <p className="text-xs text-muted-foreground">
+                  Enable auto-connect for this server to set a per-server protocol override.
                 </p>
               )}
             </div>

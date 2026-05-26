@@ -152,15 +152,6 @@ export function ServerDetailModal({
   // Whether the server is in the project's auto-connect `serverIds`
   // set. The backend `ensureProjectServerConfig` rejects overrides for
   // servers not in this set ("override key X is not a member of
-  // serverIds") — overrides ONLY make sense for servers the project
-  // auto-connects, otherwise the override row would dangle. Surface
-  // this gate to the toggle so it disables cleanly with a hint
-  // instead of producing a Convex error toast.
-  const isInProjectAutoConnect = useMemo(() => {
-    if (!serverId) return false;
-    return Boolean(projectServerConfigDto?.serverIds.includes(serverId));
-  }, [projectServerConfigDto, serverId]);
-
   // Pending reconnect bookkeeping for the override-save → reconnect
   // race (see `handleMcpProtocolVersionOverrideChange` below). Holds the
   // target override value the user just wrote; the watcher effect
@@ -211,15 +202,6 @@ export function ServerDetailModal({
       );
       return;
     }
-    if (!isInProjectAutoConnect) {
-      // Backend invariant: overrides only for servers in serverIds.
-      // Surface a clear path forward rather than letting the mutation
-      // reject with the raw Convex error.
-      toast.error(
-        "Add this server to the project's auto-connect set first (Servers tab → Auto-connect), or use the host-level mcpProtocolVersion in the Client → MCP Protocol JSON.",
-      );
-      return;
-    }
     // setConfig replaces the entire (serverIds, overrides) pair — read
     // current (now guaranteed non-undefined), splice in the new
     // override, write back. Preserve every other server's overrides
@@ -227,6 +209,12 @@ export function ServerDetailModal({
     // yet for this project) — that case is genuinely the empty
     // baseline.
     const currentServerIds = projectServerConfigDto?.serverIds ?? [];
+    if (!currentServerIds.includes(serverId)) {
+      toast.error(
+        "Enable auto-connect for this server first to set a per-server protocol override.",
+      );
+      return;
+    }
     const currentOverrides = projectServerConfigDto?.overrides ?? {};
     const existingEntry = currentOverrides[serverId] ?? {};
     const updatedEntry: ProjectServerOverrideEntry = {
@@ -573,7 +561,8 @@ export function ServerDetailModal({
                     hostedServerId={hostedServerId}
                     mcpProtocolVersionOverride={currentMcpProtocolVersionOverride}
                     onMcpProtocolVersionOverrideChange={
-                      projectId && isInProjectAutoConnect
+                      projectId && serverId &&
+                      projectServerConfigDto?.serverIds.includes(serverId)
                         ? handleMcpProtocolVersionOverrideChange
                         : undefined
                     }
@@ -590,20 +579,28 @@ export function ServerDetailModal({
                 }}
               >
                 <Button
-                  type="submit"
+                  type={isConnected && !formState.hasChanges ? "button" : "submit"}
+                  onClick={
+                    isConnected && !formState.hasChanges
+                      ? () => void handleConnect()
+                      : undefined
+                  }
                   disabled={
                     isDuplicateServerName ||
                     isSaving ||
-                    !formState.hasChanges ||
+                    isReconnecting ||
+                    (!formState.hasChanges && !isConnected) ||
                     formState.preregisteredOauthBlocksSubmit
                   }
                   size="sm"
                 >
-                  {isSaving ? (
+                  {isSaving || isReconnecting ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
+                      {isSaving ? "Saving..." : "Reconnecting..."}
                     </>
+                  ) : isConnected && !formState.hasChanges ? (
+                    "Reconnect"
                   ) : (
                     "Save Changes"
                   )}
