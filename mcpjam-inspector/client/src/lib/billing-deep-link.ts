@@ -1,6 +1,6 @@
 import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 
-export type CheckoutPlanTier = "starter" | "team";
+export type CheckoutPlanTier = "team";
 
 export interface CheckoutIntent {
   plan: CheckoutPlanTier;
@@ -15,7 +15,7 @@ export type CheckoutIntentWithOrganization = CheckoutIntent & {
 const STORAGE_KEY = "mcpjam:checkout-intent";
 const SIGN_IN_RETURN_PATH_STORAGE_KEY = "mcpjam:billing-signin-return-path";
 
-const VALID_PLANS = new Set<CheckoutPlanTier>(["starter", "team"]);
+const VALID_PLANS = new Set<CheckoutPlanTier>(["team"]);
 const VALID_INTERVALS = new Set<BillingInterval>(["monthly", "annual"]);
 
 function parseSearchParams(search: string): URLSearchParams {
@@ -31,7 +31,7 @@ function isValidInterval(value: string | null): value is BillingInterval {
 }
 
 /**
- * True when `plan` appears in the query with a non-starter/team value (or empty).
+ * True when `plan` appears in the query with a non-team value (or empty).
  */
 export function hasInvalidCheckoutQueryParams(search: string): boolean {
   const params = parseSearchParams(search);
@@ -148,10 +148,10 @@ export function readPersistedCheckoutIntent(): CheckoutIntent | null {
     }
     const plan = (parsed as { plan: unknown }).plan;
     const interval = (parsed as { interval: unknown }).interval;
-    if (!isValidPlan(typeof plan === "string" ? plan : null)) {
+    if (typeof plan !== "string" || !isValidPlan(plan)) {
       return null;
     }
-    if (!isValidInterval(typeof interval === "string" ? interval : null)) {
+    if (typeof interval !== "string" || !isValidInterval(interval)) {
       return null;
     }
     return { plan, interval };
@@ -232,26 +232,10 @@ export function isBillingEntryPathname(pathname: string): boolean {
   return pathname === "/billing" || pathname === "/billing/";
 }
 
-export function hashMatchesOrganizationBilling(
-  hash: string,
-  organizationId: string,
-): boolean {
-  const parts = hash
-    .replace(/^#/, "")
-    .replace(/^\/+/, "")
-    .split("/")
-    .filter(Boolean);
-  return (
-    parts[0] === "organizations" &&
-    parts[1] === organizationId &&
-    parts[2] === "billing"
-  );
-}
-
 export function resolveCheckoutOrganizationId(
   sortedOrganizations: readonly { _id: string }[],
   activeOrganizationId: string | undefined,
-  workspaceOrganizationId: string | undefined,
+  projectOrganizationId: string | undefined,
 ): string | null {
   if (sortedOrganizations.length === 0) {
     return null;
@@ -263,8 +247,8 @@ export function resolveCheckoutOrganizationId(
   if (activeOrganizationId && ids.has(activeOrganizationId)) {
     return activeOrganizationId;
   }
-  if (workspaceOrganizationId && ids.has(workspaceOrganizationId)) {
-    return workspaceOrganizationId;
+  if (projectOrganizationId && ids.has(projectOrganizationId)) {
+    return projectOrganizationId;
   }
   return sortedOrganizations[0]._id;
 }

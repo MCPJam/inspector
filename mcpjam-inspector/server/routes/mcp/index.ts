@@ -20,6 +20,8 @@ import tasks from "./tasks";
 import skills from "./skills";
 import conformance from "./conformance";
 import xaa from "./xaa";
+import command from "./command";
+import subscribe from "./subscribe";
 
 const mcp = new Hono();
 
@@ -40,6 +42,10 @@ mcp.route("/elicitation", elicitation);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);
+
+// Inspector command bus endpoints
+mcp.route("/command", command);
+mcp.route("/subscribe", subscribe);
 
 // Servers management endpoints - REAL IMPLEMENTATION
 mcp.route("/servers", servers);

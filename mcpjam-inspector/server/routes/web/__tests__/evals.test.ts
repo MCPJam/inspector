@@ -88,7 +88,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/run",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
       suiteName: "Hosted Suite",
       tests: [
@@ -114,7 +114,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/run-test-case",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
@@ -135,7 +135,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/generate-tests",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
     },
     successBody: { success: true, tests: [{ title: "Generated test" }] },
@@ -144,7 +144,7 @@ const endpointCases: EndpointCase[] = [
   {
     path: "/api/web/evals/generate-negative-tests",
     body: {
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["server-1"],
     },
     successBody: { success: true, tests: [{ title: "Negative test" }] },
@@ -235,7 +235,7 @@ function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
                 {
                   ok: true,
                   role: "member",
-                  accessLevel: "workspace_member",
+                  accessLevel: "project_member",
                   permissions: { chatOnly: false },
                   serverConfig,
                 },
@@ -253,7 +253,7 @@ function stubAuthorizeResponse(options?: { useOAuth?: boolean }) {
         JSON.stringify({
           authorized: true,
           role: "member",
-          accessLevel: "workspace_member",
+          accessLevel: "project_member",
           permissions: { chatOnly: false },
           serverConfig,
         }),
@@ -381,7 +381,7 @@ describe("web routes — evals", () => {
       app,
       "/api/web/evals/run",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
         suiteName: "Hosted Suite",
@@ -402,7 +402,7 @@ describe("web routes — evals", () => {
     expect(response.status).toBe(200);
     expect(runEvalsWithManagerMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
         convexAuthToken: token,
@@ -430,7 +430,7 @@ describe("web routes — evals", () => {
       app,
       "/api/web/evals/stream-test-case",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["server-1"],
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
@@ -446,7 +446,7 @@ describe("web routes — evals", () => {
     expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledTimes(1);
     expect(streamEvalTestCaseWithManagerMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["server-1"],
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
@@ -457,103 +457,7 @@ describe("web routes — evals", () => {
     );
   });
 
-  it("runs direct guest quick evals with the synthetic guest server", async () => {
-    runEvalTestCaseWithManagerMock.mockResolvedValueOnce({
-      success: true,
-      iteration: { _id: "guest-iter-1" },
-    });
-    const { app } = createEvalsTestApp();
-    const { token } = issueGuestToken();
-
-    const response = await postJson(
-      app,
-      "/api/web/evals/run-test-case",
-      {
-        serverUrl: "https://guest.example.com/mcp",
-        serverName: "Guest Server",
-        serverHeaders: { "X-Guest": "yes" },
-        oauthAccessToken: "fresh-oauth-token",
-        testCaseId: "guest-case-1",
-        model: "openai/gpt-5-mini",
-        provider: "openai",
-      },
-      token,
-    );
-
-    const { status, data } = await expectJson(response);
-
-    expect(status).toBe(200);
-    expect(data).toEqual({
-      success: true,
-      iteration: { _id: "guest-iter-1" },
-    });
-    expect(runEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        workspaceId: "__guest__",
-        serverIds: ["__guest__"],
-        testCaseId: "guest-case-1",
-        convexAuthToken: token,
-      }),
-    );
-    expect(managerConfigsMock).toHaveBeenCalledWith({
-      __guest__: expect.objectContaining({
-        url: "https://guest.example.com/mcp",
-        requestInit: {
-          headers: {
-            "X-Guest": "yes",
-            Authorization: "Bearer fresh-oauth-token",
-          },
-        },
-      }),
-    });
-  });
-
-  it("generates direct guest eval tests with the synthetic guest server", async () => {
-    generateEvalTestsWithManagerMock.mockResolvedValueOnce({
-      success: true,
-      tests: [{ title: "Generated guest test" }],
-    });
-    const { app } = createEvalsTestApp();
-    const { token } = issueGuestToken();
-
-    const response = await postJson(
-      app,
-      "/api/web/evals/generate-tests",
-      {
-        serverUrl: "https://guest.example.com/mcp",
-        serverName: "Guest Server",
-      },
-      token,
-    );
-
-    const { status, data } = await expectJson(response);
-
-    expect(status).toBe(200);
-    expect(data).toEqual({
-      success: true,
-      tests: [{ title: "Generated guest test" }],
-    });
-    expect(generateEvalTestsWithManagerMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        workspaceId: "__guest__",
-        serverIds: ["__guest__"],
-        convexAuthToken: token,
-      }),
-    );
-  });
-
-  it("streams direct guest compare quick runs with the synthetic guest server", async () => {
-    const encoder = new TextEncoder();
-    streamEvalTestCaseWithManagerMock.mockResolvedValueOnce(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
-          controller.close();
-        },
-      }),
-    );
+  it("rejects direct guest compare quick run bodies", async () => {
     const { app } = createEvalsTestApp();
     const { token } = issueGuestToken();
 
@@ -571,22 +475,14 @@ describe("web routes — evals", () => {
       token,
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    await expect(response.text()).resolves.toContain('"type":"complete"');
-    expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        workspaceId: "__guest__",
-        serverIds: ["__guest__"],
-        testCaseId: "guest-case-1",
-        compareRunId: "cmp_guest",
-        convexAuthToken: token,
-      }),
-      expect.objectContaining({
-        onStreamComplete: expect.any(Function),
-      }),
-    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(400);
+    expect(data.code).toBe("VALIDATION_ERROR");
+    expect(streamEvalTestCaseWithManagerMock).not.toHaveBeenCalled();
   });
 
   it("rejects direct guest full suite eval runs", async () => {

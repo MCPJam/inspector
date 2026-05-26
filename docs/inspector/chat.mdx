@@ -1,8 +1,16 @@
 ---
 title: "Chat"
-description: "Chat with your MCP server(s) (including MCP apps and ChatGPT apps) using frontier models"
+description: "Deprecated — see Playground"
 icon: "message-circle"
 ---
+
+<Warning>
+  **The Chat tab is deprecated.** It has been replaced by the
+  [Playground](/inspector/playground), which combines chat, manual tool
+  invocation, widget rendering, traces, multi-model compare, multi-host
+  compare, and the JSON-RPC logger into one workspace. This page is kept for
+  reference; new development happens in the Playground.
+</Warning>
 
 The Chat tab lets you chat with your MCP server(s) using frontier models, switch between Chat, Trace, and Raw views for profound analytics, and compare how multiple models respond to the same prompt side by side.
 
@@ -83,7 +91,7 @@ Resize panels by dragging the divider to focus on chat or debugging as needed.
 Click the **+** button on the left of the chat input bar to manage servers, attach files, and tune how the model behaves:
 
 **Servers**
-A list of every server in your workspace, sorted by status. Each row shows the server name and its transport type — `HTTP` or `stdio`(npx/desktop only). Connect or disconnect a server inline, or toggle it on and off for the current chat.
+A list of every server in your project, sorted by status. Each row shows the server name and its transport type — `HTTP` or `stdio`(npx/desktop only). Connect or disconnect a server inline, or toggle it on and off for the current chat.
 
 - **+ Add server** — Register a brand-new server without leaving Chat. Opens the add-server modal directly from the popover.
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ChevronRight,
-  CircleAlert,
   FlaskConical,
   Loader2,
   Play,
@@ -359,11 +358,6 @@ export function EvalsSuiteListSidebar({
                   const rowTitle = evalOverviewEntryOutcomeTitle(entry);
                   const isSelected = selectedSuiteId === suite._id;
                   const suiteTitle = suite.name || "Untitled suite";
-                  const latestRun = entry.latestRun;
-                  const showLastRunFailed =
-                    latestRun != null &&
-                    (latestRun.result === "failed" ||
-                      latestRun.status === "failed");
                   const runAllBlocked = Boolean(
                     rerunningSuiteId ||
                       replayingRunId != null ||

@@ -32,7 +32,6 @@ import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
-import { detectUiTypeFromTool, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface PlaygroundLeftProps {
   tools: Record<string, Tool>;
@@ -55,6 +54,12 @@ interface PlaygroundLeftProps {
   onDeleteRequest: (id: string) => void;
   // Panel visibility
   onClose?: () => void;
+  /**
+   * Whether to render the inline LoggerView in the bottom resizable slot.
+   * Defaults to true for backward compat with AppBuilderTab. The Playground
+   * left rail passes `false` because the logger lives in the right rail.
+   */
+  showLogger?: boolean;
 }
 
 export function PlaygroundLeft({
@@ -76,6 +81,7 @@ export function PlaygroundLeft({
   onDuplicateRequest,
   onDeleteRequest,
   onClose,
+  showLogger = true,
 }: PlaygroundLeftProps) {
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -141,14 +147,6 @@ export function PlaygroundLeft({
     onExecute();
   };
 
-  const shouldRenderUiTypeOverrideSelector = useMemo(() => {
-    if (!selectedToolName) return false;
-    return (
-      detectUiTypeFromTool(tools[selectedToolName!]) ===
-      UIType.OPENAI_SDK_AND_MCP_APPS
-    );
-  }, [selectedToolName, tools]);
-
   const mainContent = (
     <div className="h-full min-h-0">
       {activeTab === "saved" && !selectedToolName ? (
@@ -185,9 +183,6 @@ export function PlaygroundLeft({
           onSelectTool={onSelectTool}
           onFieldChange={onFieldChange}
           onToggleField={onToggleField}
-          shouldRenderUiTypeOverrideSelector={
-            shouldRenderUiTypeOverrideSelector
-          }
         />
       )}
     </div>
@@ -215,21 +210,25 @@ export function PlaygroundLeft({
       />
 
       {/* Middle Content Area + Logger */}
-      <ResizablePanelGroup
-        direction="vertical"
-        className="flex-1 min-h-0"
-        autoSaveId="ui-playground-left-logger"
-      >
-        <ResizablePanel defaultSize={65} minSize={10}>
-          {mainContent}
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={35} minSize={10} maxSize={70}>
-          <div className="h-full min-h-0 flex flex-col border-t border-border bg-background">
-            <LoggerView isCollapsable={false} />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+      {showLogger ? (
+        <ResizablePanelGroup
+          direction="vertical"
+          className="flex-1 min-h-0"
+          autoSaveId="ui-playground-left-logger"
+        >
+          <ResizablePanel defaultSize={65} minSize={10}>
+            {mainContent}
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={35} minSize={10} maxSize={70}>
+            <div className="h-full min-h-0 flex flex-col border-t border-border bg-background">
+              <LoggerView isCollapsable={false} />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="flex-1 min-h-0">{mainContent}</div>
+      )}
     </div>
   );
 }
@@ -307,7 +306,6 @@ interface ToolParametersViewProps {
   onSelectTool: (name: string | null) => void;
   onFieldChange: (name: string, value: unknown) => void;
   onToggleField: (name: string, isSet: boolean) => void;
-  shouldRenderUiTypeOverrideSelector: boolean;
 }
 
 function ToolParametersView({
@@ -319,7 +317,6 @@ function ToolParametersView({
   onSelectTool,
   onFieldChange,
   onToggleField,
-  shouldRenderUiTypeOverrideSelector,
 }: ToolParametersViewProps) {
   const hasParameters = formFields && formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(["description"]);
@@ -337,7 +334,6 @@ function ToolParametersView({
           names: toolNames,
           onSelect: (name) => onSelectTool(name),
         }}
-        showProtocolSelector={shouldRenderUiTypeOverrideSelector}
       />
       <ScrollArea className="flex-1 min-h-0">
         <Accordion

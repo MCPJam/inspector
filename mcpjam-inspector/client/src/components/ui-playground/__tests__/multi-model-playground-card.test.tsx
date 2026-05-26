@@ -90,13 +90,52 @@ vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
   },
 }));
 
-vi.mock("@/contexts/chatbox-host-style-context", () => ({
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: <T,>(selector: (state: any) => T): T =>
+    selector({ hostCapabilitiesOverride: null }),
+}));
+
+vi.mock("@/contexts/chatbox-client-style-context", () => ({
   ChatboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
   ChatboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
+  ChatboxChatUiOverrideProvider: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <>{children}</>,
+  useChatboxChatUiOverride: () => undefined,
+}));
+
+vi.mock("@/contexts/chatbox-client-capabilities-override-context", () => ({
+  ChatboxHostCapabilitiesOverrideProvider: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <>{children}</>,
+  useChatboxHostCapabilitiesOverride: () => undefined,
+}));
+
+vi.mock("@/contexts/active-mcp-profile-context", () => ({
+  ActiveMcpProfileProvider: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  useActiveMcpProfile: () => undefined,
+}));
+
+vi.mock("@/contexts/active-host-client-capabilities-context", () => ({
+  ActiveHostCapsResolverScope: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <>{children}</>,
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: () => null,
 }));
 
 const model = {
@@ -118,21 +157,21 @@ function Harness() {
         {Object.keys(messageFlags).length}
       </div>
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={Object.values(summaries)}
         selectedServers={[]}
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={0}
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={(summary) =>
           setSummaries((previous) => ({
             ...previous,
@@ -168,21 +207,21 @@ describe("MultiModelPlaygroundCard", () => {
   it("omits compare header chrome when showComparisonChrome is false (matches chat tab single-column compare)", () => {
     render(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={0}
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
         showComparisonChrome={false}
       />,
@@ -194,21 +233,21 @@ describe("MultiModelPlaygroundCard", () => {
   it("hides shared-message empty hint when suppressThreadEmptyHint is true", () => {
     render(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={0}
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
         suppressThreadEmptyHint
       />,
@@ -222,42 +261,42 @@ describe("MultiModelPlaygroundCard", () => {
   it("calls stop when stopRequestId changes", async () => {
     const { rerender } = render(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={0}
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
       />,
     );
 
     rerender(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={1}
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
       />,
     );
@@ -276,21 +315,21 @@ describe("MultiModelPlaygroundCard", () => {
     it("card root has no forced min-height so it can shrink inside a short grid row", () => {
       render(
         <MultiModelPlaygroundCard
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
           model={model}
           comparisonSummaries={[]}
           selectedServers={[]}
           broadcastRequest={null}
           deterministicExecutionRequest={null}
           stopRequestId={0}
-          initialSystemPrompt=""
-          initialTemperature={0.7}
-          initialRequireToolApproval={false}
+          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
           displayMode="inline"
           onDisplayModeChange={vi.fn()}
           hostStyle="chatgpt"
           effectiveThreadTheme="light"
           deviceType="desktop"
-          selectedProtocol={null}
           onSummaryChange={vi.fn()}
         />,
       );
@@ -312,21 +351,21 @@ describe("MultiModelPlaygroundCard", () => {
 
       const { container } = render(
         <MultiModelPlaygroundCard
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
           model={model}
           comparisonSummaries={[]}
           selectedServers={[]}
           broadcastRequest={null}
           deterministicExecutionRequest={null}
           stopRequestId={0}
-          initialSystemPrompt=""
-          initialTemperature={0.7}
-          initialRequireToolApproval={false}
+          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
           displayMode="inline"
           onDisplayModeChange={vi.fn()}
           hostStyle="chatgpt"
           effectiveThreadTheme="light"
           deviceType="desktop"
-          selectedProtocol={null}
           onSummaryChange={vi.fn()}
         />,
       );
@@ -348,21 +387,21 @@ describe("MultiModelPlaygroundCard", () => {
 
       const { container } = render(
         <MultiModelPlaygroundCard
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
           model={model}
           comparisonSummaries={[]}
           selectedServers={[]}
           broadcastRequest={null}
           deterministicExecutionRequest={null}
           stopRequestId={0}
-          initialSystemPrompt=""
-          initialTemperature={0.7}
-          initialRequireToolApproval={false}
+          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
           displayMode="fullscreen"
           onDisplayModeChange={vi.fn()}
           hostStyle="chatgpt"
           effectiveThreadTheme="light"
           deviceType="mobile"
-          selectedProtocol={null}
           onSummaryChange={vi.fn()}
         />,
       );

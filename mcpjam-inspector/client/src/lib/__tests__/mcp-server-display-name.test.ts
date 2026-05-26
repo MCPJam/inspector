@@ -6,7 +6,7 @@ import {
   formatMcpConnectServerPrompt,
   isUnresolvableMcpServerRef,
 } from "../mcp-server-display-name";
-import { setHostedApiContext } from "../apis/web/context";
+import { setApiContext } from "../apis/web/context";
 
 vi.mock("@/lib/config", () => ({
   get HOSTED_MODE() {
@@ -19,20 +19,20 @@ let mockHosted = false;
 describe("getMcpServerDisplayName", () => {
   beforeEach(() => {
     mockHosted = false;
-    setHostedApiContext({
-      workspaceId: "ws-1",
+    setApiContext({
+      projectId: "ws-1",
       isAuthenticated: true,
       serverIdsByName: { asana: "id-asana" },
     });
   });
 
-  it("resolves a Convex _id to the workspace server name", () => {
+  it("resolves a Convex _id to the project server name", () => {
     expect(
       getMcpServerDisplayName("k1234567890123456789012345", {
         remoteServers: [
           {
             _id: "k1234567890123456789012345",
-            workspaceId: "ws-1",
+            projectId: "ws-1",
             name: "My Tools",
             enabled: true,
             transportType: "http" as const,
@@ -78,7 +78,7 @@ describe("formatMcpServerRefsForError", () => {
 });
 
 describe("isUnresolvableMcpServerRef", () => {
-  it("is true for opaque ids with no workspace or hosted match", () => {
+  it("is true for opaque ids with no project or hosted match", () => {
     mockHosted = false;
     expect(
       isUnresolvableMcpServerRef("mn79gdfjnftd2esny26j8n4w0s83hc8n", {
@@ -93,7 +93,7 @@ describe("isUnresolvableMcpServerRef", () => {
         remoteServers: [
           {
             _id: "kid",
-            workspaceId: "w",
+            projectId: "w",
             name: "Known",
             enabled: true,
             transportType: "http" as const,

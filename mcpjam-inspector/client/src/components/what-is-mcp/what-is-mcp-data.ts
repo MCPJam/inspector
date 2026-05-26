@@ -101,10 +101,10 @@ export const STEP_HIGHLIGHTS: Record<WhatIsMcpStep, StepHighlightMap> = {
 // ---------------------------------------------------------------------------
 
 const NODES: ArchNodeDef[] = [
-  // Host Application group
+  // Client Application group
   {
     id: "host-group",
-    label: "Host Application",
+    label: "Client Application",
     subtitle: "Claude Desktop, Cursor, VS Code, etc.",
     type: "group",
     color: "#6366f1", // indigo

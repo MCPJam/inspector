@@ -1,4 +1,6 @@
+import type { Context } from "hono";
 import { logger } from "./logger";
+import { getRequestLogger } from "./request-logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
@@ -19,7 +21,7 @@ const ENRICHMENT_HEADERS_TO_FORWARD = [
  * forwarded to the Convex `/ingest-chat` endpoint.
  */
 export function pickEnrichmentHeaders(
-  reqHeaders: { get(name: string): string | null | undefined } | Headers,
+  reqHeaders: { get(name: string): string | null | undefined } | Headers
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const name of ENRICHMENT_HEADERS_TO_FORWARD) {
@@ -37,6 +39,75 @@ interface ResumeConfig {
   temperature?: number;
   requireToolApproval?: boolean;
   selectedServers?: string[];
+}
+
+/**
+ * Direct-chat host configuration sent alongside the transcript so the backend
+ * can dedupe per-turn config into `hostConfigs`. Mirrors the `HostConfigPayload`
+ * shape accepted by the Convex `/ingest-chat` route. Only emitted for direct
+ * chats (serverShare and chatbox flows skip it).
+ *
+ * Phase 3 read switch: `hostStyle` carries the real host style
+ * (`claude` / `chatgpt`). The legacy literal `"direct"` is kept in
+ * the union for one deploy so an old backend (still expecting
+ * `'direct'`) keeps working until its roll lands; the new backend
+ * accepts both and normalizes legacy `'direct'` to the project
+ * default's real style with a `legacy_direct_style` warn.
+ */
+export type DirectChatHostStyle = "claude" | "chatgpt" | "direct";
+export interface DirectHostConfig {
+  hostStyle: DirectChatHostStyle;
+  systemPrompt: string;
+  modelId: string;
+  temperature: number;
+  requireToolApproval: boolean;
+  selectedServerIds: string[];
+}
+
+/**
+ * Build a contract-safe direct `hostConfig` payload from the inspector's
+ * loose runtime values. Coerces undefined `systemPrompt` / `temperature` /
+ * `requireToolApproval` / `selectedServerIds` into the types the backend's
+ * `isHostConfigPayload` guard requires — without this, paths like GPT-5 (where
+ * `resolvedTemperature` is undefined) would fail the guard and skip with
+ * `missing_field`.
+ *
+ * `hostStyle` defaults to `"claude"` when the caller doesn't supply one.
+ * Old call sites that used to hardcode `"direct"` should pass the
+ * resolved chat-tab host style instead — see ChatTabV2's hydration
+ * from project default for the source of truth.
+ */
+export function buildDirectHostConfig(input: {
+  modelId: string;
+  hostStyle?: DirectChatHostStyle;
+  systemPrompt?: string;
+  requestedTemperature?: number;
+  resolvedTemperature?: number;
+  requireToolApproval?: boolean;
+  selectedServerIds?: string[];
+}): DirectHostConfig {
+  const {
+    modelId,
+    hostStyle,
+    systemPrompt,
+    requestedTemperature,
+    resolvedTemperature,
+    requireToolApproval,
+    selectedServerIds,
+  } = input;
+  return {
+    hostStyle: hostStyle ?? "claude",
+    systemPrompt: systemPrompt ?? "",
+    modelId,
+    temperature:
+      typeof resolvedTemperature === "number"
+        ? resolvedTemperature
+        : typeof requestedTemperature === "number"
+        ? requestedTemperature
+        : 0.7,
+    requireToolApproval: requireToolApproval === true,
+    selectedServerIds: selectedServerIds ?? [],
+  };
 }
 
 /**
@@ -59,14 +130,14 @@ export interface PersistedTurnTrace {
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
-  modelSource: "mcpjam" | "byok";
+  modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
-  workspaceId?: string;
-  sourceType?: "serverShare" | "chatbox" | "direct";
-  directVisibility?: "private" | "workspace";
+  projectId?: string;
+  sourceType?: "chatbox" | "direct";
+  directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
-  shareToken?: string;
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -84,8 +155,89 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   turnTrace?: PersistedTurnTrace;
+  hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeSenderUserId(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readSenderUserId(message: unknown): string | undefined {
+  if (!isRecord(message)) {
+    return undefined;
+  }
+
+  const senderUserId = normalizeSenderUserId(message.senderUserId);
+  if (senderUserId) {
+    return senderUserId;
+  }
+
+  const metadata = message.metadata;
+  if (!isRecord(metadata)) {
+    return undefined;
+  }
+
+  return normalizeSenderUserId(metadata.senderUserId);
+}
+
+/**
+ * AI SDK model-message conversion intentionally drops UI-only metadata. For
+ * shared direct sessions, carry the current authenticated user's
+ * `senderUserId` from the incoming UI transcript onto the persisted trace by
+ * user-message ordinal so other collaborators can render the same per-message
+ * avatar after the stream is saved. The incoming transcript is client-
+ * controlled, so the extracted id is only trusted when it matches the
+ * server-authenticated principal for this request.
+ */
+export function stampSenderUserIdsOnSessionMessages(
+  sessionMessages: unknown[],
+  sourceMessages: unknown[],
+  options?: {
+    authenticatedUserId?: string | null;
+  }
+): unknown[] {
+  if (!Array.isArray(sessionMessages) || !Array.isArray(sourceMessages)) {
+    return sessionMessages;
+  }
+
+  const authenticatedUserId = normalizeSenderUserId(
+    options?.authenticatedUserId
+  );
+  const senderUserIdsByUserOrdinal = sourceMessages
+    .filter((message) => isRecord(message) && message.role === "user")
+    .map((message) => {
+      const senderUserId = readSenderUserId(message);
+      return senderUserId === authenticatedUserId ? senderUserId : undefined;
+    });
+
+  if (!senderUserIdsByUserOrdinal.some(Boolean)) {
+    return sessionMessages;
+  }
+
+  let userOrdinal = 0;
+  let changed = false;
+  const stampedMessages = sessionMessages.map((message) => {
+    if (!isRecord(message) || message.role !== "user") {
+      return message;
+    }
+
+    const senderUserId = senderUserIdsByUserOrdinal[userOrdinal];
+    userOrdinal += 1;
+    if (!senderUserId || message.senderUserId === senderUserId) {
+      return message;
+    }
+
+    changed = true;
+    return { ...message, senderUserId };
+  });
+
+  return changed ? stampedMessages : sessionMessages;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -99,12 +251,12 @@ function sanitizeDiagnosticText(text: string): string {
     .replace(
       /(\bauthorization\b\s*[:=]\s*)(bearer\s+)?([^"',\s}]+)/gi,
       (_match, prefix: string, scheme?: string) =>
-        `${prefix}${scheme ?? ""}[redacted-token]`,
+        `${prefix}${scheme ?? ""}[redacted-token]`
     )
     .replace(/\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi, "$1[redacted-token]")
     .replace(
       /(["']?(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)([^"',\s}]+)/gi,
-      "$1[redacted-secret]",
+      "$1[redacted-secret]"
     )
     .replace(/\bsk-[A-Za-z0-9]+\b/g, "[redacted-secret]");
 
@@ -122,6 +274,7 @@ async function readResponsePreview(response: Response): Promise<string> {
 
 export async function persistChatSessionToConvex(
   options: PersistChatSessionOptions,
+  c?: Context
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl || !options.authHeader || !options.chatSessionId) {
@@ -147,14 +300,16 @@ export async function persistChatSessionToConvex(
         chatSessionId: options.chatSessionId,
         modelId: options.modelId,
         modelSource: options.modelSource,
-        ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+        ...(options.projectId ? { projectId: options.projectId } : {}),
         ...(options.sourceType ? { sourceType: options.sourceType } : {}),
         ...(options.directVisibility
           ? { directVisibility: options.directVisibility }
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
-        ...(options.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options.chatboxToken ? { chatboxToken: options.chatboxToken } : {}),
+        ...(options.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(options.chatboxId && Number.isFinite(options.accessVersion)
+          ? { accessVersion: options.accessVersion }
+          : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }
@@ -183,34 +338,81 @@ export async function persistChatSessionToConvex(
           ? { expectedVersion: options.expectedVersion }
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
+        ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
       }),
     });
 
     if (!response.ok) {
       const responsePreview = await readResponsePreview(response);
-      const logMessage =
-        response.status === 409 && responsePreview.includes("VERSION_CONFLICT")
-          ? "[chat-session-persistence] Chat session version conflict"
-          : `[chat-session-persistence] Failed to persist chat session (${response.status}): ${responsePreview}`;
-      logger.warn(logMessage, {
-        status: response.status,
-        responsePreview,
-      });
+      const isVersionConflict =
+        response.status === 409 &&
+        (response.headers.get("content-type")?.includes("application/json")
+          ? false
+          : responsePreview.includes("VERSION_CONFLICT"));
+      let failureKind: "version_conflict" | "http_error" = "http_error";
+
+      if (response.status === 409) {
+        let jsonCode: string | undefined;
+        try {
+          const cloned = response.clone();
+          const json = (await cloned.json()) as { code?: string };
+          jsonCode = json?.code;
+        } catch {
+          // ignored — use text fallback
+        }
+        if (
+          jsonCode === "VERSION_CONFLICT" ||
+          isVersionConflict ||
+          responsePreview.includes("VERSION_CONFLICT")
+        ) {
+          failureKind = "version_conflict";
+        }
+      }
+
+      if (c) {
+        const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
+        reqLogger.event("chat.session.persist.failed", {
+          failureKind,
+          statusCode: response.status,
+          sourceType: options.sourceType,
+        });
+      } else {
+        const logMessage =
+          failureKind === "version_conflict"
+            ? "[chat-session-persistence] Chat session version conflict"
+            : `[chat-session-persistence] Failed to persist chat session (${response.status}): ${responsePreview}`;
+        logger.warn(logMessage, { status: response.status, responsePreview });
+      }
     }
   } catch (error) {
     if (isAbortError(error)) {
-      logger.warn(
-        "[chat-session-persistence] Timed out persisting chat session",
-        {
-          timeoutMs,
-        },
-      );
+      if (c) {
+        const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
+        reqLogger.event("chat.session.persist.failed", {
+          failureKind: "timeout",
+          sourceType: options.sourceType,
+        });
+      } else {
+        logger.warn(
+          "[chat-session-persistence] Timed out persisting chat session",
+          { timeoutMs }
+        );
+      }
       return;
     }
 
-    logger.warn("[chat-session-persistence] Error persisting chat session", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (c) {
+      const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
+      reqLogger.event(
+        "chat.session.persist.failed",
+        { failureKind: "exception", sourceType: options.sourceType },
+        { error: error instanceof Error ? error : undefined }
+      );
+    } else {
+      logger.warn("[chat-session-persistence] Error persisting chat session", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   } finally {
     clearTimeout(timeoutId);
   }

@@ -1,112 +1,53 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AppState, ServerWithName, Workspace } from "../app-types";
 import { loadAppState, saveAppState } from "../storage";
 
-function createServer(
-  name: string,
-  overrides: Partial<ServerWithName> = {},
-): ServerWithName {
-  return {
-    name,
-    config: { url: new URL("https://mcp.example.com") } as ServerWithName["config"],
-    connectionStatus: "connected",
-    lastConnectionTime: new Date("2026-04-10T12:00:00.000Z"),
-    retryCount: 0,
-    enabled: true,
-    ...overrides,
-  } as ServerWithName;
-}
-
-function createState(server: ServerWithName): AppState {
-  const workspace: Workspace = {
-    id: "default",
-    name: "Default",
-    servers: { [server.name]: server },
-    createdAt: new Date("2026-04-10T12:00:00.000Z"),
-    updatedAt: new Date("2026-04-10T12:00:00.000Z"),
-    isDefault: true,
-  };
-
-  return {
-    workspaces: { default: workspace },
-    activeWorkspaceId: "default",
-    servers: { [server.name]: server },
-    selectedServer: server.name,
-    selectedMultipleServers: [],
-    isMultiSelectMode: false,
-  };
-}
-
-describe("storage", () => {
+describe("storage (no-op post-unification)", () => {
   beforeEach(() => {
     localStorage.clear();
   });
 
-  it("does not persist live oauth traces in saved app state", () => {
-    const server = createServer("asana", {
-      lastOAuthTrace: {
-        version: 1,
-        source: "interactive_connect",
-        serverName: "asana",
-        currentStep: "token_request",
-        steps: [],
-        httpHistory: [],
-      },
-    });
-
-    saveAppState(createState(server));
-
-    const persistedState = JSON.parse(
-      localStorage.getItem("mcp-inspector-state") ?? "{}",
-    );
-    const persistedWorkspaces = JSON.parse(
-      localStorage.getItem("mcp-inspector-workspaces") ?? "{}",
-    );
-
-    expect(persistedState.servers.asana.lastOAuthTrace).toBeUndefined();
-    expect(
-      persistedWorkspaces.workspaces.default.servers.asana.lastOAuthTrace,
-    ).toBeUndefined();
-  });
-
-  it("drops persisted oauth traces on load and clears legacy trace storage", () => {
+  it("loadAppState returns initial state without reading legacy storage", () => {
+    // Prefill the legacy keys to verify they're ignored — Convex is the
+    // single source of truth post-unification; the migration shim
+    // (`local-state-migration.ts`) is the only thing that reads these keys.
+    localStorage.setItem("mcp-inspector-state", JSON.stringify({ servers: {} }));
     localStorage.setItem(
-      "mcp-oauth-trace-asana",
-      JSON.stringify({
-        version: 1,
-        source: "interactive_connect",
-        currentStep: "token_request",
-        steps: [],
-        httpHistory: [],
-      }),
-    );
-    localStorage.setItem(
-      "mcp-inspector-state",
-      JSON.stringify({
-        selectedServer: "asana",
-        servers: {
-          asana: {
-            name: "asana",
-            config: { url: "https://mcp.example.com" },
-            connectionStatus: "connected",
-            lastConnectionTime: "2026-04-10T12:00:00.000Z",
-            retryCount: 0,
-            enabled: true,
-            lastOAuthTrace: {
-              version: 1,
-              source: "interactive_connect",
-              currentStep: "token_request",
-              steps: [],
-              httpHistory: [],
-            },
-          },
-        },
-      }),
+      "mcp-inspector-projects",
+      JSON.stringify({ projects: { "legacy-1": { name: "Legacy" } } }),
     );
 
     const state = loadAppState();
 
-    expect(state.servers.asana.lastOAuthTrace).toBeUndefined();
+    // Initial state has the synthetic local default project (kept until the
+    // Convex `useProjectServers` query echoes back). The crucial assertion
+    // is that NO legacy project ("legacy-1") makes it into the result.
+    expect(Object.keys(state.projects)).not.toContain("legacy-1");
+    expect(state.servers).toEqual({});
+    expect(state.selectedServer).toBe("none");
+  });
+
+  it("loadAppState clears stale persisted OAuth traces from localStorage", () => {
+    localStorage.setItem(
+      "mcp-oauth-trace-asana",
+      JSON.stringify({ version: 1, currentStep: "token_request" }),
+    );
+
+    loadAppState();
+
     expect(localStorage.getItem("mcp-oauth-trace-asana")).toBeNull();
+  });
+
+  it("saveAppState is a no-op — does not write project/state localStorage", () => {
+    saveAppState({
+      projects: {},
+      activeProjectId: "none",
+      servers: {},
+      selectedServer: "none",
+      selectedMultipleServers: [],
+      isMultiSelectMode: false,
+    });
+
+    expect(localStorage.getItem("mcp-inspector-state")).toBeNull();
+    expect(localStorage.getItem("mcp-inspector-projects")).toBeNull();
   });
 });

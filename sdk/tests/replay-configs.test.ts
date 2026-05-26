@@ -83,9 +83,9 @@ describe("server replay config auto-save wiring", () => {
   it("auto-infers replay configs for EvalTest uploads when the agent provides them", async () => {
     const agent = createReplayAwareAgent();
     const test = new EvalTest({
-      name: "list-workspaces",
+      name: "list-projects",
       test: async (evalAgent) => {
-        await evalAgent.prompt("Show me my workspaces");
+        await evalAgent.prompt("Show me my projects");
         return true;
       },
     });
@@ -151,9 +151,9 @@ describe("server replay config auto-save wiring", () => {
   it("falls back to all inferred replay configs when serverNames is omitted", async () => {
     const agent = createReplayAwareAgent();
     const test = new EvalTest({
-      name: "list-workspaces",
+      name: "list-projects",
       test: async (evalAgent) => {
-        await evalAgent.prompt("Show me my workspaces");
+        await evalAgent.prompt("Show me my projects");
         return true;
       },
     });

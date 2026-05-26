@@ -613,11 +613,16 @@ describe("TestAgent", () => {
         } as any;
       });
 
+      // Pass `injectOpenAiCompat: true` so this scenario keeps
+      // asserting the shim presence — the default is now `false`
+      // (SEP-1865 honest behavior) and snapshots without the flag
+      // come back without `openai-compat-config`.
       const agent = new TestAgent({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
         mcpClientManager: mockManager as any,
+        injectOpenAiCompat: true,
       });
 
       const result = await agent.prompt("Create two views");
@@ -637,6 +642,7 @@ describe("TestAgent", () => {
         })
       );
       // widgetHtml should contain the injected OpenAI compat runtime
+      // when injectOpenAiCompat is true.
       expect(snap0.widgetHtml).toContain('id="openai-compat-config"');
       expect(snap0.widgetHtml).toContain("First widget");
 
@@ -651,6 +657,63 @@ describe("TestAgent", () => {
       expect(snap1.widgetHtml).toContain("Second widget");
       expect(mockManager.getToolMetadata).toHaveBeenCalledTimes(2);
       expect(mockManager.readResource).toHaveBeenCalledTimes(2);
+    });
+
+    it("omits the OpenAI compat runtime by default (SEP-1865 honest behavior)", async () => {
+      const tools = createMcpAppToolSet();
+      const mockManager = {
+        getToolMetadata: vi.fn().mockReturnValue({
+          ui: { resourceUri: "ui://widget/create-view.html" },
+        }),
+        readResource: vi.fn().mockResolvedValue({
+          contents: [
+            {
+              text: "<html>Default widget</html>",
+              _meta: { ui: { prefersBorder: false } },
+            },
+          ],
+        }),
+      };
+
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        await params.tools.create_view.execute(
+          { title: "Flow Default" },
+          {
+            toolCallId: "call-default",
+            abortSignal: { throwIfAborted: vi.fn() },
+          },
+        );
+        params.onStepFinish?.();
+        return {
+          text: "ok",
+          steps: [
+            {
+              toolCalls: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-default",
+                  toolName: "create_view",
+                  input: { title: "Flow Default" },
+                },
+              ],
+            },
+          ],
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-api-key",
+        mcpClientManager: mockManager as any,
+        // injectOpenAiCompat omitted — defaults to false.
+      });
+
+      const result = await agent.prompt("Create a view");
+      const snap = result.getWidgetSnapshots()[0];
+      expect(snap.widgetHtml).not.toContain('id="openai-compat-config"');
+      expect(snap.widgetHtml).toContain("Default widget");
     });
 
     it("warns and skips widget snapshots when resource reads fail", async () => {

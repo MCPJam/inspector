@@ -52,7 +52,15 @@ function getAllowedOrigins(): string[] {
 
 /**
  * Check whether an origin matches the allowed list.
- * Supports wildcard entries like `https://*.up.railway.app`.
+ *
+ * Supports `*` anywhere in the host portion of the pattern, e.g.:
+ *   - `https://*.up.railway.app`                  (subdomain wildcard)
+ *   - `https://mcp-inspector-pr-*.up.railway.app` (mid-host wildcard for PR previews)
+ *
+ * Each `*` matches one or more host-safe characters (`[A-Za-z0-9-]+`);
+ * it never crosses a dot, never matches the empty string, and never
+ * matches scheme/port/path delimiters — so `*` cannot widen the
+ * allowlist beyond the intended host shape.
  */
 function matchesAllowedOrigin(
   origin: string,
@@ -60,20 +68,21 @@ function matchesAllowedOrigin(
 ): boolean {
   for (const allowed of allowedOrigins) {
     if (allowed.includes("*")) {
-      // e.g. "https://*.up.railway.app"  →  scheme "https://" + pattern "*.up.railway.app"
       const schemeEnd = allowed.indexOf("://");
       if (schemeEnd === -1) continue;
       const scheme = allowed.slice(0, schemeEnd + 3); // "https://"
-      const pattern = allowed.slice(schemeEnd + 3); // "*.up.railway.app"
+      const pattern = allowed.slice(schemeEnd + 3); // "mcp-inspector-pr-*.up.railway.app"
 
       if (!origin.startsWith(scheme)) continue;
-      const originHost = origin.slice(scheme.length); // "foo.up.railway.app"
+      const originHost = origin.slice(scheme.length); // "mcp-inspector-pr-2246.up.railway.app"
 
-      if (pattern.startsWith("*.")) {
-        const suffix = pattern.slice(2); // "up.railway.app"
-        if (originHost === suffix || originHost.endsWith(`.${suffix}`)) {
-          return true;
-        }
+      // Compile pattern: escape regex meta-chars, then expand `*` into
+      // a host-segment-safe character class. We deliberately exclude `.`
+      // and `:` so wildcards can't widen to cross-domain or cross-port.
+      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`^${escaped.replace(/\*/g, "[A-Za-z0-9-]+")}$`);
+      if (regex.test(originHost)) {
+        return true;
       }
     } else if (origin === allowed) {
       return true;

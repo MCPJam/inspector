@@ -1,8 +1,12 @@
 import {
   parseLLMString,
   createModelFromString,
+  buildOrgModelFromResolvedConfig,
+  assertOrgModelAllowed,
+  OrgProviderConfigError,
   type BaseUrls,
   type CreateModelOptions,
+  type OrgProviderResolvedConfig,
 } from "../src/model-factory";
 
 // Mock all provider packages
@@ -484,5 +488,208 @@ describe("model-factory", () => {
 
       expect(Object.keys(baseUrls)).toHaveLength(4);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildOrgModelFromResolvedConfig + assertOrgModelAllowed
+// ---------------------------------------------------------------------------
+
+describe("buildOrgModelFromResolvedConfig", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("openai: calls createOpenAI with apiKey", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "openai",
+      apiKey: "sk-test",
+    };
+    buildOrgModelFromResolvedConfig(config, "gpt-4o");
+    expect(createOpenAI).toHaveBeenCalledWith({ apiKey: "sk-test" });
+  });
+
+  it("anthropic: calls createAnthropic with apiKey", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "anthropic",
+      apiKey: "ant-test",
+    };
+    buildOrgModelFromResolvedConfig(config, "claude-3-5-sonnet-20241022");
+    expect(createAnthropic).toHaveBeenCalledWith({ apiKey: "ant-test" });
+  });
+
+  it("azure: extracts resourceName from baseUrl", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "azure",
+      apiKey: "az-key",
+      baseUrl: "https://my-resource.openai.azure.com",
+    };
+    buildOrgModelFromResolvedConfig(config, "gpt-4");
+    expect(createAzure).toHaveBeenCalledWith({
+      apiKey: "az-key",
+      resourceName: "my-resource",
+    });
+  });
+
+  it("azure: falls back to baseURL when resource name not parseable", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "azure",
+      apiKey: "az-key",
+      baseUrl: "https://custom.example.com/azure",
+    };
+    buildOrgModelFromResolvedConfig(config, "gpt-4");
+    expect(createAzure).toHaveBeenCalledWith({
+      apiKey: "az-key",
+      baseURL: "https://custom.example.com/azure",
+    });
+  });
+
+  it("openrouter: includes HTTP-Referer and X-Title headers", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "openrouter",
+      apiKey: "or-key",
+    };
+    buildOrgModelFromResolvedConfig(config, "anthropic/claude-3-opus");
+    expect(createOpenRouter).toHaveBeenCalledWith({
+      apiKey: "or-key",
+      headers: {
+        "HTTP-Referer": "https://www.mcpjam.com/",
+        "X-Title": "MCPJam",
+      },
+    });
+  });
+
+  it("ollama: normalizes baseUrl to end with /api", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "ollama",
+      baseUrl: "http://localhost:11434",
+    };
+    buildOrgModelFromResolvedConfig(config, "llama3");
+    expect(createOllama).toHaveBeenCalledWith({
+      baseURL: "http://localhost:11434/api",
+    });
+  });
+
+  it("ollama: keeps baseUrl that already has /api", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "ollama",
+      baseUrl: "http://localhost:11434/api",
+    };
+    buildOrgModelFromResolvedConfig(config, "llama3");
+    expect(createOllama).toHaveBeenCalledWith({
+      baseURL: "http://localhost:11434/api",
+    });
+  });
+
+  it("ollama: throws when baseUrl is missing", () => {
+    const config: OrgProviderResolvedConfig = { providerKey: "ollama" };
+    expect(() =>
+      buildOrgModelFromResolvedConfig(config, "llama3")
+    ).toThrow(OrgProviderConfigError);
+  });
+
+  it("custom openai-compatible: strips providerKey prefix from modelId", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "custom:my-provider",
+      apiKey: "key",
+      baseUrl: "http://my-provider.local",
+      protocol: "openai-compatible",
+    };
+    buildOrgModelFromResolvedConfig(config, "custom:my-provider:gpt-4");
+    expect(createOpenAI).toHaveBeenCalledWith({
+      apiKey: "key",
+      baseURL: "http://my-provider.local",
+    });
+  });
+
+  it("custom anthropic-compatible: calls createAnthropic with baseUrl", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "custom:ant-compat",
+      apiKey: "key",
+      baseUrl: "http://ant-compat.local",
+      protocol: "anthropic-compatible",
+    };
+    buildOrgModelFromResolvedConfig(config, "claude-haiku");
+    expect(createAnthropic).toHaveBeenCalledWith({
+      apiKey: "key",
+      baseURL: "http://ant-compat.local",
+    });
+  });
+
+  it("unsupported provider: throws OrgProviderConfigError", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "unknown-provider" as any,
+    };
+    expect(() =>
+      buildOrgModelFromResolvedConfig(config, "model")
+    ).toThrow(OrgProviderConfigError);
+  });
+
+  it("missing apiKey for cloud provider: throws OrgProviderConfigError", () => {
+    const config: OrgProviderResolvedConfig = { providerKey: "openai" };
+    expect(() =>
+      buildOrgModelFromResolvedConfig(config, "gpt-4o")
+    ).toThrow(OrgProviderConfigError);
+  });
+});
+
+describe("assertOrgModelAllowed", () => {
+  it("openrouter: allows model in selectedModels", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "openrouter",
+      selectedModels: ["anthropic/claude-3-opus", "openai/gpt-4o"],
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "anthropic/claude-3-opus")
+    ).not.toThrow();
+  });
+
+  it("openrouter: rejects model not in selectedModels", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "openrouter",
+      selectedModels: ["openai/gpt-4o"],
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "anthropic/claude-3-opus")
+    ).toThrow(OrgProviderConfigError);
+  });
+
+  it("openrouter: allows any model when selectedModels is empty", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "openrouter",
+      selectedModels: [],
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "anything/model")
+    ).not.toThrow();
+  });
+
+  it("custom: allows model in modelIds (after prefix strip)", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "custom:my-provider",
+      modelIds: ["gpt-4", "gpt-3.5-turbo"],
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "custom:my-provider:gpt-4")
+    ).not.toThrow();
+  });
+
+  it("custom: rejects model not in modelIds", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "custom:my-provider",
+      modelIds: ["gpt-4"],
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "custom:my-provider:gpt-5")
+    ).toThrow(OrgProviderConfigError);
+  });
+
+  it("built-in providers: pass through without allowlist check", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "anthropic",
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "any-model-id")
+    ).not.toThrow();
   });
 });

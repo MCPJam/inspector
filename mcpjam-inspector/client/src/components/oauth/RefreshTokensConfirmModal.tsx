@@ -7,8 +7,6 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
-import { AlertTriangle } from "lucide-react";
-
 interface RefreshTokensConfirmModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;

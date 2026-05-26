@@ -1,63 +1,67 @@
 import { useEffect, useState, useCallback } from "react";
-
-interface UpdateInfo {
-  version: string;
-  releaseNotes?: string;
-}
-
-const STORAGE_KEY = "mcpjam-pending-update";
+import { toast } from "sonner";
+import type { UpdateStatus } from "@/types/electron";
 
 export function useUpdateNotification() {
-  const [updateReady, setUpdateReady] = useState<UpdateInfo | null>(() => {
-    // Check localStorage on initial load
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch {
-          return null;
-        }
-      }
-    }
-    return null;
-  });
+  const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
 
   useEffect(() => {
-    // Only set up if running in Electron
     if (!window.isElectron || !window.electronAPI?.update) {
       return;
     }
+    const api = window.electronAPI.update;
 
-    const handleUpdateReady = (info: UpdateInfo) => {
-      console.log("Update ready:", info);
-      setUpdateReady(info);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(info));
-    };
+    let cancelled = false;
+    // Subscribe first so we don't miss broadcasts that arrive between the
+    // getUpdateStatus() call and its resolution.
+    let liveEventReceived = false;
+    api.onUpdateStatus((next) => {
+      liveEventReceived = true;
+      setStatus(next);
+    });
+    api.onUpdateError(() => {
+      toast.error("Update failed. Try again later.");
+    });
 
-    window.electronAPI.update.onUpdateReady(handleUpdateReady);
+    // Initial snapshot — apply only if a live event hasn't already overtaken it.
+    // Avoids a startup race where an older idle snapshot overwrites a live
+    // pending/downloaded event and hides the button until the next broadcast.
+    api.getUpdateStatus()
+      .then((initial) => {
+        if (!cancelled && !liveEventReceived) setStatus(initial);
+      })
+      .catch((error) => {
+        console.warn("Failed to get update status", error);
+      });
 
     return () => {
-      window.electronAPI?.update?.removeUpdateReadyListener();
+      cancelled = true;
+      window.electronAPI?.update?.removeUpdateStatusListener();
+      window.electronAPI?.update?.removeUpdateErrorListener();
     };
   }, []);
 
   const restartAndInstall = useCallback(() => {
-    if (window.electronAPI?.update) {
-      localStorage.removeItem(STORAGE_KEY);
-      window.electronAPI.update.restartAndInstall();
-    }
+    window.electronAPI?.update?.restartAndInstall();
   }, []);
 
   const simulateUpdate = useCallback(() => {
-    if (window.electronAPI?.update) {
-      window.electronAPI.update.simulateUpdate?.();
-    }
+    window.electronAPI?.update?.simulateUpdate?.();
+  }, []);
+
+  const simulateUpdateDownloaded = useCallback(() => {
+    window.electronAPI?.update?.simulateUpdateDownloaded?.();
+  }, []);
+
+  const simulateUpdateError = useCallback(() => {
+    window.electronAPI?.update?.simulateUpdateError?.();
   }, []);
 
   return {
-    updateReady,
+    status,
     restartAndInstall,
     simulateUpdate,
+    simulateUpdateDownloaded,
+    simulateUpdateError,
   };
 }

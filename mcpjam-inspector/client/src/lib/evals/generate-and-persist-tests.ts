@@ -3,6 +3,7 @@ import {
   generateEvalTests,
   type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
+import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
@@ -97,7 +98,7 @@ function defaultEvalModels(): Array<{ model: string; provider: string }> {
 export type GenerateAndPersistEvalTestsOptions = {
   convex: ConvexReactClient;
   getAccessToken: () => Promise<string | undefined | null>;
-  workspaceId: string | null | undefined;
+  projectId: string | null | undefined;
   suiteId: string;
   serverIds: string[];
   createTestCase: (input: CreateEvalTestCaseInput) => Promise<unknown>;
@@ -143,7 +144,7 @@ export async function generateAndPersistEvalTests(
   const {
     convex,
     getAccessToken,
-    workspaceId,
+    projectId,
     suiteId,
     serverIds,
     createTestCase,
@@ -180,15 +181,17 @@ export async function generateAndPersistEvalTests(
     modelsToUse = defaultEvalModels();
   }
 
-  const accessToken = isDirectGuest
-    ? await getGuestBearerToken()
-    : await getAccessToken();
-  if (!accessToken) {
+  const accessToken = HOSTED_MODE
+    ? null
+    : isDirectGuest
+      ? await getGuestBearerToken()
+      : await getAccessToken();
+  if (!HOSTED_MODE && !accessToken) {
     throw new Error("Not authenticated");
   }
 
   const result = await generateEvalTests({
-    workspaceId: isDirectGuest ? null : workspaceId,
+    projectId: isDirectGuest ? null : projectId,
     serverIds,
     convexAuthToken: accessToken,
   });

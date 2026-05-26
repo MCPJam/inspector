@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatboxChatPage } from "../ChatboxChatPage";
@@ -15,15 +15,23 @@ import {
 
 const {
   mockConvexAuthState,
+  mockWorkOsAuthState,
   mockGetAccessToken,
   mockSignIn,
   mockGetStoredTokens,
   mockInitiateOAuth,
   mockValidateHostedServer,
   mockChatTabV2,
+  mockUseApiContext,
+  mockAuthFetch,
+  mockPosthogCapture,
 } = vi.hoisted(() => ({
   mockConvexAuthState: {
     isAuthenticated: true,
+    isLoading: false,
+  },
+  mockWorkOsAuthState: {
+    user: { id: "user_123" },
     isLoading: false,
   },
   mockGetAccessToken: vi.fn(),
@@ -32,6 +40,9 @@ const {
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
   mockChatTabV2: vi.fn(),
+  mockUseApiContext: vi.fn(),
+  mockAuthFetch: vi.fn(),
+  mockPosthogCapture: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -42,11 +53,24 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
     signIn: mockSignIn,
+    user: mockWorkOsAuthState.user,
+    isLoading: mockWorkOsAuthState.isLoading,
   }),
 }));
 
 vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
-  useHostedApiContext: vi.fn(),
+  useApiContext: mockUseApiContext,
+}));
+
+vi.mock("@/lib/session-token", () => ({
+  authFetch: mockAuthFetch,
+}));
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({
+    capture: mockPosthogCapture,
+  }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/apis/web/servers-api", () => ({
@@ -116,7 +140,7 @@ describe("ChatboxChatPage", () => {
       ok: boolean;
       status: number;
       statusText: string;
-    }> = {},
+    }> = {}
   ) {
     return {
       ok: overrides.ok ?? true,
@@ -138,12 +162,17 @@ describe("ChatboxChatPage", () => {
     window.history.replaceState({}, "", "/");
     mockConvexAuthState.isAuthenticated = true;
     mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = { id: "user_123" };
+    mockWorkOsAuthState.isLoading = false;
     mockGetAccessToken.mockReset();
     mockSignIn.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
     mockChatTabV2.mockReset();
+    mockUseApiContext.mockReset();
+    mockAuthFetch.mockReset();
+    mockPosthogCapture.mockReset();
 
     mockGetAccessToken.mockResolvedValue("workos-token");
     mockGetStoredTokens.mockReturnValue(null);
@@ -153,6 +182,27 @@ describe("ChatboxChatPage", () => {
       status: "connected",
       initInfo: null,
     });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        chatboxId: "sbx_1",
+        accessVersion: 1,
+        bootstrap: {
+          projectId: "ws_1",
+          chatboxId: "sbx_1",
+          name: "Resolved Chatbox",
+          description: "Hosted chatbox",
+          hostStyle: "claude",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      })
+    );
   });
 
   afterEach(() => {
@@ -163,16 +213,17 @@ describe("ChatboxChatPage", () => {
 
   it("applies chatbox host style data attributes while keeping MCPJam branding", async () => {
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "ChatGPT Chatbox",
         description: "Hosted chatbox",
         hostStyle: "chatgpt",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -185,70 +236,44 @@ describe("ChatboxChatPage", () => {
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     expect(
-      container.querySelector('[data-host-style="chatgpt"]'),
+      container.querySelector('[data-host-style="chatgpt"]')
     ).toBeInTheDocument();
     expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         reasoningDisplayMode: "hidden",
-        loadingIndicatorVariant: "chatgpt-dot",
-      }),
+      })
     );
   });
 
-  it("uses the Claude loading indicator variant for Claude-style hosted chatboxes", async () => {
-    writeChatboxSession({
-      token: "chatbox-token",
-      payload: {
-        workspaceId: "ws_1",
-        chatboxId: "sbx_1",
-        name: "Claude Chatbox",
-        description: "Hosted chatbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "anthropic/claude-sonnet-4-5",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
-      },
-    });
-
-    render(<ChatboxChatPage />);
-
-    expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(mockChatTabV2).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loadingIndicatorVariant: "claude-mark",
-      }),
-    );
-  });
+  // Removed: "uses the Claude loading indicator variant for Claude-style
+  // hosted chatboxes". The indicator no longer flows through a
+  // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
+  // it from `ChatboxHostStyleProvider` context. Behavior is covered in
+  // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
 
   it("loads playground sessions from local storage and skips bootstrap", async () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
     window.history.replaceState(
       {},
       "",
-      "/chatbox/demo/chatbox-token?playground=1&playgroundId=pg_123",
+      "/chatbox/demo/chatbox-token?playground=1&playgroundId=pg_123"
     );
 
     writePlaygroundSession({
       playgroundId: "pg_123",
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       surface: "preview",
       updatedAt: Date.now(),
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Playground Chatbox",
         description: "Hosted chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -260,11 +285,13 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage pathToken="chatbox-token" />);
 
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
-        hostedChatboxSurface: "preview",
-      }),
+        hostedContext: expect.objectContaining({
+          chatboxSurface: "preview",
+        }),
+      })
     );
   });
 
@@ -272,117 +299,255 @@ describe("ChatboxChatPage", () => {
     window.history.replaceState(
       {},
       "",
-      "/chatbox/demo/chatbox-token?playground=1&playgroundId=missing",
+      "/chatbox/demo/chatbox-token?playground=1&playgroundId=missing"
     );
 
     render(<ChatboxChatPage pathToken="chatbox-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Preview unavailable" }),
+      await screen.findByRole("heading", { name: "Preview unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Playground session expired. Return to the builder to preview.",
-      ),
+        "Playground session expired. Return to the builder to preview."
+      )
     ).toBeInTheDocument();
   });
 
   it("shows curated copy for an invalid or expired chatbox link", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        createFetchResponse(
-          {
-            code: "NOT_FOUND",
-            message:
-              "Uncaught Error: This chatbox link is invalid or has expired. at resolveChatboxBootstrapForUser (../../convex/chatboxes.ts:309:14) at async handler (../../convex/chatboxes.ts:1088:6)",
-          },
-          { ok: false, status: 404, statusText: "Not Found" },
-        ),
-      ),
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "NOT_FOUND",
+          message:
+            "Uncaught Error: This chatbox link is invalid or has expired. at resolveChatboxBootstrapForUser (../../convex/chatboxes.ts:309:14) at async handler (../../convex/chatboxes.ts:1088:6)",
+        },
+        { ok: false, status: 404, statusText: "Not Found" }
+      )
     );
 
     render(<ChatboxChatPage pathToken="stale-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" }),
+      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This chatbox link is invalid or expired. Ask the owner to share a new link if you still need access.",
-      ),
+        "This chatbox link is invalid or expired. Ask the owner to share a new link if you still need access."
+      )
     ).toBeInTheDocument();
     expect(screen.queryByText(/Uncaught Error:/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/resolveChatboxBootstrapForUser/),
+      screen.queryByText(/resolveChatboxBootstrapForUser/)
     ).not.toBeInTheDocument();
+  });
+
+  it("waits for active WorkOS and Convex loading to settle before bootstrapping the link", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = true;
+    mockWorkOsAuthState.user = { id: "user_settling" };
+    mockWorkOsAuthState.isLoading = true;
+
+    const { rerender } = render(<ChatboxChatPage pathToken="token-workos" />);
+
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      })
+    ).not.toBeInTheDocument();
+    expect(mockUseApiContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: null,
+        serverIdsByName: {},
+        chatboxId: undefined,
+        accessVersion: undefined,
+        isAuthenticated: true,
+        hasSession: true,
+      })
+    );
+
+    mockWorkOsAuthState.isLoading = false;
+    mockConvexAuthState.isLoading = false;
+    mockConvexAuthState.isAuthenticated = true;
+    rerender(<ChatboxChatPage pathToken="token-workos" />);
+
+    expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/chatboxes/redeem",
+      expect.objectContaining({
+        body: JSON.stringify({ chatboxToken: "token-workos" }),
+      })
+    );
+    expect(mockPosthogCapture).toHaveBeenCalledWith(
+      "chatbox_bootstrap_started",
+      expect.objectContaining({
+        surface: "chatbox",
+        auth_mode: "workos",
+        status: "started",
+      })
+    );
+  });
+
+  it("does not stay stuck resolving auth when WorkOS is hydrated but Convex remains unauthenticated", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = { id: "user_stalled_convex" };
+    mockWorkOsAuthState.isLoading = false;
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-stalled-convex" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      "/api/web/chatboxes/redeem",
+      expect.objectContaining({
+        body: JSON.stringify({ chatboxToken: "token-stalled-convex" }),
+      })
+    );
   });
 
   it("keeps the access denied sign-in path intact", async () => {
     mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
     window.history.replaceState({}, "", "/chatbox/test/token-denied");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        createFetchResponse(
-          {
-            code: "FORBIDDEN",
-            message:
-              "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
-          },
-          { ok: false, status: 403, statusText: "Forbidden" },
-        ),
-      ),
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
     );
 
     render(<ChatboxChatPage pathToken="token-denied" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Access Denied" }),
+      await screen.findByRole("heading", { name: "Access Denied" })
     ).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", {
         name: "Sign in",
-      }),
+      })
     );
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
-      "/chatbox/test/token-denied",
+      "/chatbox/test/token-denied"
     );
+  });
+
+  it("shows the sign-in CTA for guest-blocked links only after bootstrap denies access", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockWorkOsAuthState.user = null;
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "Guests cannot access Test Chatbox. This chatbox does not allow guest access.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-guest-blocked" />);
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      })
+    ).not.toBeInTheDocument();
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Sign in",
+      })
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockPosthogCapture).toHaveBeenCalledWith(
+        "interactive_signin_required",
+        expect.objectContaining({
+          surface: "chatbox",
+          auth_mode: "guest",
+          status: "required",
+          error_kind: "guest_blocked",
+        })
+      )
+    );
+  });
+
+  it("does not show the sign-in CTA when an authenticated viewer is denied", async () => {
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = { id: "user_denied" };
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "You don't have access to Test Chatbox. This chatbox is invite-only - ask the owner to invite you.",
+        },
+        { ok: false, status: 403, statusText: "Forbidden" }
+      )
+    );
+
+    render(<ChatboxChatPage pathToken="token-auth-denied" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access Denied" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Sign in",
+      })
+    ).not.toBeInTheDocument();
   });
 
   it("shows a generic fallback for unexpected chatbox bootstrap failures", async () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        createFetchResponse(
-          {
-            code: "INTERNAL_ERROR",
-            message:
-              "Uncaught Error: Internal database exploded at handler (../../convex/chatboxes.ts:1088:6)",
-          },
-          { ok: false, status: 500, statusText: "Internal Server Error" },
-        ),
-      ),
+    mockAuthFetch.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "INTERNAL_ERROR",
+          message:
+            "Uncaught Error: Internal database exploded at handler (../../convex/chatboxes.ts:1088:6)",
+        },
+        { ok: false, status: 500, statusText: "Internal Server Error" }
+      )
     );
 
     render(<ChatboxChatPage pathToken="broken-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" }),
+      await screen.findByRole("heading", { name: "Chatbox Link Unavailable" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "We couldn't open this chatbox right now. Please try again or open MCPJam.",
-      ),
+        "We couldn't open this chatbox right now. Please try again or open MCPJam."
+      )
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Internal database exploded/),
+      screen.queryByText(/Internal database exploded/)
     ).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "[ChatboxChatPage] Failed to bootstrap chatbox",
@@ -392,7 +557,7 @@ describe("ChatboxChatPage", () => {
         message: "Internal database exploded",
         rawMessage:
           "Uncaught Error: Internal database exploded at handler (../../convex/chatboxes.ts:1088:6)",
-      }),
+      })
     );
   });
 
@@ -400,20 +565,21 @@ describe("ChatboxChatPage", () => {
     vi.useFakeTimers();
     let hasToken = false;
     mockGetStoredTokens.mockImplementation(() =>
-      hasToken ? { access_token: "chatbox-token" } : null,
+      hasToken ? { access_token: "chatbox-token" } : null
     );
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Asana Chatbox",
         description: "Hosted chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -439,10 +605,10 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage />);
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" }),
+      screen.getByRole("heading", { name: "Finishing authorization" })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" }),
+      screen.queryByRole("button", { name: "Authorize" })
     ).not.toBeInTheDocument();
 
     await act(async () => {
@@ -451,8 +617,77 @@ describe("ChatboxChatPage", () => {
     });
 
     expect(screen.getByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(mockValidateHostedServer).toHaveBeenCalledWith("srv_asana", null);
+    expect(mockValidateHostedServer).toHaveBeenCalledWith(
+      "srv_asana",
+      undefined,
+      undefined,
+      expect.objectContaining({
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        accessScope: "chat_v2",
+        chatboxId: "sbx_1",
+      }),
+    );
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps guest chatbox OAuth in first-consent welcome before callback completion", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    writeChatboxSession({
+      chatboxId: "sbx_1",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_1",
+        chatboxId: "sbx_1",
+        name: "Asana Chatbox",
+        description: "Hosted chatbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: true,
+        viewerIsProjectMember: false,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+        chatUi: {
+          surfaces: {
+            welcome: {
+              enabled: true,
+              body: "Connect Asana before chatting.",
+            },
+          },
+        },
+      },
+    });
+
+    render(<ChatboxChatPage />);
+
+    expect(
+      await screen.findByText("Connect Asana before chatting.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Get Started" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Finishing authorization" })
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
   });
 
   it("shows curated copy instead of transport details when chatbox OAuth validation fails", async () => {
@@ -463,21 +698,22 @@ describe("ChatboxChatPage", () => {
     mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
     mockValidateHostedServer.mockRejectedValue(
       new Error(
-        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)',
-      ),
+        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)'
+      )
     );
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Asana Chatbox",
         description: "Hosted chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -498,7 +734,7 @@ describe("ChatboxChatPage", () => {
     render(<ChatboxChatPage />);
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" }),
+      screen.getByRole("heading", { name: "Finishing authorization" })
     ).toBeInTheDocument();
 
     await act(async () => {
@@ -506,17 +742,17 @@ describe("ChatboxChatPage", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      screen.getByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Your authorization expired or was rejected. Authorize again to continue.",
-      ),
+        "Your authorization expired or was rejected. Authorize again to continue."
+      )
     ).toBeInTheDocument();
     expect(screen.queryByText(/SSE error/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Non-200 status code/i)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize again" }),
+      screen.getByRole("button", { name: "Authorize again" })
     ).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "[useHostedOAuthGate] OAuth validation failed",
@@ -524,7 +760,7 @@ describe("ChatboxChatPage", () => {
         surface: "chatbox",
         serverId: "srv_asana",
         serverName: "asana",
-      }),
+      })
     );
   });
 
@@ -532,16 +768,17 @@ describe("ChatboxChatPage", () => {
     mockGetStoredTokens.mockReturnValue({ access_token: "chatbox-token" });
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Asana Chatbox",
         description: "Hosted chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -564,17 +801,17 @@ describe("ChatboxChatPage", () => {
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Trigger OAuth" }),
+      screen.getByRole("button", { name: "Trigger OAuth" })
     );
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      screen.getByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(
-      screen.getByText("You'll return here automatically after consent."),
+      screen.getByText("You'll return here automatically after consent.")
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize" }),
+      screen.getByRole("button", { name: "Authorize" })
     ).toBeInTheDocument();
   });
 
@@ -590,16 +827,17 @@ describe("ChatboxChatPage", () => {
     });
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Asana Chatbox",
         description: "Hosted chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -630,15 +868,15 @@ describe("ChatboxChatPage", () => {
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Trigger targeted OAuth" }),
+      screen.getByRole("button", { name: "Trigger targeted OAuth" })
     );
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" }),
+      screen.getByRole("heading", { name: "Authorization Required" })
     ).toBeInTheDocument();
     expect(screen.getByText("asana")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize again" }),
+      screen.queryByRole("button", { name: "Authorize again" })
     ).not.toBeInTheDocument();
     expect(screen.queryByText("linear")).not.toBeInTheDocument();
   });
@@ -655,26 +893,31 @@ describe("ChatboxChatPage", () => {
       };
     }
 
-    it("shows welcome dialog when welcomeDialog is enabled and has content", async () => {
+    it("shows welcome dialog when chatUi welcome surface is enabled and has content", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
-          workspaceId: "ws_1",
+          projectId: "ws_1",
           chatboxId: "sbx_welcome",
           name: "Welcome Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
-          viewerIsWorkspaceMember: true,
+          viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
           modelId: "openai/gpt-5-mini",
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "Welcome — thanks for trying this out.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "Welcome — thanks for trying this out.",
+              },
+            },
           },
         },
       });
@@ -682,37 +925,42 @@ describe("ChatboxChatPage", () => {
       render(<ChatboxChatPage />);
 
       expect(
-        await screen.findByText("Welcome — thanks for trying this out."),
+        await screen.findByText("Welcome — thanks for trying this out.")
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Get Started" }),
+        screen.getByRole("button", { name: "Get Started" })
       ).toBeInTheDocument();
       // Composer is blocked while the welcome is open
       expect(mockChatTabV2).toHaveBeenCalledWith(
-        expect.objectContaining({ chatboxComposerBlocked: true }),
+        expect.objectContaining({ chatboxComposerBlocked: true })
       );
     });
 
     it("dismisses welcome and shows chat when Get Started is clicked", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
-          workspaceId: "ws_1",
+          projectId: "ws_1",
           chatboxId: "sbx_dismiss",
           name: "Welcome Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
-          viewerIsWorkspaceMember: true,
+          viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
           modelId: "openai/gpt-5-mini",
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "Welcome — thanks for trying this out.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "Welcome — thanks for trying this out.",
+              },
+            },
           },
         },
       });
@@ -720,35 +968,40 @@ describe("ChatboxChatPage", () => {
       render(<ChatboxChatPage />);
 
       await userEvent.click(
-        await screen.findByRole("button", { name: "Get Started" }),
+        await screen.findByRole("button", { name: "Get Started" })
       );
 
       expect(
-        screen.queryByText("Welcome — thanks for trying this out."),
+        screen.queryByText("Welcome — thanks for trying this out.")
       ).not.toBeInTheDocument();
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     });
 
-    it("skips welcome and goes straight to chat when welcomeDialog.enabled is false", async () => {
+    it("skips welcome and goes straight to chat when chatUi welcome.enabled is false", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
-          workspaceId: "ws_1",
+          projectId: "ws_1",
           chatboxId: "sbx_disabled",
           name: "No Welcome Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
-          viewerIsWorkspaceMember: true,
+          viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
           modelId: "openai/gpt-5-mini",
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: false,
-            body: "This should not appear.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: false,
+                body: "This should not appear.",
+              },
+            },
           },
         },
       });
@@ -757,33 +1010,38 @@ describe("ChatboxChatPage", () => {
 
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
       expect(
-        screen.queryByText("This should not appear."),
+        screen.queryByText("This should not appear.")
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Get Started" }),
+        screen.queryByRole("button", { name: "Get Started" })
       ).not.toBeInTheDocument();
     });
 
-    it("skips welcome and goes straight to chat when welcomeDialog body is empty", async () => {
+    it("skips welcome and goes straight to chat when chatUi welcome body is empty", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
-          workspaceId: "ws_1",
+          projectId: "ws_1",
           chatboxId: "sbx_emptybody",
           name: "Empty Body Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
-          viewerIsWorkspaceMember: true,
+          viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
           modelId: "openai/gpt-5-mini",
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "",
+              },
+            },
           },
         },
       });
@@ -792,7 +1050,7 @@ describe("ChatboxChatPage", () => {
 
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Get Started" }),
+        screen.queryByRole("button", { name: "Get Started" })
       ).not.toBeInTheDocument();
     });
   });

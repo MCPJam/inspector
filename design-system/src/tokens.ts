@@ -41,6 +41,15 @@ export const tokensCss: string = `@theme {
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.769 0.188 85.3);
   --pending-foreground: oklch(0.239 0.06 60);
+  /* Diagram accent tokens — pastel hues for the client-diagram layers
+     (servers hub, sandbox proxy iframe, view iframe). Role-based, not
+     reused outside the architecture diagram. */
+  --diagram-server: oklch(0.62 0.1 155);
+  --diagram-server-foreground: oklch(0.99 0.01 155);
+  --diagram-sandbox: oklch(0.65 0.12 75);
+  --diagram-sandbox-foreground: oklch(0.99 0.01 75);
+  --diagram-view: oklch(0.6 0.1 290);
+  --diagram-view-foreground: oklch(0.99 0.01 290);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -122,6 +131,14 @@ export const tokensCss: string = `@theme {
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.75 0.183 55);
   --pending-foreground: oklch(0.95 0.06 70);
+  /* Diagram accent tokens — pastel hues for the client-diagram layers.
+     Higher lightness in dark mode so tints read against the dark canvas. */
+  --diagram-server: oklch(0.8 0.1 155);
+  --diagram-server-foreground: oklch(0.2 0.04 155);
+  --diagram-sandbox: oklch(0.82 0.11 75);
+  --diagram-sandbox-foreground: oklch(0.2 0.04 75);
+  --diagram-view: oklch(0.8 0.09 290);
+  --diagram-view-foreground: oklch(0.2 0.04 290);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:

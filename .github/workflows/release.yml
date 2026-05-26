@@ -22,6 +22,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_verify:
+        description: "Skip npm run verify during preflight"
+        required: false
+        default: false
+        type: boolean
 
 env:
   NODE_VERSION: "24.14.0"
@@ -66,6 +71,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Verify workspace
+        if: ${{ !fromJSON(inputs.skip_verify) }}
         run: npm run verify
 
       - name: Require green staging smoke for candidate SHA
@@ -75,12 +81,13 @@ jobs:
             const workflowId = "deploy-staging.yml";
             const { owner, repo } = context.repo;
             const headSha = context.sha;
+            // Fetch without branch/status filters — GitHub's search index
+            // can lag minutes behind, causing false negatives on recent runs.
+            // JS-side filtering on head_sha + conclusion is authoritative.
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
               owner,
               repo,
               workflow_id: workflowId,
-              branch: "main",
-              status: "completed",
               per_page: 100,
             });
 
@@ -205,7 +212,7 @@ jobs:
 
   build-mac:
     needs: preflight
-    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     uses: ./.github/workflows/mac-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
@@ -214,7 +221,7 @@ jobs:
 
   build-windows:
     needs: preflight
-    if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     uses: ./.github/workflows/windows-release.yml
     with:
       version: ${{ needs.preflight.outputs.inspector_version }}
@@ -254,7 +261,11 @@ jobs:
     needs:
       - preflight
       - artifact-gate
-    if: needs.preflight.outputs.publish_any == 'true'
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.artifact-gate.result == 'success' &&
+      needs.preflight.outputs.publish_any == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -280,21 +291,21 @@ jobs:
 
       - name: Build SDK
         if: |
-          needs.preflight.outputs.publish_sdk == 'true' ||
-          needs.preflight.outputs.publish_cli == 'true' ||
-          needs.preflight.outputs.publish_inspector == 'true'
+          fromJSON(needs.preflight.outputs.publish_sdk) ||
+          fromJSON(needs.preflight.outputs.publish_cli) ||
+          fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/sdk
 
       - name: Build CLI
-        if: needs.preflight.outputs.publish_cli == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_cli)
         run: npm run build -w @mcpjam/cli
 
       - name: Build Inspector package
-        if: needs.preflight.outputs.publish_inspector == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/inspector
 
       - name: Inject SDK sourcemap debug ids
-        if: needs.preflight.outputs.publish_sdk == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
         run: npx @sentry/cli sourcemaps inject ./sdk/dist
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -305,7 +316,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Upload SDK sourcemaps
-        if: needs.preflight.outputs.publish_sdk == 'true'
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
         continue-on-error: true
         run: |
           version=$(node -p "require('./sdk/package.json').version")
@@ -321,7 +332,10 @@ jobs:
     needs:
       - preflight
       - publish-packages
-    if: inputs.deploy_backend_prod
+    if: |
+      always() &&
+      needs.publish-packages.result == 'success' &&
+      fromJSON(inputs.deploy_backend_prod)
     runs-on: ubuntu-latest
     environment: backend-production
     steps:
@@ -391,11 +405,11 @@ jobs:
       - deploy-backend-prod
     if: |
       always() &&
-      inputs.promote_production &&
+      fromJSON(inputs.promote_production) &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
       (
-        inputs.deploy_backend_prod != true ||
+        !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ubuntu-latest
@@ -440,21 +454,14 @@ jobs:
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.publish-packages.result == 'success' &&
-      (
-        (inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'success') ||
-        (!inputs.deploy_backend_prod && needs.deploy-backend-prod.result == 'skipped')
-      ) &&
-      (
-        (inputs.promote_production && needs.promote-production.result == 'success') ||
-        (!inputs.promote_production && needs.promote-production.result == 'skipped')
-      )
+      needs.publish-packages.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
       - name: Download release patch
         uses: actions/download-artifact@v4
@@ -474,7 +481,9 @@ jobs:
           git commit -m "chore(release): version packages"
 
       - name: Push release commit
-        run: git push origin HEAD:main
+        run: |
+          git pull --rebase origin main
+          git push origin HEAD:main
 
       - name: Create and push release tag
         if: needs.preflight.outputs.release_tag != ''
@@ -483,14 +492,14 @@ jobs:
           git push origin "${{ needs.preflight.outputs.release_tag }}"
 
       - name: Download macOS artifacts
-        if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+        if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
         uses: actions/download-artifact@v4
         with:
           name: inspector-macos-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/macos
 
       - name: Download Windows artifacts
-        if: needs.preflight.outputs.build_inspector_artifacts == 'true'
+        if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
         uses: actions/download-artifact@v4
         with:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}

@@ -2,11 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import type {
   AppAction,
   AppState,
   ServerWithName,
-  Workspace,
+  Project,
 } from "@/state/app-types";
 import {
   testConnection,
@@ -27,6 +32,8 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  isElectronMcpCallbackState,
+  readStoredOAuthConfig,
 } from "@/lib/oauth/mcp-oauth";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
@@ -38,26 +45,115 @@ import { HOSTED_MODE } from "@/lib/config";
 import {
   injectHostedServerMapping,
   tryGetHostedServerDisplayName,
+  tryResolveProjectServer,
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  captureCurrentReturnPath,
+  navigateApp,
+  normalizeReturnTargetPath,
+  routePaths,
+} from "@/lib/app-navigation";
+import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-import { useServerMutations, type RemoteServer } from "./useWorkspaces";
+import { useServerMutations, type RemoteServer } from "./useProjects";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
-  getEffectiveServerClientCapabilities,
+  PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+  getEffectiveProjectConnectionDefaults,
+  mergeProjectConnectionHeaders,
 } from "@/lib/client-config";
+import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
+import {
+  resolveEffectiveMcpProtocolVersion,
+  type HostConfigDtoV2,
+  type McpProtocolVersion,
+} from "@/lib/client-config-v2";
+import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
-  serverName: string,
+  serverName: string
 ): boolean {
   if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
   const status = readOnboardingState()?.status;
   return status === "seen";
+}
+
+function extractRequestHeaders(
+  requestInit: RequestInit | undefined
+): Record<string, string> | undefined {
+  const headers = requestInit?.headers;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return undefined;
+  }
+
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).filter(([, value]) => typeof value === "string")
+  ) as Record<string, string>;
+}
+
+function omitAuthorizationHeader(
+  headers?: Record<string, string>
+): Record<string, string> | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  const sanitized = Object.fromEntries(
+    Object.entries(headers).filter(
+      ([key, value]) =>
+        key.toLowerCase() !== "authorization" && typeof value === "string"
+    )
+  );
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+function mergeOAuthCallbackServerConfig(
+  existingConfig: MCPServerConfig | undefined,
+  callbackConfig: HttpServerConfig
+): HttpServerConfig {
+  const existingHttpConfig =
+    existingConfig && "url" in existingConfig ? existingConfig : undefined;
+  const mergedHeaders = {
+    ...(omitAuthorizationHeader(
+      extractRequestHeaders(existingHttpConfig?.requestInit)
+    ) ?? {}),
+    ...(extractRequestHeaders(callbackConfig.requestInit) ?? {}),
+  };
+  const nextRequestInit =
+    existingHttpConfig?.requestInit || callbackConfig.requestInit
+      ? {
+          ...(existingHttpConfig?.requestInit ?? {}),
+          ...(callbackConfig.requestInit ?? {}),
+          ...(Object.keys(mergedHeaders).length > 0
+            ? { headers: mergedHeaders }
+            : {}),
+        }
+      : undefined;
+
+  return {
+    ...(existingHttpConfig ?? {}),
+    ...callbackConfig,
+    ...(nextRequestInit ? { requestInit: nextRequestInit } : {}),
+    timeout: callbackConfig.timeout ?? existingHttpConfig?.timeout,
+    capabilities:
+      callbackConfig.capabilities ?? existingHttpConfig?.capabilities,
+    clientCapabilities:
+      callbackConfig.clientCapabilities ??
+      existingHttpConfig?.clientCapabilities ??
+      callbackConfig.capabilities ??
+      existingHttpConfig?.capabilities,
+  } as HttpServerConfig;
 }
 
 /**
@@ -65,6 +161,10 @@ function shouldSuppressExcalidrawConnectToastForOnboarding(
  * This persists server URL, scopes, headers, and client credentials.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
+  if (HOSTED_MODE) {
+    return;
+  }
+
   if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
     return;
   }
@@ -72,6 +172,17 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
 
   const oauthConfig: Record<string, unknown> = {};
+  const existingOAuthConfig = readStoredOAuthConfig(formData.name);
+  const protocolMode = formData.oauthProtocolMode ?? "auto";
+  const registrationMode =
+    formData.oauthRegistrationMode ??
+    (formData.clientId || formData.clientSecret ? "preregistered" : "auto");
+
+  oauthConfig.protocolMode = protocolMode;
+  oauthConfig.registrationMode = registrationMode;
+  if (protocolMode !== "auto") {
+    oauthConfig.protocolVersion = protocolMode;
+  }
   if (formData.oauthScopes && formData.oauthScopes.length > 0) {
     oauthConfig.scopes = formData.oauthScopes;
   }
@@ -81,38 +192,227 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
   }
-  if (formData.clientId || formData.clientSecret) {
-    oauthConfig.registrationStrategy = "preregistered";
+  if (registrationMode !== "auto") {
+    oauthConfig.registrationStrategy = registrationMode;
+  }
+  if (existingOAuthConfig.resourceUrl) {
+    oauthConfig.resourceUrl = existingOAuthConfig.resourceUrl;
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
       `mcp-oauth-config-${formData.name}`,
-      JSON.stringify(oauthConfig),
+      JSON.stringify(oauthConfig)
     );
   }
 
-  if (formData.clientId || formData.clientSecret) {
+  if (formData.clientId || (!HOSTED_MODE && formData.clientSecret)) {
     const clientInfo: Record<string, string> = {};
     if (formData.clientId) {
       clientInfo.client_id = formData.clientId;
     }
-    if (formData.clientSecret) {
+    if (!HOSTED_MODE && formData.clientSecret) {
       clientInfo.client_secret = formData.clientSecret;
     }
     localStorage.setItem(
       `mcp-client-${formData.name}`,
-      JSON.stringify(clientInfo),
+      JSON.stringify(clientInfo)
     );
+  } else {
+    localStorage.removeItem(`mcp-client-${formData.name}`);
   }
+}
+
+export function buildElectronMcpCallbackUrl(): string | null {
+  if (window.isElectron || window.location.pathname !== "/oauth/callback") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (!params.get("code") && !params.get("error")) {
+    return null;
+  }
+
+  // Electron-started MCP OAuth explicitly tags the state parameter so the
+  // browser callback can hand control back to the desktop app without relying
+  // on browser-local storage heuristics.
+  if (!isElectronMcpCallbackState(params.get("state"))) {
+    return null;
+  }
+
+  const callbackUrl = new URL("mcpjam://oauth/callback");
+  callbackUrl.searchParams.set("flow", "mcp");
+
+  for (const [key, value] of params.entries()) {
+    callbackUrl.searchParams.append(key, value);
+  }
+
+  return callbackUrl.toString();
+}
+
+const OAUTH_CONNECTION_RETRY_DELAY_MS = 1500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function readStoredClientCredentials(serverName: string): {
+  clientId?: string;
+  clientSecret?: string;
+} {
+  try {
+    const raw = localStorage.getItem(`mcp-client-${serverName}`);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw);
+    return {
+      clientId:
+        typeof parsed?.client_id === "string" && parsed.client_id.trim() !== ""
+          ? parsed.client_id
+          : undefined,
+      clientSecret:
+        !HOSTED_MODE &&
+        typeof parsed?.client_secret === "string" &&
+        parsed.client_secret.trim() !== ""
+          ? parsed.client_secret
+          : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function parseOAuthScopes(scopes?: string): string[] | undefined {
+  const parsed = scopes
+    ?.split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  return parsed && parsed.length > 0 ? parsed : undefined;
+}
+
+function profileHeadersToRecord(
+  headers?: Array<{ key: string; value: string }>
+): Record<string, string> | undefined {
+  const entries = headers
+    ?.map(({ key, value }) => [key.trim(), value] as const)
+    .filter(([key, value]) => key && value);
+
+  return entries && entries.length > 0
+    ? Object.fromEntries(entries)
+    : undefined;
+}
+
+function buildResolvedOAuthProfile(input: {
+  serverName: string;
+  serverUrl: string;
+  existingProfile?: OAuthTestProfile;
+  storedOAuthConfig: ReturnType<typeof readStoredOAuthConfig>;
+  storedClientCredentials: ReturnType<typeof readStoredClientCredentials>;
+  oauthResourceUrl?: string;
+}): OAuthTestProfile | undefined {
+  const existingProfile = input.existingProfile;
+  const storedOAuthConfig = input.storedOAuthConfig;
+  const storedClientCredentials = input.storedClientCredentials;
+
+  const protocolVersion =
+    existingProfile?.protocolVersion ??
+    storedOAuthConfig.protocolVersion ??
+    (storedOAuthConfig.protocolMode && storedOAuthConfig.protocolMode !== "auto"
+      ? storedOAuthConfig.protocolMode
+      : undefined);
+  const registrationStrategy =
+    existingProfile?.registrationStrategy ??
+    storedOAuthConfig.registrationStrategy ??
+    (storedOAuthConfig.registrationMode &&
+    storedOAuthConfig.registrationMode !== "auto"
+      ? storedOAuthConfig.registrationMode
+      : undefined);
+
+  if (!protocolVersion || !registrationStrategy) {
+    return existingProfile;
+  }
+
+  const customHeaders = existingProfile?.customHeaders?.length
+    ? existingProfile.customHeaders
+    : Object.entries(storedOAuthConfig.customHeaders ?? {}).map(
+        ([key, value]) => ({
+          key,
+          value,
+        })
+      );
+
+  return {
+    serverUrl: input.serverUrl,
+    resourceUrl:
+      input.oauthResourceUrl ??
+      existingProfile?.resourceUrl ??
+      storedOAuthConfig.resourceUrl ??
+      "",
+    clientId:
+      existingProfile?.clientId ?? storedClientCredentials.clientId ?? "",
+    clientSecret:
+      existingProfile?.clientSecret ??
+      storedClientCredentials.clientSecret ??
+      "",
+    scopes:
+      existingProfile?.scopes ?? storedOAuthConfig.scopes?.join(",") ?? "",
+    customHeaders,
+    protocolVersion,
+    registrationStrategy,
+  };
+}
+
+function buildOAuthProfileFromFormData(
+  formData: ServerFormData,
+  existingProfile?: OAuthTestProfile
+): OAuthTestProfile | undefined {
+  if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
+    return undefined;
+  }
+
+  const protocolVersion =
+    formData.oauthProtocolMode && formData.oauthProtocolMode !== "auto"
+      ? formData.oauthProtocolMode
+      : existingProfile?.protocolVersion ?? "2025-11-25";
+  const registrationStrategy =
+    formData.oauthRegistrationMode && formData.oauthRegistrationMode !== "auto"
+      ? formData.oauthRegistrationMode
+      : existingProfile?.registrationStrategy ??
+        (formData.clientId || formData.clientSecret || formData.hasClientSecret
+          ? "preregistered"
+          : "dcr");
+  const customHeaders = Object.entries(formData.headers ?? {})
+    .filter(([key, value]) => key.trim() && value)
+    .map(([key, value]) => ({ key, value }));
+
+  return {
+    serverUrl: formData.url,
+    resourceUrl: existingProfile?.resourceUrl ?? "",
+    clientId: formData.clientId ?? existingProfile?.clientId ?? "",
+    clientSecret: HOSTED_MODE
+      ? ""
+      : formData.clientSecret ?? existingProfile?.clientSecret ?? "",
+    scopes: formData.oauthScopes?.join(",") ?? existingProfile?.scopes ?? "",
+    customHeaders,
+    protocolVersion,
+    registrationStrategy,
+  };
 }
 
 function restorePathAfterOAuthCallback(
   currentPathname: string,
-  savedHash: string,
+  savedTarget: string
 ): string {
   const basePath =
-    currentPathname === "/oauth/callback" ? "/" : currentPathname;
-  return `${basePath}${savedHash}`;
+    currentPathname === "/oauth/callback"
+      ? routePaths.servers
+      : currentPathname;
+  return savedTarget
+    ? normalizeReturnTargetPath(savedTarget, basePath)
+    : basePath;
 }
 
 function requiresFreshOAuthAuthorization(error: unknown): boolean {
@@ -120,8 +420,8 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
     typeof error === "string"
       ? error
       : error instanceof Error
-        ? error.message
-        : "";
+      ? error.message
+      : "";
 
   if (!errorMessage) {
     return false;
@@ -131,10 +431,33 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
   return (
     normalized.includes("requires oauth authentication") ||
     normalized.includes(
-      "stored hosted oauth credential is missing refresh_token",
+      "stored hosted oauth credential is missing refresh_token"
     ) ||
     (normalized.includes("authentication failed") &&
       normalized.includes("invalid_token"))
+  );
+}
+
+export function shouldRetryOAuthConnectionFailure(
+  errorMessage?: string,
+): boolean {
+  if (!errorMessage) {
+    return false;
+  }
+
+  const normalized = errorMessage.toLowerCase();
+  if (
+    normalized.includes("authentication failed") ||
+    normalized.includes("invalid_client") ||
+    normalized.includes("unauthorized_client")
+  ) {
+    return false;
+  }
+
+  return (
+    normalized.includes("request timed out") ||
+    normalized.includes("streamable http error") ||
+    (normalized.includes("non-200 status code") && normalized.includes("404"))
   );
 }
 
@@ -153,6 +476,7 @@ interface RegistryOAuthConfigResponse {
 interface ResolvedOAuthInitiationInputs {
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret: boolean;
   registryServerId?: string;
   scopes?: string[];
   useRegistryOAuthProxy: boolean;
@@ -163,21 +487,57 @@ interface UseServerStateParams {
   dispatch: Dispatch<AppAction>;
   isLoading: boolean;
   isAuthenticated: boolean;
+  /** True when a signed-in WorkOS user is present (not guest Convex-only auth). */
+  hasSignedInUser: boolean;
   isAuthLoading: boolean;
-  isLoadingWorkspaces: boolean;
+  isLoadingProjects: boolean;
   useLocalFallback: boolean;
-  effectiveWorkspaces: Record<string, Workspace>;
-  effectiveActiveWorkspaceId: string;
-  activeWorkspaceServersFlat: RemoteServer[] | undefined;
+  effectiveProjects: Record<string, Project>;
+  effectiveActiveProjectId: string;
+  activeProjectServersFlat: RemoteServer[] | undefined;
+  /**
+   * The active project default hostConfig's mcpProfile envelope, when
+   * one is set. Supplied by `use-app-state` via the
+   * `hostConfigsV2.getProjectDefault` query. `undefined` means "use SDK
+   * defaults" — preserves historical wire behavior on /api/mcp/connect
+   * for users who haven't opted into mcpProfile. Forwarded by every
+   * resolver-path connect site into ConnectionDefaults so the SDK pins
+   * clientInfo / supportedProtocolVersions accordingly.
+   */
+  activeMcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1;
+  /**
+   * When a named host is active (e.g. selected in ChatTabV2 or ClientBuilderView
+   * preview), its connectionDefaults replace the project-level connection
+   * defaults in `withProjectConnectionDefaults`. Per-server overrides are
+   * applied when the call site also supplies the `serverId`.
+   */
+  activeHostConfig?: HostConfigDtoV2;
   logger: LoggerLike;
 }
+
+export type PersistRuntimeServerResult =
+  | "noop"
+  | "pending"
+  | "persisted"
+  | "skipped_existing_name"
+  | "skipped_project_servers_unresolved"
+  | "failed";
+
+const PROJECT_SERVERS_SNAPSHOT_WAIT_MS = 10_000;
+/** Must stay below Vitest's default 30s test timeout so callers can finish after a full wait + margin. */
+const PROJECT_SERVER_ECHO_WAIT_MS = 25_000;
+const PROJECT_SERVERS_POLL_MS = 100;
 
 export interface ServerUpdateResult {
   ok: boolean;
   serverName: string;
 }
 
-type EnsureServerConnectionStatus = "connected" | "failed" | "missing" | "reauth";
+type EnsureServerConnectionStatus =
+  | "connected"
+  | "failed"
+  | "missing"
+  | "reauth";
 
 interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
@@ -203,20 +563,54 @@ export function useServerState({
   dispatch,
   isLoading,
   isAuthenticated,
+  hasSignedInUser,
   isAuthLoading,
-  isLoadingWorkspaces,
+  isLoadingProjects,
   useLocalFallback,
-  effectiveWorkspaces,
-  effectiveActiveWorkspaceId,
-  activeWorkspaceServersFlat,
+  effectiveProjects,
+  effectiveActiveProjectId,
+  activeProjectServersFlat,
+  activeMcpProfile,
+  activeHostConfig,
   logger,
 }: UseServerStateParams) {
+  const isUserReady = useDbUserReady();
   const convex = useConvex();
+  // Rollout kill-switch for stateless wire mode. Mirrors the App.tsx gate
+  // on the hosted path so local-mode connects can't bypass it either via
+  // a persisted `mcpProtocolVersion: "DRAFT-2026-v1"` override.
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
-    createServer: convexCreateServer,
+    createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
+    createServerWithClientSecret: convexCreateServerWithClientSecret,
+    updateServerWithClientSecret: convexUpdateServerWithClientSecret,
     deleteServer: convexDeleteServer,
   } = useServerMutations();
+
+  const hasSignedInUserRef = useRef(hasSignedInUser);
+  hasSignedInUserRef.current = hasSignedInUser;
+  const isAuthenticatedRef = useRef(isAuthenticated);
+  isAuthenticatedRef.current = isAuthenticated;
+  const isUserReadyRef = useRef(isUserReady);
+  isUserReadyRef.current = isUserReady;
+  const isAuthLoadingRef = useRef(isAuthLoading);
+  isAuthLoadingRef.current = isAuthLoading;
+  const isLoadingProjectsRef = useRef(isLoadingProjects);
+  isLoadingProjectsRef.current = isLoadingProjects;
+  const useLocalFallbackRef = useRef(useLocalFallback);
+  useLocalFallbackRef.current = useLocalFallback;
+  const effectiveActiveProjectIdRef = useRef(effectiveActiveProjectId);
+  effectiveActiveProjectIdRef.current = effectiveActiveProjectId;
+  const appStateServersRef = useRef(appState.servers);
+  appStateServersRef.current = appState.servers;
+  const activeProjectServersFlatRef = useRef(activeProjectServersFlat);
+  activeProjectServersFlatRef.current = activeProjectServersFlat;
+  const persistRuntimeDedupeKeysRef = useRef<Set<string>>(new Set());
+
+  async function sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   const oauthCallbackHandledRef = useRef(false);
   const opTokenRef = useRef<Map<string, number>>(new Map());
@@ -245,7 +639,7 @@ export function useServerState({
 
       return pendingServerName;
     },
-    [dispatch],
+    [dispatch]
   );
   const updateServerOAuthTrace = useCallback(
     (serverName: string, oauthTrace: OAuthTrace) => {
@@ -255,12 +649,12 @@ export function useServerState({
         oauthTrace,
       });
     },
-    [dispatch],
+    [dispatch]
   );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
-  const prepareHostedWorkspaceOAuthRedirect = useCallback(
+  const prepareHostedProjectOAuthRedirect = useCallback(
     (params: {
       serverId?: string | null;
       serverName: string;
@@ -269,60 +663,49 @@ export function useServerState({
       if (
         !HOSTED_MODE ||
         !isAuthenticated ||
-        !effectiveActiveWorkspaceId ||
+        !effectiveActiveProjectId ||
         !params.serverId ||
         !params.serverUrl
       ) {
         return false;
       }
 
-      const returnHash = window.location.hash || "#servers";
+      const returnPath = captureCurrentReturnPath();
+      const organizationId =
+        effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
-        surface: "workspace",
-        workspaceId: effectiveActiveWorkspaceId,
+        surface: "project",
+        organizationId,
+        projectId: effectiveActiveProjectId,
         serverId: params.serverId,
         serverName: params.serverName,
         serverUrl: params.serverUrl,
-        accessScope: "workspace_member",
-        returnHash,
+        accessScope: "project_member",
+        returnPath,
       });
-      localStorage.setItem("mcp-oauth-return-hash", returnHash);
+      if (returnPath) {
+        localStorage.setItem("mcp-oauth-return-hash", returnPath);
+      }
       return true;
     },
-    [effectiveActiveWorkspaceId, isAuthenticated],
+    [effectiveActiveProjectId, effectiveProjects, isAuthenticated]
   );
 
-  const activeWorkspace = useMemo(() => {
-    const workspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
-    if (!workspace) {
+  const activeProject = useMemo(() => {
+    const project = effectiveProjects[effectiveActiveProjectId];
+    if (!project) {
       return undefined;
     }
 
     const serversWithRuntime: Record<string, ServerWithName> = {};
-    for (const [name, server] of Object.entries(workspace.servers)) {
+    for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
-
-      let envFromStorage: Record<string, string> | undefined;
-      try {
-        const stored = localStorage.getItem(`mcp-env-${name}`);
-        if (stored) envFromStorage = JSON.parse(stored);
-      } catch {
-        // Ignore parse errors
-      }
-
-      let configWithEnv: MCPServerConfig = server.config;
-      if (
-        envFromStorage &&
-        "command" in server.config &&
-        typeof server.config.command === "string"
-      ) {
-        configWithEnv = { ...server.config, env: envFromStorage };
-      }
-
+      // Env now lives on the Convex server doc and is returned by the
+      // resolver inside `server.config.env`; no localStorage read needed.
       serversWithRuntime[name] = {
         ...server,
-        config: configWithEnv,
+        config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
@@ -332,40 +715,154 @@ export function useServerState({
       };
     }
 
-    return { ...workspace, servers: serversWithRuntime };
-  }, [effectiveWorkspaces, effectiveActiveWorkspaceId, appState.servers]);
+    if (!isAuthenticated || useLocalFallback) {
+      // Surface runtime-only servers only in local/fallback state. For
+      // Convex-backed projects the server list must come from the Convex
+      // project-server queries, otherwise runtime state can leak across
+      // logout, guest handoff, or organization switches.
+      for (const [name, runtime] of Object.entries(appState.servers)) {
+        if (serversWithRuntime[name]) continue;
+        if (
+          runtime.connectionStatus !== "connected" &&
+          runtime.connectionStatus !== "connecting"
+        ) {
+          continue;
+        }
+        serversWithRuntime[name] = runtime;
+      }
+    }
+
+    return { ...project, servers: serversWithRuntime };
+  }, [
+    effectiveProjects,
+    effectiveActiveProjectId,
+    appState.servers,
+    isAuthenticated,
+    useLocalFallback,
+  ]);
 
   const effectiveServers = useMemo(() => {
-    return activeWorkspace?.servers || {};
-  }, [activeWorkspace]);
+    return activeProject?.servers || {};
+  }, [activeProject]);
+
+  const connectedOrConnectingServerConfigs = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(effectiveServers).filter(
+          ([, server]) =>
+            server.connectionStatus === "connected" ||
+            server.connectionStatus === "connecting"
+        )
+      ),
+    [effectiveServers]
+  );
   const latestEffectiveServersRef = useRef(effectiveServers);
 
   useEffect(() => {
     latestEffectiveServersRef.current = effectiveServers;
   }, [effectiveServers]);
 
-  const isClientConfigSyncPending = useClientConfigStore(
-    (state) =>
-      state.isAwaitingRemoteEcho &&
-      state.pendingWorkspaceId === effectiveActiveWorkspaceId,
+  const isClientConfigSyncPending = useProjectClientConfigSyncPending(
+    effectiveActiveProjectId
   );
 
-  const withWorkspaceClientCapabilities = useCallback(
-    (serverConfig: MCPServerConfig): MCPServerConfig => {
-      const mergedCapabilities = getEffectiveServerClientCapabilities({
-        workspaceClientConfig: activeWorkspace?.clientConfig,
-        serverCapabilities: serverConfig.capabilities as
-          | Record<string, unknown>
-          | undefined,
-      });
+  const projectConnectionDefaults = useMemo(
+    () => getEffectiveProjectConnectionDefaults(activeProject?.clientConfig),
+    [activeProject?.clientConfig]
+  );
+
+  const withProjectConnectionDefaults = useCallback(
+    (serverConfig: MCPServerConfig, serverId?: string): MCPServerConfig => {
+      // Capability precedence: per-server explicit override → active host
+      // (always the single source for the global tab scope) → project
+      // clientConfig shadow (transient, only when activeHostConfig hasn't
+      // hydrated yet). The host is the only authoritative source once
+      // provisioned — `projects.clientConfig` is a backend-maintained
+      // shadow-mirror of the project default host.
+      const effectiveClientCapabilities = activeHostConfig
+        ? resolveEffectiveClientCapabilities({
+            host: activeHostConfig,
+            serverConfig,
+          })
+        : resolveEffectiveClientCapabilities({
+            host: activeProject?.clientConfig
+              ? ({
+                  clientCapabilities:
+                    activeProject.clientConfig.clientCapabilities,
+                } as Pick<HostConfigDtoV2, "clientCapabilities">)
+              : null,
+            serverConfig,
+          });
+
+      let nextRequestInit = serverConfig.requestInit;
+      if ("url" in serverConfig) {
+        let mergedHeaders: Record<string, string>;
+        let effectiveTimeout: number;
+
+        if (activeHostConfig) {
+          // Use host-level connection defaults + optional per-server override
+          const serverBase = {
+            headers: extractRequestHeaders(serverConfig.requestInit),
+            timeout: serverConfig.timeout,
+          };
+          const perServerOverride = serverId
+            ? activeHostConfig.serverConnectionOverrides?.[serverId]
+            : undefined;
+          const resolved = resolveServerConnectionSettings(
+            serverBase,
+            activeHostConfig.connectionDefaults,
+            perServerOverride,
+          );
+          mergedHeaders = resolved.headers;
+          effectiveTimeout = resolved.timeout;
+        } else {
+          mergedHeaders = mergeProjectConnectionHeaders(
+            projectConnectionDefaults.headers,
+            extractRequestHeaders(serverConfig.requestInit)
+          );
+          effectiveTimeout =
+            serverConfig.timeout ?? projectConnectionDefaults.requestTimeout;
+        }
+
+        if (Object.keys(mergedHeaders).length > 0) {
+          nextRequestInit = {
+            ...(serverConfig.requestInit ?? {}),
+            headers: mergedHeaders,
+          };
+        }
+
+        return {
+          ...serverConfig,
+          ...(nextRequestInit ? { requestInit: nextRequestInit } : {}),
+          timeout: effectiveTimeout,
+          capabilities: effectiveClientCapabilities,
+          clientCapabilities: effectiveClientCapabilities,
+        } as MCPServerConfig;
+      }
 
       return {
         ...serverConfig,
-        capabilities: mergedCapabilities,
-        clientCapabilities: mergedCapabilities,
-      };
+        timeout: activeHostConfig
+          ? activeHostConfig.connectionDefaults.requestTimeout ??
+            serverConfig.timeout ??
+            projectConnectionDefaults.requestTimeout
+          : serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
+        capabilities: effectiveClientCapabilities,
+        clientCapabilities: effectiveClientCapabilities,
+      } as MCPServerConfig;
     },
-    [activeWorkspace?.clientConfig],
+    [activeProject?.clientConfig, projectConnectionDefaults, activeHostConfig]
+  );
+
+  const mergeWithProjectHeaders = useCallback(
+    (headers?: Record<string, string>) => {
+      const merged = mergeProjectConnectionHeaders(
+        projectConnectionDefaults.headers,
+        omitAuthorizationHeader(headers)
+      );
+      return Object.keys(merged).length > 0 ? merged : undefined;
+    },
+    [projectConnectionDefaults.headers]
   );
 
   const assertClientConfigSynced = useCallback(() => {
@@ -385,20 +882,200 @@ export function useServerState({
     return true;
   }, [isClientConfigSyncPending]);
 
+  const isProjectProvisioned = useMemo(
+    () => Boolean(activeProject?.sharedProjectId),
+    [activeProject?.sharedProjectId]
+  );
+
+  const getProjectNotProvisionedError = useCallback(() => {
+    if (isProjectProvisioned) {
+      return null;
+    }
+    if (useLocalFallbackRef.current || !isAuthenticatedRef.current) {
+      return null;
+    }
+    return PROJECT_NOT_PROVISIONED_ERROR_MESSAGE;
+  }, [isProjectProvisioned]);
+
+  const notifyIfProjectNotProvisioned = useCallback(() => {
+    const errorMessage = getProjectNotProvisionedError();
+    if (!errorMessage) {
+      return false;
+    }
+
+    toast.error(errorMessage);
+    return true;
+  }, [getProjectNotProvisionedError]);
+
+  // Extract runtime overlay applied by `withProjectConnectionDefaults` so the
+  // resolver path can reproduce them server-side. Without this, the resolver
+  // sees only the Convex-stored per-server config and loses project-level
+  // header overlays / timeout / capabilities. HTTP servers' Authorization is
+  // omitted here — OAuth bearer is reattached server-side from the Convex
+  // token store.
+  const buildResolverConnectionDefaults = useCallback(
+    (
+      serverConfig: MCPServerConfig,
+      // Optional mcpProfile (hostConfig.mcpProfile) that the caller has
+      // already resolved from a chatbox/project context. When provided,
+      // its `initialize.clientInfo` and first
+      // `initialize.supportedProtocolVersions` entry flow onto the
+      // ConnectionDefaults wire shape. Undefined preserves historical
+      // behavior — connect runs without an mcpProfile pin and the SDK
+      // falls back to its hardcoded defaults.
+      mcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1,
+      // Server identifier used to look up per-server protocol-version
+      // pins on `activeHostConfig.serverConnectionOverrides`. When
+      // supplied, `resolveEffectiveMcpProtocolVersion(serverOverride,
+      // hostDefault)` runs so a per-server dropdown choice actually
+      // reaches the connect payload — without this argument, the host
+      // default wins and per-server overrides are silently dropped (the
+      // bug PR #2257 review flagged).
+      serverId?: string
+    ) => {
+      const defaults: {
+        headers?: Record<string, string>;
+        timeoutMs?: number;
+        clientCapabilities?: Record<string, unknown>;
+        clientInfo?: { name?: string; version?: string } & Record<
+          string,
+          unknown
+        >;
+        supportedProtocolVersions?: string[];
+        mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
+      } = {};
+      if ("url" in serverConfig) {
+        const headers = omitAuthorizationHeader(
+          extractRequestHeaders(serverConfig.requestInit)
+        );
+        if (headers && Object.keys(headers).length > 0) {
+          defaults.headers = headers;
+        }
+      }
+      if (typeof serverConfig.timeout === "number") {
+        defaults.timeoutMs = serverConfig.timeout;
+      }
+      const caps = serverConfig.clientCapabilities as
+        | Record<string, unknown>
+        | undefined;
+      if (caps && typeof caps === "object") defaults.clientCapabilities = caps;
+      const ci = mcpProfile?.initialize?.clientInfo;
+      if (ci && typeof ci === "object" && !Array.isArray(ci)) {
+        defaults.clientInfo = ci;
+      }
+      const versions = mcpProfile?.initialize?.supportedProtocolVersions;
+      if (Array.isArray(versions) && versions.length > 0) {
+        // Forward the full accept-list. First entry is what the SDK
+        // proposes in `initialize.params.protocolVersion`; later entries
+        // are accepted if the server negotiates one of them. Collapsing
+        // to `[versions[0]]` was the prior shape and silently caused
+        // "server speaks a later listed version → connect fails," which
+        // defeats the point of letting users pin a multi-version list.
+        defaults.supportedProtocolVersions = versions.filter(
+          (v): v is string => typeof v === "string" && v.trim() !== "",
+        );
+      }
+      // Effective pinned MCP protocol version: per-server override
+      // (from `activeHostConfig.serverConnectionOverrides[serverId]
+      // .mcpProtocolVersionOverride`) wins, otherwise the host default
+      // from `mcpProfile.mcpProtocolVersion`, otherwise undefined
+      // (preserves "SDK chooses" semantics). Membership-gate each
+      // candidate via `isKnownProtocolVersion` so a typo on either
+      // layer doesn't slip past to the SDK's open-routing predicate.
+      const rawServerOverride =
+        serverId && activeHostConfig
+          ? activeHostConfig.serverConnectionOverrides?.[serverId]
+              ?.mcpProtocolVersionOverride
+          : undefined;
+      const serverOverride: McpProtocolVersion | undefined =
+        typeof rawServerOverride === "string" &&
+        isKnownProtocolVersion(rawServerOverride)
+          ? rawServerOverride
+          : undefined;
+      const rawHostPin = mcpProfile?.mcpProtocolVersion;
+      const hostPin: McpProtocolVersion | undefined =
+        typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+          ? rawHostPin
+          : undefined;
+      const effective = resolveEffectiveMcpProtocolVersion(
+        serverOverride,
+        hostPin,
+      );
+      // Stateless versions are gated behind the rollout flag. A persisted
+      // override from a prior flag-on session must NOT bypass the gate
+      // (the UI controls only gate authoring). Stateful pins like
+      // "2025-11-25" still flow through.
+      if (
+        effective !== undefined &&
+        (statelessMcpEnabled || !isStatelessProtocolVersion(effective))
+      ) {
+        defaults.mcpProtocolVersion = effective;
+      }
+      return Object.keys(defaults).length > 0 ? defaults : undefined;
+    },
+    [activeHostConfig, statelessMcpEnabled]
+  );
+
   const guardedTestConnection = useCallback(
     async (serverConfig: MCPServerConfig, serverName: string) => {
       assertClientConfigSynced();
-      return testConnection(serverConfig, serverName);
+      // Opt into the resolver path when both projectId and a Convex serverId
+      // are populated in the API context; otherwise fall back to legacy
+      // {serverConfig, serverId} so brand-new servers (not yet synced to
+      // Convex) keep working. The 2-arg call signature is preserved when no
+      // resolver context is available so existing test mocks keep matching.
+      const resolved = tryResolveProjectServer(serverName);
+      if (resolved) {
+        return testConnection(serverConfig, resolved.serverId, {
+          projectId: resolved.projectId,
+          serverName,
+          // Forward the active mcpProfile so the resolver path pins
+          // clientInfo / supportedProtocolVersions on this connect.
+          // Undefined preserves SDK defaults — no behavior change for
+          // users without an mcpProfile.
+          connectionDefaults: buildResolverConnectionDefaults(
+            serverConfig,
+            activeMcpProfile,
+            resolved.serverId,
+          ),
+        });
+      }
+      throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
-    [assertClientConfigSynced],
+    [
+      assertClientConfigSynced,
+      buildResolverConnectionDefaults,
+      activeMcpProfile,
+    ]
   );
 
   const guardedReconnectServer = useCallback(
     async (serverName: string, serverConfig: MCPServerConfig) => {
       assertClientConfigSynced();
-      return reconnectServer(serverName, serverConfig);
+      const resolved = tryResolveProjectServer(serverName);
+      if (resolved) {
+        const configWithDefaults = withProjectConnectionDefaults(
+          serverConfig,
+          resolved.serverId,
+        );
+        return reconnectServer(resolved.serverId, configWithDefaults, {
+          projectId: resolved.projectId,
+          serverName,
+          connectionDefaults: buildResolverConnectionDefaults(
+            configWithDefaults,
+            activeMcpProfile,
+            resolved.serverId,
+          ),
+        });
+      }
+      throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
-    [assertClientConfigSynced],
+    [
+      assertClientConfigSynced,
+      buildResolverConnectionDefaults,
+      activeMcpProfile,
+      withProjectConnectionDefaults,
+    ]
   );
 
   const validateForm = (formData: ServerFormData): string | null => {
@@ -434,20 +1111,68 @@ export function useServerState({
     async (
       serverName: string,
       serverEntry: ServerWithName,
+      secretOptions?: { clientSecret?: string; clearClientSecret?: boolean }
     ): Promise<string | undefined> => {
-      if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId) {
+      const latestUseLocalFallback = useLocalFallbackRef.current;
+      const latestIsAuthenticated = isAuthenticatedRef.current;
+      const latestProjectId = effectiveActiveProjectIdRef.current;
+      if (
+        latestUseLocalFallback ||
+        !latestIsAuthenticated ||
+        !latestProjectId ||
+        latestProjectId === "none"
+      ) {
         return undefined;
       }
 
-      const existingServer = activeWorkspaceServersFlat?.find(
-        (s) => s.name === serverName,
-      );
+      const flatSnapshot =
+        activeProjectServersFlatRef.current ?? activeProjectServersFlat;
+
+      const clientSecret = secretOptions?.clientSecret?.trim();
+      const clearClientSecret = secretOptions?.clearClientSecret === true;
+      if (clientSecret && clearClientSecret) {
+        throw new Error(
+          "Cannot replace and clear the OAuth client secret in the same save."
+        );
+      }
+      const hasSecretOperation = Boolean(clientSecret || clearClientSecret);
+
+      // Resolve "does a server with this name already exist?" from the local
+      // snapshot when possible, then fall back to a one-shot Convex query
+      // during loading windows. When no row is visible, the no-secret write
+      // path still uses the backend create-if-missing mutation so the final
+      // decision is atomic.
+      const resolveExistingServer = async (
+        snapshot: RemoteServer[] | undefined,
+        options?: { queryWhenLoaded?: boolean }
+      ): Promise<RemoteServer | undefined> => {
+        const local = snapshot?.find((s) => s.name === serverName);
+        if (local) return local;
+        if (snapshot !== undefined && options?.queryWhenLoaded !== true) {
+          return undefined;
+        }
+        if (!isUserReadyRef.current) {
+          return undefined;
+        }
+        try {
+          const fresh = (await convex.query(
+            "servers:getProjectServers" as any,
+            { projectId: latestProjectId } as any
+          )) as RemoteServer[] | undefined;
+          return fresh?.find((s) => s.name === serverName);
+        } catch {
+          return undefined;
+        }
+      };
+
+      const existingServer = await resolveExistingServer(flatSnapshot);
 
       const config = serverEntry.config as any;
       const transportType = config?.command ? "stdio" : "http";
       const url =
         config?.url instanceof URL ? config.url.href : config?.url || undefined;
       const headers = config?.requestInit?.headers || undefined;
+      const storedOAuthConfig = readStoredOAuthConfig(serverName);
 
       const payload = {
         name: serverName,
@@ -458,55 +1183,93 @@ export function useServerState({
         url,
         headers,
         timeout: config?.timeout,
+        clientCapabilities: config?.clientCapabilities,
         useOAuth: serverEntry.useOAuth,
         oauthScopes: serverEntry.oauthFlowProfile?.scopes
           ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
           : undefined,
         clientId: serverEntry.oauthFlowProfile?.clientId,
+        oauthResourceUrl:
+          serverEntry.oauthFlowProfile?.resourceUrl ||
+          storedOAuthConfig.resourceUrl,
       } as const;
 
       try {
         if (existingServer) {
-          await convexUpdateServer({
+          const updatePayload = {
             serverId: existingServer._id,
             ...payload,
-          });
+            ...(clientSecret ? { clientSecret } : {}),
+            ...(clearClientSecret ? { clearClientSecret: true } : {}),
+          };
+          if (hasSecretOperation) {
+            await convexUpdateServerWithClientSecret(updatePayload);
+          } else {
+            await convexUpdateServer(updatePayload);
+          }
           return existingServer._id;
         }
 
-        const newId = await convexCreateServer({
-          workspaceId: effectiveActiveWorkspaceId,
+        const createPayload = {
+          projectId: latestProjectId,
           ...payload,
-        });
+          ...(clientSecret ? { clientSecret } : {}),
+        };
+        const newId = clientSecret
+          ? await convexCreateServerWithClientSecret(createPayload)
+          : await convexCreateServerIfMissing(createPayload);
         return newId as string | undefined;
       } catch (primaryError) {
+        const primaryErrorMessage =
+          primaryError instanceof Error
+            ? primaryError.message
+            : "Unknown error";
         // Best-effort fallback for stale query snapshots:
         // if update failed, try create; if create failed, try update when possible.
         try {
           if (existingServer) {
-            const newId = await convexCreateServer({
-              workspaceId: effectiveActiveWorkspaceId,
+            const createPayload = {
+              projectId: latestProjectId,
               ...payload,
-            });
+              ...(clientSecret ? { clientSecret } : {}),
+            };
+            const newId = clientSecret
+              ? await convexCreateServerWithClientSecret(createPayload)
+              : await convexCreateServerIfMissing(createPayload);
             return newId as string | undefined;
           }
-          const retryExisting = activeWorkspaceServersFlat?.find(
-            (s) => s.name === serverName,
-          );
+          const flatRetry =
+            activeProjectServersFlatRef.current ?? activeProjectServersFlat;
+          const retryExisting = await resolveExistingServer(flatRetry, {
+            queryWhenLoaded: true,
+          });
           if (retryExisting) {
-            await convexUpdateServer({
+            const updatePayload = {
               serverId: retryExisting._id,
               ...payload,
-            });
+              ...(clientSecret ? { clientSecret } : {}),
+              ...(clearClientSecret ? { clearClientSecret: true } : {}),
+            };
+            if (hasSecretOperation) {
+              await convexUpdateServerWithClientSecret(updatePayload);
+            } else {
+              await convexUpdateServer(updatePayload);
+            }
             return retryExisting._id;
           }
+          const createPayload = {
+            projectId: latestProjectId,
+            ...payload,
+            ...(clientSecret ? { clientSecret } : {}),
+          };
+          const newId = clientSecret
+            ? await convexCreateServerWithClientSecret(createPayload)
+            : await convexCreateServerIfMissing(createPayload);
+          return newId as string | undefined;
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
             serverName,
-            primaryError:
-              primaryError instanceof Error
-                ? primaryError.message
-                : "Unknown error",
+            primaryError: primaryErrorMessage,
             fallbackError:
               fallbackError instanceof Error
                 ? fallbackError.message
@@ -514,36 +1277,245 @@ export function useServerState({
           });
           return undefined;
         }
-
-        logger.error("Failed to sync server to Convex", {
-          serverName,
-          error:
-            primaryError instanceof Error
-              ? primaryError.message
-              : "Unknown error",
-        });
-        return undefined;
       }
     },
     [
-      useLocalFallback,
-      isAuthenticated,
-      effectiveActiveWorkspaceId,
-      activeWorkspaceServersFlat,
+      activeProjectServersFlat,
+      convex,
+      convexCreateServerIfMissing,
       convexUpdateServer,
-      convexCreateServer,
+      convexCreateServerWithClientSecret,
+      convexUpdateServerWithClientSecret,
       logger,
-    ],
+    ]
+  );
+
+  const persistRuntimeServerToProjectIfNeeded = useCallback(
+    async (
+      serverName: string,
+      runtimeServerOverride?: ServerWithName
+    ): Promise<PersistRuntimeServerResult> => {
+      if (HOSTED_MODE) {
+        return "noop";
+      }
+      const resolveRuntime = (): ServerWithName | undefined =>
+        runtimeServerOverride ?? appStateServersRef.current[serverName];
+
+      let runtime = resolveRuntime();
+      if (!runtime) {
+        return "noop";
+      }
+      if (runtime.connectionStatus !== "connected") {
+        return "noop";
+      }
+
+      const initialProjectKey =
+        effectiveActiveProjectIdRef.current ?? effectiveActiveProjectId;
+      const frozenProjectId =
+        initialProjectKey && initialProjectKey !== "none"
+          ? initialProjectKey
+          : null;
+      let dedupeKey = `${frozenProjectId ?? "pending"}:${serverName}`;
+
+      if (persistRuntimeDedupeKeysRef.current.has(dedupeKey)) {
+        return "pending";
+      }
+
+      persistRuntimeDedupeKeysRef.current.add(dedupeKey);
+
+      const clearDedupeKey = () => {
+        persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
+      };
+
+      const rekeyDedupe = (resolvedProjectId: string): boolean => {
+        const nextKey = `${resolvedProjectId}:${serverName}`;
+        if (nextKey === dedupeKey) {
+          return true;
+        }
+        if (persistRuntimeDedupeKeysRef.current.has(nextKey)) {
+          persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
+          return false;
+        }
+        persistRuntimeDedupeKeysRef.current.delete(dedupeKey);
+        persistRuntimeDedupeKeysRef.current.add(nextKey);
+        dedupeKey = nextKey;
+        return true;
+      };
+
+      let projectId: string | null = null;
+      try {
+        const readyStarted = Date.now();
+        while (Date.now() - readyStarted < PROJECT_SERVERS_SNAPSHOT_WAIT_MS) {
+          if (isAuthLoadingRef.current || isLoadingProjectsRef.current) {
+            await sleep(PROJECT_SERVERS_POLL_MS);
+            continue;
+          }
+
+          if (
+            !hasSignedInUserRef.current ||
+            !isAuthenticatedRef.current ||
+            useLocalFallbackRef.current
+          ) {
+            clearDedupeKey();
+            return "noop";
+          }
+
+          const latestProjectId = effectiveActiveProjectIdRef.current;
+          if (latestProjectId && latestProjectId !== "none") {
+            if (frozenProjectId && latestProjectId !== frozenProjectId) {
+              clearDedupeKey();
+              return "noop";
+            }
+            if (!rekeyDedupe(latestProjectId)) {
+              return "pending";
+            }
+            projectId = latestProjectId;
+            break;
+          }
+
+          await sleep(PROJECT_SERVERS_POLL_MS);
+        }
+
+        if (!projectId) {
+          if (
+            !hasSignedInUserRef.current ||
+            !isAuthenticatedRef.current ||
+            useLocalFallbackRef.current
+          ) {
+            clearDedupeKey();
+            return "noop";
+          }
+          logger.warn(
+            "persistRuntimeServerToProjectIfNeeded: auth/project state did not become ready in time; skipping Convex write",
+            { serverName }
+          );
+          clearDedupeKey();
+          return "skipped_project_servers_unresolved";
+        }
+
+        const startedWait = Date.now();
+        while (Date.now() - startedWait < PROJECT_SERVERS_SNAPSHOT_WAIT_MS) {
+          const flat = activeProjectServersFlatRef.current;
+          if (flat !== undefined) {
+            break;
+          }
+          await sleep(PROJECT_SERVERS_POLL_MS);
+        }
+
+        const flatAfterWait = activeProjectServersFlatRef.current;
+        if (flatAfterWait === undefined) {
+          logger.warn(
+            "persistRuntimeServerToProjectIfNeeded: project server snapshot still unresolved; skipping Convex write",
+            { serverName, projectId }
+          );
+          clearDedupeKey();
+          return "skipped_project_servers_unresolved";
+        }
+
+        if (
+          effectiveActiveProjectIdRef.current &&
+          effectiveActiveProjectIdRef.current !== projectId
+        ) {
+          clearDedupeKey();
+          return "noop";
+        }
+
+        const liveRuntime = appStateServersRef.current[serverName];
+        if (!liveRuntime || liveRuntime.connectionStatus !== "connected") {
+          clearDedupeKey();
+          return "noop";
+        }
+        runtime = liveRuntime;
+
+        if (flatAfterWait.some((s) => s.name === serverName)) {
+          logger.warn(
+            "persistRuntimeServerToProjectIfNeeded: runtime server not persisted because a saved server with the same name already exists",
+            { serverName, projectId }
+          );
+          clearDedupeKey();
+          return "skipped_existing_name";
+        }
+
+        let convexResult: string | undefined;
+        try {
+          convexResult = await syncServerToConvex(serverName, runtime);
+        } catch (syncError) {
+          logger.error(
+            "persistRuntimeServerToProjectIfNeeded: syncServerToConvex threw",
+            {
+              serverName,
+              projectId,
+              phase: "syncServerToConvex",
+              error:
+                syncError instanceof Error
+                  ? syncError.message
+                  : "Unknown error",
+            }
+          );
+          clearDedupeKey();
+          return "failed";
+        }
+
+        if (convexResult === undefined) {
+          logger.error(
+            "persistRuntimeServerToProjectIfNeeded: syncServerToConvex returned no server id",
+            {
+              serverName,
+              projectId,
+              phase: "after_syncServerToConvex",
+            }
+          );
+          clearDedupeKey();
+          return "failed";
+        }
+
+        const echoStarted = Date.now();
+        let echoed = false;
+        while (Date.now() - echoStarted < PROJECT_SERVER_ECHO_WAIT_MS) {
+          const flatEcho = activeProjectServersFlatRef.current;
+          if (flatEcho?.some((s) => s.name === serverName)) {
+            echoed = true;
+            break;
+          }
+          await sleep(PROJECT_SERVERS_POLL_MS);
+        }
+
+        if (!echoed) {
+          logger.warn(
+            "persistRuntimeServerToProjectIfNeeded: timed out waiting for project server echo after persist",
+            { serverName, projectId }
+          );
+        }
+
+        clearDedupeKey();
+        return "persisted";
+      } catch (unexpected) {
+        logger.error(
+          "persistRuntimeServerToProjectIfNeeded: unexpected error",
+          {
+            serverName,
+            projectId,
+            error:
+              unexpected instanceof Error
+                ? unexpected.message
+                : "Unknown error",
+          }
+        );
+        clearDedupeKey();
+        return "failed";
+      }
+    },
+    [effectiveActiveProjectId, syncServerToConvex, logger]
   );
 
   const removeServerFromConvex = useCallback(
     async (serverName: string) => {
-      if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId) {
+      if (useLocalFallback || !isAuthenticated || !effectiveActiveProjectId) {
         return;
       }
 
-      const existingServer = activeWorkspaceServersFlat?.find(
-        (s) => s.name === serverName,
+      const existingServer = activeProjectServersFlat?.find(
+        (s) => s.name === serverName
       );
 
       if (!existingServer) {
@@ -565,36 +1537,36 @@ export function useServerState({
     [
       useLocalFallback,
       isAuthenticated,
-      effectiveActiveWorkspaceId,
-      activeWorkspaceServersFlat,
+      effectiveActiveProjectId,
+      activeProjectServersFlat,
       convexDeleteServer,
       logger,
-    ],
+    ]
   );
 
-  const persistServerToLocalWorkspace = useCallback(
+  const persistServerToLocalProject = useCallback(
     (
       serverName: string,
       serverEntry: ServerWithName,
-      options?: { originalServerName?: string },
+      options?: { originalServerName?: string }
     ) => {
-      const targetWorkspaceId =
-        effectiveActiveWorkspaceId !== "none"
-          ? effectiveActiveWorkspaceId
-          : appState.activeWorkspaceId;
+      const targetProjectId =
+        effectiveActiveProjectId !== "none"
+          ? effectiveActiveProjectId
+          : appState.activeProjectId;
 
-      if (!targetWorkspaceId || targetWorkspaceId === "none") {
+      if (!targetProjectId || targetProjectId === "none") {
         return;
       }
 
-      const workspace =
-        effectiveWorkspaces[targetWorkspaceId] ??
-        appState.workspaces[targetWorkspaceId];
-      if (!workspace) {
+      const project =
+        effectiveProjects[targetProjectId] ??
+        appState.projects[targetProjectId];
+      if (!project) {
         return;
       }
 
-      const nextServers = { ...workspace.servers };
+      const nextServers = { ...project.servers };
       if (
         options?.originalServerName &&
         options.originalServerName !== serverName
@@ -604,18 +1576,18 @@ export function useServerState({
       nextServers[serverName] = serverEntry;
 
       dispatch({
-        type: "UPDATE_WORKSPACE",
-        workspaceId: targetWorkspaceId,
+        type: "UPDATE_PROJECT",
+        projectId: targetProjectId,
         updates: { servers: nextServers },
       });
     },
     [
-      effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      appState.activeWorkspaceId,
-      appState.workspaces,
+      effectiveActiveProjectId,
+      effectiveProjects,
+      appState.activeProjectId,
+      appState.projects,
       dispatch,
-    ],
+    ]
   );
 
   const fetchAndStoreInitInfo = useCallback(
@@ -636,7 +1608,7 @@ export function useServerState({
         });
       }
     },
-    [dispatch],
+    [dispatch]
   );
 
   /**
@@ -647,7 +1619,7 @@ export function useServerState({
   const storeInitInfo = useCallback(
     async (
       serverName: string,
-      initInfo: Record<string, unknown> | null | undefined,
+      initInfo: Record<string, unknown> | null | undefined
     ) => {
       if (initInfo) {
         dispatch({
@@ -659,12 +1631,195 @@ export function useServerState({
         await fetchAndStoreInitInfo(serverName);
       }
     },
-    [dispatch, fetchAndStoreInitInfo],
+    [dispatch, fetchAndStoreInitInfo]
+  );
+
+  // Re-validate already-connected servers when the resolved effective
+  // `mcpProtocolVersion` for them changes — either because the host-level
+  // default flipped or a per-server override moved. The pinned wire mode
+  // is part of every subsequent request payload (via
+  // `buildResolverConnectionDefaults`), so a server that no longer speaks
+  // the pinned version will fail every call after the switch; without this
+  // re-test the durable "Connected" pill keeps lying until the user manually
+  // toggles the server.
+  //
+  // Behavior:
+  // - On the first observation of a connected server, seed the last-applied
+  //   map without re-testing (so steady-state mounts don't trigger probes).
+  // - On a subsequent observation where the resolved version differs, kick
+  //   off `guardedReconnectServer` (which threads the new pin through
+  //   `buildResolverConnectionDefaults` / `withProjectConnectionDefaults`).
+  //   Dispatch `CONNECT_SUCCESS` or `CONNECT_FAILURE` based on the result so
+  //   the toggle reflects reality.
+  // - Race protection via the existing `nextOpToken` / `isStaleOp` pattern,
+  //   so a user-initiated disconnect or another pin change supersedes an
+  //   in-flight re-test.
+  // - Drop entries for servers no longer in "connected" status so a manual
+  //   reconnect re-seeds against the live pin rather than against whatever
+  //   was last seen.
+  const lastAppliedProtocolVersionRef = useRef<
+    Map<string, McpProtocolVersion | undefined>
+  >(new Map());
+  useEffect(() => {
+    const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+    const hostPin: McpProtocolVersion | undefined =
+      typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+        ? rawHostPin
+        : undefined;
+
+    const observed = new Set<string>();
+    for (const [name, server] of Object.entries(appState.servers)) {
+      if (server.connectionStatus !== "connected") continue;
+      observed.add(name);
+
+      const resolved = tryResolveProjectServer(name);
+      const serverId = resolved?.serverId;
+      const rawOverride =
+        serverId && activeHostConfig
+          ? activeHostConfig.serverConnectionOverrides?.[serverId]
+              ?.mcpProtocolVersionOverride
+          : undefined;
+      const serverOverride: McpProtocolVersion | undefined =
+        typeof rawOverride === "string" && isKnownProtocolVersion(rawOverride)
+          ? rawOverride
+          : undefined;
+      const resolvedPin = resolveEffectiveMcpProtocolVersion(
+        serverOverride,
+        hostPin
+      );
+      // Track the EFFECTIVELY-STAMPED pin (after the rollout-flag gate),
+      // not the raw resolved pin. `buildResolverConnectionDefaults`
+      // drops stateless pins when `stateless-mcp-enabled` is off, so a
+      // raw resolved `DRAFT-2026-v1` against a flag-off state actually
+      // stamps `undefined` on the wire. Tracking the raw pin would
+      // miss flag-flip transitions — toggling the flag changes the wire
+      // mode without changing the stored pin, and `previous === resolved`
+      // would skip the re-test even though the transport just changed.
+      const effective: McpProtocolVersion | undefined =
+        resolvedPin !== undefined &&
+        (statelessMcpEnabled || !isStatelessProtocolVersion(resolvedPin))
+          ? resolvedPin
+          : undefined;
+
+      const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
+      const previous = lastAppliedProtocolVersionRef.current.get(name);
+      lastAppliedProtocolVersionRef.current.set(name, effective);
+
+      // Initial observation seeds without probing.
+      if (!seenBefore) continue;
+      if (previous === effective) continue;
+
+      // Resolved pin changed for a connected server. Re-test asynchronously;
+      // dispatch CONNECT_FAILURE if the server can't speak the new wire mode
+      // (e.g. legacy 2025 server with the host now pinned to a draft).
+      const serverConfig = server.config;
+      const useOAuth = server.useOAuth ?? false;
+      const token = nextOpToken(name);
+      void (async () => {
+        try {
+          const result = await guardedReconnectServer(name, serverConfig);
+          if (isStaleOp(name, token)) return;
+          if (result?.success) {
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name,
+              config: serverConfig,
+              tokens: getStoredTokens(name),
+              useOAuth,
+            });
+            if (result.initInfo) {
+              await storeInitInfo(name, result.initInfo).catch(() => {});
+            }
+            return;
+          }
+          const errorMessage =
+            (typeof result?.error === "string" && result.error.length > 0
+              ? result.error
+              : undefined) ??
+            `Server does not speak the pinned MCP protocol version (${
+              effective ?? "default"
+            })`;
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name,
+            error: errorMessage,
+          });
+        } catch (error) {
+          if (isStaleOp(name, token)) return;
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Connection re-test failed after protocol version change",
+          });
+        }
+      })();
+    }
+
+    // Drop entries for servers no longer in "connected" status so the next
+    // manual connect re-seeds against the current pin.
+    for (const name of Array.from(
+      lastAppliedProtocolVersionRef.current.keys()
+    )) {
+      if (!observed.has(name)) {
+        lastAppliedProtocolVersionRef.current.delete(name);
+      }
+    }
+  }, [
+    appState.servers,
+    activeMcpProfile?.mcpProtocolVersion,
+    activeHostConfig,
+    statelessMcpEnabled,
+    dispatch,
+    guardedReconnectServer,
+    storeInitInfo,
+  ]);
+
+  const testConnectionAfterOAuth = useCallback(
+    async (serverConfig: MCPServerConfig, serverName: string) => {
+      try {
+        const firstResult = await guardedTestConnection(
+          serverConfig,
+          serverName
+        );
+        if (
+          firstResult.success ||
+          !shouldRetryOAuthConnectionFailure(firstResult.error)
+        ) {
+          return firstResult;
+        }
+
+        logger.warn(
+          "Retrying OAuth connection after transient transport error",
+          {
+            serverName,
+            error: firstResult.error,
+          },
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown connection error";
+        if (!shouldRetryOAuthConnectionFailure(errorMessage)) {
+          throw error;
+        }
+
+        logger.warn("Retrying OAuth connection after transport exception", {
+          serverName,
+          error: errorMessage,
+        });
+      }
+
+      await delay(OAUTH_CONNECTION_RETRY_DELAY_MS);
+      return guardedTestConnection(serverConfig, serverName);
+    },
+    [guardedTestConnection, logger]
   );
 
   const resolveOAuthInitiationInputs = useCallback(
     async (
-      formData: ServerFormData,
+      formData: ServerFormData
     ): Promise<ResolvedOAuthInitiationInputs> => {
       let registryOAuthConfig: RegistryOAuthConfigResponse | null = null;
 
@@ -672,13 +1827,13 @@ export function useServerState({
         try {
           registryOAuthConfig = (await convex.query(
             "registryServers:getRegistryServerOAuthConfig" as any,
-            { registryServerId: formData.registryServerId } as any,
+            { registryServerId: formData.registryServerId } as any
           )) as RegistryOAuthConfigResponse | null;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
           throw new Error(
-            `Failed to resolve registry OAuth config: ${errorMessage}`,
+            `Failed to resolve registry OAuth config: ${errorMessage}`
           );
         }
       }
@@ -691,7 +1846,7 @@ export function useServerState({
       const scopes =
         Array.isArray(registryOAuthConfig?.scopes) &&
         registryOAuthConfig.scopes.every(
-          (scope): scope is string => typeof scope === "string",
+          (scope): scope is string => typeof scope === "string"
         )
           ? registryOAuthConfig.scopes
           : formData.oauthScopes;
@@ -699,24 +1854,28 @@ export function useServerState({
       return {
         clientId,
         clientSecret: formData.clientSecret,
+        hasClientSecret: Boolean(
+          formData.clientSecret || formData.hasClientSecret
+        ),
         registryServerId: formData.registryServerId,
         scopes,
         useRegistryOAuthProxy: Boolean(clientId && formData.registryServerId),
       };
     },
-    [convex],
+    [convex]
   );
 
   const handleOAuthCallbackComplete = useCallback(
     async (
       code: string,
-      hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
+      state: string | null,
+      hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>
     ) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
-      const isHostedWorkspaceCallback =
+      const isHostedProjectCallback =
         HOSTED_MODE &&
         isAuthenticated &&
-        hostedCallbackContext?.surface === "workspace";
+        hostedCallbackContext?.surface === "project";
       const handleLiveOAuthTrace = (oauthTrace: OAuthTrace) => {
         const traceServerName =
           oauthTrace.serverName ??
@@ -729,8 +1888,9 @@ export function useServerState({
       };
 
       try {
-        const result = isHostedWorkspaceCallback
+        const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
+              callbackState: state,
               onTraceUpdate: handleLiveOAuthTrace,
             })
           : await handleOAuthCallback(code, {
@@ -738,47 +1898,98 @@ export function useServerState({
             });
 
         localStorage.removeItem("mcp-oauth-return-hash");
-        if (isHostedWorkspaceCallback) {
+        if (isHostedProjectCallback) {
           clearHostedOAuthPendingState();
+        }
+        if (result.success) {
           localStorage.removeItem("mcp-oauth-pending");
         }
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
+          const existingServer = latestEffectiveServersRef.current[serverName];
+          const mergedServerConfig = mergeOAuthCallbackServerConfig(
+            existingServer?.config,
+            result.serverConfig
+          );
+          const storedOAuthConfig = readStoredOAuthConfig(serverName);
+          const storedClientCredentials =
+            readStoredClientCredentials(serverName);
+          const resolvedOAuthProfile = buildResolvedOAuthProfile({
+            serverName,
+            serverUrl: String(mergedServerConfig.url),
+            existingProfile: existingServer?.oauthFlowProfile,
+            storedOAuthConfig,
+            storedClientCredentials,
+            oauthResourceUrl: result.oauthResourceUrl,
+          });
+          const oauthServerEntry: ServerWithName = {
+            ...(existingServer ?? {}),
+            name: serverName,
+            config: mergedServerConfig,
+            lastConnectionTime:
+              existingServer?.lastConnectionTime ?? new Date(),
+            connectionStatus:
+              existingServer?.connectionStatus ?? "disconnected",
+            retryCount: existingServer?.retryCount ?? 0,
+            enabled: existingServer?.enabled ?? true,
+            oauthTokens: existingServer?.oauthTokens,
+            oauthFlowProfile: resolvedOAuthProfile,
+            hasClientSecret: existingServer?.hasClientSecret,
+            initializationInfo: existingServer?.initializationInfo,
+            useOAuth: true,
+            lastOAuthTrace: result.oauthTrace,
+          };
+
+          dispatch({
+            type: "UPSERT_SERVER",
+            name: serverName,
+            server: oauthServerEntry,
+          });
+          if (!isAuthenticated || useLocalFallback) {
+            persistServerToLocalProject(serverName, oauthServerEntry);
+          } else {
+            syncServerToConvex(serverName, oauthServerEntry).catch((error) =>
+              logger.warn("Failed to sync OAuth profile to Convex", {
+                serverName,
+                error,
+              })
+            );
+          }
 
           dispatch({
             type: "CONNECT_REQUEST",
             name: serverName,
-            config: result.serverConfig,
+            config: mergedServerConfig,
             select: true,
           });
 
           try {
-            const connectionResult = await guardedTestConnection(
-              withWorkspaceClientCapabilities(result.serverConfig),
-              serverName,
+            const connectionResult = await testConnectionAfterOAuth(
+              withProjectConnectionDefaults(mergedServerConfig),
+              serverName
             );
             if (connectionResult.success) {
-                dispatch({
-                  type: "CONNECT_SUCCESS",
-                  name: serverName,
-                  config: result.serverConfig,
-                  tokens: isHostedWorkspaceCallback
-                    ? undefined
-                    : getStoredTokens(serverName),
-                  useOAuth: true,
-                  oauthTrace: result.oauthTrace,
-                });
-                logger.info("OAuth connection successful", { serverName });
-                toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`,
+              dispatch({
+                type: "CONNECT_SUCCESS",
+                name: serverName,
+                config: mergedServerConfig,
+                tokens: isHostedProjectCallback
+                  ? undefined
+                  : getStoredTokens(serverName),
+                useOAuth: true,
+                oauthTrace: result.oauthTrace,
+              });
+              logger.info("OAuth connection successful", { serverName });
+              toast.success(
+                `OAuth connection successful! Connected to ${serverName}.`
               );
               storeInitInfo(serverName, connectionResult.initInfo).catch(
                 (err) =>
                   logger.warn("Failed to fetch init info", {
                     serverName,
                     err,
-                  }),
+                  })
               );
             } else {
               dispatch({
@@ -794,7 +2005,7 @@ export function useServerState({
                 error: connectionResult.error,
               });
               toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`,
+                `OAuth succeeded but connection test failed: ${connectionResult.error}`
               );
             }
           } catch (connectionError) {
@@ -813,7 +2024,7 @@ export function useServerState({
               error: errorMessage,
             });
             toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`,
+              `OAuth succeeded but connection test failed: ${errorMessage}`
             );
           }
         } else {
@@ -827,16 +2038,16 @@ export function useServerState({
           error instanceof Error
             ? error.message
             : typeof error === "object" &&
-                error !== null &&
-                "message" in error &&
-                typeof (error as { message?: unknown }).message === "string"
-              ? ((error as { message: string }).message)
-              : "Unknown error";
+              error !== null &&
+              "message" in error &&
+              typeof (error as { message?: unknown }).message === "string"
+            ? (error as { message: string }).message
+            : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
         const oauthTrace =
           typeof error === "object" && error !== null && "oauthTrace" in error
-            ? ((error as { oauthTrace?: OAuthTrace }).oauthTrace)
+            ? (error as { oauthTrace?: OAuthTrace }).oauthTrace
             : undefined;
         const failedServerName =
           failPendingOAuthConnection(errorMessage, oauthTrace) ??
@@ -854,11 +2065,15 @@ export function useServerState({
       failPendingOAuthConnection,
       isAuthenticated,
       logger,
+      persistServerToLocalProject,
       storeInitInfo,
+      testConnectionAfterOAuth,
       guardedTestConnection,
+      syncServerToConvex,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
-    ],
+      useLocalFallback,
+      withProjectConnectionDefaults,
+    ]
   );
 
   useEffect(() => {
@@ -872,22 +2087,27 @@ export function useServerState({
     if (
       isAuthenticated &&
       !useLocalFallback &&
-      (isLoadingWorkspaces || !effectiveActiveWorkspaceId)
+      (isLoadingProjects || !effectiveActiveProjectId)
     ) {
       return;
     }
 
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
+    const state = urlParams.get("state");
     const error = urlParams.get("error");
     const errorDescription = urlParams.get("error_description");
+    const electronCallbackUrl = buildElectronMcpCallbackUrl();
     const hostedOAuthCallbackContext = HOSTED_MODE
       ? getHostedOAuthCallbackContext()
       : null;
-    const isHostedWorkspaceCallback =
-      hostedOAuthCallbackContext?.surface === "workspace";
+    if (electronCallbackUrl) {
+      return;
+    }
+    const isHostedProjectCallback =
+      hostedOAuthCallbackContext?.surface === "project";
     if (code) {
-      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
+      if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       if (oauthCallbackHandledRef.current) {
@@ -919,15 +2139,16 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
       );
 
       handleOAuthCallbackComplete(
         code,
-        isHostedWorkspaceCallback ? hostedOAuthCallbackContext : null,
+        state,
+        isHostedProjectCallback ? hostedOAuthCallbackContext : null
       );
     } else if (error) {
-      if (hostedOAuthCallbackContext && !isHostedWorkspaceCallback) {
+      if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
       }
       const errorMessage = errorDescription
@@ -946,7 +2167,7 @@ export function useServerState({
       window.history.replaceState(
         {},
         document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash),
+        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
       );
     }
   }, [
@@ -954,8 +2175,8 @@ export function useServerState({
     isAuthLoading,
     isAuthenticated,
     useLocalFallback,
-    isLoadingWorkspaces,
-    effectiveActiveWorkspaceId,
+    isLoadingProjects,
+    effectiveActiveProjectId,
     failPendingOAuthConnection,
     handleOAuthCallbackComplete,
     logger,
@@ -964,6 +2185,9 @@ export function useServerState({
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
       if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+      if (notifyIfProjectNotProvisioned()) {
         return;
       }
 
@@ -982,6 +2206,25 @@ export function useServerState({
       });
       const token = nextOpToken(formData.name);
       let hostedServerId: string | undefined;
+      const existingServerForSave = appState.servers[formData.name];
+      const formOAuthProfile = buildOAuthProfileFromFormData(
+        formData,
+        existingServerForSave?.oauthFlowProfile
+      );
+      const nextHasClientSecret =
+        formData.useOAuth && !formData.clearClientSecret
+          ? Boolean(
+              formData.clientSecret ||
+                formData.hasClientSecret ||
+                existingServerForSave?.hasClientSecret
+            )
+          : false;
+      const clientSecretSyncOptions = {
+        ...(formData.clientSecret
+          ? { clientSecret: formData.clientSecret }
+          : {}),
+        ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+      };
 
       const serverEntryForSave: ServerWithName = {
         name: formData.name,
@@ -991,40 +2234,58 @@ export function useServerState({
         retryCount: 0,
         enabled: true,
         useOAuth: formData.useOAuth ?? false,
+        oauthFlowProfile: formOAuthProfile,
+        hasClientSecret: nextHasClientSecret,
       };
-      if (HOSTED_MODE) {
-        try {
-          const serverId = await syncServerToConvex(
-            formData.name,
-            serverEntryForSave,
-          );
-          if (serverId) {
-            hostedServerId = serverId;
-            injectHostedServerMapping(formData.name, serverId);
-          }
-        } catch (err) {
-          logger.warn("Sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          });
-        }
-      } else {
-        syncServerToConvex(formData.name, serverEntryForSave).catch((err) =>
-          logger.warn("Background sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          }),
+      // Both modes: await Convex sync so the returned serverId is available
+      // for OAuth binding (hosted) and for the new {projectId, serverId}
+      // request shape (local mode resolver path). Failure is non-fatal in
+      // local mode — the legacy {serverConfig, serverId: name} body still
+      // works as a fallback.
+      let syncErr: unknown;
+      try {
+        const serverId = await syncServerToConvex(
+          formData.name,
+          serverEntryForSave,
+          clientSecretSyncOptions
         );
+        if (serverId) {
+          hostedServerId = serverId;
+          injectHostedServerMapping(formData.name, serverId);
+        }
+      } catch (err) {
+        syncErr = err;
+        logger.warn("Sync to Convex failed (pre-connection)", {
+          serverName: formData.name,
+          err,
+        });
+      }
+      if (HOSTED_MODE && formData.useOAuth && !hostedServerId) {
+        // OAuth in hosted mode requires a Convex serverId to bind credentials
+        // to; without it the OAuth dance would complete without a durable
+        // credential. Local-mode OAuth follows the same constraint post-
+        // unification but the legacy localStorage fallback still catches it.
+        const errorMessage =
+          syncErr instanceof Error
+            ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
+            : "Could not save the hosted server before starting OAuth. Please try again.";
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: formData.name,
+          error: errorMessage,
+        });
+        toast.error(errorMessage);
+        return;
       }
       if (!isAuthenticated) {
-        const workspace = appState.workspaces[appState.activeWorkspaceId];
-        if (workspace) {
+        const project = appState.projects[appState.activeProjectId];
+        if (project) {
           dispatch({
-            type: "UPDATE_WORKSPACE",
-            workspaceId: appState.activeWorkspaceId,
+            type: "UPDATE_PROJECT",
+            projectId: appState.activeProjectId,
             updates: {
               servers: {
-                ...workspace.servers,
+                ...project.servers,
                 [formData.name]: serverEntryForSave,
               },
             },
@@ -1051,8 +2312,8 @@ export function useServerState({
               },
             } satisfies HttpServerConfig;
             const connectionResult = await guardedTestConnection(
-              withWorkspaceClientCapabilities(serverConfig),
-              formData.name,
+              withProjectConnectionDefaults(serverConfig),
+              formData.name
             );
             if (isStaleOp(formData.name, token)) return;
             if (connectionResult.success) {
@@ -1064,14 +2325,14 @@ export function useServerState({
                 useOAuth: true,
               });
               toast.success(
-                "Connected successfully with existing OAuth tokens!",
+                "Connected successfully with existing OAuth tokens!"
               );
               storeInitInfo(formData.name, connectionResult.initInfo).catch(
                 (err) =>
                   logger.warn("Failed to fetch init info", {
                     serverName: formData.name,
                     err,
-                  }),
+                  })
               );
               return;
             }
@@ -1085,11 +2346,8 @@ export function useServerState({
             type: "UPSERT_SERVER",
             name: formData.name,
             server: {
-              name: formData.name,
-              config: mcpConfig,
-              lastConnectionTime: new Date(),
+              ...serverEntryForSave,
               connectionStatus: "oauth-flow",
-              retryCount: 0,
               enabled: true,
               useOAuth: true,
             } as ServerWithName,
@@ -1098,16 +2356,33 @@ export function useServerState({
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
           const existingOAuthProfile =
             appState.servers[formData.name]?.oauthFlowProfile;
+          const protocolMode =
+            formData.oauthProtocolMode ??
+            existingOAuthProfile?.protocolVersion ??
+            "auto";
+          const registrationMode =
+            formData.oauthRegistrationMode ??
+            existingOAuthProfile?.registrationStrategy ??
+            "auto";
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
             clientId: oauthInputs.clientId,
             clientSecret: oauthInputs.clientSecret,
+            hasClientSecret: oauthInputs.hasClientSecret,
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
-            customHeaders: formData.headers,
-            protocolVersion: existingOAuthProfile?.protocolVersion,
-            registrationStrategy: existingOAuthProfile?.registrationStrategy,
+            customHeaders: mergeWithProjectHeaders(formData.headers),
+            protocolMode,
+            registrationMode,
+            protocolVersion:
+              protocolMode !== "auto"
+                ? protocolMode
+                : existingOAuthProfile?.protocolVersion,
+            registrationStrategy:
+              registrationMode !== "auto"
+                ? registrationMode
+                : existingOAuthProfile?.registrationStrategy,
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
               updateServerOAuthTrace(formData.name, oauthTrace);
             },
@@ -1115,7 +2390,7 @@ export function useServerState({
           if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
             oauthOptions.scopes = oauthInputs.scopes;
           }
-          prepareHostedWorkspaceOAuthRedirect({
+          prepareHostedProjectOAuthRedirect({
             serverId: hostedServerId,
             serverName: formData.name,
             serverUrl: formData.url,
@@ -1124,8 +2399,8 @@ export function useServerState({
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
               const connectionResult = await guardedTestConnection(
-                withWorkspaceClientCapabilities(oauthResult.serverConfig),
-                formData.name,
+                withProjectConnectionDefaults(oauthResult.serverConfig),
+                formData.name
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -1146,7 +2421,7 @@ export function useServerState({
                     logger.warn("Failed to fetch init info", {
                       serverName: formData.name,
                       err,
-                    }),
+                    })
                 );
               } else {
                 dispatch({
@@ -1157,12 +2432,12 @@ export function useServerState({
                   oauthTrace: oauthResult.oauthTrace,
                 });
                 toast.error(
-                  `OAuth succeeded but connection failed: ${connectionResult.error}`,
+                  `OAuth succeeded but connection failed: ${connectionResult.error}`
                 );
               }
             } else {
               toast.success(
-                "OAuth flow initiated. You will be redirected to authorize access.",
+                "OAuth flow initiated. You will be redirected to authorize access."
               );
             }
             return;
@@ -1180,15 +2455,15 @@ export function useServerState({
         }
 
         const hasPendingCallback = new URLSearchParams(
-          window.location.search,
+          window.location.search
         ).has("code");
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
-        const effectiveConfig = withWorkspaceClientCapabilities(mcpConfig);
+        const effectiveConfig = withProjectConnectionDefaults(mcpConfig);
         const result = await guardedTestConnection(
           effectiveConfig,
-          formData.name,
+          formData.name
         );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
@@ -1198,13 +2473,9 @@ export function useServerState({
             config: mcpConfig,
             useOAuth: formData.useOAuth ?? false,
           });
-          const env = (mcpConfig as any).env;
-          if (env && Object.keys(env).length > 0) {
-            localStorage.setItem(
-              `mcp-env-${formData.name}`,
-              JSON.stringify(env),
-            );
-          }
+          // Env now persists on the Convex server doc via syncServerToConvex;
+          // no localStorage write needed. The resolver returns env in the
+          // resolved config on subsequent connects.
           logger.info("Connection successful", { serverName: formData.name });
           if (
             !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
@@ -1215,7 +2486,7 @@ export function useServerState({
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,
               err,
-            }),
+            })
           );
         } else {
           dispatch({
@@ -1242,31 +2513,36 @@ export function useServerState({
           serverName: formData.name,
           error: errorMessage,
         });
-        toast.error(`Network error: ${errorMessage}`);
+        toast.error(
+          errorMessage === PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
+            ? errorMessage
+            : `Network error: ${errorMessage}`
+        );
       }
     },
     [
       dispatch,
       isAuthenticated,
       appState.servers,
-      appState.workspaces,
-      appState.activeWorkspaceId,
+      appState.projects,
+      appState.activeProjectId,
       notifyIfClientConfigSyncPending,
-      prepareHostedWorkspaceOAuthRedirect,
+      notifyIfProjectNotProvisioned,
+      prepareHostedProjectOAuthRedirect,
       resolveOAuthInitiationInputs,
       syncServerToConvex,
       logger,
       storeInitInfo,
       guardedTestConnection,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
-    ],
+      withProjectConnectionDefaults,
+    ]
   );
 
   const saveServerConfigWithoutConnecting = useCallback(
     async (
       formData: ServerFormData,
-      options?: { oauthProfile?: OAuthTestProfile },
+      options?: { oauthProfile?: OAuthTestProfile }
     ) => {
       const validationError = validateForm(formData);
       if (validationError) {
@@ -1283,8 +2559,21 @@ export function useServerState({
       const existingServer = appState.servers[serverName];
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile = formData.useOAuth
-        ? (options?.oauthProfile ?? existingServer?.oauthFlowProfile)
+        ? options?.oauthProfile ??
+          buildOAuthProfileFromFormData(
+            formData,
+            existingServer?.oauthFlowProfile
+          ) ??
+          existingServer?.oauthFlowProfile
         : undefined;
+      const nextHasClientSecret =
+        formData.useOAuth && !formData.clearClientSecret
+          ? Boolean(
+              formData.clientSecret ||
+                formData.hasClientSecret ||
+                existingServer?.hasClientSecret
+            )
+          : false;
 
       const serverEntry: ServerWithName = {
         ...(existingServer ?? {}),
@@ -1296,10 +2585,11 @@ export function useServerState({
         enabled: existingServer?.enabled ?? false,
         oauthFlowProfile: nextOAuthProfile,
         useOAuth: formData.useOAuth ?? false,
+        hasClientSecret: nextHasClientSecret,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
-        window.location.search,
+        window.location.search
       ).has("code");
       if (!formData.useOAuth && !hasPendingOAuthCallback) {
         clearOAuthData(serverName);
@@ -1316,18 +2606,23 @@ export function useServerState({
       if (
         isAuthenticated &&
         !useLocalFallback &&
-        effectiveActiveWorkspaceId &&
-        effectiveActiveWorkspaceId !== "none"
+        effectiveActiveProjectId &&
+        effectiveActiveProjectId !== "none"
       ) {
         try {
-          await syncServerToConvex(serverName, serverEntry);
+          await syncServerToConvex(serverName, serverEntry, {
+            ...(formData.clientSecret
+              ? { clientSecret: formData.clientSecret }
+              : {}),
+            ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+          });
         } catch (error) {
           logger.error("Failed to sync server to Convex", {
             error: error instanceof Error ? error.message : "Unknown error",
           });
         }
       } else {
-        persistServerToLocalWorkspace(serverName, serverEntry);
+        persistServerToLocalProject(serverName, serverEntry);
       }
 
       logger.info("Saved server configuration without connecting", {
@@ -1336,17 +2631,17 @@ export function useServerState({
       toast.success(`Saved configuration for ${serverName}`);
     },
     [
-      appState.activeWorkspaceId,
+      appState.activeProjectId,
       appState.servers,
-      appState.workspaces,
+      appState.projects,
       logger,
       dispatch,
       isAuthenticated,
       useLocalFallback,
-      effectiveActiveWorkspaceId,
+      effectiveActiveProjectId,
       syncServerToConvex,
-      persistServerToLocalWorkspace,
-    ],
+      persistServerToLocalProject,
+    ]
   );
 
   const applyTokensFromOAuthFlow = useCallback(
@@ -1360,7 +2655,7 @@ export function useServerState({
         clientId?: string;
         clientSecret?: string;
       },
-      serverUrl: string,
+      serverUrl: string
     ): Promise<{ success: boolean; error?: string }> => {
       const tokenData = {
         access_token: tokens.accessToken,
@@ -1368,22 +2663,26 @@ export function useServerState({
         token_type: tokens.tokenType || "Bearer",
         expires_in: tokens.expiresIn,
       };
-      localStorage.setItem(
-        `mcp-tokens-${serverName}`,
-        JSON.stringify(tokenData),
-      );
+      if (!HOSTED_MODE) {
+        localStorage.setItem(
+          `mcp-tokens-${serverName}`,
+          JSON.stringify(tokenData)
+        );
+      }
 
-      if (tokens.clientId) {
+      if (!HOSTED_MODE && tokens.clientId) {
         localStorage.setItem(
           `mcp-client-${serverName}`,
           JSON.stringify({
             client_id: tokens.clientId,
             client_secret: tokens.clientSecret,
-          }),
+          })
         );
       }
 
-      localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+      if (!HOSTED_MODE) {
+        localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+      }
 
       const serverConfig = {
         url: serverUrl,
@@ -1404,7 +2703,7 @@ export function useServerState({
       try {
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(serverConfig),
+          withProjectConnectionDefaults(serverConfig)
         );
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
@@ -1444,8 +2743,8 @@ export function useServerState({
       dispatch,
       storeInitInfo,
       guardedReconnectServer,
-      withWorkspaceClientCapabilities,
-    ],
+      withProjectConnectionDefaults,
+    ]
   );
 
   const handleConnectWithTokensFromOAuthFlow = useCallback(
@@ -1459,16 +2758,19 @@ export function useServerState({
         clientId?: string;
         clientSecret?: string;
       },
-      serverUrl: string,
+      serverUrl: string
     ) => {
       if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+      if (notifyIfProjectNotProvisioned()) {
         return;
       }
 
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
-        serverUrl,
+        serverUrl
       );
       if (result.success) {
         toast.success(`Connected to ${serverName}!`);
@@ -1476,7 +2778,11 @@ export function useServerState({
         toast.error(`Connection failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
+    [
+      applyTokensFromOAuthFlow,
+      notifyIfClientConfigSyncPending,
+      notifyIfProjectNotProvisioned,
+    ]
   );
 
   const handleRefreshTokensFromOAuthFlow = useCallback(
@@ -1490,16 +2796,19 @@ export function useServerState({
         clientId?: string;
         clientSecret?: string;
       },
-      serverUrl: string,
+      serverUrl: string
     ) => {
       if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+      if (notifyIfProjectNotProvisioned()) {
         return;
       }
 
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
-        serverUrl,
+        serverUrl
       );
       if (result.success) {
         toast.success(`Tokens refreshed for ${serverName}!`);
@@ -1507,7 +2816,11 @@ export function useServerState({
         toast.error(`Token refresh failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
+    [
+      applyTokensFromOAuthFlow,
+      notifyIfClientConfigSyncPending,
+      notifyIfProjectNotProvisioned,
+    ]
   );
 
   const cliConfigProcessedRef = useRef<boolean>(false);
@@ -1524,8 +2837,15 @@ export function useServerState({
         .then((data) => {
           const cliConfig = data.config;
           if (cliConfig) {
-            if (cliConfig.initialTab && !window.location.hash) {
-              window.location.hash = cliConfig.initialTab;
+            if (
+              cliConfig.initialTab &&
+              (!window.location.pathname ||
+                window.location.pathname === "/")
+            ) {
+              const tab = cliConfig.initialTab.replace(/^[#/]+/, "");
+              if (tab) {
+                navigateApp(`/${tab}`, { replace: true });
+              }
             }
 
             if (
@@ -1546,7 +2866,7 @@ export function useServerState({
                   serverCount: cliConfig.servers.length,
                   autoConnectServer: autoConnectServer || "all",
                   cliConfig: cliConfig,
-                },
+                }
               );
 
               cliConfig.servers.forEach((server: any) => {
@@ -1629,7 +2949,7 @@ export function useServerState({
       if (!server?.oauthTokens) return null;
       return server.oauthTokens.access_token || null;
     },
-    [appState.servers],
+    [appState.servers]
   );
 
   const handleDisconnect = useCallback(
@@ -1653,12 +2973,29 @@ export function useServerState({
         });
       }
     },
-    [dispatch, logger],
+    [dispatch, logger]
+  );
+
+  // Runtime-only counterpart to `handleDisconnect`. Just flips the in-memory
+  // connection state to "disconnected" without going through `deleteServer`,
+  // which in local mode would also remove the server's persisted config.
+  // Used by host-switch auto-disconnect, where we want to drop the runtime
+  // connection but keep the server entry intact so the user can re-connect
+  // (or another host can require it) without re-adding the server.
+  const handleRuntimeDisconnect = useCallback(
+    (serverName: string) => {
+      dispatch({ type: "DISCONNECT", name: serverName });
+    },
+    [dispatch],
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
+    // Slice 5: env removal handled by Convex deleteServer; only OAuth local
+    // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
+    // collapses the localStorage cache fully, this can drop too.
     clearOAuthData(serverName);
-    localStorage.removeItem(`mcp-env-${serverName}`);
+    // Env now lives on the Convex server doc; removal happens via the
+    // server-delete mutation. No localStorage cleanup needed.
   }, []);
 
   const removeServerFromStateAndCloud = useCallback(
@@ -1667,7 +3004,7 @@ export function useServerState({
       dispatch({ type: "REMOVE_SERVER", name: serverName });
       await removeServerFromConvex(serverName);
     },
-    [cleanupServerLocalArtifacts, dispatch, removeServerFromConvex],
+    [cleanupServerLocalArtifacts, dispatch, removeServerFromConvex]
   );
 
   const handleRemoveServer = useCallback(
@@ -1676,13 +3013,13 @@ export function useServerState({
       await handleDisconnect(serverName);
       await removeServerFromStateAndCloud(serverName);
     },
-    [logger, handleDisconnect, removeServerFromStateAndCloud],
+    [logger, handleDisconnect, removeServerFromStateAndCloud]
   );
 
   const waitForServerReconnectOutcome = useCallback(
     async (
       serverName: string,
-      timeoutMs = 15_000,
+      timeoutMs = 15_000
     ): Promise<EnsureServerConnectionResult> =>
       await new Promise<EnsureServerConnectionResult>((resolve) => {
         const startedAt = Date.now();
@@ -1717,8 +3054,7 @@ export function useServerState({
           ) {
             resolve({
               status: "failed",
-              error:
-                server.lastError || `Failed to reconnect to ${serverName}`,
+              error: server.lastError || `Failed to reconnect to ${serverName}`,
             });
             return;
           }
@@ -1736,13 +3072,13 @@ export function useServerState({
 
         check();
       }),
-    [],
+    []
   );
 
   const reconnectServerInternal = useCallback(
     async (
       serverName: string,
-      options?: ReconnectServerInternalOptions,
+      options?: ReconnectServerInternalOptions
     ): Promise<EnsureServerConnectionResult> => {
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
@@ -1760,6 +3096,38 @@ export function useServerState({
           status: "failed",
           error: errorMessage,
         };
+      }
+
+      const projectNotProvisionedError = getProjectNotProvisionedError();
+      if (projectNotProvisionedError) {
+        reportError(projectNotProvisionedError);
+        return {
+          status: "failed",
+          error: projectNotProvisionedError,
+        };
+      }
+
+      // Defer reconnects until bootstrap completes. Without this, the
+      // page-load auto-reconnect loop fires before the project + server
+      // mappings are loaded, hits validate without {projectId, serverId},
+      // and produces "Hosted server metadata is still syncing" toasts.
+      // Returning `failed` (not throwing) lets ensureServersReady move on
+      // and a later trigger (project resolves, user clicks reconnect)
+      // can retry against a ready app.
+      if (HOSTED_MODE) {
+        const projectIdForReconnect = effectiveActiveProjectIdRef.current;
+        if (
+          !projectIdForReconnect ||
+          projectIdForReconnect === "none"
+        ) {
+          logger.info("Deferring reconnect: app still bootstrapping", {
+            serverName,
+          });
+          return {
+            status: "failed",
+            error: "App is still loading. Reconnect will retry once ready.",
+          };
+        }
       }
 
       logger.info("Reconnecting to server", { serverName, options });
@@ -1789,14 +3157,11 @@ export function useServerState({
         select,
       });
       const token = nextOpToken(serverName);
-      const hostedWorkspaceServerId = activeWorkspaceServersFlat?.find(
-        (remoteServer) => remoteServer.name === serverName,
+      const hostedProjectServerId = activeProjectServersFlat?.find(
+        (remoteServer) => remoteServer.name === serverName
       )?._id;
 
       if (options?.forceOAuthFlow) {
-        clearOAuthData(serverName);
-        await deleteServer(serverName);
-
         const serverUrl = (server.config as any)?.url?.toString?.();
         if (!serverUrl) {
           const errorMessage = "No server URL found for OAuth flow";
@@ -1812,26 +3177,112 @@ export function useServerState({
           };
         }
 
-        prepareHostedWorkspaceOAuthRedirect({
-          serverId: hostedWorkspaceServerId,
+        const storedOAuthConfig = readStoredOAuthConfig(serverName);
+        const storedClientCredentials = readStoredClientCredentials(serverName);
+        const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
+        const profileHeaders = profileHeadersToRecord(
+          server.oauthFlowProfile?.customHeaders
+        );
+        const protocolMode =
+          server.oauthFlowProfile?.protocolVersion ??
+          storedOAuthConfig.protocolMode ??
+          "auto";
+        const registrationMode =
+          server.oauthFlowProfile?.registrationStrategy ??
+          storedOAuthConfig.registrationMode ??
+          "auto";
+        const oauthOptions = {
           serverName,
           serverUrl,
-        });
-        const oauthResult = await initiateOAuth({
-          serverName,
-          serverUrl,
-          customHeaders:
-            "requestInit" in server.config &&
-            server.config.requestInit?.headers &&
-            !Array.isArray(server.config.requestInit.headers)
-              ? (server.config.requestInit.headers as Record<string, string>)
-              : undefined,
-          protocolVersion: server.oauthFlowProfile?.protocolVersion,
-          registrationStrategy: server.oauthFlowProfile?.registrationStrategy,
+          scopes: profileScopes ?? storedOAuthConfig.scopes,
+          resourceUrl:
+            server.oauthFlowProfile?.resourceUrl ??
+            storedOAuthConfig.resourceUrl,
+          clientId:
+            server.oauthTokens?.client_id ??
+            server.oauthFlowProfile?.clientId ??
+            storedClientCredentials.clientId,
+          clientSecret:
+            server.oauthTokens?.client_secret ??
+            server.oauthFlowProfile?.clientSecret ??
+            storedClientCredentials.clientSecret,
+          hasClientSecret: Boolean(
+            server.oauthTokens?.client_secret ||
+              server.oauthFlowProfile?.clientSecret ||
+              storedClientCredentials.clientSecret ||
+              server.hasClientSecret
+          ),
+          customHeaders: mergeWithProjectHeaders(
+            profileHeaders ??
+              ("requestInit" in server.config
+                ? extractRequestHeaders(server.config.requestInit)
+                : undefined) ??
+              storedOAuthConfig.customHeaders
+          ),
+          registryServerId: storedOAuthConfig.registryServerId,
+          useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
+          protocolMode,
+          registrationMode,
+          protocolVersion:
+            protocolMode !== "auto"
+              ? protocolMode
+              : server.oauthFlowProfile?.protocolVersion ??
+                storedOAuthConfig.protocolVersion,
+          registrationStrategy:
+            registrationMode !== "auto"
+              ? registrationMode
+              : server.oauthFlowProfile?.registrationStrategy ??
+                storedOAuthConfig.registrationStrategy,
           onTraceUpdate: (oauthTrace: OAuthTrace) => {
             updateServerOAuthTrace(serverName, oauthTrace);
           },
+        };
+
+        clearOAuthData(serverName);
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: serverName,
+          server: {
+            ...server,
+            connectionStatus: "oauth-flow",
+            enabled: true,
+            lastError: undefined,
+            useOAuth: true,
+          },
         });
+        let oauthResult: Awaited<ReturnType<typeof initiateOAuth>>;
+        try {
+          await deleteServer(serverName);
+
+          prepareHostedProjectOAuthRedirect({
+            serverId: hostedProjectServerId,
+            serverName,
+            serverUrl,
+          });
+          oauthResult = await initiateOAuth(oauthOptions);
+        } catch (error) {
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "failed",
+              error:
+                error instanceof Error ? error.message : "OAuth flow failed",
+            };
+          }
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "Failed to start OAuth flow";
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
+          reportError(errorMessage);
+          return {
+            status: "failed",
+            error: errorMessage,
+          };
+        }
 
         if (oauthResult.success && !oauthResult.serverConfig) {
           return {
@@ -1861,7 +3312,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(oauthResult.serverConfig!),
+          withProjectConnectionDefaults(oauthResult.serverConfig!)
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -1885,7 +3336,7 @@ export function useServerState({
             serverName,
           });
           storeInitInfo(serverName, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
+            logger.warn("Failed to fetch init info", { serverName, err })
           );
           return { status: "connected" };
         }
@@ -1904,13 +3355,13 @@ export function useServerState({
       }
 
       if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
-        const hostedReconnectConfig = withWorkspaceClientCapabilities(
-          server.config,
+        const hostedReconnectConfig = withProjectConnectionDefaults(
+          server.config
         );
         try {
           const result = await guardedReconnectServer(
             serverName,
-            hostedReconnectConfig,
+            hostedReconnectConfig
           );
           if (isStaleOp(serverName, token)) {
             return {
@@ -1931,7 +3382,7 @@ export function useServerState({
               result,
             });
             storeInitInfo(serverName, result.initInfo).catch((err) =>
-              logger.warn("Failed to fetch init info", { serverName, err }),
+              logger.warn("Failed to fetch init info", { serverName, err })
             );
             return { status: "connected" };
           }
@@ -1953,14 +3404,13 @@ export function useServerState({
 
           logger.info(
             "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
-            { serverName, error: result.error },
+            { serverName, error: result.error }
           );
         } catch (error) {
           if (isStaleOp(serverName, token)) {
             return {
               status: "failed",
-              error:
-                error instanceof Error ? error.message : "Unknown error",
+              error: error instanceof Error ? error.message : "Unknown error",
             };
           }
 
@@ -1986,7 +3436,7 @@ export function useServerState({
 
           logger.info(
             "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
-            { serverName, error: errorMessage },
+            { serverName, error: errorMessage }
           );
         }
       }
@@ -1996,8 +3446,8 @@ export function useServerState({
           server,
           {
             beforeRedirect: (oauthOptions) => {
-              prepareHostedWorkspaceOAuthRedirect({
-                serverId: hostedWorkspaceServerId,
+              prepareHostedProjectOAuthRedirect({
+                serverId: hostedProjectServerId,
                 serverName,
                 serverUrl: oauthOptions.serverUrl,
               });
@@ -2006,7 +3456,7 @@ export function useServerState({
               updateServerOAuthTrace(serverName, oauthTrace);
             },
             allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow,
-          },
+          }
         );
         if (authResult.kind === "redirect") {
           return {
@@ -2054,7 +3504,7 @@ export function useServerState({
         }
         const result = await guardedReconnectServer(
           serverName,
-          withWorkspaceClientCapabilities(authResult.serverConfig),
+          withProjectConnectionDefaults(authResult.serverConfig)
         );
         if (isStaleOp(serverName, token)) {
           return {
@@ -2073,7 +3523,7 @@ export function useServerState({
           });
           logger.info("Reconnection successful", { serverName, result });
           storeInitInfo(serverName, result.initInfo).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
+            logger.warn("Failed to fetch init info", { serverName, err })
           );
           return { status: "connected" };
         }
@@ -2116,17 +3566,19 @@ export function useServerState({
       }
     },
     [
-      activeWorkspaceServersFlat,
+      activeProjectServersFlat,
       isAuthenticated,
       isClientConfigSyncPending,
+      getProjectNotProvisionedError,
       storeInitInfo,
       logger,
       dispatch,
-      prepareHostedWorkspaceOAuthRedirect,
+      prepareHostedProjectOAuthRedirect,
       guardedReconnectServer,
+      mergeWithProjectHeaders,
       updateServerOAuthTrace,
-      withWorkspaceClientCapabilities,
-    ],
+      withProjectConnectionDefaults,
+    ]
   );
 
   const handleReconnect = useCallback(
@@ -2135,7 +3587,7 @@ export function useServerState({
       options?: {
         forceOAuthFlow?: boolean;
         allowInteractiveOAuthFlow?: boolean;
-      },
+      }
     ) => {
       await reconnectServerInternal(serverName, {
         forceOAuthFlow: options?.forceOAuthFlow,
@@ -2143,24 +3595,24 @@ export function useServerState({
         select: true,
       });
     },
-    [reconnectServerInternal],
+    [reconnectServerInternal]
   );
 
   const ensureServersReady = useCallback(
     async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
 
-      const resolveToWorkspaceServerKey = (serverRef: string): string => {
+      const resolveToProjectServerKey = (serverRef: string): string => {
         const effective = latestEffectiveServersRef.current;
         if (effective[serverRef]) {
           return serverRef;
         }
 
-        const fromWorkspace = activeWorkspaceServersFlat?.find(
-          (s) => s._id === serverRef,
+        const fromProject = activeProjectServersFlat?.find(
+          (s) => s._id === serverRef
         );
-        if (fromWorkspace) {
-          return fromWorkspace.name;
+        if (fromProject) {
+          return fromProject.name;
         }
 
         if (HOSTED_MODE) {
@@ -2174,13 +3626,13 @@ export function useServerState({
       };
 
       // Multiple refs (e.g. hosted id and display name) can collapse to the
-      // same workspace server. Group by resolved key so we only kick off one
+      // same project server. Group by resolved key so we only kick off one
       // reconnect per real server and avoid spurious "stale op" failures.
       type RefGroup = { resolvedKey: string; refs: string[] };
       const groupsByKey = new Map<string, RefGroup>();
       const orderedKeys: string[] = [];
       for (const serverName of uniqueServerNames) {
-        const resolvedKey = resolveToWorkspaceServerKey(serverName);
+        const resolvedKey = resolveToProjectServerKey(serverName);
         const existing = groupsByKey.get(resolvedKey);
         if (existing) {
           existing.refs.push(serverName);
@@ -2193,7 +3645,7 @@ export function useServerState({
       const outcomesByKey = await Promise.all(
         orderedKeys.map(
           async (
-            resolvedKey,
+            resolvedKey
           ): Promise<readonly [string, EnsureServerConnectionResult]> => {
             const server = latestEffectiveServersRef.current[resolvedKey];
             if (!server) {
@@ -2235,20 +3687,21 @@ export function useServerState({
                 suppressErrors: true,
               }),
             ] as const;
-          },
-        ),
+          }
+        )
       );
 
       const outcomeByKey = new Map(outcomesByKey);
-      const outcomes: ReadonlyArray<readonly [string, EnsureServerConnectionResult]> =
-        uniqueServerNames.map((serverName) => {
-          const resolvedKey = resolveToWorkspaceServerKey(serverName);
-          const outcome = outcomeByKey.get(resolvedKey) ?? {
-            status: "missing",
-            error: `Server ${serverName} not found`,
-          };
-          return [serverName, outcome] as const;
-        });
+      const outcomes: ReadonlyArray<
+        readonly [string, EnsureServerConnectionResult]
+      > = uniqueServerNames.map((serverName) => {
+        const resolvedKey = resolveToProjectServerKey(serverName);
+        const outcome = outcomeByKey.get(resolvedKey) ?? {
+          status: "missing",
+          error: `Server ${serverName} not found`,
+        };
+        return [serverName, outcome] as const;
+      });
 
       const readyServerNames: string[] = [];
       const missingServerNames: string[] = [];
@@ -2281,48 +3734,55 @@ export function useServerState({
       };
     },
     [
-      activeWorkspaceServersFlat,
+      activeProjectServersFlat,
       reconnectServerInternal,
       waitForServerReconnectOutcome,
-    ],
+    ]
   );
+
+  const syncAgentStatus = useCallback(async () => {
+    try {
+      const result = await listServers();
+      if (result?.success && Array.isArray(result.servers)) {
+        dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
+      }
+      return result;
+    } catch (error) {
+      logger.debug("Failed to sync server status", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    }
+  }, [logger, dispatch]);
 
   useEffect(() => {
     if (isLoading) return;
-    const syncServerStatus = async () => {
-      try {
-        const result = await listServers();
-        if (result?.success && result.servers) {
-          dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
-        }
-      } catch (error) {
-        logger.debug("Failed to sync server status on startup", {
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    };
-    syncServerStatus();
-  }, [isLoading, logger, dispatch]);
+    void syncAgentStatus().catch((error) => {
+      logger.debug("Startup server status sync failed", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    });
+  }, [isLoading, logger, syncAgentStatus]);
 
   const setSelectedServer = useCallback(
     (serverName: string) => {
       dispatch({ type: "SELECT_SERVER", name: serverName });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const setSelectedMCPConfigs = useCallback(
     (serverNames: string[]) => {
       dispatch({ type: "SET_MULTI_SELECTED", names: serverNames });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const toggleMultiSelectMode = useCallback(
     (enabled: boolean) => {
       dispatch({ type: "SET_MULTI_MODE", enabled });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const toggleServerSelection = useCallback(
@@ -2333,14 +3793,14 @@ export function useServerState({
         : [...current, serverName];
       dispatch({ type: "SET_MULTI_SELECTED", names: next });
     },
-    [appState.selectedMultipleServers, dispatch],
+    [appState.selectedMultipleServers, dispatch]
   );
 
   const handleUpdate = useCallback(
     async (
       originalServerName: string,
       formData: ServerFormData,
-      skipAutoConnect?: boolean,
+      skipAutoConnect?: boolean
     ): Promise<ServerUpdateResult> => {
       const nextServerName = formData.name.trim();
       if (!nextServerName) {
@@ -2348,11 +3808,11 @@ export function useServerState({
         return { ok: false, serverName: originalServerName };
       }
       const isRename = nextServerName !== originalServerName;
-      const activeWorkspaceServers =
-        effectiveWorkspaces[effectiveActiveWorkspaceId]?.servers ?? {};
-      if (isRename && activeWorkspaceServers[nextServerName]) {
+      const activeProjectServers =
+        effectiveProjects[effectiveActiveProjectId]?.servers ?? {};
+      if (isRename && activeProjectServers[nextServerName]) {
         toast.error(
-          `A server named "${nextServerName}" already exists. Choose a different name.`,
+          `A server named "${nextServerName}" already exists. Choose a different name.`
         );
         return { ok: false, serverName: originalServerName };
       }
@@ -2391,7 +3851,7 @@ export function useServerState({
         });
 
         if (!isAuthenticated || useLocalFallback) {
-          persistServerToLocalWorkspace(nextServerName, updatedServer, {
+          persistServerToLocalProject(nextServerName, updatedServer, {
             originalServerName: isRename ? originalServerName : undefined,
           });
         } else {
@@ -2408,6 +3868,9 @@ export function useServerState({
 
       const hadOAuthTokens = originalServer?.oauthTokens != null;
       if (notifyIfClientConfigSyncPending()) {
+        return { ok: false, serverName: originalServerName };
+      }
+      if (notifyIfProjectNotProvisioned()) {
         return { ok: false, serverName: originalServerName };
       }
 
@@ -2428,8 +3891,8 @@ export function useServerState({
         saveOAuthConfigToLocalStorage(formData);
         try {
           const result = await guardedTestConnection(
-            withWorkspaceClientCapabilities(originalServer.config),
-            originalServerName,
+            withProjectConnectionDefaults(originalServer.config),
+            originalServerName
           );
           if (result.success) {
             dispatch({
@@ -2443,12 +3906,12 @@ export function useServerState({
             return { ok: true, serverName: originalServerName };
           }
           console.warn(
-            "OAuth connection test failed, falling back to full reconnect",
+            "OAuth connection test failed, falling back to full reconnect"
           );
         } catch (error) {
           console.warn(
             "OAuth connection test error, falling back to full reconnect",
-            error,
+            error
           );
         }
       }
@@ -2476,12 +3939,12 @@ export function useServerState({
     },
     [
       appState.servers,
-      appState.activeWorkspaceId,
-      appState.workspaces,
+      appState.activeProjectId,
+      appState.projects,
       appState.selectedServer,
       dispatch,
-      effectiveWorkspaces,
-      effectiveActiveWorkspaceId,
+      effectiveProjects,
+      effectiveActiveProjectId,
       effectiveServers,
       storeInitInfo,
       handleDisconnect,
@@ -2491,23 +3954,18 @@ export function useServerState({
       setSelectedServer,
       syncServerToConvex,
       useLocalFallback,
-      persistServerToLocalWorkspace,
+      persistServerToLocalProject,
       notifyIfClientConfigSyncPending,
+      notifyIfProjectNotProvisioned,
       guardedTestConnection,
-    ],
+    ]
   );
 
   return {
-    activeWorkspace,
+    activeProject,
     effectiveServers,
-    workspaceServers: effectiveServers,
-    connectedOrConnectingServerConfigs: Object.fromEntries(
-      Object.entries(effectiveServers).filter(
-        ([, server]) =>
-          server.connectionStatus === "connected" ||
-          server.connectionStatus === "connecting",
-      ),
-    ),
+    projectServers: effectiveServers,
+    connectedOrConnectingServerConfigs,
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
     selectedMCPConfigs: appState.selectedMultipleServers
@@ -2520,13 +3978,15 @@ export function useServerState({
         }
         return acc;
       },
-      {} as Record<string, MCPServerConfig>,
+      {} as Record<string, MCPServerConfig>
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
     handleConnect,
     handleDisconnect,
+    handleRuntimeDisconnect,
     handleReconnect,
     ensureServersReady,
+    syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
@@ -2538,5 +3998,6 @@ export function useServerState({
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    persistRuntimeServerToProjectIfNeeded,
   };
 }

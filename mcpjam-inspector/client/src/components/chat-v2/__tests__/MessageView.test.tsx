@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
 // Mock PartSwitch
@@ -26,6 +26,9 @@ vi.mock("../thread/user-message-bubble", () => ({
 // Mock thread-helpers
 vi.mock("../thread/thread-helpers", () => ({
   groupAssistantPartsIntoSteps: (parts: any[]) => [parts],
+  isHiddenInternalMessage: (message: { id?: string }) =>
+    message.id?.startsWith("widget-state-") === true ||
+    message.id?.startsWith("model-context-") === true,
 }));
 
 describe("MessageView", () => {
@@ -111,6 +114,65 @@ describe("MessageView", () => {
 
       const textParts = screen.getAllByTestId("part-text");
       expect(textParts).toHaveLength(2);
+    });
+
+    it("renders renderUserMessageActions slot below the bubble when provided", () => {
+      const message = createMessage({
+        id: "msg-row-test",
+        role: "user",
+        parts: [{ type: "text", text: "Save me" }],
+      });
+      const renderActions = vi.fn(() => (
+        <button data-testid="save-as-test-case-stub">save</button>
+      ));
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderUserMessageActions={renderActions}
+        />,
+      );
+
+      expect(renderActions).toHaveBeenCalledTimes(1);
+      expect(renderActions).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-row-test" }),
+      );
+      expect(
+        screen.getByTestId("save-as-test-case-stub"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not render the actions slot when no renderer is provided", () => {
+      const message = createMessage({
+        role: "user",
+        parts: [{ type: "text", text: "no actions" }],
+      });
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+      expect(
+        screen.queryByTestId("save-as-test-case-stub"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not render the actions slot for assistant messages", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+      const renderActions = vi.fn(() => (
+        <button data-testid="save-as-test-case-stub">save</button>
+      ));
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderUserMessageActions={renderActions}
+        />,
+      );
+      expect(renderActions).not.toHaveBeenCalled();
+      expect(
+        screen.queryByTestId("save-as-test-case-stub"),
+      ).not.toBeInTheDocument();
     });
   });
 

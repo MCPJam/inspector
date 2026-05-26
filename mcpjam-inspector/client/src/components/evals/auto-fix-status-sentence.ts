@@ -118,7 +118,6 @@ function suiteStopReasonCore(
 
 function caseStopReasonCore(reason: string, o: AutoFixOutcomeSnapshot): string {
   const prov = o.provisionalAppliedCount ?? 0;
-  const sl = o.serverLikelyCount ?? 0;
 
   switch (reason) {
     case "completed_case":

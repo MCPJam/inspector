@@ -23,7 +23,7 @@ export class WebRouteError extends Error {
     status: number,
     code: ErrorCode,
     message: string,
-    details?: Record<string, unknown>,
+    details?: Record<string, unknown>
   ) {
     super(message);
     this.status = status;
@@ -38,7 +38,7 @@ export function webError(
   code: ErrorCode,
   message: string,
   details?: Record<string, unknown>,
-  extras?: Record<string, unknown>,
+  extras?: Record<string, unknown>
 ) {
   return c.json(
     {
@@ -47,7 +47,7 @@ export function webError(
       message,
       ...(details ? { details } : {}),
     },
-    status,
+    status
   );
 }
 
@@ -83,7 +83,7 @@ export function assertBearerToken(c: any): string {
     throw new WebRouteError(
       401,
       ErrorCode.UNAUTHORIZED,
-      "Missing or invalid bearer token",
+      "Missing or invalid bearer token"
     );
   }
   return authHeader.slice("Bearer ".length);
@@ -96,7 +96,7 @@ export async function readJsonBody<T>(c: any): Promise<T> {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body",
+      "Invalid JSON body"
     );
   }
 }
@@ -108,7 +108,7 @@ export function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      issue?.message ?? "Request validation failed",
+      issue?.message ?? "Request validation failed"
     );
   }
   return parsed.data;

@@ -23,7 +23,7 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
-import { formatRelativeTime } from "./helpers";
+import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration } from "./types";
 import {
   caseListCardClassName,
@@ -301,7 +301,10 @@ export function TestCasesOverview({
 
   const batchDelete = Boolean(onDeleteTestCasesBatch);
   const showRunColumn = Boolean(onRunTestCase);
-  const suiteServers = suite.environment?.servers ?? [];
+  // Effective list = legacy `environment.servers` merged with any host
+  // attachments' `resolvedServerNames`. Without the merge, per-case Run
+  // buttons stay disabled on attachment-only suites (the current model).
+  const suiteServers = getEffectiveSuiteServers(suite);
   const missingSuiteServers =
     connectedServerNames == null
       ? []

@@ -4,7 +4,7 @@ import { COMPARE_PLAN_MARKETING_SECTIONS } from "../compare-plan-marketing";
 describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
   it("mirrors the marketing compare table sections and row coverage", () => {
     expect(COMPARE_PLAN_MARKETING_SECTIONS.map((s) => s.title)).toEqual([
-      "Organization & workspaces",
+      "Organization & projects",
       "Standard features",
       "Evaluations",
       "Chatboxes",
@@ -21,7 +21,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     expect(rowCount).toBe(35);
   });
 
-  it("includes representative product and org/workspace cells", () => {
+  it("includes representative product and org/project cells", () => {
     const testing = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Evaluations",
     );
@@ -33,14 +33,14 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     });
     expect(evalsRow?.free).toEqual({ kind: "text", text: "5 / mo" });
 
-    const orgWorkspaces = COMPARE_PLAN_MARKETING_SECTIONS.find(
-      (s) => s.title === "Organization & workspaces",
+    const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Organization & projects",
     );
     expect(
-      orgWorkspaces?.rows.find((r) => r.label === "Seat limit")?.starter,
+      orgProjects?.rows.find((r) => r.label === "Seat limit")?.free,
     ).toEqual({
       kind: "text",
-      text: "3",
+      text: "5",
     });
     const security = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Security & Compliance",
@@ -58,10 +58,6 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (r) => r.label === "Daily rate limit / user",
     );
 
-    expect(rateLimitRow?.starter).toEqual({
-      kind: "text",
-      text: "$5",
-    });
     expect(rateLimitRow?.team).toEqual({
       kind: "text",
       text: "$5",
@@ -81,6 +77,27 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     expect(auditLogRow?.enterprise).toEqual({
       kind: "text",
       text: "Custom",
+      emphasize: true,
+    });
+  });
+
+  it("advertises unlimited servers per project across every tier (matches backend entitlement)", () => {
+    const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Organization & projects",
+    );
+    const serversRow = orgProjects?.rows.find(
+      (r) => r.label === "Servers per project",
+    );
+
+    expect(serversRow?.free).toEqual({ kind: "text", text: "Unlimited" });
+    expect(serversRow?.team).toEqual({
+      kind: "text",
+      text: "Unlimited",
+      emphasize: true,
+    });
+    expect(serversRow?.enterprise).toEqual({
+      kind: "text",
+      text: "Unlimited",
       emphasize: true,
     });
   });

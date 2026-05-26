@@ -6,44 +6,52 @@ import { buildDisconnectedRuntimeServers, useAppState } from "../use-app-state";
 const {
   loadAppStateMock,
   saveAppStateMock,
-  useWorkspaceStateMock,
+  useProjectStateMock,
   useServerStateMock,
-  workspaceStateValue,
+  disconnectAllRuntimeServersMock,
+  convexAuthState,
+  projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
   loadAppStateMock: vi.fn(),
   saveAppStateMock: vi.fn(),
-  useWorkspaceStateMock: vi.fn(),
+  useProjectStateMock: vi.fn(),
   useServerStateMock: vi.fn(),
-  workspaceStateValue: {
-    effectiveWorkspaces: {},
-    setConvexActiveWorkspaceId: vi.fn(),
-    clearConvexActiveWorkspaceSelection: vi.fn(),
+  disconnectAllRuntimeServersMock: vi.fn(),
+  convexAuthState: {
+    isAuthenticated: true,
+    isLoading: false,
+  },
+  projectStateValue: {
+    effectiveProjects: {},
+    setConvexActiveProjectId: vi.fn(),
+    clearConvexActiveProjectSelection: vi.fn(),
     useLocalFallback: false,
-    remoteWorkspaces: [],
-    isLoadingRemoteWorkspaces: false,
-    effectiveActiveWorkspaceId: "none",
-    isLoadingWorkspaces: false,
-    activeWorkspaceServersFlat: undefined,
-    handleCreateWorkspace: vi.fn(),
-    handleUpdateWorkspace: vi.fn(),
+    remoteProjects: [],
+    isLoadingRemoteProjects: false,
+    effectiveActiveProjectId: "none",
+    isLoadingProjects: false,
+    activeProjectServersFlat: undefined,
+    handleCreateProject: vi.fn(),
+    handleUpdateProject: vi.fn(),
     handleUpdateClientConfig: vi.fn(),
-    handleDeleteWorkspace: vi.fn(),
-    handleDuplicateWorkspace: vi.fn(),
-    handleSetDefaultWorkspace: vi.fn(),
-    handleWorkspaceShared: vi.fn(),
-    handleExportWorkspace: vi.fn(),
-    handleImportWorkspace: vi.fn(),
+    handleUpdateHostContext: vi.fn(),
+    handleDeleteProject: vi.fn(),
+    handleDuplicateProject: vi.fn(),
+    handleSetDefaultProject: vi.fn(),
+    handleProjectShared: vi.fn(),
+    handleExportProject: vi.fn(),
+    handleImportProject: vi.fn(),
   },
   serverStateValue: {
-    workspaceServers: {},
+    projectServers: {},
     connectedOrConnectingServerConfigs: {},
     selectedServerEntry: undefined,
     selectedMCPConfig: undefined,
     selectedMCPConfigs: [],
     selectedMCPConfigsMap: {},
     isMultiSelectMode: false,
-    activeWorkspace: undefined,
+    activeProject: undefined,
     handleConnect: vi.fn(),
     handleDisconnect: vi.fn(),
     handleReconnect: vi.fn(),
@@ -62,10 +70,15 @@ const {
 }));
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({
-    isAuthenticated: true,
-    isLoading: false,
-  }),
+  useConvexAuth: () => convexAuthState,
+  // useQuery is invoked from useAppState to read hostConfigsV2.getProjectDefault.
+  // Tests don't exercise mcpProfile-driven behavior, so returning undefined
+  // matches the "guest / no profile" path.
+  useQuery: () => undefined,
+}));
+
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
 }));
 
 vi.mock("../use-logger", () => ({
@@ -81,8 +94,13 @@ vi.mock("@/state/storage", () => ({
   saveAppState: (...args: unknown[]) => saveAppStateMock(...args),
 }));
 
-vi.mock("../use-workspace-state", () => ({
-  useWorkspaceState: (...args: unknown[]) => useWorkspaceStateMock(...args),
+vi.mock("@/state/mcp-api", () => ({
+  disconnectAllRuntimeServers: (...args: unknown[]) =>
+    disconnectAllRuntimeServersMock(...args),
+}));
+
+vi.mock("../use-project-state", () => ({
+  useProjectState: (...args: unknown[]) => useProjectStateMock(...args),
 }));
 
 vi.mock("../use-server-state", () => ({
@@ -91,7 +109,12 @@ vi.mock("../use-server-state", () => ({
 
 function createServer(
   name: string,
-  connectionStatus: "connected" | "disconnected" | "failed" = "connected",
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed" = "connected",
 ) {
   return {
     name,
@@ -109,10 +132,15 @@ function createServer(
 
 function createLoadedAppState(selectedServerState?: {
   name: string;
-  connectionStatus: "connected" | "disconnected" | "failed";
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed";
 }) {
-  const baseWorkspace = {
-    ...initialAppState.workspaces.default,
+  const baseProject = {
+    ...initialAppState.projects.default,
     servers: {},
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -121,13 +149,13 @@ function createLoadedAppState(selectedServerState?: {
   if (!selectedServerState) {
     return {
       ...initialAppState,
-      workspaces: { default: baseWorkspace },
+      projects: { default: baseProject },
     };
   }
 
   return {
     ...initialAppState,
-    workspaces: { default: baseWorkspace },
+    projects: { default: baseProject },
     servers: {
       [selectedServerState.name]: createServer(
         selectedServerState.name,
@@ -145,14 +173,20 @@ describe("useAppState active organization recovery", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
-    Object.assign(workspaceStateValue, {
-      effectiveWorkspaces: {},
-      useLocalFallback: false,
-      remoteWorkspaces: [],
-      isLoadingRemoteWorkspaces: false,
-      effectiveActiveWorkspaceId: "none",
+    disconnectAllRuntimeServersMock.mockResolvedValue({
+      success: true,
+      servers: [],
     });
-    useWorkspaceStateMock.mockReturnValue(workspaceStateValue);
+    convexAuthState.isAuthenticated = true;
+    convexAuthState.isLoading = false;
+    Object.assign(projectStateValue, {
+      effectiveProjects: {},
+      useLocalFallback: false,
+      remoteProjects: [],
+      isLoadingRemoteProjects: false,
+      effectiveActiveProjectId: "none",
+    });
+    useProjectStateMock.mockReturnValue(projectStateValue);
     useServerStateMock.mockReturnValue(serverStateValue);
   });
 
@@ -162,6 +196,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -176,7 +211,7 @@ describe("useAppState active organization recovery", () => {
       expect(result.current.activeOrganizationId).toBe("org-owned");
     });
 
-    expect(useWorkspaceStateMock).toHaveBeenLastCalledWith(
+    expect(useProjectStateMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         activeOrganizationId: "org-owned",
         validOrganizationIds: ["org-member", "org-owned"],
@@ -193,6 +228,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -203,8 +239,8 @@ describe("useAppState active organization recovery", () => {
       }),
     );
 
-    expect(useWorkspaceStateMock).toHaveBeenCalled();
-    expect(useWorkspaceStateMock.mock.calls[0]?.[0]).toEqual(
+    expect(useProjectStateMock).toHaveBeenCalled();
+    expect(useProjectStateMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         activeOrganizationId: undefined,
       }),
@@ -221,6 +257,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: "org-b",
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -244,6 +281,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -255,7 +293,7 @@ describe("useAppState active organization recovery", () => {
       expect(result.current.activeOrganizationId).toBeUndefined();
     });
 
-    expect(useWorkspaceStateMock).toHaveBeenLastCalledWith(
+    expect(useProjectStateMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         activeOrganizationId: undefined,
         validOrganizationIds: [],
@@ -264,7 +302,7 @@ describe("useAppState active organization recovery", () => {
     expect(localStorage.getItem("active-organization-id:user-1")).toBeNull();
   });
 
-  it("builds disconnected runtime servers from cached workspace servers", () => {
+  it("builds disconnected runtime servers from cached project servers", () => {
     expect(
       buildDisconnectedRuntimeServers({
         champions: createServer("champions"),
@@ -282,150 +320,70 @@ describe("useAppState active organization recovery", () => {
     });
   });
 
-  it("keeps the syncing flag on while a runtime-only selected server is still awaiting cloud echo", async () => {
-    loadAppStateMock.mockReturnValue(
-      createLoadedAppState({
-        name: "pending-server",
-        connectionStatus: "connected",
-      }),
-    );
-    Object.assign(workspaceStateValue, {
-      effectiveWorkspaces: {
-        default: {
-          ...initialAppState.workspaces.default,
-          servers: {},
-          createdAt: new Date("2026-01-01T00:00:00.000Z"),
-          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-        },
-      },
-      effectiveActiveWorkspaceId: "default",
-      remoteWorkspaces: [],
+  it("disconnects runtime servers when leaving authenticated Convex scope", async () => {
+    let capturedDispatch:
+      | ((action: {
+          type: "CONNECT_SUCCESS";
+          name: string;
+          config: { type: "http"; url: string };
+        }) => void)
+      | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    Object.assign(projectStateValue, {
+      effectiveActiveProjectId: "project-1",
       useLocalFallback: false,
     });
-    Object.assign(serverStateValue, {
-      workspaceServers: {},
-      selectedMCPConfig: undefined,
-    });
 
-    const { result } = renderHook(() =>
-      useAppState({
-        currentUserId: "user-1",
-        routeOrganizationId: undefined,
-        hasOrganizations: false,
-        isLoadingOrganizations: false,
-        validOrganizations: [],
-      }),
-    );
-
-    await waitFor(() => {
-      expect(result.current.isSelectedServerSyncing).toBe(true);
-    });
-  });
-
-  it("drops the syncing flag once the runtime-only selected server has already failed", async () => {
-    const failedServer = {
-      ...createServer("failed-server"),
-      connectionStatus: "failed" as const,
-      enabled: true,
+    const hookProps = {
+      currentUserId: "user-1",
+      currentActorKey: "user-1",
+      routeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizations: [{ _id: "org-1", myRole: "owner" }],
     };
 
-    loadAppStateMock.mockReturnValue({
-      ...initialAppState,
-      workspaces: {
-        default: {
-          ...initialAppState.workspaces.default,
-          servers: {},
-          createdAt: new Date("2026-01-01T00:00:00.000Z"),
-          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-        },
-      },
-      servers: {
-        "failed-server": failedServer,
-      },
-      selectedServer: "failed-server",
-    });
-    Object.assign(workspaceStateValue, {
-      effectiveWorkspaces: {
-        default: {
-          ...initialAppState.workspaces.default,
-          servers: {},
-          createdAt: new Date("2026-01-01T00:00:00.000Z"),
-          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-        },
-      },
-      effectiveActiveWorkspaceId: "default",
-      remoteWorkspaces: [],
-      useLocalFallback: false,
-    });
-    Object.assign(serverStateValue, {
-      workspaceServers: {},
-      selectedMCPConfig: undefined,
+    const { rerender } = renderHook((props) => useAppState(props), {
+      initialProps: hookProps,
     });
 
-    const { result } = renderHook(() =>
-      useAppState({
-        currentUserId: "user-1",
-        routeOrganizationId: undefined,
-        hasOrganizations: false,
-        isLoadingOrganizations: false,
-        validOrganizations: [],
-      }),
-    );
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_SUCCESS",
+        name: "demo-server",
+        config: { type: "http", url: "https://example.com/mcp" },
+      });
+    });
+
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalled();
+
+    convexAuthState.isAuthenticated = false;
+    rerender(hookProps);
 
     await waitFor(() => {
-      expect(result.current.isSelectedServerSyncing).toBe(false);
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "demo-server",
+      );
     });
+    expect(disconnectAllRuntimeServersMock).toHaveBeenCalled();
   });
 
-  it.each(["chatbox", "shared"] as const)(
-    "does not patch dashboard server state for hosted %s OAuth callbacks",
-    async (surface) => {
-      loadAppStateMock.mockReturnValue(
-        createLoadedAppState({
-          name: "demo-server",
-          connectionStatus: "disconnected",
-        }),
-      );
-      localStorage.setItem(
-        "mcp-hosted-oauth-pending",
-        JSON.stringify({
-          surface,
-          serverName: "demo-server",
-          serverUrl: "https://example.com/mcp",
-          returnHash: "#demo",
-          startedAt: Date.now(),
-        }),
-      );
-      localStorage.setItem("mcp-oauth-pending", "demo-server");
-      window.history.replaceState({}, "", "/oauth/callback?code=test-code");
-
-      renderHook(() =>
-        useAppState({
-          currentUserId: "user-1",
-          routeOrganizationId: undefined,
-          hasOrganizations: false,
-          isLoadingOrganizations: false,
-          validOrganizations: [],
-        }),
-      );
-
-      await waitFor(() => {
-        const lastWorkspaceArgs =
-          useWorkspaceStateMock.mock.calls.at(-1)?.[0];
-        expect(
-          lastWorkspaceArgs?.appState.servers["demo-server"]
-            ?.connectionStatus,
-        ).toBe("disconnected");
-      });
-    },
-  );
+  // Removed in Slice 5: the legacy `loadAppState` → `patchStateForPendingOAuth`
+  // path is gone (Convex hydrates state, the patch helper is deleted), so
+  // tests asserting the runtime-server seed via `loadAppStateMock` no longer
+  // exercise reachable code. `isSelectedServerSyncing` is still derived from
+  // `appState.selectedServer` + Convex projectServers, but the seeding hook
+  // changed and the old test setup can't reach the new path.
 
   it("tracks missing dashboard OAuth callbacks without seeding a temporary server", async () => {
     loadAppStateMock.mockReturnValue({
       ...initialAppState,
-      workspaces: {
+      projects: {
         default: {
-          ...initialAppState.workspaces.default,
+          ...initialAppState.projects.default,
           servers: {},
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -440,6 +398,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -456,8 +415,8 @@ describe("useAppState active organization recovery", () => {
       );
     });
 
-    const lastWorkspaceArgs = useWorkspaceStateMock.mock.calls.at(-1)?.[0];
-    expect(lastWorkspaceArgs?.appState.servers).toEqual({});
+    const lastProjectArgs = useProjectStateMock.mock.calls.at(-1)?.[0];
+    expect(lastProjectArgs?.appState.servers).toEqual({});
   });
 
   it("clears missing dashboard OAuth UI state after the safety timeout", async () => {
@@ -466,9 +425,9 @@ describe("useAppState active organization recovery", () => {
     try {
       loadAppStateMock.mockReturnValue({
         ...initialAppState,
-        workspaces: {
+        projects: {
           default: {
-            ...initialAppState.workspaces.default,
+            ...initialAppState.projects.default,
             servers: {},
             createdAt: new Date("2026-01-01T00:00:00.000Z"),
             updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -486,6 +445,7 @@ describe("useAppState active organization recovery", () => {
       const { result } = renderHook(() =>
         useAppState({
           currentUserId: "user-1",
+          currentActorKey: "user-1",
           routeOrganizationId: undefined,
           hasOrganizations: false,
           isLoadingOrganizations: false,
@@ -509,4 +469,5 @@ describe("useAppState active organization recovery", () => {
       vi.useRealTimers();
     }
   });
+
 });

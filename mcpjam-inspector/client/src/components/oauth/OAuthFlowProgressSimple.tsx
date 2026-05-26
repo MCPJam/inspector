@@ -1,6 +1,6 @@
 import { OAuthFlowState, OAuthStep } from "@/lib/types/oauth-flow-types";
 import { CheckCircle2, Circle, ExternalLink } from "lucide-react";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import type { OAuthClientInformation } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import { DebugMCPOAuthClientProvider } from "@/lib/oauth/debug-oauth-provider";
@@ -79,6 +79,7 @@ export const OAuthFlowProgressSimple = ({
   const [clientInfo, setClientInfo] = useState<OAuthClientInformation | null>(
     null,
   );
+  const processedElectronCodeRef = useRef<string | null>(null);
 
   // Track if authorization modal is open
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -110,6 +111,63 @@ export const OAuthFlowProgressSimple = ({
     flowState.oauthClientInfo,
     currentStepIdx,
   ]);
+
+  useEffect(() => {
+    const handleElectronOAuthCallback = (event: Event) => {
+      const callbackUrl = (event as CustomEvent<string>).detail;
+      if (!callbackUrl) {
+        return;
+      }
+
+      try {
+        const parsed = new URL(callbackUrl);
+        if (parsed.searchParams.get("flow") !== "debug") {
+          return;
+        }
+
+        const error = parsed.searchParams.get("error");
+        const errorDescription = parsed.searchParams.get("error_description");
+        if (error) {
+          updateFlowState({
+            latestError: new Error(errorDescription ?? error),
+            validationError: null,
+          });
+          return;
+        }
+
+        const code = parsed.searchParams.get("code");
+        if (!code || processedElectronCodeRef.current === code) {
+          return;
+        }
+
+        processedElectronCodeRef.current = code;
+        updateFlowState({
+          authorizationCode: code,
+          latestError: null,
+          validationError: null,
+          statusMessage: {
+            type: "success",
+            message:
+              "Authorization received from your browser. Click Continue to exchange the code.",
+          },
+        });
+      } catch (error) {
+        console.error("Failed to process Electron OAuth callback:", error);
+      }
+    };
+
+    window.addEventListener(
+      "electron-oauth-callback",
+      handleElectronOAuthCallback as EventListener,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "electron-oauth-callback",
+        handleElectronOAuthCallback as EventListener,
+      );
+    };
+  }, [updateFlowState]);
 
   // Helper to get step props
   const getStepProps = (stepName: OAuthStep) => ({

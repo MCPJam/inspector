@@ -1,7 +1,10 @@
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
+import type {
+  ProjectClientConfig,
+  ProjectConnectionDefaults,
+} from "@/lib/client-config";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
 export type ConnectionStatus =
@@ -11,7 +14,7 @@ export type ConnectionStatus =
   | "disconnected"
   | "oauth-flow";
 
-export type WorkspaceVisibility = "public" | "private";
+export type ProjectVisibility = "public" | "private";
 
 export interface InitializationInfo {
   protocolVersion?: string;
@@ -46,37 +49,51 @@ export interface ServerWithName {
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
+  hasClientSecret?: boolean;
 }
 
-export interface Workspace {
+export interface Project {
   id: string;
   name: string;
   description?: string;
   icon?: string;
-  clientConfig?: WorkspaceClientConfig;
+  /**
+   * @deprecated Backend-maintained shadow-mirror of the project default host
+   * (`hostConfigsV2.getProjectDefault`). UI reads should go through
+   * `useAppState().activeHost` (which resolves the top-bar selection → project
+   * default). Kept on the type only as a transient bootstrap fallback for the
+   * window before the host query hydrates; will be dropped once that gap can
+   * be guaranteed-closed by `isClientConfigSyncPending`.
+   */
+  clientConfig?: ProjectClientConfig;
   servers: Record<string, ServerWithName>;
   createdAt: Date;
   updatedAt: Date;
-  canDeleteWorkspace?: boolean;
+  canDeleteProject?: boolean;
   isDefault?: boolean;
-  sharedWorkspaceId?: string;
+  sharedProjectId?: string;
   organizationId?: string;
-  visibility?: WorkspaceVisibility;
+  visibility?: ProjectVisibility;
 }
 
 export interface AppState {
-  workspaces: Record<string, Workspace>;
-  activeWorkspaceId: string;
+  projects: Record<string, Project>;
+  activeProjectId: string;
   servers: Record<string, ServerWithName>;
   selectedServer: string;
   selectedMultipleServers: string[];
   isMultiSelectMode: boolean;
 }
 
-export type AgentServerInfo = { id: string; status: ConnectionStatus };
+export type AgentServerInfo = {
+  id: string;
+  status: ConnectionStatus;
+  config?: MCPServerConfig;
+};
 
 export type AppAction =
   | { type: "HYDRATE_STATE"; payload: AppState }
+  | { type: "CLEAR_RUNTIME_STATE" }
   | { type: "UPSERT_SERVER"; name: string; server: ServerWithName }
   | {
       type: "CONNECT_REQUEST";
@@ -120,33 +137,79 @@ export type AppAction =
       name: string;
       oauthTrace?: OAuthTrace;
     }
-  | { type: "CREATE_WORKSPACE"; workspace: Workspace }
+  | { type: "CREATE_PROJECT"; project: Project }
   | {
-      type: "UPDATE_WORKSPACE";
-      workspaceId: string;
-      updates: Partial<Workspace>;
+      type: "UPDATE_PROJECT";
+      projectId: string;
+      updates: Partial<Project>;
     }
-  | { type: "DELETE_WORKSPACE"; workspaceId: string }
-  | { type: "SWITCH_WORKSPACE"; workspaceId: string }
-  | { type: "SET_DEFAULT_WORKSPACE"; workspaceId: string }
-  | { type: "IMPORT_WORKSPACE"; workspace: Workspace }
-  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string };
+  | {
+      // Merge one section of `clientConfig` into the project's current
+      // value, reading the current value from reducer state at the time
+      // the action is processed. Necessary so concurrent connection +
+      // host-context saves don't clobber each other locally — a full
+      // `UPDATE_PROJECT` with a composed clientConfig captures the
+      // sibling section at save-start, so a slow save can overwrite a
+      // newer sibling. This action only touches the named slice.
+      type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE";
+      projectId: string;
+      slice:
+        | {
+            kind: "connection";
+            connectionDefaults: ProjectConnectionDefaults | undefined;
+            clientCapabilities: Record<string, unknown>;
+          }
+        | {
+            kind: "hostContext";
+            hostContext: Record<string, unknown>;
+          };
+    }
+  | { type: "DELETE_PROJECT"; projectId: string }
+  | { type: "SWITCH_PROJECT"; projectId: string }
+  | { type: "SET_DEFAULT_PROJECT"; projectId: string }
+  | { type: "IMPORT_PROJECT"; project: Project }
+  | { type: "DUPLICATE_PROJECT"; projectId: string; newName: string };
 
-export const initialAppState: AppState = {
-  workspaces: {
-    default: {
-      id: "default",
-      name: "Default",
-      description: "Default workspace",
-      servers: {},
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      isDefault: true,
+export function createLocalProjectId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `local_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function createLocalDefaultProject(
+  overrides: Partial<Project> = {},
+): Project {
+  const now = new Date();
+  const id = overrides.id ?? createLocalProjectId();
+  return {
+    id,
+    name: "Default",
+    description: "Default project",
+    servers: {},
+    createdAt: now,
+    updatedAt: now,
+    isDefault: true,
+    ...overrides,
+  };
+}
+
+export function createInitialAppState(): AppState {
+  const project = createLocalDefaultProject();
+  return {
+    projects: {
+      [project.id]: project,
     },
-  },
-  activeWorkspaceId: "default",
-  servers: {},
-  selectedServer: "none",
-  selectedMultipleServers: [],
-  isMultiSelectMode: false,
-};
+    activeProjectId: project.id,
+    servers: {},
+    selectedServer: "none",
+    selectedMultipleServers: [],
+    isMultiSelectMode: false,
+  };
+}
+
+export const initialAppState: AppState = createInitialAppState();

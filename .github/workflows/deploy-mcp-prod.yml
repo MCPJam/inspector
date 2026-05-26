@@ -94,12 +94,12 @@ jobs:
             const { owner, repo } = context.repo;
             const headSha = context.sha;
 
+            // Fetch without branch/status filters — GitHub's search index
+            // can lag minutes behind, causing false negatives on recent runs.
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
               owner,
               repo,
               workflow_id: workflowId,
-              branch: "main",
-              status: "completed",
               per_page: 100,
             });
 

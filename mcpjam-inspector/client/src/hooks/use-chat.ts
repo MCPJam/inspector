@@ -19,6 +19,7 @@ import {
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
 import { authFetch } from "@/lib/session-token";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 
 interface ElicitationRequest {
   requestId: string;
@@ -472,13 +473,43 @@ export function useChat(options: UseChatOptions = {}) {
 
         if (!response.ok) {
           const errorText = await response.text();
-          let errorData;
+          let errorData: unknown;
           try {
             errorData = JSON.parse(errorText);
           } catch {
+            notifyMCPJamLimitError({ message: errorText });
             throw new Error(`Chat request failed: ${response.status}`);
           }
-          throw new Error(errorData.error || "Chat request failed");
+          const errorRecord =
+            errorData && typeof errorData === "object"
+              ? (errorData as {
+                  code?: unknown;
+                  error?: unknown;
+                  message?: unknown;
+                  limitKind?: unknown;
+                })
+              : null;
+          const errorMessage =
+            typeof errorRecord?.error === "string"
+              ? errorRecord.error
+              : typeof errorRecord?.message === "string"
+                ? errorRecord.message
+              : "Chat request failed";
+          const limitKind =
+            errorRecord?.limitKind === "total" ||
+            errorRecord?.limitKind === "concurrency"
+              ? errorRecord.limitKind
+              : undefined;
+          notifyMCPJamLimitError({
+            code:
+              typeof errorRecord?.code === "string"
+                ? errorRecord.code
+                : undefined,
+            details: errorData,
+            message: errorMessage,
+            limitKind,
+          });
+          throw new Error(errorMessage);
         }
 
         // Handle streaming response via parser
@@ -755,7 +786,7 @@ function pickDefaultModel(
   }
   const priorities: Array<Model | string> = [
     "google/gemini-3-flash-preview",
-    Model.CLAUDE_3_5_SONNET_LATEST,
+    Model.CLAUDE_3_7_SONNET_LATEST,
     Model.GPT_4O,
     Model.DEEPSEEK_CHAT,
     Model.GEMINI_2_5_FLASH,

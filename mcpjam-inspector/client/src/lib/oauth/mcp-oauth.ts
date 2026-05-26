@@ -11,16 +11,21 @@ import {
   getBrowserDebugDynamicRegistrationMetadata,
   EMPTY_OAUTH_FLOW_STATE,
   projectOAuthTraceSnapshot,
+  resolveAuthorizationPlan,
   runOAuthStateMachine,
   selectResourceURL,
 } from "@mcpjam/sdk/browser";
 import type {
+  AuthorizationDiscoverySnapshot,
+  OAuthProtocolMode,
+  OAuthRegistrationMode,
   HttpHistoryEntry,
   OAuthClientProvider,
   OAuthDiscoveryState,
   OAuthFlowState,
   OAuthProtocolVersion,
   OAuthRequestResult,
+  ResolvedAuthorizationPlan,
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
@@ -30,7 +35,14 @@ import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
+import {
+  importHostedOAuthTokens,
+  normalizeImportHostedOAuthTokens,
+  type ImportHostedOAuthTokensRequest,
+} from "@/lib/apis/hosted-oauth-import-tokens-api";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
+import { captureCurrentReturnPath } from "@/lib/app-navigation";
 import {
   matchesHostedOAuthServerIdentity,
   readHostedOAuthPendingMarker,
@@ -43,10 +55,13 @@ import {
   appendOAuthTraceHttpHistory,
   buildOAuthTraceFromSnapshot,
   clearOAuthTrace,
+  clearOAuthTraceSession,
   completeOAuthTraceStep,
   createOAuthTrace,
   failOAuthTraceStep,
+  loadOAuthTraceFromSession,
   mergeOAuthTraces,
+  saveOAuthTraceToSession,
   startOAuthTraceStep,
   type OAuthTrace,
 } from "./oauth-trace";
@@ -58,6 +73,8 @@ interface StoredOAuthDiscoveryState {
   serverUrl: string;
   discoveryState: OAuthDiscoveryState;
 }
+
+const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
 
 interface StoredOAuthClientInformation {
   client_id?: string;
@@ -72,9 +89,12 @@ type OAuthRegistrationStrategy =
 export interface StoredOAuthConfig {
   scopes?: string[];
   customHeaders?: Record<string, string>;
+  resourceUrl?: string;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
+  protocolMode?: OAuthProtocolMode;
   protocolVersion?: OAuthProtocolVersion;
+  registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
 }
 
@@ -89,9 +109,6 @@ interface StoredOAuthFlowSession {
   registrationStrategy: OAuthRegistrationStrategy;
   state: OAuthFlowState;
 }
-
-const DEFAULT_OAUTH_PROTOCOL_VERSION: OAuthProtocolVersion = "2025-11-25";
-const DEFAULT_OAUTH_REGISTRATION_STRATEGY: OAuthRegistrationStrategy = "dcr";
 
 function getFlowStateStorageKey(serverName: string): string {
   return `mcp-oauth-flow-state-${serverName}`;
@@ -299,21 +316,16 @@ function createHttpHistoryEntry(input: {
 }
 
 function traceOAuthHeaders(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
-  return SANITIZE_OAUTH_TRACES
-    ? sanitizeOAuthHeaders(headers)
-    : { ...headers };
+  return SANITIZE_OAUTH_TRACES ? sanitizeOAuthHeaders(headers) : { ...headers };
 }
 
 function traceOAuthValue(value: unknown): unknown {
   return SANITIZE_OAUTH_TRACES ? sanitizeOAuthTraceValue(value) : value;
 }
 
-function parseOAuthResponseText(
-  text: string,
-  contentType: string,
-): unknown {
+function parseOAuthResponseText(text: string, contentType: string): unknown {
   const looksJson =
     contentType.includes("application/json") ||
     contentType.includes("+json") ||
@@ -465,21 +477,31 @@ function clearOAuthFlowSession(serverName: string): void {
   localStorage.removeItem(getFlowStateStorageKey(serverName));
 }
 
-function resolveOAuthProtocolVersion(
-  options: Pick<MCPOAuthOptions, "protocolVersion">
-): OAuthProtocolVersion {
-  return options.protocolVersion ?? DEFAULT_OAUTH_PROTOCOL_VERSION;
+function resolveOAuthProtocolMode(
+  options: Pick<MCPOAuthOptions, "protocolMode" | "protocolVersion">
+): OAuthProtocolMode {
+  if (options.protocolMode) {
+    return options.protocolMode;
+  }
+
+  return options.protocolVersion ?? "auto";
 }
 
-function resolveOAuthRegistrationStrategy(
+function resolveOAuthRegistrationMode(
   options: Pick<
     MCPOAuthOptions,
+    | "registrationMode"
     | "registrationStrategy"
     | "clientId"
     | "clientSecret"
+    | "hasClientSecret"
     | "useRegistryOAuthProxy"
   >
-): OAuthRegistrationStrategy {
+): OAuthRegistrationMode {
+  if (options.registrationMode) {
+    return options.registrationMode;
+  }
+
   if (options.registrationStrategy) {
     return options.registrationStrategy;
   }
@@ -487,12 +509,121 @@ function resolveOAuthRegistrationStrategy(
   if (
     options.useRegistryOAuthProxy ||
     options.clientId ||
-    options.clientSecret
+    options.clientSecret ||
+    options.hasClientSecret
   ) {
     return "preregistered";
   }
 
-  return DEFAULT_OAUTH_REGISTRATION_STRATEGY;
+  return "auto";
+}
+
+function createScopedDiscoveryFetch(
+  fetchFn: typeof fetch,
+  serverUrl: string,
+  customHeaders?: Record<string, string>
+): typeof fetch {
+  if (!customHeaders || Object.keys(customHeaders).length === 0) {
+    return fetchFn;
+  }
+
+  let serverOrigin: string;
+  try {
+    serverOrigin = new URL(serverUrl).origin;
+  } catch {
+    return fetchFn;
+  }
+
+  return (input, init) => {
+    const requestUrl =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+
+    let requestOrigin: string;
+    try {
+      requestOrigin = new URL(requestUrl, serverUrl).origin;
+    } catch {
+      return fetchFn(input, init);
+    }
+
+    if (requestOrigin !== serverOrigin) {
+      return fetchFn(input, init);
+    }
+
+    const headers = new Headers(init?.headers ?? undefined);
+    for (const [key, value] of Object.entries(customHeaders)) {
+      if (!headers.has(key)) {
+        headers.set(key, value);
+      }
+    }
+
+    return fetchFn(input, {
+      ...init,
+      headers,
+    });
+  };
+}
+
+async function resolveOAuthExecutionPlan(
+  provider: MCPOAuthProvider,
+  fetchFn: typeof fetch,
+  options: Pick<
+    MCPOAuthOptions,
+    | "serverUrl"
+    | "protocolMode"
+    | "protocolVersion"
+    | "registrationMode"
+    | "registrationStrategy"
+    | "clientId"
+    | "clientSecret"
+    | "hasClientSecret"
+    | "useRegistryOAuthProxy"
+    | "customHeaders"
+  >
+): Promise<ResolvedAuthorizationPlan> {
+  const basePlan = resolveAuthorizationPlan({
+    serverUrl: options.serverUrl,
+    protocolMode: resolveOAuthProtocolMode(options),
+    protocolVersion: options.protocolVersion,
+    registrationMode: resolveOAuthRegistrationMode(options),
+    registrationStrategy: options.registrationStrategy,
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    hasClientSecret: options.hasClientSecret,
+    useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+    authMode: "interactive",
+  });
+
+  if (
+    basePlan.status !== "discovery_required" &&
+    basePlan.registrationStrategy !== "preregistered"
+  ) {
+    return basePlan;
+  }
+
+  const discoveryState = await loadCallbackDiscoveryState(
+    provider,
+    options.serverUrl,
+    fetchFn,
+    options.customHeaders
+  );
+
+  return resolveAuthorizationPlan({
+    serverUrl: options.serverUrl,
+    protocolMode: resolveOAuthProtocolMode(options),
+    protocolVersion: options.protocolVersion,
+    registrationMode: resolveOAuthRegistrationMode(options),
+    registrationStrategy: options.registrationStrategy,
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    hasClientSecret: options.hasClientSecret,
+    useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+    authMode: "interactive",
+    discovery: toAuthorizationDiscoverySnapshot(discoveryState),
+  });
 }
 
 function normalizeProxyTargetUrl(url: string): string {
@@ -575,7 +706,7 @@ async function executeRequestViaProxy(
 }
 
 async function createTraceResponseFromFetch(
-  response: Response,
+  response: Response
 ): Promise<HttpHistoryEntry["response"]> {
   return {
     status: response.status,
@@ -586,7 +717,7 @@ async function createTraceResponseFromFetch(
 }
 
 function createTraceResponseFromResult(
-  result: Pick<OAuthRequestResult, "status" | "statusText" | "headers" | "body">,
+  result: Pick<OAuthRequestResult, "status" | "statusText" | "headers" | "body">
 ): HttpHistoryEntry["response"] {
   return {
     status: result.status,
@@ -708,26 +839,143 @@ function buildOAuthTraceFromFlowState(input: {
   });
 }
 
-function buildStoredOAuthTrace(input: {
-  serverName: string;
-  serverUrl: string;
-  session: StoredOAuthFlowSession;
+function formatAuthorizationStrategyLabel(
+  strategy: OAuthRegistrationStrategy
+): string {
+  switch (strategy) {
+    case "preregistered":
+      return "pre-registered credentials";
+    case "cimd":
+      return "CIMD";
+    case "dcr":
+      return "DCR";
+  }
+}
+
+function formatSupportedStrategyLabel(
+  strategy: "preregistered" | "cimd" | "dcr"
+): string {
+  switch (strategy) {
+    case "preregistered":
+      return "Pre-registered";
+    case "cimd":
+      return "CIMD";
+    case "dcr":
+      return "DCR";
+  }
+}
+
+function buildAutomaticAuthorizationDecisionReason(
+  plan: ResolvedAuthorizationPlan
+): string | undefined {
+  switch (plan.registrationStrategy) {
+    case "preregistered":
+      return "Client credentials were already available, so automatic mode did not need CIMD or DCR.";
+    case "cimd":
+      return plan.capabilities.supportsDcr
+        ? "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR."
+        : "The authorization server advertised client_id_metadata_document_supported.";
+    case "dcr":
+      if (plan.protocolVersion !== "2025-11-25") {
+        return `CIMD is not available for protocol version ${plan.protocolVersion}, so automatic mode used DCR.`;
+      }
+
+      if (!plan.capabilities.supportsCimd) {
+        return "The authorization server advertised registration_endpoint, and CIMD support was not advertised.";
+      }
+
+      return "The authorization server advertised registration_endpoint.";
+    default:
+      return undefined;
+  }
+}
+
+function annotateTraceWithAuthorizationPlan(input: {
+  trace: OAuthTrace;
+  authorizationPlan?: ResolvedAuthorizationPlan;
+  requestedRegistrationMode: OAuthRegistrationMode;
 }): OAuthTrace {
-  return buildOAuthTraceFromSnapshot({
-    source: "interactive_connect",
-    serverName: input.serverName,
-    serverUrl: input.serverUrl,
-    snapshot: projectOAuthTraceSnapshot({
-      state: input.session.state,
-      sanitize: true,
-    }),
-  });
+  const { trace, authorizationPlan, requestedRegistrationMode } = input;
+  if (
+    requestedRegistrationMode !== "auto" ||
+    !authorizationPlan ||
+    authorizationPlan.status !== "ready" ||
+    !authorizationPlan.registrationStrategy
+  ) {
+    return trace;
+  }
+
+  const targetStepPriority = [
+    "received_authorization_server_metadata",
+    "authorization_request",
+    "received_client_credentials",
+    "request_client_registration",
+  ] as const;
+  let targetStepIndex: number | undefined;
+  for (const stepName of targetStepPriority) {
+    const index = trace.steps.findIndex((step) => step.step === stepName);
+    if (index >= 0) {
+      targetStepIndex = index;
+      break;
+    }
+  }
+  if (targetStepIndex == null || targetStepIndex === -1) {
+    return trace;
+  }
+
+  const targetStep = trace.steps[targetStepIndex];
+  const selectedStrategyLabel = formatAuthorizationStrategyLabel(
+    authorizationPlan.registrationStrategy
+  );
+  const reason = buildAutomaticAuthorizationDecisionReason(authorizationPlan);
+  const supportedStrategies =
+    authorizationPlan.capabilities.registrationStrategies.length > 0
+      ? authorizationPlan.capabilities.registrationStrategies.map(
+          formatSupportedStrategyLabel
+        )
+      : undefined;
+
+  const nextMessage = [
+    `Automatic resolved to ${selectedStrategyLabel} for this run.`,
+    reason,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const nextDetails = {
+    ...(targetStep.details ?? {}),
+    "Automatic Decision": selectedStrategyLabel,
+    ...(supportedStrategies
+      ? {
+          "Advertised Strategies": supportedStrategies.join(", "),
+        }
+      : {}),
+    ...(reason ? { Reason: reason } : {}),
+    ...(authorizationPlan.registrationStrategy === "dcr" &&
+    !authorizationPlan.capabilities.supportsCimd
+      ? {
+          "CIMD Support": "Not advertised by authorization server",
+        }
+      : {}),
+  };
+
+  return {
+    ...trace,
+    steps: trace.steps.map((step, index) =>
+      index === targetStepIndex
+        ? {
+            ...step,
+            message: nextMessage,
+            details: nextDetails,
+          }
+        : step
+    ),
+  };
 }
 
 export function readStoredOAuthConfig(
   serverName: string | null
 ): StoredOAuthConfig {
-  if (!serverName) {
+  if (!serverName || HOSTED_MODE) {
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -750,11 +998,30 @@ export function readStoredOAuthConfig(
           ? parsed.registryServerId
           : undefined,
       useRegistryOAuthProxy: parsed?.useRegistryOAuthProxy === true,
+      resourceUrl:
+        typeof parsed?.resourceUrl === "string" &&
+        parsed.resourceUrl.trim() !== ""
+          ? parsed.resourceUrl
+          : undefined,
+      protocolMode:
+        parsed?.protocolMode === "auto" ||
+        parsed?.protocolMode === "2025-03-26" ||
+        parsed?.protocolMode === "2025-06-18" ||
+        parsed?.protocolMode === "2025-11-25"
+          ? parsed.protocolMode
+          : undefined,
       protocolVersion:
         parsed?.protocolVersion === "2025-03-26" ||
         parsed?.protocolVersion === "2025-06-18" ||
         parsed?.protocolVersion === "2025-11-25"
           ? parsed.protocolVersion
+          : undefined,
+      registrationMode:
+        parsed?.registrationMode === "auto" ||
+        parsed?.registrationMode === "cimd" ||
+        parsed?.registrationMode === "dcr" ||
+        parsed?.registrationMode === "preregistered"
+          ? parsed.registrationMode
           : undefined,
       registrationStrategy:
         parsed?.registrationStrategy === "cimd" ||
@@ -784,7 +1051,8 @@ export function readStoredOAuthConfig(
     }
 
     return config;
-  } catch {
+  } catch (e) {
+    console.warn('[mcp-oauth] Failed to parse stored OAuth config', e);
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -799,14 +1067,19 @@ export function buildStoredOAuthConfig(
     | "registryServerId"
     | "useRegistryOAuthProxy"
     | "customHeaders"
+    | "resourceUrl"
+    | "protocolMode"
     | "protocolVersion"
+    | "registrationMode"
     | "registrationStrategy"
   >
 ): StoredOAuthConfig {
   const config: StoredOAuthConfig = {
     registryServerId: options.registryServerId,
     useRegistryOAuthProxy: options.useRegistryOAuthProxy === true,
+    protocolMode: options.protocolMode,
     protocolVersion: options.protocolVersion,
+    registrationMode: options.registrationMode,
     registrationStrategy: options.registrationStrategy,
   };
 
@@ -816,6 +1089,10 @@ export function buildStoredOAuthConfig(
 
   if (options.customHeaders && Object.keys(options.customHeaders).length > 0) {
     config.customHeaders = options.customHeaders;
+  }
+
+  if (options.resourceUrl?.trim()) {
+    config.resourceUrl = options.resourceUrl.trim();
   }
 
   return config;
@@ -949,15 +1226,21 @@ function toConvexOAuthPayload(
 async function loadCallbackDiscoveryState(
   provider: MCPOAuthProvider,
   serverUrl: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  customHeaders?: Record<string, string>
 ): Promise<OAuthDiscoveryState> {
+  const discoveryFetch = createScopedDiscoveryFetch(
+    fetchFn,
+    serverUrl,
+    customHeaders
+  );
   const cachedState = await provider.discoveryState();
   if (cachedState?.authorizationServerUrl) {
     const authorizationServerMetadata =
       cachedState.authorizationServerMetadata ??
       (await discoverAuthorizationServerMetadata(
         cachedState.authorizationServerUrl,
-        { fetchFn }
+        { fetchFn: discoveryFetch }
       ));
 
     const discoveryState: OAuthDiscoveryState = {
@@ -968,7 +1251,9 @@ async function loadCallbackDiscoveryState(
     return discoveryState;
   }
 
-  const discovered = await discoverOAuthServerInfo(serverUrl, { fetchFn });
+  const discovered = await discoverOAuthServerInfo(serverUrl, {
+    fetchFn: discoveryFetch,
+  });
   const discoveryState: OAuthDiscoveryState = {
     authorizationServerUrl: discovered.authorizationServerUrl,
     resourceMetadata: discovered.resourceMetadata,
@@ -976,6 +1261,21 @@ async function loadCallbackDiscoveryState(
   };
   await provider.saveDiscoveryState(discoveryState);
   return discoveryState;
+}
+
+function toAuthorizationDiscoverySnapshot(
+  discoveryState: OAuthDiscoveryState
+): AuthorizationDiscoverySnapshot {
+  return {
+    authorizationServerMetadataUrl: discoveryState.authorizationServerUrl,
+    authorizationServerMetadata: discoveryState.authorizationServerMetadata as
+      | Record<string, unknown>
+      | undefined,
+    resourceMetadataUrl: discoveryState.resourceMetadataUrl,
+    resourceMetadata: discoveryState.resourceMetadata as
+      | Record<string, unknown>
+      | undefined,
+  };
 }
 
 /**
@@ -1159,13 +1459,17 @@ export interface MCPOAuthOptions {
   serverUrl: string;
   scopes?: string[];
   customHeaders?: Record<string, string>;
+  resourceUrl?: string;
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret?: boolean;
   /** Registry record identifier for bookkeeping and optional Convex token exchange */
   registryServerId?: string;
   /** True only for registry servers with backend-managed preregistered OAuth credentials */
   useRegistryOAuthProxy?: boolean;
+  protocolMode?: OAuthProtocolMode;
   protocolVersion?: OAuthProtocolVersion;
+  registrationMode?: OAuthRegistrationMode;
   registrationStrategy?: OAuthRegistrationStrategy;
   onTraceUpdate?: (trace: OAuthTrace) => void;
 }
@@ -1175,6 +1479,49 @@ export interface OAuthResult {
   serverConfig?: HttpServerConfig;
   error?: string;
   oauthTrace?: OAuthTrace;
+  oauthResourceUrl?: string;
+}
+
+export function buildMCPOAuthState(): string {
+  const state = generateRandomString(32);
+  if (window.isElectron) {
+    return `${ELECTRON_MCP_CALLBACK_STATE_PREFIX}${state}`;
+  }
+  return state;
+}
+
+export function isElectronMcpCallbackState(
+  state: string | null | undefined,
+): boolean {
+  return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
+}
+
+function tagElectronMcpCallbackState(state: string | null | undefined): string {
+  if (isElectronMcpCallbackState(state)) {
+    return state!;
+  }
+
+  return `${ELECTRON_MCP_CALLBACK_STATE_PREFIX}${
+    state || generateRandomString(32)
+  }`;
+}
+
+function buildElectronMcpAuthorizationRequest(authorizationUrl: string): {
+  authorizationUrl: string;
+  state?: string;
+} {
+  if (typeof window === "undefined" || !window.isElectron) {
+    return { authorizationUrl };
+  }
+
+  try {
+    const url = new URL(authorizationUrl);
+    const state = tagElectronMcpCallbackState(url.searchParams.get("state"));
+    url.searchParams.set("state", state);
+    return { authorizationUrl: url.toString(), state };
+  } catch {
+    return { authorizationUrl };
+  }
 }
 
 interface HostedOAuthCompletionResponse {
@@ -1211,6 +1558,163 @@ function waitForMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function canonicalizeOAuthResourceUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    parsed.hash = "";
+
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function readOAuthResourceFromAuthorizationUrl(
+  authorizationUrl?: string
+): string | undefined {
+  if (!authorizationUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(authorizationUrl);
+    const resource = url.searchParams.get("resource")?.trim();
+    return resource || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Restrict acceptance of an MCP-server-advertised `resource` indicator (from
+ * the protected-resource-metadata document) to the same origin as the server
+ * URL. PRM is fetched from the server itself; honoring an arbitrary
+ * cross-origin resource value would let a compromised server steer tokens to
+ * a different audience than what the client is actually talking to.
+ */
+function isOAuthResourceIndicatorAllowed(input: {
+  serverUrl: string;
+  resource: string;
+}): boolean {
+  try {
+    const requested = new URL(input.serverUrl);
+    const resource = new URL(input.resource);
+    return requested.origin === resource.origin;
+  } catch {
+    return false;
+  }
+}
+
+function assertOAuthResourceIndicatorAllowed(input: {
+  serverUrl: string;
+  resource: string;
+  source: string;
+}): void {
+  if (
+    isOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: input.resource,
+    })
+  ) {
+    return;
+  }
+
+  throw new Error(
+    `Rejected cross-origin OAuth resource indicator from ${input.source}.`
+  );
+}
+
+function readOAuthResourceFromMetadata(
+  resourceMetadata?: { resource?: unknown } | null
+): string | undefined {
+  const resource =
+    typeof resourceMetadata?.resource === "string"
+      ? resourceMetadata.resource.trim()
+      : "";
+  return resource || undefined;
+}
+
+function resolveOAuthResourceUrl(input: {
+  serverUrl: string;
+  authorizationUrl?: string;
+  configuredResourceUrl?: string;
+  resourceMetadata?: { resource?: unknown } | null;
+}): string {
+  // Prefer the resource indicator advertised by the MCP server's
+  // protected-resource-metadata document — this is the canonical audience the
+  // RS expects in `aud`. Fall back to caller-configured / serverUrl only when
+  // PRM doesn't supply one.
+  const advertisedResource = readOAuthResourceFromMetadata(
+    input.resourceMetadata
+  );
+  if (advertisedResource) {
+    assertOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: advertisedResource,
+      source: "protected resource metadata",
+    });
+    return canonicalizeOAuthResourceUrl(advertisedResource);
+  }
+
+  const requestedFromAuth = readOAuthResourceFromAuthorizationUrl(
+    input.authorizationUrl
+  );
+  if (requestedFromAuth) {
+    assertOAuthResourceIndicatorAllowed({
+      serverUrl: input.serverUrl,
+      resource: requestedFromAuth,
+      source: "authorization URL",
+    });
+    return canonicalizeOAuthResourceUrl(requestedFromAuth);
+  }
+
+  const configured = input.configuredResourceUrl?.trim();
+  if (configured) {
+    return canonicalizeOAuthResourceUrl(configured);
+  }
+
+  return canonicalizeOAuthResourceUrl(input.serverUrl);
+}
+
+/**
+ * Stamp `?resource=<resourceUrl>` onto an authorization URL so the AS knows
+ * which audience to mint the token for (RFC 8707 / MCP OAuth profile).
+ * Without this, the AS issues tokens with a default `aud` that the resource
+ * server may reject.
+ */
+function withOAuthResourceParam(
+  authorizationUrl: string,
+  resourceUrl: string
+): string {
+  try {
+    const url = new URL(authorizationUrl);
+    url.searchParams.set("resource", resourceUrl);
+    return url.toString();
+  } catch {
+    return authorizationUrl;
+  }
+}
+
+function writeStoredOAuthConfig(
+  serverName: string,
+  updates: Partial<StoredOAuthConfig>
+): void {
+  const existing = readStoredOAuthConfig(serverName);
+  localStorage.setItem(
+    `mcp-oauth-config-${serverName}`,
+    JSON.stringify({
+      ...existing,
+      ...updates,
+    })
+  );
+}
+
 function readHostedOAuthExpectedState(state: OAuthFlowState): string {
   const expectedState =
     typeof state.state === "string" ? state.state.trim() : "";
@@ -1226,6 +1730,8 @@ async function createHostedOAuthSessionIfNeeded(input: {
   serverUrl: string;
   redirectUrl: string;
   state: OAuthFlowState;
+  authorizationUrl?: string;
+  configuredResourceUrl?: string;
 }): Promise<string | undefined> {
   if (!HOSTED_MODE) {
     return undefined;
@@ -1233,7 +1739,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
 
   const pendingMarker = readHostedOAuthPendingMarker();
   if (
-    !pendingMarker?.workspaceId ||
+    !pendingMarker?.projectId ||
     !pendingMarker.serverId ||
     !matchesHostedOAuthServerIdentity(
       {
@@ -1259,6 +1765,14 @@ async function createHostedOAuthSessionIfNeeded(input: {
     throw new Error("Code verifier not ready for hosted callback session.");
   }
   const expectedState = readHostedOAuthExpectedState(input.state);
+  const oauthResourceUrl = resolveOAuthResourceUrl({
+    serverUrl: input.serverUrl,
+    authorizationUrl: input.authorizationUrl ?? input.state.authorizationUrl,
+    configuredResourceUrl: input.configuredResourceUrl,
+    resourceMetadata: input.state.resourceMetadata as
+      | { resource?: unknown }
+      | undefined,
+  });
 
   const response = await authFetch("/api/web/oauth/session", {
     method: "POST",
@@ -1266,11 +1780,12 @@ async function createHostedOAuthSessionIfNeeded(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      workspaceId: pendingMarker.workspaceId,
+      projectId: pendingMarker.projectId,
       serverId: pendingMarker.serverId,
       codeVerifier,
       redirectUri: input.redirectUrl,
       expectedState,
+      oauthResourceUrl,
       clientInformation: {
         clientId,
         ...(input.state.clientSecret
@@ -1280,11 +1795,13 @@ async function createHostedOAuthSessionIfNeeded(input: {
       ...(pendingMarker.accessScope
         ? { accessScope: pendingMarker.accessScope }
         : {}),
-      ...(pendingMarker.shareToken
-        ? { shareToken: pendingMarker.shareToken }
+      ...(pendingMarker.chatboxId
+        ? { chatboxId: pendingMarker.chatboxId }
         : {}),
-      ...(pendingMarker.chatboxToken
-        ? { chatboxToken: pendingMarker.chatboxToken }
+      ...(pendingMarker.chatboxId &&
+      typeof pendingMarker.accessVersion === "number" &&
+      Number.isFinite(pendingMarker.accessVersion)
+        ? { accessVersion: pendingMarker.accessVersion }
         : {}),
     }),
   });
@@ -1303,7 +1820,7 @@ async function createHostedOAuthSessionIfNeeded(input: {
     typeof result.sessionId !== "string"
   ) {
     throw new Error(
-      result?.error || `Hosted OAuth session failed (${response.status})`
+      result?.error || `OAuth session failed (${response.status})`
     );
   }
 
@@ -1317,9 +1834,10 @@ async function createHostedOAuthSessionIfNeeded(input: {
 async function readHostedOAuthSessionProgress(input: {
   convexSiteUrl: string;
   context: HostedOAuthCallbackContext;
+  authorizationHeader?: string | null;
 }): Promise<HostedOAuthSessionProgressResponse | null> {
   if (
-    !input.context.workspaceId ||
+    !input.context.projectId ||
     !input.context.serverId ||
     !input.context.sessionId
   ) {
@@ -1332,19 +1850,24 @@ async function readHostedOAuthSessionProgress(input: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(input.authorizationHeader
+          ? { Authorization: input.authorizationHeader }
+          : {}),
       },
       body: JSON.stringify({
-        workspaceId: input.context.workspaceId,
+        projectId: input.context.projectId,
         serverId: input.context.serverId,
         sessionId: input.context.sessionId,
         ...(input.context.accessScope
           ? { accessScope: input.context.accessScope }
           : {}),
-        ...(input.context.shareToken
-          ? { shareToken: input.context.shareToken }
+        ...(input.context.chatboxId
+          ? { chatboxId: input.context.chatboxId }
           : {}),
-        ...(input.context.chatboxToken
-          ? { chatboxToken: input.context.chatboxToken }
+        ...(input.context.chatboxId &&
+        typeof input.context.accessVersion === "number" &&
+        Number.isFinite(input.context.accessVersion)
+          ? { accessVersion: input.context.accessVersion }
           : {}),
       }),
     }
@@ -1362,28 +1885,52 @@ async function readHostedOAuthSessionProgress(input: {
 /**
  * Simple localStorage-based OAuth provider for MCP
  */
+/**
+ * Optional Convex binding threaded through to `saveTokens` so that — in local
+ * mode — pre-exchanged OAuth tokens get imported into the Convex
+ * `hostedOAuthCredentials` store via `/api/web/oauth/import-tokens`. Without
+ * a binding, `saveTokens` falls back to localStorage-only (legacy behaviour),
+ * which is the right path for brand-new servers that haven't been synced to
+ * Convex yet — the resolver path also falls back in that case.
+ *
+ * `kind` is `"registry"` iff BOTH `registryServerId` AND `useRegistryOAuthProxy`
+ * are set on the originating flow; a stored `registryServerId` alone does not
+ * imply registry-managed tokens.
+ */
+export interface MCPOAuthProviderConvexBinding {
+  projectId: string;
+  serverId: string;
+  oauthResourceUrl?: string;
+  kind: "generic" | "registry";
+  registryServerId?: string;
+  useRegistryOAuthProxy?: boolean;
+}
+
 export class MCPOAuthProvider implements OAuthClientProvider {
   private serverName: string;
   private serverUrl: string;
   private redirectUri: string;
   private customClientId?: string;
   private customClientSecret?: string;
+  private convexBinding?: MCPOAuthProviderConvexBinding;
 
   constructor(
     serverName: string,
     serverUrl: string,
     customClientId?: string,
-    customClientSecret?: string
+    customClientSecret?: string,
+    convexBinding?: MCPOAuthProviderConvexBinding
   ) {
     this.serverName = serverName;
     this.serverUrl = serverUrl;
     this.redirectUri = getRedirectUri();
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
+    this.convexBinding = convexBinding;
   }
 
   state(): string {
-    return generateRandomString(32);
+    return buildMCPOAuthState();
   }
 
   get redirectUrl(): string {
@@ -1405,13 +1952,21 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   clientInformation() {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
     const storedJson = stored ? JSON.parse(stored) : undefined;
+    const storedClientInformation =
+      HOSTED_MODE && storedJson
+        ? Object.fromEntries(
+            Object.entries(storedJson).filter(
+              ([key]) => key !== "client_secret"
+            )
+          )
+        : storedJson;
 
     // If custom client ID is provided, use it
     if (this.customClientId) {
-      if (storedJson) {
+      if (storedClientInformation) {
         // If there's stored information, merge with custom client credentials
         const result = {
-          ...storedJson,
+          ...storedClientInformation,
           client_id: this.customClientId,
         };
         // Add client secret if provided
@@ -1430,13 +1985,21 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         return result;
       }
     }
-    return storedJson;
+    return storedClientInformation;
   }
 
   async saveClientInformation(clientInformation: any) {
+    const clientInformationToStore =
+      HOSTED_MODE && clientInformation
+        ? Object.fromEntries(
+            Object.entries(clientInformation).filter(
+              ([key]) => key !== "client_secret"
+            )
+          )
+        : clientInformation;
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformation)
+      JSON.stringify(clientInformationToStore)
     );
   }
 
@@ -1446,10 +2009,57 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: any) {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
       JSON.stringify(tokens)
     );
+
+    // Local mode: also persist tokens into Convex `hostedOAuthCredentials` so
+    // that the resolver path (/web/authorize-batch-local) can serve them on
+    // subsequent /api/mcp/connect calls. Without this, OAuth-protected servers
+    // either 401 on the resolver path or fall through to the legacy
+    // {serverConfig} body. localStorage stays the source for in-memory
+    // refresh until Slice 2b purges it.
+    const normalizedTokens = normalizeImportHostedOAuthTokens(tokens);
+    if (this.convexBinding && normalizedTokens) {
+      const stored = this.clientInformation();
+      const clientId = (stored?.client_id as string | undefined) ?? this.customClientId;
+      if (!clientId) {
+        // No clientId means we can't write a usable record; bail loudly so
+        // the OAuth-completion error surfaces in the UI rather than 401ing
+        // silently on the next connect.
+        throw new Error(
+          "OAuth client information missing client_id; cannot import tokens to Convex"
+        );
+      }
+      const clientSecret =
+        (stored?.client_secret as string | undefined) ?? this.customClientSecret;
+      const importPayload: ImportHostedOAuthTokensRequest = {
+        projectId: this.convexBinding.projectId,
+        serverId: this.convexBinding.serverId,
+        serverUrl: this.serverUrl,
+        ...(this.convexBinding.oauthResourceUrl
+          ? { oauthResourceUrl: this.convexBinding.oauthResourceUrl }
+          : {}),
+        kind: this.convexBinding.kind,
+        ...(this.convexBinding.registryServerId
+          ? { registryServerId: this.convexBinding.registryServerId }
+          : {}),
+        ...(this.convexBinding.useRegistryOAuthProxy
+          ? { useRegistryOAuthProxy: this.convexBinding.useRegistryOAuthProxy }
+          : {}),
+        clientInformation: {
+          clientId,
+          ...(clientSecret ? { clientSecret } : {}),
+        },
+        tokens: normalizedTokens,
+      };
+      await importHostedOAuthTokens(importPayload);
+    }
   }
 
   prepareTokenRequest() {
@@ -1500,14 +2110,44 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
+    const authorizationUrlString = authorizationUrl.toString();
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
-    // Store current hash to restore after OAuth callback
-    if (window.location.hash) {
-      localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
+    // Store the current route to restore after OAuth callback.
+    const returnTarget = captureCurrentReturnPath();
+    if (returnTarget) {
+      // Key name is retained for in-flight migration compatibility; values are
+      // now path targets.
+      localStorage.setItem("mcp-oauth-return-hash", returnTarget);
     }
-    window.location.href = authorizationUrl.toString();
+
+    if (window.isElectron) {
+      if (window.electronAPI?.app?.openExternal) {
+        try {
+          await window.electronAPI.app.openExternal(authorizationUrlString);
+          return;
+        } catch (error) {
+          console.warn(
+            "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
+            error,
+          );
+        }
+      } else {
+        console.warn(
+          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+        );
+      }
+
+      this.navigateToUrl(authorizationUrlString);
+      return;
+    }
+
+    this.navigateToUrl(authorizationUrlString);
+  }
+
+  navigateToUrl(url: string) {
+    window.location.assign(url);
   }
 
   async saveCodeVerifier(codeVerifier: string) {
@@ -1548,6 +2188,140 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 }
 
+/**
+ * Persisted Convex binding so `handleOAuthCallback` can recover the
+ * projectId/serverId mapping after the OAuth redirect, when the in-memory
+ * `apiContext.serverIdsByName` hasn't been repopulated yet (the Convex
+ * `getProjectServers` query is still inflight on the post-redirect mount).
+ *
+ * Without this persisted copy `saveTokens` skips the Convex
+ * `hostedOAuthCredentials` write and the next `/api/mcp/connect` 401s with
+ * "Server requires OAuth authentication" because `authorize-batch-local`
+ * can't find the credential row. Cleared with the rest of the per-server
+ * OAuth state in `clearOAuthData`.
+ */
+const oauthBindingStorage = {
+  storageKey(serverName: string): string {
+    return `mcp-oauth-binding-${serverName}`;
+  },
+  get(serverName: string): MCPOAuthProviderConvexBinding | undefined {
+    if (typeof window === "undefined") return undefined;
+    try {
+      const raw = localStorage.getItem(this.storageKey(serverName));
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw) as Partial<MCPOAuthProviderConvexBinding>;
+      if (
+        typeof parsed?.projectId !== "string" ||
+        typeof parsed?.serverId !== "string"
+      ) {
+        return undefined;
+      }
+      if (parsed.kind !== "generic" && parsed.kind !== "registry") {
+        return undefined;
+      }
+      return parsed as MCPOAuthProviderConvexBinding;
+    } catch {
+      return undefined;
+    }
+  },
+  set(serverName: string, binding: MCPOAuthProviderConvexBinding): void {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(
+        this.storageKey(serverName),
+        JSON.stringify(binding)
+      );
+    } catch {
+      // best-effort — saveTokens still writes to localStorage; the only
+      // downside of a missed persist is that the post-redirect callback
+      // can't import to Convex and the user re-OAuths after expiry.
+    }
+  },
+  clear(serverName: string): void {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.removeItem(this.storageKey(serverName));
+    } catch {
+      // best-effort
+    }
+  },
+};
+
+/**
+ * Build the Convex binding to thread into `MCPOAuthProvider` so that
+ * `saveTokens` mirrors the issued tokens to the Convex `hostedOAuthCredentials`
+ * store. Tries in-memory `apiContext` first (the populated common case at
+ * `initiateOAuth` time); falls back to the localStorage-persisted binding
+ * written at initiation so post-redirect callbacks can still resolve the
+ * mapping while `getProjectServers` is still loading. Returns undefined
+ * only when both lookups fail (server not yet synced to Convex), in which
+ * case `saveTokens` falls back to localStorage-only.
+ */
+function buildConvexBindingForServer(input: {
+  serverName: string;
+  oauthResourceUrl?: string;
+  registryServerId?: string;
+  useRegistryOAuthProxy?: boolean;
+}): MCPOAuthProviderConvexBinding | undefined {
+  if (HOSTED_MODE) return undefined;
+  const resolved = tryResolveProjectServer(input.serverName);
+  if (resolved) {
+    const isRegistry =
+      !!input.registryServerId && input.useRegistryOAuthProxy === true;
+    const binding: MCPOAuthProviderConvexBinding = {
+      projectId: resolved.projectId,
+      serverId: resolved.serverId,
+      ...(input.oauthResourceUrl
+        ? { oauthResourceUrl: input.oauthResourceUrl }
+        : {}),
+      kind: isRegistry ? "registry" : "generic",
+      ...(isRegistry
+        ? {
+            registryServerId: input.registryServerId,
+            useRegistryOAuthProxy: true,
+          }
+        : {}),
+    };
+    // Persist so the post-redirect callback can recover this mapping even
+    // if apiContext.serverIdsByName hasn't repopulated yet.
+    oauthBindingStorage.set(input.serverName, binding);
+    return binding;
+  }
+  return oauthBindingStorage.get(input.serverName);
+}
+
+/**
+ * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
+ * The three OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`,
+ * `refreshOAuthTokens`) all need an identical instance shape; this factory
+ * keeps that wiring in one place so adding a constructor argument doesn't
+ * require touching three call sites.
+ */
+function createMCPOAuthProvider(input: {
+  serverName: string;
+  serverUrl: string;
+  clientId?: string;
+  clientSecret?: string;
+  oauthConfig: {
+    resourceUrl?: string;
+    registryServerId?: string;
+    useRegistryOAuthProxy?: boolean;
+  };
+}): MCPOAuthProvider {
+  return new MCPOAuthProvider(
+    input.serverName,
+    input.serverUrl,
+    input.clientId,
+    input.clientSecret,
+    buildConvexBindingForServer({
+      serverName: input.serverName,
+      oauthResourceUrl: input.oauthConfig.resourceUrl,
+      registryServerId: input.oauthConfig.registryServerId,
+      useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
+    })
+  );
+}
+
 function readStoredClientInformation(
   serverName: string
 ): StoredOAuthClientInformation {
@@ -1562,6 +2336,7 @@ function readStoredClientInformation(
       client_id:
         typeof parsed.client_id === "string" ? parsed.client_id : undefined,
       client_secret:
+        !HOSTED_MODE &&
         typeof parsed.client_secret === "string"
           ? parsed.client_secret
           : undefined,
@@ -1582,38 +2357,52 @@ export async function initiateOAuth(
     state = { ...state, ...updates };
   };
   const getState = () => state;
+  const requestedProtocolMode = resolveOAuthProtocolMode(options);
+  const requestedRegistrationMode = resolveOAuthRegistrationMode(options);
+  let traceAuthorizationPlan: ResolvedAuthorizationPlan | undefined;
   const emitTraceSnapshot = (snapshot: OAuthTraceSnapshot) =>
     publishOAuthTraceUpdate(
       options.serverName,
-      buildOAuthTraceFromSnapshot({
-        source: "interactive_connect",
-        serverName: options.serverName,
-        serverUrl: options.serverUrl,
-        snapshot,
+      annotateTraceWithAuthorizationPlan({
+        trace: buildOAuthTraceFromSnapshot({
+          source: "interactive_connect",
+          serverName: options.serverName,
+          serverUrl: options.serverUrl,
+          snapshot,
+        }),
+        authorizationPlan: traceAuthorizationPlan,
+        requestedRegistrationMode,
       }),
       options.onTraceUpdate
     );
   const emitTraceFromState = (nextState: OAuthFlowState) =>
     publishOAuthTraceUpdate(
       options.serverName,
-      buildOAuthTraceFromFlowState({
-        source: "interactive_connect",
-        serverName: options.serverName,
-        serverUrl: options.serverUrl,
-        state: nextState,
+      annotateTraceWithAuthorizationPlan({
+        trace: buildOAuthTraceFromFlowState({
+          source: "interactive_connect",
+          serverName: options.serverName,
+          serverUrl: options.serverUrl,
+          state: nextState,
+        }),
+        authorizationPlan: traceAuthorizationPlan,
+        requestedRegistrationMode,
       }),
       options.onTraceUpdate
     );
 
   try {
-    const provider = new MCPOAuthProvider(
-      options.serverName,
-      options.serverUrl,
-      options.clientId,
-      options.clientSecret
-    );
-    const protocolVersion = resolveOAuthProtocolVersion(options);
-    const registrationStrategy = resolveOAuthRegistrationStrategy(options);
+    const provider = createMCPOAuthProvider({
+      serverName: options.serverName,
+      serverUrl: options.serverUrl,
+      clientId: options.clientId,
+      clientSecret: options.clientSecret,
+      oauthConfig: {
+        resourceUrl: options.resourceUrl,
+        registryServerId: options.registryServerId,
+        useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      },
+    });
     const fetchFn = createOAuthFetchInterceptor(
       {
         registryServerId: options.registryServerId,
@@ -1621,6 +2410,23 @@ export async function initiateOAuth(
       },
       undefined
     );
+    const authorizationPlan = await resolveOAuthExecutionPlan(
+      provider,
+      fetchFn,
+      options
+    );
+    traceAuthorizationPlan = authorizationPlan;
+    if (
+      authorizationPlan.status !== "ready" ||
+      !authorizationPlan.registrationStrategy
+    ) {
+      return {
+        success: false,
+        error: authorizationPlan.blockers[0] || authorizationPlan.summary,
+      };
+    }
+    const protocolVersion = authorizationPlan.protocolVersion;
+    const registrationStrategy = authorizationPlan.registrationStrategy;
     const requestExecutor = createOAuthRequestExecutor(
       fetchFn,
       options.serverUrl
@@ -1636,7 +2442,9 @@ export async function initiateOAuth(
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig({
       ...options,
+      protocolMode: requestedProtocolMode,
       protocolVersion,
+      registrationMode: requestedRegistrationMode,
       registrationStrategy,
     });
     localStorage.setItem(
@@ -1645,19 +2453,32 @@ export async function initiateOAuth(
     );
 
     // Store custom client credentials if provided, so they can be retrieved during callback
-    if (options.clientId || options.clientSecret) {
+    if (options.clientId || (!HOSTED_MODE && options.clientSecret)) {
       const existingClientInfo = localStorage.getItem(
         `mcp-client-${options.serverName}`
       );
-      const existingJson = existingClientInfo
-        ? JSON.parse(existingClientInfo)
-        : {};
+      let existingJsonRaw: any = {};
+      if (existingClientInfo) {
+        try {
+          existingJsonRaw = JSON.parse(existingClientInfo);
+        } catch {
+          existingJsonRaw = {};
+        }
+      }
+      const existingJson =
+        HOSTED_MODE && existingJsonRaw
+          ? Object.fromEntries(
+              Object.entries(existingJsonRaw).filter(
+                ([key]) => key !== "client_secret"
+              )
+            )
+          : existingJsonRaw;
 
       const updatedClientInfo: any = { ...existingJson };
       if (options.clientId) {
         updatedClientInfo.client_id = options.clientId;
       }
-      if (options.clientSecret) {
+      if (!HOSTED_MODE && options.clientSecret) {
         updatedClientInfo.client_secret = options.clientSecret;
       }
 
@@ -1680,6 +2501,7 @@ export async function initiateOAuth(
       serverUrl: options.serverUrl,
       serverName: options.serverName,
       redirectUrl: provider.redirectUrl,
+      hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
       loadPreregisteredCredentials: async () => {
@@ -1701,11 +2523,41 @@ export async function initiateOAuth(
         emitTraceSnapshot(snapshot);
       },
       onAuthorizationRequest: async ({ authorizationUrl }) => {
+        const electronAuthorization =
+          buildElectronMcpAuthorizationRequest(authorizationUrl);
+        const resourceMetadata = getState().resourceMetadata as
+          | { resource?: unknown }
+          | undefined;
+        const oauthResourceUrl = resolveOAuthResourceUrl({
+          serverUrl: options.serverUrl,
+          authorizationUrl: electronAuthorization.authorizationUrl,
+          configuredResourceUrl: options.resourceUrl,
+          resourceMetadata,
+        });
+        // Stamp ?resource= onto the authorization URL so the AS mints a token
+        // whose `aud` matches what the MCP server expects. Stored
+        // authorization URL is updated to the redirected one so the callback
+        // path round-trips the same resource.
+        const redirectedAuthorizationUrl = withOAuthResourceParam(
+          electronAuthorization.authorizationUrl,
+          oauthResourceUrl
+        );
+        updateState({
+          authorizationUrl: redirectedAuthorizationUrl,
+          ...(electronAuthorization.state
+            ? { state: electronAuthorization.state }
+            : {}),
+        });
+        writeStoredOAuthConfig(options.serverName, {
+          resourceUrl: oauthResourceUrl,
+        });
         await createHostedOAuthSessionIfNeeded({
           serverName: options.serverName,
           serverUrl: options.serverUrl,
           redirectUrl: provider.redirectUrl,
           state: getState(),
+          authorizationUrl: redirectedAuthorizationUrl,
+          configuredResourceUrl: oauthResourceUrl,
         });
         await persistOAuthStateArtifacts(provider, getState());
         saveOAuthFlowSession(options.serverName, {
@@ -1714,8 +2566,11 @@ export async function initiateOAuth(
           registrationStrategy,
           state: cloneFlowState(getState()),
         });
-        emitTraceFromState(getState());
-        await provider.redirectToAuthorization(new URL(authorizationUrl));
+        const preRedirectTrace = emitTraceFromState(getState());
+        saveOAuthTraceToSession(options.serverName, preRedirectTrace);
+        await provider.redirectToAuthorization(
+          new URL(redirectedAuthorizationUrl)
+        );
         return { type: "redirect" };
       },
     });
@@ -1828,15 +2683,20 @@ export async function completeHostedOAuthCallback(
   options: {
     callbackState?: string | null;
     onTraceUpdate?: (trace: OAuthTrace) => void;
+    authorizationHeader?: string | null;
   } = {}
 ): Promise<OAuthResult & { serverName?: string; expiresAt?: number | null }> {
   const serverName =
-    context.serverName || localStorage.getItem("mcp-oauth-pending");
+    context.serverName ||
+    localStorage.getItem("mcp-oauth-pending") ||
+    undefined;
   const callbackTrace = createOAuthTrace({
     source: "hosted_callback",
     serverName: serverName ?? undefined,
   });
-  let previousTrace: OAuthTrace | undefined;
+  let previousTrace: OAuthTrace | undefined = serverName
+    ? loadOAuthTraceFromSession(serverName)
+    : undefined;
   const mergeHostedCallbackTrace = (backendTrace?: OAuthTrace): OAuthTrace =>
     backendTrace
       ? mergeOAuthTraces(callbackTrace, backendTrace)
@@ -1849,22 +2709,25 @@ export async function completeHostedOAuthCallback(
     );
   let stopProgressPolling = false;
   let progressPollingPromise: Promise<void> | null = null;
-  let resolveTerminalProgressFailure:
-    | ((failure: { message: string; oauthTrace?: OAuthTrace }) => void)
-    | null = null;
+  type TerminalProgressFailureResolver = (failure: {
+    message: string;
+    oauthTrace?: OAuthTrace;
+  }) => void;
+  let resolveTerminalProgressFailure: TerminalProgressFailureResolver | null =
+    null;
 
   try {
     if (!serverName) {
       throw new Error("No pending OAuth flow found");
     }
-    if (!context.workspaceId || !context.serverId) {
-      throw new Error("Hosted OAuth callback is missing server context");
+    if (!context.projectId || !context.serverId) {
+      throw new Error("OAuth callback is missing server context");
     }
 
     startOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: context.sessionId
-        ? "Received hosted OAuth callback and restoring server-side callback state."
-        : "Received hosted OAuth callback and loading stored callback state.",
+        ? "Received OAuth callback and restoring server-side callback state."
+        : "Received OAuth callback and loading stored callback state.",
     });
     emitTrace(callbackTrace);
     const serverUrl =
@@ -1872,18 +2735,22 @@ export async function completeHostedOAuthCallback(
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
+    const storedOAuthConfig = readStoredOAuthConfig(serverName);
     const storedSession = loadOAuthFlowSession(serverName);
-    previousTrace = storedSession
-      ? buildStoredOAuthTrace({
-          serverName,
-          serverUrl,
-          session: storedSession,
-        })
-      : undefined;
+    const oauthResourceUrl = resolveOAuthResourceUrl({
+      serverUrl,
+      authorizationUrl: storedSession?.state.authorizationUrl,
+      configuredResourceUrl: storedOAuthConfig.resourceUrl,
+      resourceMetadata: storedSession?.state.resourceMetadata as
+        | { resource?: unknown }
+        | undefined,
+    });
+    previousTrace = loadOAuthTraceFromSession(serverName) ?? previousTrace;
+    clearOAuthTraceSession(serverName);
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: context.sessionId
-        ? "Hosted callback state restored from the shared backend session."
-        : "Hosted callback state restored.",
+        ? "Callback state restored from the server session."
+        : "Callback state restored.",
       details: {
         serverUrl,
         ...(context.sessionId
@@ -1932,6 +2799,7 @@ export async function completeHostedOAuthCallback(
             const progress = await readHostedOAuthSessionProgress({
               convexSiteUrl,
               context,
+              authorizationHeader: options.authorizationHeader,
             });
             if (
               progress?.success &&
@@ -1944,13 +2812,17 @@ export async function completeHostedOAuthCallback(
             }
             if (progress?.success && progress.status === "failed") {
               stopProgressPolling = true;
-              resolveTerminalProgressFailure?.({
-                message:
-                  progress.lastError ||
-                  progress.error ||
-                  "Hosted OAuth callback failed",
-                oauthTrace: progress.oauthTrace,
-              });
+              if (resolveTerminalProgressFailure) {
+                (
+                  resolveTerminalProgressFailure as TerminalProgressFailureResolver
+                )({
+                  message:
+                    progress.lastError ||
+                    progress.error ||
+                    "OAuth callback failed",
+                  oauthTrace: progress.oauthTrace,
+                });
+              }
               break;
             }
             if (progress?.success && progress.status === "succeeded") {
@@ -1974,11 +2846,15 @@ export async function completeHostedOAuthCallback(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(options.authorizationHeader
+            ? { Authorization: options.authorizationHeader }
+            : {}),
         },
         body: JSON.stringify({
-          workspaceId: context.workspaceId,
+          projectId: context.projectId,
           serverId: context.serverId,
           code: authorizationCode,
+          oauthResourceUrl,
           ...(context.sessionId
             ? {
                 sessionId: context.sessionId,
@@ -1996,9 +2872,11 @@ export async function completeHostedOAuthCallback(
                 },
               }),
           ...(context.accessScope ? { accessScope: context.accessScope } : {}),
-          ...(context.shareToken ? { shareToken: context.shareToken } : {}),
-          ...(context.chatboxToken
-            ? { chatboxToken: context.chatboxToken }
+          ...(context.chatboxId ? { chatboxId: context.chatboxId } : {}),
+          ...(context.chatboxId &&
+          typeof context.accessVersion === "number" &&
+          Number.isFinite(context.accessVersion)
+            ? { accessVersion: context.accessVersion }
             : {}),
         }),
       });
@@ -2013,14 +2891,14 @@ export async function completeHostedOAuthCallback(
           message:
             result?.error ||
             responseText ||
-            `Hosted OAuth callback failed (${response.status})`,
+            `OAuth callback failed (${response.status})`,
           oauthTrace: result?.oauthTrace,
         };
       }
 
       if (!result?.success) {
         throw {
-          message: result?.error || "Hosted OAuth callback failed",
+          message: result?.error || "OAuth callback failed",
           oauthTrace: result?.oauthTrace,
         };
       }
@@ -2040,14 +2918,17 @@ export async function completeHostedOAuthCallback(
 
     localStorage.removeItem(`mcp-tokens-${serverName}`);
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    writeStoredOAuthConfig(serverName, {
+      resourceUrl: oauthResourceUrl,
+    });
     completeOAuthTraceStep(callbackTrace, "token_request", {
-      message: "Hosted token exchange succeeded.",
+      message: "Token exchange succeeded.",
     });
     completeOAuthTraceStep(callbackTrace, "received_access_token", {
-      message: "Hosted access token is stored in the backend vault.",
+      message: "OAuth credential stored for reconnection.",
     });
     completeOAuthTraceStep(callbackTrace, "complete", {
-      message: "Hosted OAuth callback completed successfully.",
+      message: "OAuth callback completed successfully.",
     });
     const mergedTrace = previousTrace
       ? mergeOAuthTraces(
@@ -2064,6 +2945,7 @@ export async function completeHostedOAuthCallback(
       serverConfig: createServerConfig(serverUrl),
       expiresAt: result.expiresAt ?? null,
       oauthTrace: mergedTrace,
+      oauthResourceUrl,
     };
   } catch (error) {
     const message =
@@ -2076,7 +2958,7 @@ export async function completeHostedOAuthCallback(
         ? (error as { message: string }).message
         : String(error);
     failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, message, {
-      message: "Hosted OAuth callback failed.",
+      message: "OAuth callback failed.",
     });
     const backendTrace =
       typeof error === "object" && error !== null && "oauthTrace" in error
@@ -2127,7 +3009,8 @@ export async function handleOAuthCallback(
     }
 
     // Get server URL
-    serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`) ?? undefined;
+    serverUrl =
+      localStorage.getItem(`mcp-serverUrl-${serverName}`) ?? undefined;
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
@@ -2141,22 +3024,18 @@ export async function handleOAuthCallback(
       ? JSON.parse(storedClientInfo).client_secret
       : undefined;
 
-    const provider = new MCPOAuthProvider(
+    const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
-      customClientId,
-      customClientSecret
-    );
+      clientId: customClientId,
+      clientSecret: customClientSecret,
+      oauthConfig,
+    });
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
     const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
     const storedSession = loadOAuthFlowSession(serverName);
-    previousTrace = storedSession
-      ? buildStoredOAuthTrace({
-          serverName,
-          serverUrl,
-          session: storedSession,
-        })
-      : undefined;
+    previousTrace = loadOAuthTraceFromSession(serverName);
+    clearOAuthTraceSession(serverName);
 
     if (storedSession) {
       let state = cloneFlowState(storedSession.state);
@@ -2230,6 +3109,14 @@ export async function handleOAuthCallback(
         serverUrl,
         state: flowResult.state,
       });
+      const oauthResourceUrl = resolveOAuthResourceUrl({
+        serverUrl,
+        authorizationUrl: flowResult.state.authorizationUrl,
+        configuredResourceUrl: oauthConfig.resourceUrl,
+        resourceMetadata: flowResult.state.resourceMetadata as
+          | { resource?: unknown }
+          | undefined,
+      });
       const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
       publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
@@ -2248,6 +3135,9 @@ export async function handleOAuthCallback(
       }
 
       await persistOAuthStateArtifacts(provider, flowResult.state);
+      writeStoredOAuthConfig(serverName, {
+        resourceUrl: oauthResourceUrl,
+      });
       clearOAuthFlowSession(serverName);
       localStorage.removeItem(`mcp-verifier-${serverName}`);
       localStorage.removeItem("mcp-oauth-pending");
@@ -2258,6 +3148,7 @@ export async function handleOAuthCallback(
         }),
         serverName,
         oauthTrace: mergedTrace,
+        oauthResourceUrl,
       };
     }
 
@@ -2285,7 +3176,8 @@ export async function handleOAuthCallback(
     const discoveryState = await loadCallbackDiscoveryState(
       provider,
       serverUrl,
-      fetchFn
+      fetchFn,
+      oauthConfig.customHeaders
     );
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: "Callback state restored.",
@@ -2294,11 +3186,26 @@ export async function handleOAuthCallback(
       },
     });
     emitTrace(callbackTrace);
+    // Resource URL comes from the server's discovery document — treat it as
+    // untrusted input and validate it matches the originally configured server
+    // URL before embedding it in the authorization request.
     const resource = await selectResourceURL(
       serverUrl,
       provider,
       discoveryState.resourceMetadata
     );
+    const oauthResourceUrl = resolveOAuthResourceUrl({
+      serverUrl,
+      configuredResourceUrl:
+        typeof resource === "string"
+          ? resource
+          : resource instanceof URL
+          ? resource.toString()
+          : oauthConfig.resourceUrl,
+      resourceMetadata: discoveryState.resourceMetadata as
+        | { resource?: unknown }
+        | undefined,
+    });
     startOAuthTraceStep(callbackTrace, "token_request", {
       message: "Exchanging authorization code for OAuth tokens.",
     });
@@ -2329,6 +3236,9 @@ export async function handleOAuthCallback(
     // Clean up pending state
     localStorage.removeItem("mcp-oauth-pending");
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    writeStoredOAuthConfig(serverName, {
+      resourceUrl: oauthResourceUrl,
+    });
     const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
     publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
@@ -2338,6 +3248,7 @@ export async function handleOAuthCallback(
       serverConfig,
       serverName, // Return server name so caller doesn't need to look it up
       oauthTrace: mergedTrace,
+      oauthResourceUrl,
     };
   } catch (error) {
     const callbackTrace = buildOAuthTraceFromFlowState({
@@ -2380,6 +3291,9 @@ export interface StoredTokensState {
 }
 
 export function getStoredTokensState(serverName: string): StoredTokensState {
+  if (HOSTED_MODE) {
+    return { tokens: undefined, isInvalid: false };
+  }
   const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
   const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
@@ -2413,6 +3327,9 @@ export function getStoredTokens(serverName: string): any {
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
 export function hasOAuthConfig(serverName: string): boolean {
+  if (HOSTED_MODE) {
+    return false;
+  }
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
   const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   const storedOAuthConfig = localStorage.getItem(
@@ -2485,12 +3402,13 @@ export async function refreshOAuthTokens(
       };
     }
 
-    const provider = new MCPOAuthProvider(
+    const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
-      customClientId,
-      customClientSecret
-    );
+      clientId: customClientId,
+      clientSecret: customClientSecret,
+      oauthConfig,
+    });
     const existingTokens = provider.tokens();
 
     if (!existingTokens?.refresh_token) {
@@ -2509,7 +3427,8 @@ export async function refreshOAuthTokens(
     const discoveryState = await loadCallbackDiscoveryState(
       provider,
       serverUrl,
-      fetchFn
+      fetchFn,
+      oauthConfig.customHeaders
     );
     completeOAuthTraceStep(trace, "request_resource_metadata", {
       message: "Protected resource metadata loaded.",
@@ -2603,9 +3522,11 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  oauthBindingStorage.clear(serverName);
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);
   clearOAuthTrace(serverName);
+  clearOAuthTraceSession(serverName);
 }
 
 /**

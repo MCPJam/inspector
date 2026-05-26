@@ -17,6 +17,7 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
+import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
@@ -42,6 +43,8 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
+import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -72,6 +75,14 @@ export function createHonoApp() {
       },
       410,
     );
+  const isElectron = process.env.ELECTRON_APP === "true";
+  const isProduction = process.env.NODE_ENV === "production";
+  const isPackaged = process.env.IS_PACKAGED === "true";
+  const frontendUrl = getInspectorFrontendUrl({
+    isElectron,
+    isPackaged,
+    isProduction,
+  });
 
   // Create the MCPJam client manager instance and wire RPC logging to SSE bus
   const mcpClientManager = new MCPClientManager(
@@ -119,6 +130,12 @@ export function createHonoApp() {
     c.mcpClientManager = mcpClientManager;
     await next();
   });
+
+  // Request log context (mounted BEFORE the security stack so that 401s from
+  // session auth, 403s from origin validation, and hosted-mode 410 partition
+  // responses are still observed in Axiom — those are exactly the requests
+  // SREs want to see during an outage or attack).
+  app.use("/api/*", requestLogContextMiddleware);
 
   // ===== SECURITY MIDDLEWARE STACK =====
   // Order matters: headers -> origin validation -> strict partition -> session auth
@@ -219,7 +236,12 @@ export function createHonoApp() {
 
   // Health check
   app.get("/health", (c) => {
-    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+    return c.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      hasActiveClient: inspectorCommandBus.hasActiveClient(),
+      frontend: frontendUrl,
+    });
   });
 
   // Guest JWT JWKS compatibility endpoint — public, no auth required.
@@ -270,10 +292,6 @@ export function createHonoApp() {
   });
 
   // Static hosting / dev redirect behavior
-  const isElectron = process.env.ELECTRON_APP === "true";
-  const isProduction = process.env.NODE_ENV === "production";
-  const isPackaged = process.env.IS_PACKAGED === "true";
-
   if (isProduction || (isElectron && isPackaged)) {
     // Production (web) or Electron packaged build: serve files from bundled client
     let root = "./dist/client";
@@ -336,9 +354,8 @@ export function createHonoApp() {
     });
   } else if (isElectron && !isPackaged) {
     // Electron development: redirect any front-end route to the renderer dev server
-    const rendererDevUrl = "http://localhost:8080";
     app.get("/*", (c) => {
-      const target = new URL(c.req.path, rendererDevUrl).toString();
+      const target = new URL(c.req.path, frontendUrl).toString();
       return c.redirect(target, 307);
     });
   } else {
@@ -348,7 +365,7 @@ export function createHonoApp() {
       return c.json({
         message: "MCPJam API Server",
         environment: "development",
-        frontend: "http://localhost:8080",
+        frontend: frontendUrl,
       });
     });
   }

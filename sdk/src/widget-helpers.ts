@@ -24,6 +24,32 @@ export function serializeForInlineScript(value: unknown): string {
 // ── MCP Apps OpenAI compat injection ─────────────────────────────────
 
 /**
+ * Per-method `window.openai.*` capability surface for the compat
+ * runtime. Mirror of `ResolvedOpenAiAppsCapabilities` in the inspector
+ * client (`client/src/lib/client-styles/types.ts`). Defined inline here
+ * because the SDK can't import client types.
+ *
+ * Optional fields here mean "use the runtime's default" — the runtime's
+ * default is the full ChatGPT surface, preserving the pre-capability
+ * behavior for legacy callers that don't pass `capabilities`.
+ */
+export type OpenAiCompatCapabilities = {
+  callTool?: boolean;
+  sendFollowUpMessage?: boolean;
+  setWidgetState?: boolean;
+  requestDisplayMode?: "all" | "fullscreen-only" | "none";
+  notifyIntrinsicHeight?: boolean;
+  openExternal?: boolean;
+  setOpenInAppUrl?: boolean;
+  requestModal?: boolean;
+  uploadFile?: boolean;
+  selectFiles?: boolean;
+  getFileDownloadUrl?: boolean;
+  requestCheckout?: boolean;
+  requestClose?: boolean;
+};
+
+/**
  * Inject the OpenAI compatibility runtime into MCP App HTML.
  * Adds a JSON config element + the bundled IIFE script into <head>.
  * If no <head> tag exists, wraps the content in a full HTML document.
@@ -37,9 +63,31 @@ export function injectOpenAICompat(
     toolName: string;
     toolInput: Record<string, unknown>;
     toolOutput: unknown;
+    /**
+     * Tool response `_meta` exposed to the widget as
+     * `window.openai.toolResponseMetadata`. Apps SDK widgets read this
+     * for non-model-context metadata (timestamps, source IDs, etc.).
+     */
+    toolResponseMetadata?: Record<string, unknown> | null;
+    /**
+     * Persisted widget state from a saved view or fork. The compat
+     * runtime uses this as the initial value for `window.openai.widgetState`
+     * so widgets boot in the same state they were when the view was
+     * saved (Apps SDK parity).
+     */
+    initialWidgetState?: unknown;
     theme?: string;
     viewMode?: string;
     viewParams?: Record<string, unknown>;
+    /**
+     * Per-method capability surface the runtime should expose on
+     * `window.openai`. Disabled methods are LITERALLY ABSENT from the
+     * runtime (typeof === "undefined") so widgets that feature-detect
+     * fall back correctly. When omitted, the runtime defaults to the
+     * full ChatGPT surface — preserves behavior for callers that
+     * pre-date the capability matrix.
+     */
+    capabilities?: OpenAiCompatCapabilities;
   }
 ): string {
   if (html.includes('id="openai-compat-config"')) {
@@ -51,9 +99,17 @@ export function injectOpenAICompat(
     toolName: widgetData.toolName,
     toolInput: widgetData.toolInput,
     toolOutput: widgetData.toolOutput,
+    toolResponseMetadata: widgetData.toolResponseMetadata ?? null,
+    initialWidgetState: widgetData.initialWidgetState ?? null,
     theme: widgetData.theme ?? "dark",
     viewMode: widgetData.viewMode ?? "inline",
     viewParams: widgetData.viewParams ?? {},
+    // Omit the field entirely when undefined so the runtime takes its
+    // legacy full-surface default — keeps the serialized config
+    // byte-identical to the pre-capability shape for old callers.
+    ...(widgetData.capabilities !== undefined
+      ? { capabilities: widgetData.capabilities }
+      : {}),
   });
 
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
@@ -152,6 +208,79 @@ const WS_SOURCES = [
   "wss://localhost:*",
 ];
 
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0,
+  );
+}
+
+function uniqueSources(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function hasAnyWidgetCspField(value: WidgetCspMeta): boolean {
+  return (
+    Boolean(value.connect_domains?.length) ||
+    Boolean(value.resource_domains?.length) ||
+    Boolean(value.frame_domains?.length)
+  );
+}
+
+function normalizeStandardWidgetCsp(
+  uiCsp: Record<string, unknown>,
+): WidgetCspMeta | undefined {
+  const normalized: WidgetCspMeta = {};
+  const connectDomains = readStringArray(uiCsp.connectDomains);
+  const resourceDomains = readStringArray(uiCsp.resourceDomains);
+  const frameDomains = readStringArray(uiCsp.frameDomains);
+
+  if (connectDomains) normalized.connect_domains = connectDomains;
+  if (resourceDomains) normalized.resource_domains = resourceDomains;
+  if (frameDomains) normalized.frame_domains = frameDomains;
+
+  return hasAnyWidgetCspField(normalized) ? normalized : undefined;
+}
+
+function normalizeLegacyWidgetCsp(
+  openaiCsp: Record<string, unknown>,
+): WidgetCspMeta | undefined {
+  const normalized: WidgetCspMeta = {};
+  const connectDomains = readStringArray(openaiCsp.connect_domains);
+  const resourceDomains = readStringArray(openaiCsp.resource_domains);
+  const frameDomains = readStringArray(openaiCsp.frame_domains);
+
+  if (connectDomains) normalized.connect_domains = connectDomains;
+  if (resourceDomains) normalized.resource_domains = resourceDomains;
+  if (frameDomains) normalized.frame_domains = frameDomains;
+
+  return hasAnyWidgetCspField(normalized) ? normalized : undefined;
+}
+
+export function normalizeWidgetCspMeta(
+  resourceMeta?: Record<string, unknown> | null,
+): WidgetCspMeta | undefined {
+  if (!resourceMeta || typeof resourceMeta !== "object") return undefined;
+
+  const uiMeta =
+    resourceMeta.ui && typeof resourceMeta.ui === "object"
+      ? (resourceMeta.ui as Record<string, unknown>)
+      : undefined;
+  const uiCsp =
+    uiMeta?.csp && typeof uiMeta.csp === "object"
+      ? (uiMeta.csp as Record<string, unknown>)
+      : undefined;
+  if (uiCsp) return normalizeStandardWidgetCsp(uiCsp);
+
+  const openaiCsp =
+    resourceMeta["openai/widgetCSP"] &&
+    typeof resourceMeta["openai/widgetCSP"] === "object"
+      ? (resourceMeta["openai/widgetCSP"] as Record<string, unknown>)
+      : undefined;
+
+  return openaiCsp ? normalizeLegacyWidgetCsp(openaiCsp) : undefined;
+}
+
 export function buildCspHeader(
   mode: CspMode,
   widgetCsp?: WidgetCspMeta | null,
@@ -162,52 +291,88 @@ export function buildCspHeader(
   let frameDomains: string[];
 
   if (mode === "widget-declared") {
-    connectDomains = [
+    connectDomains = uniqueSources([
       "'self'",
       ...(widgetCsp?.connect_domains || []),
       ...LOCALHOST_SOURCES,
       ...WS_SOURCES,
-    ];
-    resourceDomains = [
+    ]);
+    resourceDomains = uniqueSources([
       "'self'",
       "data:",
       "blob:",
       ...(widgetCsp?.resource_domains || []),
       ...LOCALHOST_SOURCES,
-    ];
+    ]);
     frameDomains =
       widgetCsp?.frame_domains && widgetCsp.frame_domains.length > 0
-        ? widgetCsp.frame_domains
+        ? uniqueSources(widgetCsp.frame_domains)
         : [];
   } else {
-    connectDomains = [
+    connectDomains = uniqueSources([
       "'self'",
       "https:",
+      "http:",
       "wss:",
       "ws:",
       ...LOCALHOST_SOURCES,
       ...WS_SOURCES,
-    ];
-    resourceDomains = [
+    ]);
+    resourceDomains = uniqueSources([
       "'self'",
       "data:",
       "blob:",
       "https:",
+      "http:",
       ...LOCALHOST_SOURCES,
-    ];
-    frameDomains = ["*", "data:", "blob:", "https:", "http:", "about:"];
+    ]);
+    frameDomains = uniqueSources([
+      "*",
+      "data:",
+      "blob:",
+      "https:",
+      "http:",
+      "about:",
+    ]);
   }
 
   const connectSrc = connectDomains.join(" ");
-  const resourceSrc = resourceDomains.join(" ");
-  const imgSrc =
+  const scriptSrc = uniqueSources([
+    "'self'",
+    "'unsafe-inline'",
+    "'unsafe-eval'",
+    ...resourceDomains,
+  ]).join(" ");
+  const styleSrc = uniqueSources([
+    "'self'",
+    "'unsafe-inline'",
+    ...resourceDomains,
+  ]).join(" ");
+  const fontSrc = uniqueSources(["'self'", "data:", ...resourceDomains]).join(
+    " ",
+  );
+  const imgSrc = uniqueSources(
     mode === "widget-declared"
-      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${LOCALHOST_SOURCES.join(" ")}`
-      : `'self' data: blob: https: ${LOCALHOST_SOURCES.join(" ")}`;
-  const mediaSrc =
+      ? [
+          "'self'",
+          "data:",
+          "blob:",
+          ...(widgetCsp?.resource_domains || []),
+          ...LOCALHOST_SOURCES,
+        ]
+      : ["'self'", "data:", "blob:", "https:", "http:", ...LOCALHOST_SOURCES],
+  ).join(" ");
+  const mediaSrc = uniqueSources(
     mode === "widget-declared"
-      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${LOCALHOST_SOURCES.join(" ")}`
-      : "'self' data: blob: https:";
+      ? [
+          "'self'",
+          "data:",
+          "blob:",
+          ...(widgetCsp?.resource_domains || []),
+          ...LOCALHOST_SOURCES,
+        ]
+      : ["'self'", "data:", "blob:", "https:", "http:"],
+  ).join(" ");
 
   const frameAncestors =
     options?.frameAncestors ??
@@ -220,13 +385,13 @@ export function buildCspHeader(
 
   const headerString = [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceSrc}`,
+    `script-src ${scriptSrc}`,
     "worker-src 'self' blob:",
     "child-src 'self' blob:",
-    `style-src 'self' 'unsafe-inline' ${resourceSrc}`,
+    `style-src ${styleSrc}`,
     `img-src ${imgSrc}`,
     `media-src ${mediaSrc}`,
-    `font-src 'self' data: ${resourceSrc}`,
+    `font-src ${fontSrc}`,
     `connect-src ${connectSrc}`,
     frameSrc,
     frameAncestors,

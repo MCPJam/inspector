@@ -5,6 +5,8 @@ import type {
 } from "./types.js";
 
 const BODY_SNIPPET_LIMIT = 140;
+const SENSITIVE_OAUTH_KEYS =
+  "access_token|refresh_token|client_secret|id_token|code|code_verifier|accessToken|refreshToken|clientSecret|idToken|codeVerifier";
 
 type BodySummary =
   | {
@@ -41,15 +43,15 @@ function redactSensitiveStrings(value: string): string {
       "$1[REDACTED]",
     )
     .replace(
-      /([?&](?:access_token|refresh_token|client_secret|code)=)([^&#\s]+)/gi,
+      new RegExp(`([?&](?:${SENSITIVE_OAUTH_KEYS})=)([^&#\\s]+)`, "gi"),
       "$1[REDACTED]",
     )
     .replace(
-      /("(?:access_token|refresh_token|client_secret|code)"\s*:\s*")([^"]*)(")/gi,
+      new RegExp(`("(?:${SENSITIVE_OAUTH_KEYS})"\\s*:\\s*")([^"]*)(")`, "gi"),
       '$1[REDACTED]$3',
     )
     .replace(
-      /('(?:access_token|refresh_token|client_secret|code)'\s*:\s*')([^']*)(')/gi,
+      new RegExp(`('(?:${SENSITIVE_OAUTH_KEYS})'\\s*:\\s*')([^']*)(')`, "gi"),
       "$1[REDACTED]$3",
     );
 }

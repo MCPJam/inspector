@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   useEvalQueries: vi.fn(),
   deleteSuiteMutation: vi.fn(),
   directDeleteRun: vi.fn().mockResolvedValue(undefined),
-  navigateToCiEvalsRoute: vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -41,10 +40,8 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
 
-vi.mock("@/lib/ci-evals-router", () => ({
-  useCiEvalsRoute: () => mocks.route.current,
-  navigateToCiEvalsRoute: (...args: unknown[]) =>
-    mocks.navigateToCiEvalsRoute(...args),
+vi.mock("@/lib/eval-route-url", () => ({
+  useCiEvalsRouteFromUrl: () => mocks.route.current,
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
@@ -247,14 +244,14 @@ describe("CiEvalsTab first-run NUX", () => {
       }),
     );
 
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.getByText("Loading runs...")).toBeInTheDocument();
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
   });
 
   it("shows the first-run NUX when there are no suites and no runs after loading", () => {
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.getByText("Run your first eval")).toBeInTheDocument();
     expect(screen.getByTestId("sdk-eval-quickstart")).toBeInTheDocument();
@@ -271,7 +268,7 @@ describe("CiEvalsTab first-run NUX", () => {
       }),
     );
 
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
     expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();
@@ -286,7 +283,7 @@ describe("CiEvalsTab first-run NUX", () => {
       }),
     );
 
-    render(<CiEvalsTab convexWorkspaceId="ws-1" />);
+    render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
     expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();

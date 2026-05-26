@@ -165,7 +165,7 @@ describe("TestTemplateEditor prompt validation UI", () => {
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
+        projectId={null}
         availableModels={[
           {
             provider: "openai",

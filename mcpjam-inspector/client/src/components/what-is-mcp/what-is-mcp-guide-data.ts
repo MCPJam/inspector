@@ -31,9 +31,9 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
   },
 
   host_app: {
-    title: "The Host Application",
+    title: "The Client Application",
     summary:
-      "The host is the app you are using, like Claude Desktop, Cursor, VS Code, or ChatGPT.",
+      "The client is the app you are using, like Claude Desktop, Cursor, VS Code, or ChatGPT.",
     category: "architecture",
     teachableMoments: [
       "One host can connect to many MCP servers at the same time.",

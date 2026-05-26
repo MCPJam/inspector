@@ -5,10 +5,24 @@ import {
   normalizeClientCapabilities,
 } from "@mcpjam/sdk/browser";
 
-export type WorkspaceClientConfig = {
+export type ProjectClientConfig = {
   version: 1;
+  connectionDefaults?: ProjectConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
+};
+
+export type ProjectConnectionConfigDraft = {
+  version: 1;
+  connectionDefaults?: ProjectConnectionDefaults;
+  clientCapabilities: Record<string, unknown>;
+};
+
+export type ProjectHostContextDraft = Record<string, unknown>;
+
+export type ProjectConnectionDefaults = {
+  headers: Record<string, string>;
+  requestTimeout: number;
 };
 
 export type HostDisplayMode = "inline" | "pip" | "fullscreen";
@@ -26,7 +40,11 @@ export type HostSafeAreaInsets = {
 };
 
 export const CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE =
-  "Workspace client config is still syncing. Try again in a moment.";
+  "Project connection defaults are still syncing. Try again in a moment.";
+
+export const PROJECT_NOT_PROVISIONED_ERROR_MESSAGE = "Finishing setup.";
+
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 
 export const DEFAULT_HOST_DEVICE_CAPABILITIES: HostDeviceCapabilities = {
   hover: true,
@@ -46,14 +64,32 @@ export const DEFAULT_HOST_DISPLAY_MODES: HostDisplayMode[] = [
   "fullscreen",
 ];
 
-export function buildDefaultHostContext(args: {
+export function buildDefaultProjectConnectionDefaults(): ProjectConnectionDefaults {
+  return {
+    headers: {},
+    requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
+  };
+}
+
+export function buildDefaultProjectConnectionConfig(): ProjectConnectionConfigDraft {
+  return {
+    version: 1,
+    connectionDefaults: buildDefaultProjectConnectionDefaults(),
+    clientCapabilities: getDefaultClientCapabilities() as Record<
+      string,
+      unknown
+    >,
+  };
+}
+
+export function buildDefaultProjectHostContext(args: {
   theme: "light" | "dark";
   displayMode: HostDisplayMode;
   locale: string;
   timeZone: string;
   deviceCapabilities: HostDeviceCapabilities;
   safeAreaInsets: HostSafeAreaInsets;
-}): Record<string, unknown> {
+}): ProjectHostContextDraft {
   return {
     theme: args.theme,
     displayMode: args.displayMode,
@@ -65,27 +101,25 @@ export function buildDefaultHostContext(args: {
   };
 }
 
-export function buildDefaultWorkspaceClientConfig(args: {
+export const buildDefaultHostContext = buildDefaultProjectHostContext;
+
+export function buildDefaultProjectClientConfig(args: {
   theme: "light" | "dark";
   displayMode: HostDisplayMode;
   locale: string;
   timeZone: string;
   deviceCapabilities: HostDeviceCapabilities;
   safeAreaInsets: HostSafeAreaInsets;
-}): WorkspaceClientConfig {
-  return {
-    version: 1,
-    clientCapabilities: getDefaultClientCapabilities() as Record<
-      string,
-      unknown
-    >,
-    hostContext: buildDefaultHostContext(args),
-  };
+}): ProjectClientConfig {
+  return composeProjectClientConfig({
+    connectionConfig: buildDefaultProjectConnectionConfig(),
+    hostContext: buildDefaultProjectHostContext(args),
+  });
 }
 
-export function isWorkspaceClientConfig(
+export function isProjectClientConfig(
   value: unknown,
-): value is WorkspaceClientConfig {
+): value is ProjectClientConfig {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -93,36 +127,166 @@ export function isWorkspaceClientConfig(
   const candidate = value as Record<string, unknown>;
   return (
     candidate.version === 1 &&
+    (candidate.connectionDefaults === undefined ||
+      isProjectConnectionDefaults(candidate.connectionDefaults)) &&
     isRecord(candidate.clientCapabilities) &&
     isRecord(candidate.hostContext)
   );
 }
 
-export function sanitizeWorkspaceClientConfig(
+export function sanitizeProjectClientConfig(
   value: unknown,
-  fallback: WorkspaceClientConfig,
-): WorkspaceClientConfig {
-  return isWorkspaceClientConfig(value) ? value : fallback;
+  fallback: ProjectClientConfig,
+): ProjectClientConfig {
+  if (!isProjectClientConfig(value)) {
+    return fallback;
+  }
+
+  return composeProjectClientConfig({
+    connectionConfig: {
+      version: 1,
+      connectionDefaults: sanitizeProjectConnectionDefaults(
+        value.connectionDefaults,
+        fallback.connectionDefaults,
+      ),
+      clientCapabilities: sanitizeProjectClientCapabilities(
+        value.clientCapabilities,
+        fallback.clientCapabilities,
+      ),
+    },
+    hostContext: sanitizeProjectHostContext(value.hostContext, fallback.hostContext),
+  });
 }
 
-export function mergeWorkspaceClientCapabilities(
-  workspaceCapabilities?: Record<string, unknown>,
+export function sanitizeProjectClientCapabilities(
+  value: unknown,
+  fallback: Record<string, unknown> = getDefaultClientCapabilities() as Record<
+    string,
+    unknown
+  >,
+): Record<string, unknown> {
+  return isRecord(value) ? value : fallback;
+}
+
+export function sanitizeProjectHostContext(
+  value: unknown,
+  fallback: ProjectHostContextDraft = {},
+): ProjectHostContextDraft {
+  return isRecord(value) ? value : fallback;
+}
+
+export function pickProjectConnectionConfig(
+  projectClientConfig?: ProjectClientConfig | null,
+): ProjectConnectionConfigDraft {
+  return {
+    version: 1,
+    connectionDefaults: sanitizeProjectConnectionDefaults(
+      projectClientConfig?.connectionDefaults,
+    ),
+    clientCapabilities: sanitizeProjectClientCapabilities(
+      projectClientConfig?.clientCapabilities,
+    ),
+  };
+}
+
+export function pickProjectHostContext(
+  projectClientConfig?: ProjectClientConfig | null,
+  fallback: ProjectHostContextDraft = {},
+): ProjectHostContextDraft {
+  return sanitizeProjectHostContext(projectClientConfig?.hostContext, fallback);
+}
+
+export function composeProjectClientConfig(args: {
+  connectionConfig?: ProjectConnectionConfigDraft | null;
+  hostContext?: ProjectHostContextDraft | null;
+  fallback?: ProjectClientConfig | null;
+}): ProjectClientConfig {
+  const fallback = args.fallback ?? null;
+  const fallbackConnectionConfig = pickProjectConnectionConfig(fallback);
+  const fallbackHostContext = pickProjectHostContext(fallback);
+
+  const connectionConfig = args.connectionConfig ?? fallbackConnectionConfig;
+  const hostContext = args.hostContext ?? fallbackHostContext;
+
+  return {
+    version: 1,
+    connectionDefaults: sanitizeProjectConnectionDefaults(
+      connectionConfig.connectionDefaults,
+      fallbackConnectionConfig.connectionDefaults,
+    ),
+    clientCapabilities: sanitizeProjectClientCapabilities(
+      connectionConfig.clientCapabilities,
+      fallbackConnectionConfig.clientCapabilities,
+    ),
+    hostContext: sanitizeProjectHostContext(hostContext, fallbackHostContext),
+  };
+}
+
+export function sanitizeProjectConnectionDefaults(
+  value: unknown,
+  fallback: ProjectConnectionDefaults = buildDefaultProjectConnectionDefaults(),
+): ProjectConnectionDefaults {
+  if (!isProjectConnectionDefaults(value)) {
+    return fallback;
+  }
+
+  const headers = normalizeProjectConnectionHeaders(
+    value.headers as Record<string, unknown>,
+  );
+  const requestTimeout = normalizeProjectRequestTimeout(
+    value.requestTimeout,
+    fallback.requestTimeout,
+  );
+
+  return {
+    headers,
+    requestTimeout,
+  };
+}
+
+export function getEffectiveProjectConnectionDefaults(
+  projectClientConfig?: Pick<
+    ProjectClientConfig,
+    "connectionDefaults"
+  > | null,
+): ProjectConnectionDefaults {
+  return sanitizeProjectConnectionDefaults(
+    projectClientConfig?.connectionDefaults,
+  );
+}
+
+export function mergeProjectConnectionHeaders(
+  projectHeaders?: Record<string, string>,
+  serverHeaders?: Record<string, string>,
+): Record<string, string> {
+  return {
+    ...normalizeProjectConnectionHeaders(
+      projectHeaders as Record<string, unknown> | undefined,
+    ),
+    ...normalizeExplicitConnectionHeaders(
+      serverHeaders as Record<string, unknown> | undefined,
+    ),
+  };
+}
+
+export function mergeProjectClientCapabilities(
+  projectCapabilities?: Record<string, unknown>,
   serverCapabilities?: Record<string, unknown>,
 ): ClientCapabilityOptions {
   return mergeClientCapabilities(
-    workspaceCapabilities as ClientCapabilityOptions | undefined,
+    projectCapabilities as ClientCapabilityOptions | undefined,
     serverCapabilities as ClientCapabilityOptions | undefined,
   );
 }
 
-export function getEffectiveWorkspaceClientCapabilities(
-  workspaceClientConfig?: Pick<
-    WorkspaceClientConfig,
+export function getEffectiveProjectClientCapabilities(
+  projectClientConfig?: Pick<
+    ProjectClientConfig,
     "clientCapabilities"
   > | null,
 ): ClientCapabilityOptions {
-  return normalizeWorkspaceClientCapabilities(
-    (workspaceClientConfig?.clientCapabilities as
+  return normalizeProjectClientCapabilities(
+    (projectClientConfig?.clientCapabilities as
       | Record<string, unknown>
       | undefined) ??
       (getDefaultClientCapabilities() as Record<string, unknown>),
@@ -130,26 +294,58 @@ export function getEffectiveWorkspaceClientCapabilities(
 }
 
 export function getEffectiveServerClientCapabilities(args: {
-  workspaceClientConfig?: Pick<
-    WorkspaceClientConfig,
+  projectClientConfig?: Pick<
+    ProjectClientConfig,
     "clientCapabilities"
   > | null;
-  workspaceCapabilities?: Record<string, unknown>;
+  projectCapabilities?: Record<string, unknown>;
   serverCapabilities?: Record<string, unknown>;
 }): ClientCapabilityOptions {
-  const workspaceCapabilities =
-    args.workspaceCapabilities ??
-    getEffectiveWorkspaceClientCapabilities(args.workspaceClientConfig);
+  const projectCapabilities =
+    args.projectCapabilities ??
+    getEffectiveProjectClientCapabilities(args.projectClientConfig);
 
-  return normalizeWorkspaceClientCapabilities(
-    mergeWorkspaceClientCapabilities(
-      workspaceCapabilities as Record<string, unknown>,
+  return normalizeProjectClientCapabilities(
+    mergeProjectClientCapabilities(
+      projectCapabilities as Record<string, unknown>,
       args.serverCapabilities,
     ) as Record<string, unknown>,
   );
 }
 
-export function normalizeWorkspaceClientCapabilities(
+/**
+ * @deprecated Use `resolveEffectiveClientCapabilities` from
+ * `lib/effective-host.ts` instead. This shim only exists to keep older call
+ * sites compiling during the migration; new code MUST go through the host.
+ *
+ * Behavior is preserved: per-server explicit > project clientConfig (which
+ * is itself a shadow-mirror of the project default host).
+ */
+export function resolveEffectiveServerClientCapabilities(args: {
+  serverConfig?: {
+    clientCapabilities?: unknown;
+    capabilities?: unknown;
+  } | null;
+  projectClientConfig?: Pick<
+    ProjectClientConfig,
+    "clientCapabilities"
+  > | null;
+}): ClientCapabilityOptions {
+  const explicit = args.serverConfig?.clientCapabilities as
+    | Record<string, unknown>
+    | undefined;
+  if (explicit) {
+    return normalizeProjectClientCapabilities(explicit);
+  }
+  return getEffectiveServerClientCapabilities({
+    projectClientConfig: args.projectClientConfig,
+    serverCapabilities: args.serverConfig?.capabilities as
+      | Record<string, unknown>
+      | undefined,
+  });
+}
+
+export function normalizeProjectClientCapabilities(
   capabilities?: Record<string, unknown>,
 ): ClientCapabilityOptions {
   return normalizeClientCapabilities(
@@ -177,16 +373,16 @@ export function stableStringifyJson(value: unknown): string {
   return JSON.stringify(canonicalizeJsonValue(value));
 }
 
-export function workspaceClientCapabilitiesNeedReconnect(args: {
+export function projectClientCapabilitiesNeedReconnect(args: {
   desiredCapabilities?: Record<string, unknown>;
   initializedCapabilities?: Record<string, unknown>;
 }): boolean {
   return (
     stableStringifyJson(
-      normalizeWorkspaceClientCapabilities(args.desiredCapabilities),
+      normalizeProjectClientCapabilities(args.desiredCapabilities),
     ) !==
     stableStringifyJson(
-      normalizeWorkspaceClientCapabilities(args.initializedCapabilities),
+      normalizeProjectClientCapabilities(args.initializedCapabilities),
     )
   );
 }
@@ -301,6 +497,70 @@ export function clampDisplayModeToAvailableModes(
 
 function isHostDisplayMode(value: unknown): value is HostDisplayMode {
   return value === "inline" || value === "pip" || value === "fullscreen";
+}
+
+function isProjectConnectionDefaults(
+  value: unknown,
+): value is Partial<ProjectConnectionDefaults> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (value.headers !== undefined && !isRecord(value.headers)) {
+    return false;
+  }
+
+  return (
+    value.requestTimeout === undefined ||
+    (typeof value.requestTimeout === "number" &&
+      Number.isFinite(value.requestTimeout))
+  );
+}
+
+function normalizeProjectConnectionHeaders(
+  headers?: Record<string, unknown>,
+): Record<string, string> {
+  if (!headers) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      ([key, value]) =>
+        key.trim() !== "" &&
+        key.toLowerCase() !== "authorization" &&
+        typeof value === "string",
+    ),
+  ) as Record<string, string>;
+}
+
+function normalizeExplicitConnectionHeaders(
+  headers?: Record<string, unknown>,
+): Record<string, string> {
+  if (!headers) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      ([key, value]) => key.trim() !== "" && typeof value === "string",
+    ),
+  ) as Record<string, string>;
+}
+
+function normalizeProjectRequestTimeout(
+  value: unknown,
+  fallback: number,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    return fallback;
+  }
+
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

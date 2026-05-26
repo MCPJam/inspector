@@ -41,22 +41,15 @@ function buildFlowStateFromProfile(profile: XAADebugProfile): XAAFlowState {
 interface XAAFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
-  onSelectServer: (serverName: string) => void;
 }
 
 export function XAAFlowTab({
   serverConfigs,
   selectedServerName,
-  onSelectServer,
 }: XAAFlowTabProps) {
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isBootstrapDialogOpen, setIsBootstrapDialogOpen] = useState(false);
   const [focusedStep, setFocusedStep] = useState<XAAFlowStep | null>(null);
-
-  const httpServers = useMemo(
-    () => Object.values(serverConfigs).filter((server) => isHttpServer(server)),
-    [serverConfigs],
-  );
 
   const selectedServer =
     selectedServerName !== "none"
@@ -65,12 +58,6 @@ export function XAAFlowTab({
   const activeServer = isHttpServer(selectedServer)
     ? selectedServer
     : undefined;
-
-  useEffect(() => {
-    if (!isHttpServer(selectedServer) && httpServers.length > 0) {
-      onSelectServer(httpServers[0].name);
-    }
-  }, [httpServers, onSelectServer, selectedServer]);
 
   const [profile, setProfile] = useState(() =>
     deriveXAADebugProfileFromServer(activeServer, loadStoredXAADebugProfile()),

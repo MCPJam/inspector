@@ -30,6 +30,9 @@ jobs:
       - name: Typecheck releasable packages
         run: npm run typecheck
 
+      - name: Typecheck inspector client
+        run: npm run typecheck:client -w @mcpjam/inspector
+
       - name: Build inspector package
         run: npm run build:inspector
 

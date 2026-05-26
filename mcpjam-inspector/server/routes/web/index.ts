@@ -35,11 +35,6 @@ web.use(
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
 );
-web.use(
-  "/apps/chatgpt-apps/widget-content",
-  bearerAuthMiddleware,
-  guestRateLimitMiddleware,
-);
 
 web.route("/servers", servers);
 web.route("/tools", tools);

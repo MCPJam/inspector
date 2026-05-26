@@ -1,6 +1,7 @@
 import { Button } from "@mcpjam/design-system/button";
 import { ServerSelectionCard } from "../ServerSelectionCard";
 import type { ServerWithName } from "@/state/app-types";
+import { useAppNavigate } from "@/lib/app-navigation";
 
 interface ServersStepProps {
   connectedServers: Array<[string, ServerWithName]>;
@@ -13,6 +14,7 @@ export function ServersStep({
   selectedServers,
   onToggleServer,
 }: ServersStepProps) {
+  const appNavigate = useAppNavigate();
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -45,7 +47,7 @@ export function ServersStep({
             No connected servers yet
           </p>
           <p className="mt-2">
-            Launch a server from the Workspaces tab to make it available here.
+            Launch a server from the Projects tab to make it available here.
             Once connected, it will appear instantly.
           </p>
           <Button
@@ -54,10 +56,10 @@ export function ServersStep({
             size="sm"
             className="mt-4"
             onClick={() => {
-              window.location.hash = "servers";
+              appNavigate("/servers");
             }}
           >
-            Go to Workspaces tab
+            Go to Projects tab
           </Button>
         </div>
       )}

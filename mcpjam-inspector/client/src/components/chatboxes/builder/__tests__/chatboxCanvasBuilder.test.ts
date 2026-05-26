@@ -12,17 +12,21 @@ const baseDraft = (): ChatboxDraftConfig => ({
   temperature: 0.7,
   requireToolApproval: false,
   allowGuestAccess: false,
-  mode: "any_signed_in_with_link",
+  mode: "anyone_with_link",
   selectedServerIds: ["srv-draft"],
   optionalServerIds: [],
-  welcomeDialog: { enabled: true, body: "" },
-  feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+  chatUi: {
+    surfaces: {
+      welcome: { enabled: true, body: "" },
+      feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+    },
+  },
 });
 
-const workspaceServers = [
+const projectServers = [
   {
     _id: "srv-saved",
-    workspaceId: "ws",
+    projectId: "ws",
     name: "Saved only",
     enabled: true,
     transportType: "http" as const,
@@ -33,7 +37,7 @@ const workspaceServers = [
   },
   {
     _id: "srv-draft",
-    workspaceId: "ws",
+    projectId: "ws",
     name: "Draft pick",
     enabled: true,
     transportType: "http" as const,
@@ -49,7 +53,7 @@ function minimalChatbox(
 ): ChatboxSettings {
   return {
     chatboxId: "sb1",
-    workspaceId: "ws",
+    projectId: "ws",
     name: "Saved chatbox",
     description: "",
     hostStyle: "claude",
@@ -58,7 +62,7 @@ function minimalChatbox(
     temperature: 0.7,
     requireToolApproval: false,
     allowGuestAccess: false,
-    mode: "any_signed_in_with_link",
+    mode: "anyone_with_link",
     servers: [
       {
         serverId: "srv-saved",
@@ -83,7 +87,7 @@ describe("buildChatboxCanvas", () => {
     const context: ChatboxBuilderContext = {
       chatbox,
       draft,
-      workspaceServers,
+      projectServers,
     };
 
     const vm = buildChatboxCanvas(context);
@@ -105,7 +109,7 @@ describe("buildChatboxCanvas", () => {
     const context: ChatboxBuilderContext = {
       chatbox,
       draft: null,
-      workspaceServers,
+      projectServers,
     };
 
     const vm = buildChatboxCanvas(context);

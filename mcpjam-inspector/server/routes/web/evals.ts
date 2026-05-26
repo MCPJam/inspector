@@ -5,10 +5,8 @@ import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import { logger } from "../../utils/logger.js";
 import {
-  createGuestEphemeralManager,
   createAuthorizedManager,
   handleRoute,
-  isGuestServerRequestBody,
   parseWithSchema,
   readJsonBody,
   withEphemeralConnection,
@@ -31,18 +29,18 @@ const GUEST_UNSUPPORTED_MESSAGE =
   "Not available for guests yet. Sign in to use this.";
 
 const hostedBatchSchema = z.object({
-  workspaceId: z.string().min(1),
+  projectId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).min(1).optional(),
   clientCapabilities: z.record(z.string(), z.unknown()).optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
-  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-  shareToken: z.string().min(1).optional(),
-  chatboxToken: z.string().min(1).optional(),
+  accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
 });
 
 const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
-  workspaceId: true,
+  projectId: true,
   serverIds: true,
   convexAuthToken: true,
 }).extend(hostedBatchSchema.shape);
@@ -129,44 +127,6 @@ evals.post("/stream-test-case", async (c) => {
   const rawBody = await readJsonBody<Record<string, unknown>>(c);
   const WEB_CALL_TIMEOUT_MS = 60_000;
 
-  if (isGuestServerRequestBody(rawBody)) {
-    const { manager, augmentedBody } = await createGuestEphemeralManager(
-      c,
-      rawBody,
-      { timeoutMs: WEB_CALL_TIMEOUT_MS },
-    );
-
-    try {
-      const body = parseWithSchema(
-        hostedRunTestCaseSchema,
-        augmentedBody,
-      ) as z.infer<typeof hostedRunTestCaseSchema>;
-      const stream = await streamEvalTestCaseWithManager(
-        manager,
-        {
-          ...(body as z.infer<typeof hostedRunTestCaseSchema> & {
-            serverIds: string[];
-          }),
-          convexAuthToken: bearerToken,
-        },
-        {
-          onStreamComplete: () => manager.disconnectAllServers(),
-        },
-      );
-
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
-    } catch (error) {
-      await manager.disconnectAllServers();
-      throw error;
-    }
-  }
-
   const body = parseWithSchema(hostedRunTestCaseSchema, rawBody) as z.infer<
     typeof hostedRunTestCaseSchema
   >;
@@ -175,19 +135,20 @@ evals.post("/stream-test-case", async (c) => {
   const oauthTokens = body.oauthTokens;
 
   const { manager } = await createAuthorizedManager(
+    c,
     bearerToken,
-    body.workspaceId,
+    body.projectId,
     serverIds,
     WEB_CALL_TIMEOUT_MS,
     oauthTokens,
     body.clientCapabilities as Record<string, unknown> | undefined,
     {
       accessScope: body.accessScope as
-        | "workspace_member"
+        | "project_member"
         | "chat_v2"
         | undefined,
-      shareToken: body.shareToken as string | undefined,
-      chatboxToken: body.chatboxToken as string | undefined,
+      chatboxId: body.chatboxId as string | undefined,
+      accessVersion: body.accessVersion as number | undefined,
       serverNames: body.serverNames,
     },
   );

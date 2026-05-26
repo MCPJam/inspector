@@ -24,6 +24,8 @@ export type {
   MCPServerSummary,
   RegisteredServerState,
   LiveClientState,
+  UnauthorizedRefreshHandler,
+  UnauthorizedRefreshResult,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
@@ -79,6 +81,12 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+} from "./mcp-client-manager/index.js";
+export {
+  MCP_PROTOCOL_VERSIONS,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
 
 // Error classes
@@ -173,6 +181,19 @@ export type {
   ToolCallValidationResult,
 } from "./response-validation.js";
 export { redactSensitiveValue } from "./redaction.js";
+export {
+  resolveAuthorizationPlan,
+  resolveRegistrationStrategies,
+} from "./oauth/authorization-plan.js";
+export type {
+  AuthorizationDiscoverySnapshot,
+  AuthorizationPlanCapabilities,
+  AuthorizationPlanInput,
+  OAuthProtocolMode,
+  OAuthRegistrationMode,
+  OAuthRegistrationStrategy,
+  ResolvedAuthorizationPlan,
+} from "./oauth/authorization-plan.js";
 export {
   summarizeStructuredCases,
   renderStructuredRunJson,
@@ -354,11 +375,32 @@ export {
   WIDGET_BASE_CSS,
   buildRuntimeConfigScript,
   injectScripts,
+  normalizeWidgetCspMeta,
   buildCspHeader,
   buildCspMetaContent,
   buildChatGptRuntimeHead,
 } from "./widget-helpers.js";
 export type { CspMode, WidgetCspMeta, CspConfig } from "./widget-helpers.js";
+
+// Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
+// resolver consumed by both client-side renderers and server-side route
+// handlers that build CSP / permission policy for untrusted UI.
+export {
+  resolveSandboxCsp,
+  resolveSandboxPermissions,
+} from "./sandbox-policy.js";
+export type {
+  SandboxCspMode,
+  SandboxPermissionsMode,
+  SandboxCspDomainSet,
+  SandboxCspPolicy,
+  SandboxPermissionsPolicy,
+  ResourceDeclaredCsp,
+  EffectiveSandboxCsp,
+  EffectiveSandboxPermissions,
+  ResolveSandboxCspArgs,
+  ResolveSandboxPermissionsArgs,
+} from "./sandbox-policy.js";
 
 // OAuth proxy helpers (shared by inspector server routes and the CLI)
 export {
@@ -482,3 +524,15 @@ export type {
   ListToolsParams,
   WithEphemeralClientOptions,
 } from "./operations.js";
+
+// Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
+export {
+  evaluateToolCalls,
+} from "./matchers.js";
+export type {
+  EvalArgumentMismatch,
+  EvalMatchOptions,
+  EvalOutOfOrderToolCall,
+  EvalToolCall,
+  EvalToolCallMatchResult,
+} from "./matchers.js";

@@ -35,7 +35,7 @@ describe("generateAndPersistEvalTests", () => {
     const result = await generateAndPersistEvalTests({
       convex,
       getAccessToken: mockGetAccessToken,
-      workspaceId: "ws",
+      projectId: "ws",
       suiteId: "suite",
       serverIds: ["srv"],
       createTestCase: mockCreateTestCase,
@@ -60,7 +60,7 @@ describe("generateAndPersistEvalTests", () => {
     const result = await generateAndPersistEvalTests({
       convex,
       getAccessToken: mockGetAccessToken,
-      workspaceId: "ws",
+      projectId: "ws",
       suiteId: "suite",
       serverIds: ["srv"],
       createTestCase: mockCreateTestCase,
@@ -107,7 +107,7 @@ describe("generateAndPersistEvalTests", () => {
     await generateAndPersistEvalTests({
       convex,
       getAccessToken: mockGetAccessToken,
-      workspaceId: "ws",
+      projectId: "ws",
       suiteId: "suite",
       serverIds: ["srv"],
       createTestCase: mockCreateTestCase,
@@ -143,7 +143,7 @@ describe("generateAndPersistEvalTests", () => {
     await generateAndPersistEvalTests({
       convex,
       getAccessToken: mockGetAccessToken,
-      workspaceId: null,
+      projectId: null,
       suiteId: "suite",
       serverIds: ["srv"],
       createTestCase: mockCreateTestCase,
@@ -153,7 +153,7 @@ describe("generateAndPersistEvalTests", () => {
     expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
     expect(mockGetAccessToken).not.toHaveBeenCalled();
     expect(generateEvalTests).toHaveBeenCalledWith({
-      workspaceId: null,
+      projectId: null,
       serverIds: ["srv"],
       convexAuthToken: "guest-token",
     });

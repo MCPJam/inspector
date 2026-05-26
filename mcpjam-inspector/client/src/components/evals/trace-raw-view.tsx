@@ -1,11 +1,14 @@
 /**
  * Raw trace panel — single JsonEditor with bordered chrome around the tree.
- * When `requestPayloadHistory` is provided (live chat), Raw shows the resolved model request payload
- * (`system`, `tools`, `messages`) from the last `request_payload` event. `messages` are merged with
- * `trace.messages` from the live envelope when the snapshot is ahead of the last captured request.
- * If the chat shell passes this prop but `entries` is empty (e.g. a rehydrated stored session, which
- * never replays `request_payload`), we fall back to the `trace` blob so Raw matches Trace/Chat instead
- * of showing an endless spinner. Otherwise shows the stored trace blob (evals / offline).
+ * When `requestPayloadHistory` is provided (live chat or rehydrated session), Raw shows the resolved
+ * model request payload (`system`, `tools`, `messages`) from the last entry. For live chat that's the
+ * latest `request_payload` SSE event; for rehydrated sessions, `useChatSession` synthesizes a single
+ * entry from the current `systemPrompt`, currently-resolved tool schemas, and the converted thread —
+ * so tool schemas reflect what would be sent next, not a historical snapshot. `messages` are merged
+ * with `trace.messages` from the live envelope when that snapshot is ahead of the last captured
+ * request. If both `entries` and `traceTranscriptFromUi` are empty (e.g. no servers connected on
+ * rehydration), we fall back to the `trace` blob below. Otherwise shows the stored trace blob
+ * (evals / offline).
  */
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";

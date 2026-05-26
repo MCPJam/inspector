@@ -15,6 +15,16 @@ const toUrlString = (value?: string | URL): string => {
   }
 };
 
+const normalizeOAuthProfile = (
+  profile?: Partial<OAuthTestProfile> | null,
+): OAuthTestProfile => ({
+  ...EMPTY_OAUTH_TEST_PROFILE,
+  ...(profile ?? {}),
+  customHeaders: Array.isArray(profile?.customHeaders)
+    ? profile.customHeaders
+    : [],
+});
+
 export const deriveOAuthProfileFromServer = (
   server?: ServerWithName,
 ): OAuthTestProfile => {
@@ -22,13 +32,10 @@ export const deriveOAuthProfileFromServer = (
 
   const httpConfig =
     "url" in server.config ? (server.config as HttpServerConfig) : null;
-  const baseProfile = server.oauthFlowProfile ?? EMPTY_OAUTH_TEST_PROFILE;
+  const baseProfile = normalizeOAuthProfile(server.oauthFlowProfile);
 
   if (!httpConfig) {
-    return {
-      ...EMPTY_OAUTH_TEST_PROFILE,
-      ...baseProfile,
-    };
+    return baseProfile;
   }
 
   const fallbackHeaders = Object.entries(

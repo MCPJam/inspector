@@ -1,15 +1,15 @@
 import { useMemo } from "react";
 import { useSharedAppState } from "@/state/app-state-context";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { useProjectMembers } from "@/hooks/useProjects";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 
 export function useEvalTabContext({
   isAuthenticated,
-  workspaceId,
+  projectId,
   isDirectGuest = false,
 }: {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
   /**
    * Present so callers can thread guest context; not consumed here — Convex
    * mutations enforce guest policy server-side via the foundation actor helper.
@@ -18,10 +18,17 @@ export function useEvalTabContext({
 }) {
   void isDirectGuest;
   const appState = useSharedAppState();
-  const { availableModels } = useAvailableEvalModels();
-  const { members, canManageMembers } = useWorkspaceMembers({
+  // Scope to the requested project so model availability follows that project's
+  // org rather than whatever happens to be the globally-active project.
+  const scopedProjectId = projectId ?? appState.activeProjectId ?? null;
+  const scopedProject = scopedProjectId
+    ? appState.projects?.[scopedProjectId]
+    : undefined;
+  const organizationId = scopedProject?.organizationId ?? null;
+  const { availableModels } = useAvailableEvalModels(organizationId);
+  const { members, canManageMembers } = useProjectMembers({
     isAuthenticated,
-    workspaceId,
+    projectId,
   });
 
   const connectedServerNames = useMemo(
@@ -37,7 +44,7 @@ export function useEvalTabContext({
   // Suite visibility already implies suite access; let the backend mutation
   // remain the source of truth for whether deletion is allowed.
   const canDeleteSuite = true;
-  const canDeleteRuns = !workspaceId || canManageMembers;
+  const canDeleteRuns = !projectId || canManageMembers;
 
   const userMap = useMemo(() => {
     if (!members) return undefined;

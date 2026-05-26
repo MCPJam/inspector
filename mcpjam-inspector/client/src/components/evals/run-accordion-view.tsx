@@ -34,7 +34,7 @@ interface RunTestCase {
 }
 
 export function RunAccordionView({
-  suite,
+  suite: _suite,
   runs,
   allIterations,
   onRunClick,
@@ -108,8 +108,6 @@ export function RunAccordionView({
       </div>
     );
   }
-
-  const metricLabel = suite.source === "sdk" ? "Pass Rate" : "Accuracy";
 
   return (
     <div className="rounded-xl border bg-card text-card-foreground divide-y">

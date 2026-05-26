@@ -1,27 +1,39 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useLogger } from "./use-logger";
+import { useHost } from "./useClients";
+import { usePreviewedHostId } from "./use-previewed-client-id";
+import { resolveEffectiveHost } from "@/lib/effective-client";
 import {
+  createLocalDefaultProject,
   initialAppState,
   type AppState,
   type ServerWithName,
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
-import { loadAppState, saveAppState } from "@/state/storage";
-import { useWorkspaceState } from "./use-workspace-state";
+import { disconnectAllRuntimeServers } from "@/state/mcp-api";
+import { useProjectState } from "./use-project-state";
 import { useServerState } from "./use-server-state";
 import {
   clearLegacyActiveOrganizationStorage,
   readStoredActiveOrganizationId,
   writeStoredActiveOrganizationId,
 } from "@/lib/active-organization-storage";
-import { HOSTED_OAUTH_PENDING_STORAGE_KEY } from "@/lib/hosted-oauth-callback";
+import {
+  clearHostedOAuthPendingState,
+  HOSTED_OAUTH_PENDING_STORAGE_KEY,
+} from "@/lib/hosted-oauth-callback";
+import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
+import { shouldQueryProjectId } from "./useProjects";
+import { HOSTED_MODE } from "@/lib/config";
 
 export type { ServerWithName } from "@/state/app-types";
 export type {
   EnsureServersReadyResult,
   ServerUpdateResult,
+  PersistRuntimeServerResult,
 } from "./use-server-state";
 
 export interface PendingDashboardOAuthState {
@@ -38,28 +50,57 @@ interface ActiveOrganizationSelection {
 }
 
 function resolveFallbackOrganizationId(
-  organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
+  organizations: ReadonlyArray<{ _id: string; myRole?: string }>
 ) {
   const firstOwnedOrganization = organizations.find(
-    (organization) => organization.myRole === "owner",
+    (organization) => organization.myRole === "owner"
   );
 
   return firstOwnedOrganization?._id ?? organizations[0]?._id;
 }
 
-function createDefaultWorkspace() {
-  return {
-    ...initialAppState.workspaces.default,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+function createDefaultProject() {
+  return createLocalDefaultProject();
 }
 
-// Resolves dashboard/server-list OAuth callbacks only. Hosted chatbox/shared
-// callbacks are handled by App.tsx and must not affect server-card state.
-function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
+function hasHostedOAuthCallbackParams(): boolean {
+  if (typeof window === "undefined") return false;
+  // WorkOS sign-in lands on /callback?code=…; MCP server OAuth lands on
+  // /oauth/callback?code=…. Without this path scope a WorkOS sign-in is
+  // misread as an in-flight MCP OAuth callback, resurfacing a stale
+  // "Finishing OAuth sign-in for X…" gate from leftover localStorage markers.
+  const pathname = window.location.pathname;
+  if (pathname !== "/oauth/callback" && !pathname.startsWith("/oauth/callback/")) {
+    return false;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return params.has("code") || params.has("error");
+}
+
+// Reads the organizationId from an in-flight project-surface OAuth marker.
+// Used to keep the active org stable across the post-callback re-mount,
+// avoiding a hydration-window flip to resolveFallbackOrganizationId.
+function readPendingOAuthMarkerOrgId(): string | null {
   if (typeof window === "undefined") return null;
-  if (!new URLSearchParams(window.location.search).has("code")) return null;
+  if (!hasHostedOAuthCallbackParams()) return null;
+  try {
+    const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      surface?: unknown;
+      organizationId?: unknown;
+    } | null;
+    if (parsed?.surface !== "project") return null;
+    return typeof parsed.organizationId === "string" && parsed.organizationId
+      ? parsed.organizationId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | null {
+  if (typeof window === "undefined") return null;
 
   try {
     const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
@@ -74,7 +115,7 @@ function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
         return null;
       }
       if (
-        parsed?.surface === "workspace" &&
+        parsed?.surface === "project" &&
         typeof parsed.serverName === "string" &&
         parsed.serverName
       ) {
@@ -83,7 +124,9 @@ function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
           serverUrl:
             typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
           startedAt:
-            typeof parsed.startedAt === "number" ? parsed.startedAt : Date.now(),
+            typeof parsed.startedAt === "number"
+              ? parsed.startedAt
+              : Date.now(),
         };
       }
     }
@@ -99,31 +142,24 @@ function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
   };
 }
 
-// Patches only existing server state. Missing servers are represented by
-// pendingDashboardOAuth UI state instead of fake temporary server objects.
-function patchStateForPendingOAuth(
-  state: AppState,
-  pendingOAuth: PendingDashboardOAuthState,
-): AppState {
-  const existing = state.servers[pendingOAuth.serverName];
-  if (!existing) {
-    return state;
-  }
+// Resolves dashboard/server-list OAuth callbacks only. Hosted chatbox/shared
+// callbacks are handled by App.tsx and must not affect server-card state.
+function readPendingDashboardOAuth(): PendingDashboardOAuthState | null {
+  if (!hasHostedOAuthCallbackParams()) return null;
+  return readPendingDashboardOAuthFromStorage();
+}
 
-  return {
-    ...state,
-    servers: {
-      ...state.servers,
-      [pendingOAuth.serverName]: {
-        ...existing,
-        connectionStatus: "connecting",
-      },
-    },
-  };
+function isHistoryRestore(event: PageTransitionEvent): boolean {
+  if (event.persisted) return true;
+
+  const navigationEntry = performance.getEntriesByType?.("navigation").at(0) as
+    | PerformanceNavigationTiming
+    | undefined;
+  return navigationEntry?.type === "back_forward";
 }
 
 export function buildDisconnectedRuntimeServers(
-  servers: Record<string, ServerWithName> | undefined,
+  servers: Record<string, ServerWithName> | undefined
 ): Record<string, ServerWithName> {
   return Object.fromEntries(
     Object.entries(servers ?? {}).map(([serverName, server]) => [
@@ -132,22 +168,37 @@ export function buildDisconnectedRuntimeServers(
         ...server,
         connectionStatus: "disconnected",
       } satisfies ServerWithName,
-    ]),
+    ])
   );
 }
 
 export function useAppState({
   currentUserId,
+  currentActorKey,
   routeOrganizationId,
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
+  hostsHubFlagEnabled,
 }: {
   currentUserId: string | null;
+  /**
+   * Stable identifier for the active actor — `currentUserId` for signed-in
+   * users, the guest cookie's `guestId` for guests. Used to scope per-actor
+   * local storage (e.g. active project id) so selections don't bleed across
+   * actors. May be `null` while the actor is still resolving.
+   */
+  currentActorKey: string | null;
   routeOrganizationId?: string;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
   validOrganizations: Array<{ _id: string; myRole?: string }>;
+  /**
+   * Hosts-hub feature flag. When off, host queries are skipped and the
+   * connection path falls back to the project default (still authoritative
+   * via its shadow `projects.clientConfig`).
+   */
+  hostsHubFlagEnabled: boolean;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -174,12 +225,12 @@ export function useAppState({
   const isStoredActiveOrganizationValid =
     !!storedActiveOrganizationId &&
     validOrganizations.some(
-      (organization) => organization._id === storedActiveOrganizationId,
+      (organization) => organization._id === storedActiveOrganizationId
     );
   const isRouteOrganizationValid =
     !!routeOrganizationId &&
     validOrganizations.some(
-      (organization) => organization._id === routeOrganizationId,
+      (organization) => organization._id === routeOrganizationId
     );
   const fallbackActiveOrganizationId =
     hasHydratedStoredActiveOrganization &&
@@ -187,8 +238,16 @@ export function useAppState({
     !isLoadingOrganizations
       ? resolveFallbackOrganizationId(validOrganizations)
       : undefined;
+  const pendingOAuthMarkerOrgId = readPendingOAuthMarkerOrgId();
+  const isPendingOAuthMarkerOrgValid =
+    !!pendingOAuthMarkerOrgId &&
+    validOrganizations.some(
+      (organization) => organization._id === pendingOAuthMarkerOrgId
+    );
   const activeOrganizationId = isStoredActiveOrganizationValid
     ? storedActiveOrganizationId
+    : isPendingOAuthMarkerOrgValid
+    ? pendingOAuthMarkerOrgId
     : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
@@ -197,7 +256,7 @@ export function useAppState({
         userId: currentUserId,
       });
     },
-    [currentUserId],
+    [currentUserId]
   );
 
   useEffect(() => {
@@ -227,7 +286,7 @@ export function useAppState({
 
     writeStoredActiveOrganizationId(
       currentUserId,
-      activeOrganizationSelection.organizationId,
+      activeOrganizationSelection.organizationId
     );
   }, [
     activeOrganizationSelection,
@@ -300,8 +359,16 @@ export function useAppState({
     if (hasHydratedAppStateRef.current) return;
     hasHydratedAppStateRef.current = true;
 
+    // State now hydrates from Convex queries via useProjectState + the flat
+    // servers query; the legacy localStorage `loadAppState` is gone. We still
+    // need to detect a pending dashboard OAuth callback so the dashboard can
+    // surface the in-flight connect, and we need to flip isLoading off so
+    // dependent gates resolve.
     try {
-      const loaded = loadAppState();
+      // Convex is now the source of truth for projects/servers/state, but
+      // pendingDashboardOAuth is a callback-resume marker for the OAuth
+      // flow that still lives in localStorage (deferred to Slice 2b). Read
+      // it on first paint so a fresh window can resume the in-flight OAuth.
       const pendingOAuth = readPendingDashboardOAuth();
       setPendingDashboardOAuth((current) => {
         if (
@@ -312,12 +379,11 @@ export function useAppState({
         }
         return pendingOAuth;
       });
-      const hydratedState = pendingOAuth
-        ? patchStateForPendingOAuth(loaded, pendingOAuth)
-        : loaded;
-      dispatch({ type: "HYDRATE_STATE", payload: hydratedState });
+      // No `loadAppState` — Convex queries hydrate state. The migration shim
+      // (`local-state-migration`) lifts any legacy localStorage projects on
+      // first boot and clears them.
     } catch (error) {
-      logger.error("Failed to load saved state", {
+      logger.error("Failed to read pending OAuth marker", {
         error: error instanceof Error ? error.message : "Unknown error",
       });
     } finally {
@@ -325,9 +391,9 @@ export function useAppState({
     }
   }, [logger]);
 
-  useEffect(() => {
-    if (!isLoading) saveAppState(appState);
-  }, [appState, isLoading]);
+  // No `saveAppState` — Convex mutations persist server/project state; UI
+  // selection state (selectedServer, multi-select) is intentionally
+  // ephemeral.
 
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
@@ -354,14 +420,50 @@ export function useAppState({
         current?.serverName === pendingDashboardOAuth.serverName &&
         current.startedAt === pendingDashboardOAuth.startedAt
           ? null
-          : current,
+          : current
       );
     }, PENDING_DASHBOARD_OAUTH_UI_TIMEOUT_MS - elapsedMs);
 
     return () => window.clearTimeout(timeoutId);
   }, [pendingDashboardOAuth]);
 
-  const workspaceState = useWorkspaceState({
+  useEffect(() => {
+    if (!HOSTED_MODE) return;
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (!isHistoryRestore(event) || hasHostedOAuthCallbackParams()) {
+        return;
+      }
+
+      const pendingOAuth = readPendingDashboardOAuthFromStorage();
+      if (!pendingOAuth) {
+        return;
+      }
+
+      clearHostedOAuthPendingState();
+      clearPendingQuickConnect();
+      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem("mcp-oauth-return-hash");
+      setPendingDashboardOAuth(null);
+
+      const pendingServer = appState.servers[pendingOAuth.serverName];
+      if (
+        pendingServer?.connectionStatus === "connecting" ||
+        pendingServer?.connectionStatus === "oauth-flow"
+      ) {
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: pendingOAuth.serverName,
+          error: "Authorization was cancelled. Try again.",
+        });
+      }
+    };
+
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, [appState.servers]);
+
+  const projectState = useProjectState({
     appState,
     dispatch,
     isAuthenticated,
@@ -369,11 +471,46 @@ export function useAppState({
     hasOrganizations,
     isLoadingOrganizations,
     validOrganizationIds: validOrganizations.map(
-      (organization) => organization._id,
+      (organization) => organization._id
     ),
     activeOrganizationId,
     routeOrganizationId,
+    currentActorKey,
+    hasSignedInUser: currentUserId != null,
     logger,
+  });
+
+  // Active project default hostConfig DTO. Sourced from Convex so it
+  // stays current with edits made in the ClientConfigEditor without a
+  // page reload. We pluck `mcpProfile` out and pass it down to
+  // useServerState so resolver-path connects can pin clientInfo and
+  // supportedProtocolVersions. `skip` when the active project isn't
+  // a real Convex project (guest local-mode fallback) — those flows
+  // don't have an mcpProfile, so SDK defaults apply.
+  const activeSharedProjectId =
+    projectState.effectiveProjects[projectState.effectiveActiveProjectId]
+      ?.sharedProjectId;
+  const activeProjectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    activeSharedProjectId
+      ? { projectId: activeSharedProjectId as any }
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+
+  // Single active-host state, shared with the Servers/Playground/Hosts
+  // top-bar preview and the Chat tab's ClientPicker. Picking a host anywhere
+  // in the product points every MCP `initialize` and widget `ui/initialize`
+  // at the same `HostConfigDtoV2`.
+  const [activeHostId, setActiveHostId] = usePreviewedHostId(
+    activeSharedProjectId ?? null,
+  );
+  const { host: selectedHost } = useHost({
+    isAuthenticated: isAuthenticated && hostsHubFlagEnabled,
+    hostId: activeHostId,
+  });
+  const activeHost = resolveEffectiveHost({
+    explicitHostConfig: selectedHost?.config ?? null,
+    projectDefaultHostConfig: activeProjectDefaultHostConfig ?? null,
   });
 
   const serverState = useServerState({
@@ -381,44 +518,127 @@ export function useAppState({
     dispatch,
     isLoading,
     isAuthenticated,
+    hasSignedInUser: currentUserId != null,
     isAuthLoading,
-    isLoadingWorkspaces: workspaceState.isLoadingWorkspaces,
-    useLocalFallback: workspaceState.useLocalFallback,
-    effectiveWorkspaces: workspaceState.effectiveWorkspaces,
-    effectiveActiveWorkspaceId: workspaceState.effectiveActiveWorkspaceId,
-    activeWorkspaceServersFlat: workspaceState.activeWorkspaceServersFlat,
+    isLoadingProjects: projectState.isLoadingProjects,
+    useLocalFallback: projectState.useLocalFallback,
+    effectiveProjects: projectState.effectiveProjects,
+    effectiveActiveProjectId: projectState.effectiveActiveProjectId,
+    activeProjectServersFlat: projectState.activeProjectServersFlat,
+    activeMcpProfile: activeHost?.mcpProfile,
+    activeHostConfig: activeHost,
     logger,
   });
 
   const {
-    effectiveWorkspaces,
-    setConvexActiveWorkspaceId,
-    clearConvexActiveWorkspaceSelection,
+    effectiveProjects,
+    setConvexActiveProjectId,
+    clearConvexActiveProjectSelection,
     useLocalFallback,
-    remoteWorkspaces,
-    isLoadingRemoteWorkspaces,
-    effectiveActiveWorkspaceId,
-  } = workspaceState;
+    remoteProjects,
+    isLoadingRemoteProjects,
+    effectiveActiveProjectId,
+  } = projectState;
   const { handleDisconnect } = serverState;
 
-  const handleSwitchWorkspace = useCallback(
-    async (workspaceId: string) => {
-      const newWorkspace = effectiveWorkspaces[workspaceId];
-      if (!newWorkspace) {
-        toast.error("Workspace not found");
+  const disconnectRuntimeServersForScopeReset = useCallback(
+    (servers: AppState["servers"], reason: string) => {
+      const serverNames = Object.keys(servers);
+
+      if (serverNames.length > 0) {
+        logger.info("Disconnecting runtime servers before auth scope reset", {
+          reason,
+          serverNames,
+        });
+      }
+
+      void Promise.allSettled([
+        Promise.allSettled(
+          serverNames.map((serverName) => handleDisconnect(serverName)),
+        ),
+        disconnectAllRuntimeServers(),
+      ]);
+    },
+    [handleDisconnect, logger],
+  );
+
+  const previousRuntimeScopeRef = useRef<{
+    actorKey: string | null;
+    organizationId?: string;
+    projectId: string;
+  } | null>(null);
+
+  // This intentionally overlaps with App.tsx's pre-sign-out cleanup. That
+  // path runs before WorkOS redirects; this effect covers auth/session changes,
+  // guest handoffs, org switches, and project switches that happen without a
+  // direct logout click.
+  useEffect(() => {
+    if (!isAuthenticated || useLocalFallback) {
+      if (previousRuntimeScopeRef.current) {
+        disconnectRuntimeServersForScopeReset(
+          appState.servers,
+          "leaving-authenticated-scope",
+        );
+        dispatch({ type: "CLEAR_RUNTIME_STATE" });
+      }
+      previousRuntimeScopeRef.current = null;
+      return;
+    }
+
+    const nextScope = {
+      actorKey: currentActorKey,
+      organizationId: activeOrganizationId,
+      projectId: effectiveActiveProjectId,
+    };
+    const previousScope = previousRuntimeScopeRef.current;
+    previousRuntimeScopeRef.current = nextScope;
+
+    if (!previousScope) {
+      return;
+    }
+
+    if (
+      previousScope.actorKey === nextScope.actorKey &&
+      previousScope.organizationId === nextScope.organizationId &&
+      previousScope.projectId === nextScope.projectId
+    ) {
+      return;
+    }
+
+    disconnectRuntimeServersForScopeReset(
+      appState.servers,
+      "authenticated-scope-changed",
+    );
+    dispatch({ type: "CLEAR_RUNTIME_STATE" });
+  }, [
+    activeOrganizationId,
+    appState.servers,
+    currentActorKey,
+    disconnectRuntimeServersForScopeReset,
+    dispatch,
+    effectiveActiveProjectId,
+    isAuthenticated,
+    useLocalFallback,
+  ]);
+
+  const handleSwitchProject = useCallback(
+    async (projectId: string) => {
+      const newProject = effectiveProjects[projectId];
+      if (!newProject) {
+        toast.error("Project not found");
         return;
       }
 
-      logger.info("Switching to workspace", {
-        workspaceId,
-        name: newWorkspace.name,
+      logger.info("Switching to project", {
+        projectId,
+        name: newProject.name,
       });
 
       const currentServers = Object.keys(appState.servers);
       for (const serverName of currentServers) {
         const server = appState.servers[serverName];
         if (server.connectionStatus === "connected") {
-          logger.info("Disconnecting server before workspace switch", {
+          logger.info("Disconnecting server before project switch", {
             serverName,
           });
           await handleDisconnect(serverName);
@@ -426,47 +646,47 @@ export function useAppState({
       }
 
       if (isAuthenticated && !useLocalFallback) {
-        setConvexActiveWorkspaceId(workspaceId);
+        setConvexActiveProjectId(projectId);
       } else {
-        dispatch({ type: "SWITCH_WORKSPACE", workspaceId });
+        dispatch({ type: "SWITCH_PROJECT", projectId });
       }
-      toast.success(`Switched to workspace: ${newWorkspace.name}`);
+      toast.success(`Switched to project: ${newProject.name}`);
     },
     [
-      effectiveWorkspaces,
+      effectiveProjects,
       appState.servers,
       handleDisconnect,
       logger,
       isAuthenticated,
       useLocalFallback,
       dispatch,
-      setConvexActiveWorkspaceId,
-    ],
+      setConvexActiveProjectId,
+    ]
   );
 
-  const handleLeaveWorkspace = useCallback(
-    async (workspaceId: string) => {
-      const workspace = effectiveWorkspaces[workspaceId];
-      if (!workspace) {
-        toast.error("Workspace not found");
+  const handleLeaveProject = useCallback(
+    async (projectId: string) => {
+      const project = effectiveProjects[projectId];
+      if (!project) {
+        toast.error("Project not found");
         return;
       }
 
-      const otherWorkspaceIds = Object.keys(effectiveWorkspaces).filter(
-        (id) => id !== workspaceId,
+      const otherProjectIds = Object.keys(effectiveProjects).filter(
+        (id) => id !== projectId
       );
-      const defaultWorkspace = otherWorkspaceIds.find(
-        (id) => effectiveWorkspaces[id].isDefault,
+      const defaultProject = otherProjectIds.find(
+        (id) => effectiveProjects[id].isDefault
       );
-      const targetWorkspaceId = defaultWorkspace || otherWorkspaceIds[0];
+      const targetProjectId = defaultProject || otherProjectIds[0];
 
-      if (!targetWorkspaceId) {
-        toast.error("Cannot leave the only workspace");
+      if (!targetProjectId) {
+        toast.error("Cannot leave the only project");
         return;
       }
 
-      const workspaceServers = Object.keys(workspace.servers || {});
-      for (const serverName of workspaceServers) {
+      const projectServers = Object.keys(project.servers || {});
+      for (const serverName of projectServers) {
         const runtimeServer = appState.servers[serverName];
         if (runtimeServer?.connectionStatus === "connected") {
           await handleDisconnect(serverName);
@@ -474,64 +694,79 @@ export function useAppState({
       }
 
       if (isAuthenticated && !useLocalFallback) {
-        setConvexActiveWorkspaceId(targetWorkspaceId);
+        setConvexActiveProjectId(targetProjectId);
       } else {
-        dispatch({ type: "SWITCH_WORKSPACE", workspaceId: targetWorkspaceId });
-        dispatch({ type: "DELETE_WORKSPACE", workspaceId });
+        dispatch({ type: "SWITCH_PROJECT", projectId: targetProjectId });
+        dispatch({ type: "DELETE_PROJECT", projectId });
       }
     },
     [
-      effectiveWorkspaces,
+      effectiveProjects,
       appState.servers,
       handleDisconnect,
       isAuthenticated,
       useLocalFallback,
       dispatch,
-      setConvexActiveWorkspaceId,
-    ],
+      setConvexActiveProjectId,
+    ]
   );
 
-  const clearLocalFallbackWorkspaceSelection = useCallback(
+  const clearLocalFallbackProjectSelection = useCallback(
     (deletedOrganizationId: string, fallbackOrganizationId?: string) => {
-      const remainingEntries = Object.entries(appState.workspaces).filter(
-        ([, workspace]) => workspace.organizationId !== deletedOrganizationId,
+      const remainingEntries = Object.entries(appState.projects).filter(
+        ([, project]) => project.organizationId !== deletedOrganizationId
       );
-      const nextWorkspaces =
+      const nextProjects =
         remainingEntries.length > 0
           ? Object.fromEntries(remainingEntries)
-          : { default: createDefaultWorkspace() };
-      const preferredWorkspaceForFallbackOrg = fallbackOrganizationId
-        ? Object.values(nextWorkspaces).find(
-            (workspace) => workspace.organizationId === fallbackOrganizationId,
+          : (() => {
+              const project = createDefaultProject();
+              return { [project.id]: project };
+            })();
+      const preferredProjectForFallbackOrg = fallbackOrganizationId
+        ? Object.values(nextProjects).find(
+            (project) => project.organizationId === fallbackOrganizationId
           )
         : undefined;
-      const nextActiveWorkspace =
-        preferredWorkspaceForFallbackOrg ??
-        nextWorkspaces[appState.activeWorkspaceId] ??
-        nextWorkspaces.default ??
-        Object.values(nextWorkspaces)[0];
-      const nextActiveWorkspaceId = nextActiveWorkspace?.id ?? "default";
+      const nextActiveProject =
+        preferredProjectForFallbackOrg ??
+        nextProjects[appState.activeProjectId] ??
+        Object.values(nextProjects).find((project) => project.isDefault) ??
+        Object.values(nextProjects)[0];
+      const nextActiveProjectId =
+        nextActiveProject?.id ?? Object.keys(nextProjects)[0];
+      if (!nextActiveProjectId) {
+        logger.warn(
+          "clearLocalFallbackProjectSelection: no active project resolved",
+          {
+            deletedOrganizationId,
+            fallbackOrganizationId,
+            projectCount: Object.keys(nextProjects).length,
+          }
+        );
+        return;
+      }
       const nextServers = buildDisconnectedRuntimeServers(
-        nextActiveWorkspace?.servers,
+        nextActiveProject?.servers
       );
 
       dispatch({
         type: "HYDRATE_STATE",
         payload: {
           ...appState,
-          workspaces: nextWorkspaces,
-          activeWorkspaceId: nextActiveWorkspaceId,
+          projects: nextProjects,
+          activeProjectId: nextActiveProjectId,
           servers: nextServers,
           selectedServer: "none",
           selectedMultipleServers: [],
         },
       });
     },
-    [appState, dispatch],
+    [appState, dispatch]
   );
 
   const isCloudSyncActive =
-    isAuthenticated && !useLocalFallback && remoteWorkspaces !== undefined;
+    isAuthenticated && !useLocalFallback && remoteProjects !== undefined;
   const selectedRuntimeServer =
     appState.selectedServer !== "none"
       ? appState.servers[appState.selectedServer]
@@ -539,22 +774,30 @@ export function useAppState({
   const isSelectedServerSyncing =
     isCloudSyncActive &&
     !!selectedRuntimeServer &&
-    !serverState.workspaceServers[appState.selectedServer] &&
+    !serverState.projectServers[appState.selectedServer] &&
     selectedRuntimeServer.connectionStatus !== "failed" &&
     selectedRuntimeServer.connectionStatus !== "disconnected";
 
   return {
     appState,
     isLoading,
-    isLoadingRemoteWorkspaces,
+    isLoadingRemoteProjects,
+    // True once Convex has returned the flat-servers query for the active
+    // project, OR when there's no queryable project id (sentinel like
+    // "none"/"null" — query was skipped, so no data is ever coming).
+    // Lets ServersTab distinguish "still loading" from "no real project".
+    areServersHydrated:
+      !isAuthenticated ||
+      projectState.activeProjectServersFlat !== undefined ||
+      !shouldQueryProjectId(projectState.activeProjectServersFlatProjectId),
     isCloudSyncActive,
     activeOrganizationId,
     setActiveOrganizationId,
-    clearConvexActiveWorkspaceSelection,
-    clearLocalFallbackWorkspaceSelection,
+    clearConvexActiveProjectSelection,
+    clearLocalFallbackProjectSelection,
     pendingDashboardOAuth,
 
-    workspaceServers: serverState.workspaceServers,
+    projectServers: serverState.projectServers,
     connectedOrConnectingServerConfigs:
       serverState.connectedOrConnectingServerConfigs,
     selectedServerEntry: serverState.selectedServerEntry,
@@ -568,14 +811,28 @@ export function useAppState({
     selectedMCPConfigsMap: serverState.selectedMCPConfigsMap,
     isMultiSelectMode: serverState.isMultiSelectMode,
 
-    workspaces: effectiveWorkspaces,
-    activeWorkspaceId: effectiveActiveWorkspaceId,
-    activeWorkspace: serverState.activeWorkspace,
+    projects: effectiveProjects,
+    activeProjectId: effectiveActiveProjectId,
+    activeProject: serverState.activeProject,
+    // The single active-host bundle every consumer should reach for: its
+    // `mcpProfile` powers `ActiveMcpProfileProvider`, its `clientCapabilities`
+    // and `connectionDefaults` flow through `withProjectConnectionDefaults`,
+    // and `setActiveHostId` is the canonical writer for both the Chat tab's
+    // ClientPicker and the global top-bar preview.
+    activeHost,
+    activeHostId,
+    setActiveHostId,
+    // Back-compat: `activeMcpProfile` was the per-call alias for
+    // `activeHost?.mcpProfile`. Surfaces that still destructure it (e.g.
+    // ChatV2Route) keep working without churn.
+    activeMcpProfile: activeHost?.mcpProfile,
 
     handleConnect: serverState.handleConnect,
     handleDisconnect: serverState.handleDisconnect,
+    handleRuntimeDisconnect: serverState.handleRuntimeDisconnect,
     handleReconnect: serverState.handleReconnect,
     ensureServersReady: serverState.ensureServersReady,
+    syncAgentStatus: serverState.syncAgentStatus,
     handleUpdate: serverState.handleUpdate,
     handleRemoveServer: serverState.handleRemoveServer,
     setSelectedServer: serverState.setSelectedServer,
@@ -591,17 +848,20 @@ export function useAppState({
       serverState.handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow:
       serverState.handleRefreshTokensFromOAuthFlow,
+    persistRuntimeServerToProjectIfNeeded:
+      serverState.persistRuntimeServerToProjectIfNeeded,
 
-    handleSwitchWorkspace,
-    handleCreateWorkspace: workspaceState.handleCreateWorkspace,
-    handleUpdateWorkspace: workspaceState.handleUpdateWorkspace,
-    handleUpdateClientConfig: workspaceState.handleUpdateClientConfig,
-    handleDeleteWorkspace: workspaceState.handleDeleteWorkspace,
-    handleLeaveWorkspace,
-    handleDuplicateWorkspace: workspaceState.handleDuplicateWorkspace,
-    handleSetDefaultWorkspace: workspaceState.handleSetDefaultWorkspace,
-    handleWorkspaceShared: workspaceState.handleWorkspaceShared,
-    handleExportWorkspace: workspaceState.handleExportWorkspace,
-    handleImportWorkspace: workspaceState.handleImportWorkspace,
+    handleSwitchProject,
+    handleCreateProject: projectState.handleCreateProject,
+    handleUpdateProject: projectState.handleUpdateProject,
+    handleUpdateClientConfig: projectState.handleUpdateClientConfig,
+    handleUpdateHostContext: projectState.handleUpdateHostContext,
+    handleDeleteProject: projectState.handleDeleteProject,
+    handleLeaveProject,
+    handleDuplicateProject: projectState.handleDuplicateProject,
+    handleSetDefaultProject: projectState.handleSetDefaultProject,
+    handleProjectShared: projectState.handleProjectShared,
+    handleExportProject: projectState.handleExportProject,
+    handleImportProject: projectState.handleImportProject,
   };
 }

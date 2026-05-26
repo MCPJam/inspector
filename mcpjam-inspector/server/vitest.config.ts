@@ -9,6 +9,11 @@ const sdkSkillReferenceEntry = path.resolve(
   rootDir,
   "../sdk/src/skill-reference.ts",
 );
+const sdkModelFactoryEntry = path.resolve(
+  rootDir,
+  "../sdk/src/model-factory.ts",
+);
+const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
 
 export default defineConfig({
   define: {
@@ -40,7 +45,12 @@ export default defineConfig({
     hookTimeout: 30000,
     server: {
       deps: {
-        inline: ["@mcpjam/sdk", "@mcpjam/sdk/operations"],
+        inline: [
+          "@mcpjam/sdk",
+          "@mcpjam/sdk/operations",
+          "@mcpjam/sdk/model-factory",
+          "@mcpjam/sdk/matchers",
+        ],
       },
     },
     coverage: {
@@ -62,6 +72,8 @@ export default defineConfig({
         replacement: sdkSkillReferenceEntry,
       },
       { find: "@mcpjam/sdk/operations", replacement: sdkOperationsEntry },
+      { find: "@mcpjam/sdk/model-factory", replacement: sdkModelFactoryEntry },
+      { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],
   },

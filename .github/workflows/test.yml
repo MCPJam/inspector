@@ -33,4 +33,4 @@ jobs:
         # exceeds that cap. 6 GB gives headroom without exhausting the runner.
         env:
           NODE_OPTIONS: "--max-old-space-size=6144"
-        run: npm run test:ordered
+        run: npm test
