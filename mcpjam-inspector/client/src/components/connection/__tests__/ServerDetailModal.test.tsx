@@ -291,6 +291,7 @@ describe("ServerDetailModal", () => {
   });
 
   it("submits the configuration form without closing the modal", async () => {
+    const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,
       serverName: "test-server",
@@ -305,6 +306,12 @@ describe("ServerDetailModal", () => {
       />,
     );
 
+    // Edit a field so the form has changes and "Save Changes" is active
+    // (connected servers with no changes show "Reconnect" instead).
+    const nameInput = screen.getByDisplayValue("test-server");
+    await user.clear(nameInput);
+    await user.type(nameInput, "test-server-renamed");
+
     const form = screen
       .getByRole("button", { name: "Save Changes" })
       .closest("form");
@@ -314,7 +321,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "test-server" }),
+        expect.objectContaining({ name: "test-server-renamed" }),
         "test-server",
       );
     });

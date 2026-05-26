@@ -582,7 +582,10 @@ export function ServerDetailModal({
                   type={isConnected && !formState.hasChanges ? "button" : "submit"}
                   onClick={
                     isConnected && !formState.hasChanges
-                      ? () => void handleConnect()
+                      ? () =>
+                          void handleConnect({
+                            allowInteractiveOAuthFlow: false,
+                          })
                       : undefined
                   }
                   disabled={

@@ -18,13 +18,13 @@ import type { McpProtocolVersion } from "@/lib/client-config-v2";
  *   - "latest" → `undefined`, legacy `OfficialSdkClientAdapter` +
  *     upstream `Client` (negotiates whatever `LATEST_PROTOCOL_VERSION`
  *     the SDK is shipping at runtime).
+ *   - "latest" → `"2025-11-25"`, explicit stable pin — overrides a host-level
+ *     Draft default.
  *   - "draft"  → `"DRAFT-2026-v1"`, the stateless preview client.
- *
- * "latest" serializes to `undefined` (not the literal `"2025-11-25"`) so
- * canonical hashes stay stable when the SDK bumps its default; see
- * `feedback_preserve_undefined_default`.
+ *   - "inherit" → `undefined`, defers to the host default (or SDK default if
+ *     no host default is set).
  */
-type DropdownValue = "latest" | "draft";
+type DropdownValue = "inherit" | "latest" | "draft";
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
@@ -32,6 +32,7 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   /** When true, the option appears only with `stateless-mcp-enabled` flag. */
   flagGated?: boolean;
 }> = [
+  { value: "inherit", label: "Host default" },
   { value: "latest", label: "Latest" },
   { value: "draft", label: "Draft", flagGated: true },
 ];
@@ -131,10 +132,12 @@ export function AdvancedConnectionSettingsSection({
     if (opt.value === "draft" && !isHttp) return false;
     return true;
   });
-  // "Draft" → DRAFT-2026-v1; everything else (2025-11-25, undefined,
-  // legacy carry-over) reads as "Latest".
   const selectedDropdownValue: DropdownValue =
-    mcpProtocolVersionOverride === "DRAFT-2026-v1" ? "draft" : "latest";
+    mcpProtocolVersionOverride === "DRAFT-2026-v1"
+      ? "draft"
+      : mcpProtocolVersionOverride === "2025-11-25"
+        ? "latest"
+        : "inherit";
 
   return (
     <div className="space-y-0">
@@ -290,7 +293,11 @@ export function AdvancedConnectionSettingsSection({
                 onValueChange={(next) => {
                   if (!onMcpProtocolVersionOverrideChange) return;
                   onMcpProtocolVersionOverrideChange(
-                    next === "draft" ? "DRAFT-2026-v1" : "2025-11-25",
+                    next === "draft"
+                      ? "DRAFT-2026-v1"
+                      : next === "latest"
+                        ? "2025-11-25"
+                        : undefined,
                   );
                 }}
               >
