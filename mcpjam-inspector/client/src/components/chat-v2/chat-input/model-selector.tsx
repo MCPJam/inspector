@@ -64,7 +64,7 @@ type PendingSelectionChange =
     };
 
 const groupModelsByProvider = (
-  models: ModelDefinition[],
+  models: ModelDefinition[]
 ): Map<GroupKey, ModelDefinition[]> => {
   const groupedModels = new Map<GroupKey, ModelDefinition[]>();
 
@@ -85,14 +85,14 @@ const getCustomName = (groupKey: GroupKey): string | undefined =>
 
 function sameModelOrder(
   left: ModelDefinition[],
-  right: ModelDefinition[],
+  right: ModelDefinition[]
 ): boolean {
   if (left.length !== right.length) {
     return false;
   }
 
   return left.every(
-    (model, index) => String(model.id) === String(right[index]?.id),
+    (model, index) => String(model.id) === String(right[index]?.id)
   );
 }
 
@@ -113,6 +113,10 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [providerTab, setProviderTab] = useState<"provided" | "configured">(
+    "provided"
+  );
+  const [search, setSearch] = useState("");
   const keepPopoverOpenRef = useRef(false);
   const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
   const [hoveredLockedModelId, setHoveredLockedModelId] = useState<
@@ -128,6 +132,18 @@ export function ModelSelector({
   useEffect(() => {
     onOpenChangeRef.current?.(isOpen);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setProviderTab(
+        isMCPJamProvidedModel(String(currentModel.id), currentModel.provider)
+          ? "provided"
+          : "configured"
+      );
+    } else {
+      setSearch("");
+    }
+  }, [isOpen, currentModel]);
 
   useEffect(() => {
     return () => {
@@ -175,7 +191,7 @@ export function ModelSelector({
     if (nextOpen && !isOpen) {
       posthog.capture(
         "chat_model_selector_clicked",
-        standardEventProps("chat_input"),
+        standardEventProps("chat_input")
       );
     }
     setIsOpen(nextOpen);
@@ -197,11 +213,11 @@ export function ModelSelector({
 
   const groupedModels = useMemo(
     () => groupModelsByProvider(availableModels),
-    [availableModels],
+    [availableModels]
   );
   const sortedProviders = useMemo(
     () => Array.from(groupedModels.keys()).sort(),
-    [groupedModels],
+    [groupedModels]
   );
 
   const modelGroups = useMemo(() => {
@@ -223,10 +239,10 @@ export function ModelSelector({
       }
 
       const provided = filtered.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
+        isMCPJamProvidedModel(String(model.id))
       );
       const configured = filtered.filter(
-        (model) => !isMCPJamProvidedModel(String(model.id)),
+        (model) => !isMCPJamProvidedModel(String(model.id))
       );
       const title = getProviderDisplayName(provider);
 
@@ -253,7 +269,7 @@ export function ModelSelector({
 
   const selectedIds = useMemo(
     () => new Set(selectedModelsData.map((model) => String(model.id))),
-    [selectedModelsData],
+    [selectedModelsData]
   );
   const canUseMultiModel =
     enableMultiModel &&
@@ -268,7 +284,7 @@ export function ModelSelector({
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
     const configured = modelGroups.filter(
-      (g) => g.providerType === "configured",
+      (g) => g.providerType === "configured"
     );
     return { provided, configured };
   }, [modelGroups]);
@@ -331,7 +347,7 @@ export function ModelSelector({
     const isSelected = selectedIds.has(String(model.id));
     const nextSelectedModels = isSelected
       ? selectedModelsData.filter(
-          (selectedModel) => String(selectedModel.id) !== String(model.id),
+          (selectedModel) => String(selectedModel.id) !== String(model.id)
         )
       : [...selectedModelsData, model];
 
@@ -356,7 +372,7 @@ export function ModelSelector({
     const nextSelectedModels = [
       model,
       ...selectedModelsData.filter(
-        (selectedModel) => String(selectedModel.id) !== String(model.id),
+        (selectedModel) => String(selectedModel.id) !== String(model.id)
       ),
     ];
 
@@ -401,7 +417,7 @@ export function ModelSelector({
           className={cn(
             "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
             lockedRowHighlightId &&
-              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit"
           )}
         >
           <ProviderLogo
@@ -418,7 +434,7 @@ export function ModelSelector({
                 "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
                 isSelected
                   ? "border-primary bg-primary shadow-sm"
-                  : "border-border/60 bg-transparent hover:border-border",
+                  : "border-border/60 bg-transparent hover:border-border"
               )}
               aria-hidden
             >
@@ -441,7 +457,7 @@ export function ModelSelector({
             <div
               className={cn(
                 "rounded-sm transition-colors",
-                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60"
               )}
               onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
               onMouseLeave={() => setHoveredLockedModelId(null)}
@@ -483,7 +499,11 @@ export function ModelSelector({
 
         <PopoverContent align="start" className="w-[280px] p-0" sideOffset={8}>
           <Command shouldFilter={true}>
-            <CommandInput placeholder="Search models" />
+            <CommandInput
+              placeholder="Search models"
+              value={search}
+              onValueChange={setSearch}
+            />
 
             {canUseMultiModel ? (
               <>
@@ -514,7 +534,7 @@ export function ModelSelector({
                             "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
                             isLead
                               ? "border-primary/25 bg-primary/5 text-foreground"
-                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
+                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
                           )}
                           onClick={() => handlePromoteLeadModel(model)}
                         >
@@ -552,40 +572,85 @@ export function ModelSelector({
               </>
             ) : null}
 
-            <CommandList className="max-h-[min(320px,45vh)]">
-              <CommandEmpty>No matching models.</CommandEmpty>
+            {(() => {
+              const hasBothSections =
+                modelSections.provided.length > 0 &&
+                modelSections.configured.length > 0;
+              const isSearching = search.trim().length > 0;
+              const showTabs = hasBothSections && !isSearching;
+              const showProvided =
+                modelSections.provided.length > 0 &&
+                (isSearching || !hasBothSections || providerTab === "provided");
+              const showConfigured =
+                modelSections.configured.length > 0 &&
+                (isSearching ||
+                  !hasBothSections ||
+                  providerTab === "configured");
 
-              {modelSections.provided.length > 0 ? (
-                <CommandGroup heading="Free models">
-                  {modelSections.provided.map((group) => (
-                    <div key={`${group.provider}:${group.providerType}`}>
-                      <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                        {group.title}
-                      </div>
-                      {renderGroupModelItems(group)}
+              return (
+                <>
+                  {showTabs ? (
+                    <div className="flex gap-1 border-b px-2 py-1.5">
+                      {(["provided", "configured"] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => setProviderTab(tab)}
+                          className={cn(
+                            "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                            providerTab === tab
+                              ? "bg-muted text-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {tab === "provided"
+                            ? "Free models"
+                            : "Your providers"}
+                        </button>
+                      ))}
                     </div>
-                  ))}
-                </CommandGroup>
-              ) : null}
+                  ) : null}
 
-              {modelSections.provided.length > 0 &&
-              modelSections.configured.length > 0 ? (
-                <CommandSeparator />
-              ) : null}
+                  <CommandList className="max-h-[min(320px,45vh)]">
+                    <CommandEmpty>No matching models.</CommandEmpty>
 
-              {modelSections.configured.length > 0 ? (
-                <CommandGroup heading="Your providers">
-                  {modelSections.configured.map((group) => (
-                    <div key={`${group.provider}:${group.providerType}`}>
-                      <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                        {group.title}
-                      </div>
-                      {renderGroupModelItems(group)}
-                    </div>
-                  ))}
-                </CommandGroup>
-              ) : null}
-            </CommandList>
+                    {showProvided ? (
+                      <CommandGroup
+                        heading={isSearching ? "Free models" : undefined}
+                      >
+                        {modelSections.provided.map((group) => (
+                          <div key={`${group.provider}:${group.providerType}`}>
+                            <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                              {group.title}
+                            </div>
+                            {renderGroupModelItems(group)}
+                          </div>
+                        ))}
+                      </CommandGroup>
+                    ) : null}
+
+                    {isSearching && showProvided && showConfigured ? (
+                      <CommandSeparator />
+                    ) : null}
+
+                    {showConfigured ? (
+                      <CommandGroup
+                        heading={isSearching ? "Your providers" : undefined}
+                      >
+                        {modelSections.configured.map((group) => (
+                          <div key={`${group.provider}:${group.providerType}`}>
+                            <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                              {group.title}
+                            </div>
+                            {renderGroupModelItems(group)}
+                          </div>
+                        ))}
+                      </CommandGroup>
+                    ) : null}
+                  </CommandList>
+                </>
+              );
+            })()}
           </Command>
         </PopoverContent>
       </Popover>
