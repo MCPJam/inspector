@@ -48,6 +48,7 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
+import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 export function PartSwitch({
   part,
@@ -58,6 +59,7 @@ export function PartSwitch({
   toolServerMap,
   onWidgetStateChange,
   onModelContextUpdate,
+  onAppToolInvocationChange,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -90,6 +92,7 @@ export function PartSwitch({
       structuredContent?: Record<string, unknown>;
     }
   ) => void;
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
@@ -379,6 +382,7 @@ export function PartSwitch({
                     callTool(serverId ?? "offline-view", toolName, params)
                 : undefined
             }
+            onAppToolInvocationChange={onAppToolInvocationChange}
             onWidgetStateChange={interactive ? onWidgetStateChange : undefined}
             onModelContextUpdate={
               interactive ? onModelContextUpdate : undefined

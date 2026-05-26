@@ -585,6 +585,7 @@ chatV2.post("/", async (c) => {
       selectedServers,
       selectedServerIds: bodySelectedServerIds,
       requireToolApproval: bodyRequireToolApproval,
+      respectToolVisibility: bodyRespectToolVisibility,
       chatboxId: bodyChatboxId,
       accessVersion: bodyAccessVersion,
       surface: bodySurface,
@@ -604,6 +605,7 @@ chatV2.post("/", async (c) => {
     let resolvedSystemPrompt = bodySystemPrompt;
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
+    let resolvedRespectToolVisibility = bodyRespectToolVisibility;
     let resolvedModelOverride: typeof model | null = null;
     // See web/chat-v2 for rationale: body is authoritative for direct
     // chat (sourced from the project default), host overrides for
@@ -620,6 +622,19 @@ chatV2.post("/", async (c) => {
         });
         if (runtime.ok) {
           const cfg = runtime.config;
+          if (
+            bodyRequireToolApproval !== undefined &&
+            cfg.requireToolApproval !== bodyRequireToolApproval
+          ) {
+            logger.warn(
+              "[mcp/chat-v2] client requireToolApproval differs from host; using host value",
+              {
+                chatboxId: bodyChatboxId,
+                body: bodyRequireToolApproval,
+                host: cfg.requireToolApproval,
+              }
+            );
+          }
           resolvedSystemPrompt = cfg.systemPrompt;
           resolvedTemperatureOverride = cfg.temperature;
           resolvedRequireToolApproval = cfg.requireToolApproval;
@@ -644,6 +659,22 @@ chatV2.post("/", async (c) => {
               );
             }
             resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
+          }
+          if (cfg.respectToolVisibility !== undefined) {
+            if (
+              bodyRespectToolVisibility !== undefined &&
+              cfg.respectToolVisibility !== bodyRespectToolVisibility
+            ) {
+              logger.warn(
+                "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: bodyRespectToolVisibility,
+                  host: cfg.respectToolVisibility,
+                }
+              );
+            }
+            resolvedRespectToolVisibility = cfg.respectToolVisibility;
           }
           // See web/chat-v2 for rationale: host's modelId wins on
           // chatbox-bound turns. Built-in catalog hit → full
@@ -687,6 +718,7 @@ chatV2.post("/", async (c) => {
     const systemPrompt = resolvedSystemPrompt;
     const temperature = resolvedTemperatureOverride;
     const requireToolApproval = resolvedRequireToolApproval;
+    const respectToolVisibility = resolvedRespectToolVisibility;
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
@@ -771,6 +803,7 @@ chatV2.post("/", async (c) => {
         systemPrompt,
         temperature,
         requireToolApproval,
+        respectToolVisibility,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
         // Body for direct chat (project default), host-re-resolved for
@@ -828,6 +861,7 @@ chatV2.post("/", async (c) => {
           requestedTemperature: temperature,
           resolvedTemperature,
           requireToolApproval,
+          respectToolVisibility,
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
@@ -914,6 +948,7 @@ chatV2.post("/", async (c) => {
                         systemPrompt,
                         temperature,
                         requireToolApproval,
+                        respectToolVisibility,
                         selectedServers,
                       },
                       ...(directHostConfig
@@ -998,6 +1033,7 @@ chatV2.post("/", async (c) => {
                       systemPrompt,
                       temperature,
                       requireToolApproval,
+                      respectToolVisibility,
                       selectedServers,
                     },
                     ...(directHostConfig
@@ -1137,6 +1173,7 @@ chatV2.post("/", async (c) => {
                       systemPrompt,
                       temperature,
                       requireToolApproval,
+                      respectToolVisibility,
                       selectedServers,
                     },
                     ...(directHostConfig

@@ -2765,6 +2765,57 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     }
   );
 
+  it("reports widget-initiated server tool calls for transcript rendering", async () => {
+    const onCallTool = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "tool ok" }],
+    });
+    const onAppToolInvocationChange = vi.fn();
+
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider value={{ serverTools: {} }}>
+        <MCPAppsRenderer
+          {...baseProps}
+          onCallTool={onCallTool}
+          onAppToolInvocationChange={onAppToolInvocationChange}
+        />
+      </ChatboxHostCapabilitiesOverrideProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.oncalltool).not.toBeNull();
+    });
+
+    await act(async () => {
+      await mockBridge.oncalltool({
+        name: "transparency-test",
+        arguments: { value: 1 },
+      });
+    });
+
+    expect(onCallTool).toHaveBeenCalledWith("transparency-test", { value: 1 });
+    expect(onAppToolInvocationChange).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        id: "call-1:app-tool:0",
+        parentToolCallId: "call-1",
+        toolName: "transparency-test",
+        input: { value: 1 },
+        status: "running",
+      })
+    );
+    expect(onAppToolInvocationChange).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: "call-1:app-tool:0",
+        parentToolCallId: "call-1",
+        toolName: "transparency-test",
+        input: { value: 1 },
+        output: { content: [{ type: "text", text: "tool ok" }] },
+        status: "success",
+      })
+    );
+  });
+
   it("registers all three serverResources handlers under a single cap", async () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{ serverResources: {} }}>

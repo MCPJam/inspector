@@ -24,6 +24,7 @@ import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assist
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { CopilotMessageHeader } from "./copilot-message-header";
+import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
 type MessagePart = UIMessage["parts"][number];
@@ -43,6 +44,7 @@ interface MessageViewProps {
       structuredContent?: Record<string, unknown>;
     }
   ) => void;
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
@@ -134,6 +136,7 @@ function areMessageViewPropsEqual(
     prev.toolServerMap === next.toolServerMap &&
     prev.onWidgetStateChange === next.onWidgetStateChange &&
     prev.onModelContextUpdate === next.onModelContextUpdate &&
+    prev.onAppToolInvocationChange === next.onAppToolInvocationChange &&
     prev.pipWidgetId === next.pipWidgetId &&
     prev.fullscreenWidgetId === next.fullscreenWidgetId &&
     prev.onRequestPip === next.onRequestPip &&
@@ -166,6 +169,7 @@ function MessageViewImpl({
   toolServerMap,
   onWidgetStateChange,
   onModelContextUpdate,
+  onAppToolInvocationChange,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -232,6 +236,7 @@ function MessageViewImpl({
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
                 onModelContextUpdate={onModelContextUpdate}
+                onAppToolInvocationChange={onAppToolInvocationChange}
                 pipWidgetId={pipWidgetId}
                 fullscreenWidgetId={fullscreenWidgetId}
                 onRequestPip={onRequestPip}
@@ -265,6 +270,7 @@ function MessageViewImpl({
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
                 onModelContextUpdate={onModelContextUpdate}
+                onAppToolInvocationChange={onAppToolInvocationChange}
                 pipWidgetId={pipWidgetId}
                 fullscreenWidgetId={fullscreenWidgetId}
                 onRequestPip={onRequestPip}
@@ -343,6 +349,7 @@ function MessageViewImpl({
                   toolServerMap={toolServerMap}
                   onWidgetStateChange={onWidgetStateChange}
                   onModelContextUpdate={onModelContextUpdate}
+                  onAppToolInvocationChange={onAppToolInvocationChange}
                   pipWidgetId={pipWidgetId}
                   fullscreenWidgetId={fullscreenWidgetId}
                   onRequestPip={onRequestPip}

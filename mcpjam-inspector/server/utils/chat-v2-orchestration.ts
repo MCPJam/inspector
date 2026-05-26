@@ -449,6 +449,13 @@ export interface PrepareChatV2Options {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  /**
+   * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering.
+   * `undefined` or `true` filters app-only tools out of the model tool
+   * set (spec default). Only an explicit `false` opts out — used by the
+   * Cursor template to mirror hosts that don't yet implement visibility.
+   */
+  respectToolVisibility?: boolean;
   customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
@@ -522,6 +529,7 @@ export async function prepareChatV2(
     systemPrompt,
     temperature,
     requireToolApproval,
+    respectToolVisibility,
     customProviders,
     appTools,
   } = options;
@@ -544,7 +552,14 @@ export async function prepareChatV2(
   // bridge but must not appear in the AI SDK tool set. The conversion
   // helper doesn't lift `_meta` onto the AiSdkTool, so we look the
   // metadata back up per (serverId, toolName) from the manager's cache.
-  filterAppOnlyTools(mcpTools, mcpClientManager);
+  //
+  // Gated by the host policy `respectToolVisibility`. `undefined` and
+  // `true` both filter (spec default); only an explicit `false` opts
+  // out — currently the Cursor template, which mirrors real Cursor's
+  // lack of visibility filtering.
+  if (respectToolVisibility !== false) {
+    filterAppOnlyTools(mcpTools, mcpClientManager);
+  }
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     HOSTED_MODE
       ? { tools: {}, systemPromptSection: "" }

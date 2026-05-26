@@ -980,6 +980,7 @@ export function ChatV2Route() {
                 temperature: activeHost.temperature,
                 requireToolApproval: activeHost.requireToolApproval,
                 progressiveToolDiscovery: activeHost.progressiveToolDiscovery,
+                respectToolVisibility: activeHost.respectToolVisibility,
               }
             : undefined
         }

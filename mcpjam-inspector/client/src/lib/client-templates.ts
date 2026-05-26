@@ -726,6 +726,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-sonnet-4.5",
         temperature: 0.7,
         requireToolApproval: false,
+        // Real Cursor (3.4.20 probe) doesn't yet implement SEP-1865
+        // visibility filtering — app-only tools still flow to the model.
+        // Faithful mirror: MCPJam-as-Cursor leaves visibility off so the
+        // inspector behaves the same way. Every other template inherits
+        // the spec-default `true` via emptyHostConfigInputV2.
+        respectToolVisibility: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: matches what real Cursor publishes during MCP

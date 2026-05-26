@@ -656,6 +656,7 @@ export function PlaygroundMain({
     // DTO so flipping it in the host's Agent → Behavior tab takes
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
+    respectToolVisibility: previewedHost?.config?.respectToolVisibility,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -3305,6 +3306,10 @@ export function PlaygroundMain({
                             systemPrompt,
                             temperature,
                             requireToolApproval,
+                            progressiveToolDiscovery:
+                              previewedHost?.config?.progressiveToolDiscovery,
+                            respectToolVisibility:
+                              previewedHost?.config?.respectToolVisibility,
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
