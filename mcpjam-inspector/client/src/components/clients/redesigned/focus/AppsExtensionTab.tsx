@@ -952,7 +952,11 @@ function OpenaiAppsCapabilityMatrix({
       sublineParts.push(`${overrideCount} overridden`);
     }
   }
-  const subline = sublineParts.join(" · ");
+  // When injection is off the subline invites the user to preview the
+  // surface they're missing out on, rather than going silent.
+  const sublineText = injected
+    ? sublineParts.join(" · ")
+    : `Off · expand to preview ${OPENAI_APPS_METHOD_LABELS.length} methods`;
 
   return (
     <div className="rounded-[10px] border border-border bg-background">
@@ -961,44 +965,33 @@ function OpenaiAppsCapabilityMatrix({
           A hairline `border-l` between them telegraphs that they're
           distinct controls — clicking near the Switch can't open the
           disclosure because the Switch lives outside the disclosure
-          button entirely. When injection is off the disclosure renders
-          as static (chevron hidden, no hover) since the method list is
-          meaningless without injection. */}
+          button entirely. The disclosure stays expandable even when
+          injection is off so users can preview the window.openai surface
+          they'd gain by enabling it (rows render read-only in that case). */}
       <div className="flex items-stretch border-b border-border">
-        {injected ? (
-          <button
-            type="button"
-            onClick={() => setMethodsOpen((v) => !v)}
-            aria-expanded={methodsOpen}
-            aria-controls="apps-extension-openai-methods"
-            className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
-          >
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[12px] font-medium">
-                Inject <span className="font-mono">window.openai</span>
-              </span>
-              {subline ? (
-                <span className="text-[11px] text-muted-foreground">
-                  {subline}
-                </span>
-              ) : null}
-            </div>
-            <ChevronDown
-              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
-                methodsOpen ? "rotate-180" : ""
-              }`}
-            />
-          </button>
-        ) : (
-          <div className="flex flex-1 items-center px-3.5 py-2.5">
-            <label
-              htmlFor="apps-extension-openai-toggle"
-              className="text-[12px] font-medium"
-            >
+        <button
+          type="button"
+          onClick={() => setMethodsOpen((v) => !v)}
+          aria-expanded={methodsOpen}
+          aria-controls="apps-extension-openai-methods"
+          className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
+        >
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[12px] font-medium">
               Inject <span className="font-mono">window.openai</span>
-            </label>
+            </span>
+            {sublineText ? (
+              <span className="text-[11px] text-muted-foreground">
+                {sublineText}
+              </span>
+            ) : null}
           </div>
-        )}
+          <ChevronDown
+            className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+              methodsOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
         <div className="flex items-center border-l border-border pl-3 pr-3.5">
           <Switch
             id="apps-extension-openai-toggle"
@@ -1010,61 +1003,67 @@ function OpenaiAppsCapabilityMatrix({
       </div>
 
       {/* Per-method matrix — expand to override individual methods on
-          top of the host template's defaults. */}
-      {injected ? (
-        <>
-          {methodsOpen ? (
-            <>
-              <div id="apps-extension-openai-methods" className="flex flex-col">
-                {OPENAI_APPS_METHOD_LABELS.map(({ key, label }) => {
-                  const effective = effectiveCapabilities[key];
-                  const presetValue = presetCapabilities[key];
-                  const overridden =
-                    overridesRecord !== undefined && key in overridesRecord;
-                  return (
-                    <div
-                      key={key}
-                      className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
-                    >
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-mono text-[12px]">{label}</span>
-                        {overridden ? (
-                          <span className="w-fit rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
-                            Overridden
-                          </span>
-                        ) : null}
-                      </div>
-                      {key === "requestDisplayMode" ? (
-                        <RequestDisplayModeControl
-                          value={
-                            effective as "all" | "fullscreen-only" | "none"
-                          }
-                          onChange={(next) =>
-                            setMethodOverride(
-                              key,
-                              next === presetValue ? undefined : next
-                            )
-                          }
-                        />
-                      ) : (
-                        <Switch
-                          checked={Boolean(effective)}
-                          onCheckedChange={(checked) =>
-                            setMethodOverride(
-                              key,
-                              checked === presetValue ? undefined : checked
-                            )
-                          }
-                          aria-label={label}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
+          top of the host template's defaults. Still expandable when
+          injection is off, but rows render read-only as a preview of the
+          surface enabling injection would provide. */}
+      {methodsOpen ? (
+        <div id="apps-extension-openai-methods" className="flex flex-col">
+          {!injected ? (
+            <div className="border-b border-border/50 bg-muted/30 px-3.5 py-2 text-[11px] text-muted-foreground">
+              Preview — turn on the toggle to inject these into{" "}
+              <span className="font-mono">window.openai</span>.
+            </div>
           ) : null}
-        </>
+          {OPENAI_APPS_METHOD_LABELS.map(({ key, label }) => {
+            const effective = effectiveCapabilities[key];
+            const presetValue = presetCapabilities[key];
+            const overridden =
+              injected &&
+              overridesRecord !== undefined &&
+              key in overridesRecord;
+            return (
+              <div
+                key={key}
+                className={`flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0 ${
+                  injected ? "" : "opacity-60"
+                }`}
+              >
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-mono text-[12px]">{label}</span>
+                  {overridden ? (
+                    <span className="w-fit rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
+                      Overridden
+                    </span>
+                  ) : null}
+                </div>
+                {key === "requestDisplayMode" ? (
+                  <RequestDisplayModeControl
+                    value={effective as "all" | "fullscreen-only" | "none"}
+                    disabled={!injected}
+                    onChange={(next) =>
+                      setMethodOverride(
+                        key,
+                        next === presetValue ? undefined : next
+                      )
+                    }
+                  />
+                ) : (
+                  <Switch
+                    checked={Boolean(effective)}
+                    disabled={!injected}
+                    onCheckedChange={(checked) =>
+                      setMethodOverride(
+                        key,
+                        checked === presetValue ? undefined : checked
+                      )
+                    }
+                    aria-label={label}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : null}
     </div>
   );
@@ -1074,9 +1073,11 @@ function OpenaiAppsCapabilityMatrix({
 function RequestDisplayModeControl({
   value,
   onChange,
+  disabled = false,
 }: {
   value: "all" | "fullscreen-only" | "none";
   onChange: (next: "all" | "fullscreen-only" | "none") => void;
+  disabled?: boolean;
 }) {
   const options: Array<{
     value: "all" | "fullscreen-only" | "none";
@@ -1092,10 +1093,11 @@ function RequestDisplayModeControl({
         <button
           key={opt.value}
           type="button"
+          disabled={disabled}
           className={
             opt.value === value
-              ? "bg-foreground/10 px-2 py-0.5 font-medium"
-              : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
+              ? "bg-foreground/10 px-2 py-0.5 font-medium disabled:cursor-not-allowed"
+              : "px-2 py-0.5 text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent"
           }
           onClick={() => onChange(opt.value)}
         >
