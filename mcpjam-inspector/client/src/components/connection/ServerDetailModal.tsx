@@ -10,7 +10,12 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@mcpjam/design-system/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Loader2 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
@@ -52,7 +57,7 @@ interface ServerDetailModalProps {
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
-    originalServerName: string,
+    originalServerName: string
   ) => Promise<ServerUpdateResult>;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -60,7 +65,7 @@ interface ServerDetailModalProps {
     options?: {
       forceOAuthFlow?: boolean;
       allowInteractiveOAuthFlow?: boolean;
-    },
+    }
   ) => Promise<void>;
   existingServerNames: string[];
   projectClientConfig?: Project["clientConfig"];
@@ -115,10 +120,10 @@ export function ServerDetailModal({
   const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    projectId ? ({ projectId } as never) : "skip",
+    projectId ? ({ projectId } as never) : "skip"
   ) as ProjectServerConfigDto | null | undefined;
   const setProjectServerConfigMutation = useMutation(
-    "projectServerConfig:setConfig" as never,
+    "projectServerConfig:setConfig" as never
   ) as unknown as (args: {
     projectId: string;
     input: ProjectServerConfigInput;
@@ -130,13 +135,15 @@ export function ServerDetailModal({
   // `sharedProjectServersRecord[name]?._id` and passes it down as
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
-  const currentMcpProtocolVersionOverride = useMemo<McpProtocolVersion | undefined>(
+  const currentMcpProtocolVersionOverride = useMemo<
+    McpProtocolVersion | undefined
+  >(
     () =>
       serverId
         ? (projectServerConfigDto?.overrides?.[serverId]
             ?.mcpProtocolVersionOverride as McpProtocolVersion | undefined)
         : undefined,
-    [projectServerConfigDto, serverId],
+    [projectServerConfigDto, serverId]
   );
   // Host default — prefer the explicit prop passed by the Servers tab
   // (which has direct access to `previewedHost.config.mcpProfile`),
@@ -148,6 +155,9 @@ export function ServerDetailModal({
   const activeMcpProfile = useActiveMcpProfile();
   const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
+  const canEditMcpProtocolVersionOverride = Boolean(
+    projectId && serverId && projectServerConfigDto !== undefined
+  );
 
   // Pending reconnect bookkeeping for the override-save → reconnect
   // race (see `handleMcpProtocolVersionOverrideChange` below). Holds the
@@ -168,7 +178,7 @@ export function ServerDetailModal({
     void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
       () => {
         // Reconnect failures surface their own toast inside the handler.
-      },
+      }
     );
   }, [
     currentMcpProtocolVersionOverride,
@@ -178,11 +188,11 @@ export function ServerDetailModal({
   ]);
 
   const handleMcpProtocolVersionOverrideChange = async (
-    next: McpProtocolVersion | undefined,
+    next: McpProtocolVersion | undefined
   ): Promise<void> => {
     if (!projectId) {
       toast.error(
-        "Wire mode override requires a project context; cannot save without projectId.",
+        "Wire mode override requires a project context; cannot save without projectId."
       );
       return;
     }
@@ -197,7 +207,7 @@ export function ServerDetailModal({
     // hint instead.
     if (projectServerConfigDto === undefined) {
       toast.error(
-        "Project configuration is still loading. Try again in a moment.",
+        "Project configuration is still loading. Try again in a moment."
       );
       return;
     }
@@ -208,12 +218,6 @@ export function ServerDetailModal({
     // yet for this project) — that case is genuinely the empty
     // baseline.
     const currentServerIds = projectServerConfigDto?.serverIds ?? [];
-    if (!currentServerIds.includes(serverId)) {
-      toast.error(
-        "Enable auto-connect for this server first to set a per-server protocol override.",
-      );
-      return;
-    }
     const currentOverrides = projectServerConfigDto?.overrides ?? {};
     const existingEntry = currentOverrides[serverId] ?? {};
     const updatedEntry: ProjectServerOverrideEntry = {
@@ -233,10 +237,18 @@ export function ServerDetailModal({
     };
     if (hasContent) nextOverrides[serverId] = updatedEntry;
     else delete nextOverrides[serverId];
+    // Backend validation requires override keys to be members of `serverIds`.
+    // If the user pins a protocol version for a non-auto-connected server,
+    // enroll this server alongside the override so the pin can be saved before
+    // the currently failing connection succeeds.
+    const nextServerIds =
+      hasContent && !currentServerIds.includes(serverId)
+        ? [...currentServerIds, serverId]
+        : currentServerIds;
     try {
       await setProjectServerConfigMutation({
         projectId,
-        input: { serverIds: currentServerIds, overrides: nextOverrides },
+        input: { serverIds: nextServerIds, overrides: nextOverrides },
       });
       // Reconnect-after-save race: `onReconnect` ultimately reads from
       // `activeHostConfig.serverConnectionOverrides` to compute the new
@@ -259,7 +271,9 @@ export function ServerDetailModal({
       window.setTimeout(() => {
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
-          void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(() => {});
+          void onReconnect(server.name, {
+            allowInteractiveOAuthFlow: false,
+          }).catch(() => {});
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the
@@ -269,7 +283,7 @@ export function ServerDetailModal({
       toast.error(
         err instanceof Error
           ? err.message
-          : "Failed to update wire mode override",
+          : "Failed to update wire mode override"
       );
     }
   };
@@ -313,7 +327,7 @@ export function ServerDetailModal({
           setToolsLoadError(
             error instanceof Error
               ? error.message
-              : "Failed to load tools metadata",
+              : "Failed to load tools metadata"
           );
           setToolsData(null);
         }
@@ -334,7 +348,7 @@ export function ServerDetailModal({
   const handleSave = async () => {
     if (isDuplicateServerName) {
       toast.error(
-        `A server named "${trimmedName}" already exists. Choose a different name.`,
+        `A server named "${trimmedName}" already exists. Choose a different name.`
       );
       return;
     }
@@ -359,7 +373,7 @@ export function ServerDetailModal({
 
       if (formState.clientSecret) {
         const clientSecretError = formState.validateClientSecret(
-          formState.clientSecret,
+          formState.clientSecret
         );
         if (clientSecretError) {
           toast.error(clientSecretError);
@@ -503,8 +517,8 @@ export function ServerDetailModal({
                   {isReconnecting
                     ? "Connecting..."
                     : server.connectionStatus === "failed"
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
+                    ? `${connectionStatusLabel} (${server.retryCount})`
+                    : connectionStatusLabel}
                 </span>
               </span>
               <Switch
@@ -558,10 +572,11 @@ export function ServerDetailModal({
                     isDuplicateServerName={isDuplicateServerName}
                     projectId={projectId}
                     hostedServerId={hostedServerId}
-                    mcpProtocolVersionOverride={currentMcpProtocolVersionOverride}
+                    mcpProtocolVersionOverride={
+                      currentMcpProtocolVersionOverride
+                    }
                     onMcpProtocolVersionOverrideChange={
-                      projectId && serverId &&
-                      projectServerConfigDto?.serverIds.includes(serverId)
+                      canEditMcpProtocolVersionOverride
                         ? handleMcpProtocolVersionOverrideChange
                         : undefined
                     }
@@ -578,7 +593,9 @@ export function ServerDetailModal({
                 }}
               >
                 <Button
-                  type={isConnected && !formState.hasChanges ? "button" : "submit"}
+                  type={
+                    isConnected && !formState.hasChanges ? "button" : "submit"
+                  }
                   onClick={
                     isConnected && !formState.hasChanges
                       ? () =>

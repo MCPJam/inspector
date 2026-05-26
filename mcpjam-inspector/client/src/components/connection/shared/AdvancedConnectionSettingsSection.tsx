@@ -50,7 +50,7 @@ interface AdvancedConnectionSettingsSectionProps {
   onUpdateHeader?: (
     index: number,
     field: "key" | "value",
-    value: string,
+    value: string
   ) => void;
   clientCapabilitiesOverrideEnabled?: boolean;
   onClientCapabilitiesOverrideEnabledChange?: (enabled: boolean) => void;
@@ -77,7 +77,7 @@ interface AdvancedConnectionSettingsSectionProps {
    */
   mcpProtocolVersionOverride?: McpProtocolVersion;
   onMcpProtocolVersionOverrideChange?: (
-    version: McpProtocolVersion | undefined,
+    version: McpProtocolVersion | undefined
   ) => void;
   /**
    * Transport kind of this server. Stateless options are HTTP-POST only,
@@ -118,7 +118,8 @@ export function AdvancedConnectionSettingsSection({
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
   const showProtocolVersionControl = showMcpProtocolVersionOverride;
-  const canEditProtocolVersion = onMcpProtocolVersionOverrideChange !== undefined;
+  const canEditProtocolVersion =
+    onMcpProtocolVersionOverrideChange !== undefined;
   // "Draft" is Streamable HTTP POST only — picking it on stdio / sse
   // would fail at construction with `StatelessRequiresHttpTransport`.
   // Hide it on non-HTTP transports as the user-friendly safety net.
@@ -131,8 +132,8 @@ export function AdvancedConnectionSettingsSection({
     mcpProtocolVersionOverride === "DRAFT-2026-v1"
       ? "draft"
       : mcpProtocolVersionOverride === "2025-11-25"
-        ? "latest"
-        : "inherit";
+      ? "latest"
+      : "inherit";
 
   return (
     <div className="space-y-0">
@@ -196,7 +197,9 @@ export function AdvancedConnectionSettingsSection({
                     >
                       <Input
                         value={header.key}
-                        onChange={(e) => onUpdateHeader(index, "key", e.target.value)}
+                        onChange={(e) =>
+                          onUpdateHeader(index, "key", e.target.value)
+                        }
                         placeholder="Key"
                         className="h-7 flex-1 text-xs"
                       />
@@ -291,8 +294,8 @@ export function AdvancedConnectionSettingsSection({
                     next === "draft"
                       ? "DRAFT-2026-v1"
                       : next === "latest"
-                        ? "2025-11-25"
-                        : undefined,
+                      ? "2025-11-25"
+                      : undefined
                   );
                 }}
               >
@@ -309,13 +312,14 @@ export function AdvancedConnectionSettingsSection({
               </Select>
               {!isHttp && (
                 <p className="text-xs text-muted-foreground">
-                  Draft requires Streamable HTTP — only Latest is
-                  selectable for this transport.
+                  Draft requires Streamable HTTP — only Latest is selectable for
+                  this transport.
                 </p>
               )}
               {!canEditProtocolVersion && (
                 <p className="text-xs text-muted-foreground">
-                  Enable auto-connect for this server to set a per-server protocol override.
+                  Project configuration must finish loading before setting a
+                  per-server protocol override.
                 </p>
               )}
             </div>
