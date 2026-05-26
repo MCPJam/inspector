@@ -1220,22 +1220,35 @@ function parseSingleMessage(text: string): JsonRpcMessage {
 }
 
 /**
- * True when `msg` looks like a JSON-RPC 2.0 *response* envelope matching
- * the request `id` we sent — `jsonrpc: "2.0"`, matching `id`, and either
- * a `result` field (success) or a well-formed `error` object (protocol
- * error like -32004 / -32001). Used to decide whether a non-2xx body
- * should still be unwrapped as a JSON-RPC error (spec-conformant case)
- * or surfaced as a transport error with HTTP status preserved (proxy /
- * CDN error pages that happen to claim `application/json`).
+ * True when `msg` looks like a JSON-RPC 2.0 *response* envelope —
+ * `jsonrpc: "2.0"` plus either a `result` field (success) or a
+ * well-formed `error` object (protocol error like -32004 / -32001).
+ * Used to decide whether a non-2xx body should still be unwrapped as a
+ * JSON-RPC error (spec-conformant case) or surfaced as a transport
+ * error with HTTP status preserved (proxy / CDN error pages that
+ * happen to claim `application/json`).
+ *
+ * We do NOT gate on id equality here, only on shape: the
+ * downstream `unwrapJsonRpcResult` already handles id-mismatch /
+ * id-null cases (it has the matching logic and can raise typed
+ * errors). Real-world servers (including Excalidraw at this
+ * writing) return `id: null` on `-32004 Unsupported protocol
+ * version` errors even though the spec says the id should be
+ * echoed when parseable — gating the envelope check on id match
+ * would mis-classify those as transport errors and lose the
+ * descriptive `-32004` message in favor of a generic "HTTP 400".
+ *
+ * The `expectedId` parameter is retained for symmetry with the
+ * unwrap path (callers pass both together) and to leave room for
+ * stricter validation behind a feature flag later.
  */
 function isJsonRpcResponseEnvelope(
   msg: unknown,
-  expectedId: number | string,
+  _expectedId: number | string,
 ): boolean {
   if (!msg || typeof msg !== "object") return false;
   const m = msg as Record<string, unknown>;
   if (m.jsonrpc !== "2.0") return false;
-  if (m.id !== expectedId) return false;
   if ("result" in m) return true;
   if ("error" in m) {
     const e = m.error;

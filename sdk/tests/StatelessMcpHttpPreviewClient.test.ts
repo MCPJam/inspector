@@ -812,4 +812,67 @@ describe("StatelessMcpHttpPreviewClient", () => {
       await new Promise<void>((r) => proxyServer.close(() => r()));
     }
   });
+
+  test("non-2xx JSON-RPC error envelope with id:null still unwraps as a typed JSON-RPC error", async () => {
+    // Real-world regression: Excalidraw's MCP server returns
+    // `{"jsonrpc":"2.0","id":null,"error":{"code":-32004,...}}` on
+    // an unsupported protocol version, even though the spec says the
+    // id should be echoed when parseable. If the envelope predicate
+    // gates on id equality, this gets mis-classified as a transport
+    // error (HTTP 400) and the descriptive -32004 message disappears
+    // in favor of a generic "HTTP 400 Bad Request" string. The fix
+    // relaxes the predicate to only check shape (jsonrpc + error.code
+    // or result), so id:null spec-non-conformant servers still get
+    // typed protocol errors propagated to callers.
+    const excalidrawLikeServer: Server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          // id intentionally null even though body.id was a number — this
+          // is the Excalidraw-shaped non-conformance.
+          id: null,
+          error: {
+            code: -32004,
+            message:
+              "Unsupported protocol version: DRAFT-2026-v1 (supported versions: 2025-11-25, 2025-06-18)",
+          },
+        }),
+      );
+      void body;
+    });
+    await new Promise<void>((resolve, reject) => {
+      excalidrawLikeServer.once("error", reject);
+      excalidrawLikeServer.listen(0, "127.0.0.1", () => resolve());
+    });
+    const port = (excalidrawLikeServer.address() as AddressInfo).port;
+    const excalidrawClient = new StatelessMcpHttpPreviewClient({
+      url: new URL(`http://127.0.0.1:${port}/`),
+      clientInfo: { name: "test-client", version: "0.0.1" },
+      serverId: "excalidraw-fixture",
+      discoverOnConnect: false,
+    });
+    try {
+      await excalidrawClient.connect(undefined as never);
+      let captured: unknown;
+      try {
+        await excalidrawClient.listTools();
+      } catch (err) {
+        captured = err;
+      }
+      expect(captured).toBeInstanceOf(Error);
+      // The typed -32004 propagates — NOT an HTTP 400 transport error.
+      expect((captured as Error & { code?: number }).code).toBe(-32004);
+      expect((captured as Error).message).toMatch(/Unsupported protocol version/);
+      // `.status` must NOT be set (this is a protocol-level error, not a
+      // transport error — preserves the existing diagnostic contract).
+      expect((captured as Error & { status?: number }).status).toBeUndefined();
+    } finally {
+      await excalidrawClient.close();
+      await new Promise<void>((r) => excalidrawLikeServer.close(() => r()));
+    }
+  });
 });
