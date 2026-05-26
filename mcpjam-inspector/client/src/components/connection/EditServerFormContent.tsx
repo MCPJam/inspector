@@ -28,7 +28,9 @@ interface EditServerFormContentProps {
    * server's own config blob — wire mode is a project-server-refs field.
    */
   mcpProtocolVersionOverride?: McpProtocolVersion;
-  onMcpProtocolVersionOverrideChange?: (mode: McpProtocolVersion | undefined) => void;
+  onMcpProtocolVersionOverrideChange?: (
+    mode: McpProtocolVersion | undefined
+  ) => void;
 }
 
 export function EditServerFormContent({
@@ -164,9 +166,7 @@ export function EditServerFormContent({
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
             oauthRegistrationMode={formState.oauthRegistrationMode}
-            onOauthRegistrationModeChange={
-              formState.setOauthRegistrationMode
-            }
+            onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
               formState.setUseCustomClientId(checked);
@@ -248,10 +248,8 @@ export function EditServerFormContent({
         }
         /* Render the row whenever the flag is on, regardless of whether
            a setter is wired. When `onMcpProtocolVersionOverrideChange` is
-           absent (no project, or server isn't in the project's
-           auto-connect set), the Switch disables with the existing
-           "edit mcpProtocolVersion in the JSON" hint — the affordance has to
-           be visible to be discoverable. */
+           absent (no project/server id, or project config still loading), the
+           select disables but remains visible for discoverability. */
         showMcpProtocolVersionOverride={Boolean(statelessMcpEnabled)}
         mcpProtocolVersionOverride={mcpProtocolVersionOverride}
         onMcpProtocolVersionOverrideChange={onMcpProtocolVersionOverrideChange}
