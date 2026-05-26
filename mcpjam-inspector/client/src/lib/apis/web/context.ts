@@ -1,35 +1,50 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
+import {
+  getDefaultClientCapabilities,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
-export interface HostedApiContext {
-  workspaceId: string | null;
+export interface ApiContext {
+  projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
+  /**
+   * Resolved MCP profile pins. Single-server hosted routes forward these
+   * fields so ephemeral managers use the same wire mode as connect/validate.
+   */
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
-  guestOauthTokensByServerName?: Record<string, string>;
-  shareToken?: string;
-  chatboxToken?: string;
+  /**
+   * Resolved chatbox identity. After /api/web/chatboxes/redeem resolves,
+   * the host clones these onto every chatbox-aware API call. The URL link
+   * token is consumed only at redemption time and never threaded onto the
+   * read path.
+   */
+  chatboxId?: string;
+  accessVersion?: number;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
   hasSession?: boolean;
-  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
-  serverConfigs?: Record<string, unknown>;
 }
 
-type HostedAccessScope = "workspace_member" | "chat_v2";
+// chat_v2 scope is required for all non-guest API requests that write to chat history.
+type HostedAccessScope = "project_member" | "chat_v2";
 
-const EMPTY_CONTEXT: HostedApiContext = {
-  workspaceId: null,
+const EMPTY_CONTEXT: ApiContext = {
+  projectId: null,
   serverIdsByName: {},
 };
 
-let hostedApiContext: HostedApiContext = EMPTY_CONTEXT;
+let apiContext: ApiContext = EMPTY_CONTEXT;
 let cachedBearerToken: { token: string; expiresAt: number } | null = null;
 
 const TOKEN_CACHE_TTL_MS = 30_000;
@@ -38,114 +53,53 @@ export function resetTokenCache() {
   cachedBearerToken = null;
 }
 
-function readStoredGuestOAuthAccessToken(
-  serverName: string,
-): string | undefined {
-  if (typeof window === "undefined") return undefined;
-
-  try {
-    const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
-    if (!raw) return undefined;
-
-    const parsed = JSON.parse(raw) as { access_token?: unknown };
-    if (
-      typeof parsed.access_token === "string" &&
-      parsed.access_token.trim().length > 0
-    ) {
-      return parsed.access_token;
-    }
-  } catch {
-    // Ignore malformed localStorage data and fall back to in-memory context.
-  }
-
-  return undefined;
-}
-
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
   }
 }
 
-function assertHostedClientConfigSynced() {
-  if (!hostedApiContext.clientConfigSyncPending) {
+function assertClientConfigSynced() {
+  if (!apiContext.clientConfigSyncPending) {
     return;
   }
 
   throw new Error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
 }
 
-/**
- * True when running in hosted mode as a direct guest connection.
- * Direct guests store server configs in localStorage and connect directly
- * without Convex authorization.
- */
-export function isGuestMode(): boolean {
-  if (!HOSTED_MODE) return false;
-  return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
-}
-
-export function shouldRetryHostedAuth401(): boolean {
-  if (!HOSTED_MODE) return false;
-  return !hostedApiContext.isAuthenticated;
+export function shouldRetryApiAuth401(): boolean {
+  // Retry the auth bootstrap on 401 whenever the actor isn't yet authenticated
+  // and no session is in flight — applies to both hosted guests and local CLI
+  // users post unification.
+  return !apiContext.isAuthenticated && !apiContext.hasSession;
 }
 
 /**
- * Hosted guest access comes in 2 shapes:
- * - direct guest: no workspace, direct serverUrl requests
- * - hosted shared/chatbox guest: workspace-scoped share or chatbox token,
- *   Convex-backed requests
+ * Hosted guest access uses the same Convex-backed project/server request shape
+ * as signed-in users. Unauthenticated hosted actors still authenticate with the
+ * guest JWT; they no longer send direct serverUrl request bodies.
+ *
+ * The gate is `!isAuthenticated && !hasSession`. The previous design treated a
+ * set `projectId` as proof of an authenticated session; that assumption no
+ * longer holds because guests can own projects. `hasSession` protects the
+ * WorkOS bootstrap window from reusing a stale guest bearer while a signed-in
+ * session is still resolving.
  */
 function hasHostedGuestAccess(): boolean {
-  if (!HOSTED_MODE) return false;
-  if (hostedApiContext.isAuthenticated) return false;
-  return (
-    !hostedApiContext.workspaceId ||
-    !!hostedApiContext.shareToken ||
-    !!hostedApiContext.chatboxToken
-  );
+  // Now applies to both hosted and local: any actor without a WorkOS session
+  // gets guest access. The local CLI mints its own guest bearer via the same
+  // /api/web/guest-session endpoint hosted uses.
+  if (apiContext.isAuthenticated) return false;
+  if (apiContext.hasSession) return false;
+  return true;
 }
 
-/**
- * Prefer the guest bearer for both direct guests and shared guests.
- * Shared guests still use Convex-backed requests; they only differ in how the
- * bearer is obtained.
- */
 function shouldPreferGuestBearer(): boolean {
   return hasHostedGuestAccess();
 }
 
-export function buildGuestServerRequest(
-  config: unknown,
-  oauthAccessToken?: string,
-  clientCapabilities?: Record<string, unknown>,
-  serverName?: string,
-): Record<string, unknown> {
-  const httpConfig = config as {
-    url?: string | URL;
-    requestInit?: { headers?: Record<string, string> };
-  };
-  if (!httpConfig.url) {
-    throw new Error("Guest server config must have a URL");
-  }
-  const urlStr =
-    typeof httpConfig.url === "string"
-      ? httpConfig.url
-      : httpConfig.url.toString();
-  const headers = httpConfig.requestInit?.headers;
-  return {
-    serverUrl: urlStr,
-    ...(serverName ? { serverName } : {}),
-    ...(headers && Object.keys(headers).length > 0
-      ? { serverHeaders: headers }
-      : {}),
-    ...(oauthAccessToken ? { oauthAccessToken } : {}),
-    ...(clientCapabilities ? { clientCapabilities } : {}),
-  };
-}
-
-export function setHostedApiContext(next: HostedApiContext | null): void {
-  hostedApiContext = next
+export function setApiContext(next: ApiContext | null): void {
+  apiContext = next
     ? {
         ...next,
         clientCapabilities:
@@ -157,36 +111,68 @@ export function setHostedApiContext(next: HostedApiContext | null): void {
 }
 
 /**
- * Eagerly inject a server-name → server-ID mapping into the hosted context,
+ * Eagerly inject a server-name → server-ID mapping into the API context,
  * bridging the gap between when a Convex mutation completes and when the
  * reactive subscription propagates the update through React.
  *
- * The next `setHostedApiContext` call from the subscription will overwrite
+ * Applies to both hosted and local: post unification, local mode also drives
+ * connect/reconnect through the resolver path when a Convex serverId is known,
+ * so it benefits from the same eager injection. Without this, the immediate
+ * post-save connect would fall back to the legacy `{serverConfig, serverId}`
+ * shape for one tick.
+ *
+ * The next `setApiContext` call from the subscription will overwrite
  * this with identical data, so there is no risk of stale entries.
  */
 export function injectHostedServerMapping(
   serverName: string,
   serverId: string,
 ): void {
-  if (!HOSTED_MODE) return;
-  hostedApiContext = {
-    ...hostedApiContext,
+  apiContext = {
+    ...apiContext,
     serverIdsByName: {
-      ...hostedApiContext.serverIdsByName,
+      ...apiContext.serverIdsByName,
       [serverName]: serverId,
     },
   };
 }
 
-export function getHostedWorkspaceId(): string {
+export function getHostedProjectId(): string {
   assertHostedMode();
 
-  const workspaceId = hostedApiContext.workspaceId;
-  if (!workspaceId) {
-    throw new Error("Hosted workspace is not available yet");
+  const projectId = apiContext.projectId;
+  if (!projectId) {
+    throw new BootstrapNotReadyError(
+      "provisioning-project",
+      "hosted projectId is not in the API context yet",
+    );
   }
 
-  return workspaceId;
+  return projectId;
+}
+
+/**
+ * Mode-agnostic project + server resolution used by code paths that need to
+ * opt into the new `{projectId, serverId}` shape when context is populated,
+ * but fall back to legacy when it isn't (e.g., during the post-migration
+ * window or when a brand-new server hasn't been pushed to Convex yet).
+ *
+ * Returns null when either projectId is missing or the server name doesn't
+ * resolve to a Convex Id. Callers handle null by using the legacy shape.
+ */
+export function tryResolveProjectServer(
+  serverNameOrId: string,
+): { projectId: string; serverId: string } | null {
+  const projectId = apiContext.projectId;
+  if (!projectId) return null;
+  const direct = apiContext.serverIdsByName[serverNameOrId];
+  if (direct) return { projectId, serverId: direct };
+  if (
+    Object.values(apiContext.serverIdsByName).includes(serverNameOrId)
+  ) {
+    return { projectId, serverId: serverNameOrId };
+  }
+  return null;
 }
 
 /**
@@ -205,17 +191,17 @@ function shouldIncludeHostedRefInNotFoundError(serverNameOrId: string): boolean 
 }
 
 const HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE =
-  "Hosted server not found. The server is not in your hosted workspace, or the server list is still loading.";
+  "Hosted server not found. The server is not in your hosted project, or the server list is still loading.";
 
 export function resolveHostedServerId(serverNameOrId: string): string {
   assertHostedMode();
 
-  const mapped = hostedApiContext.serverIdsByName[serverNameOrId];
+  const mapped = apiContext.serverIdsByName[serverNameOrId];
   if (mapped) return mapped;
 
   // Allow direct server IDs for callers that already resolved names.
   if (
-    Object.values(hostedApiContext.serverIdsByName).includes(serverNameOrId)
+    Object.values(apiContext.serverIdsByName).includes(serverNameOrId)
   ) {
     return serverNameOrId;
   }
@@ -241,7 +227,7 @@ export function resolveHostedServerIds(serverNamesOrIds: string[]): string[] {
 }
 
 function findHostedServerName(serverId: string): string | undefined {
-  return Object.entries(hostedApiContext.serverIdsByName).find(
+  return Object.entries(apiContext.serverIdsByName).find(
     ([, mappedId]) => mappedId === serverId,
   )?.[0];
 }
@@ -250,7 +236,7 @@ function findHostedServerName(serverId: string): string | undefined {
  * Resolves a hosted server display name or Convex server document ID to a
  * user-facing label when the server still exists in the current
  * `serverIdsByName` mapping. Returns undefined when the ref cannot be resolved
- * (for example, the server was removed from the workspace).
+ * (for example, the server was removed from the project).
  */
 export function tryGetHostedServerDisplayName(
   serverNameOrId: string,
@@ -264,7 +250,7 @@ export function tryGetHostedServerDisplayName(
     return undefined;
   }
 
-  if (hostedApiContext.serverIdsByName[trimmed] !== undefined) {
+  if (apiContext.serverIdsByName[trimmed] !== undefined) {
     return trimmed;
   }
 
@@ -290,7 +276,7 @@ export function normalizeHostedServerNames(
     }
 
     const serverName =
-      hostedApiContext.serverIdsByName[trimmed] !== undefined
+      apiContext.serverIdsByName[trimmed] !== undefined
         ? trimmed
         : (findHostedServerName(trimmed) ?? trimmed);
     const dedupeKey = serverName.toLowerCase();
@@ -319,7 +305,7 @@ function resolveHostedServerEntries(
     resolved.push({
       serverId,
       serverName:
-        hostedApiContext.serverIdsByName[serverNameOrId] !== undefined
+        apiContext.serverIdsByName[serverNameOrId] !== undefined
           ? serverNameOrId
           : (findHostedServerName(serverId) ?? serverNameOrId),
     });
@@ -329,135 +315,137 @@ function resolveHostedServerEntries(
 }
 
 export function getHostedOAuthToken(serverId: string): string | undefined {
-  return hostedApiContext.oauthTokensByServerId?.[serverId];
+  return apiContext.oauthTokensByServerId?.[serverId];
 }
 
-export function getHostedShareToken(): string | undefined {
-  return hostedApiContext.shareToken;
+export function getHostedChatboxId(): string | undefined {
+  return apiContext.chatboxId;
 }
 
-export function getHostedChatboxToken(): string | undefined {
-  return hostedApiContext.chatboxToken;
+export function getHostedChatboxAccessVersion(): number | undefined {
+  return apiContext.accessVersion;
 }
 
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedShareToken() || getHostedChatboxToken()
-    ? "chat_v2"
-    : undefined;
+  return getHostedChatboxId() ? "chat_v2" : undefined;
 }
 
-export function buildHostedServerRequest(
+export function buildServerRequest(
   serverNameOrId: string,
 ): Record<string, unknown> {
-  // Guest path: use directly-provided server config (no Convex)
-  if (isGuestMode()) {
-    const config = hostedApiContext.serverConfigs?.[serverNameOrId];
-    if (!config) {
-      throw new Error(
-        `No guest server config found for "${serverNameOrId}". ` +
-          "The server may not be loaded yet.",
-      );
-    }
-    // Prefer persisted OAuth tokens so guest requests can keep working even if
-    // React state has not yet synchronized token updates.
-    const oauthToken =
-      readStoredGuestOAuthAccessToken(serverNameOrId) ??
-      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId];
-
-    return buildGuestServerRequest(
-      config,
-      oauthToken,
-      hostedApiContext.clientCapabilities,
-      serverNameOrId,
-    );
-  }
-
-  // Authenticated path: resolve via Convex server mappings
-  assertHostedClientConfigSynced();
+  // Single hosted path: every request — guest or authed — carries
+  // {projectId, serverId}. UI surfaces gate on `useAppReady()` so this
+  // builder is never invoked before bootstrap completes; if it is invoked
+  // early, `getHostedProjectId()` throws BootstrapNotReadyError instead
+  // of emitting a guest-shape body that the server-side projectServerSchema
+  // would reject with a confusing Zod 400.
+  assertClientConfigSynced();
+  // Project id is checked FIRST so a not-yet-bootstrapped caller gets the
+  // typed BootstrapNotReadyError, not a "Hosted server not found" — which
+  // would just confuse the user about what's actually missing.
+  const projectId = getHostedProjectId();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
-  const shareToken = getHostedShareToken();
-  const chatboxToken = getHostedChatboxToken();
+  const chatboxId = getHostedChatboxId();
+  const accessVersion = getHostedChatboxAccessVersion();
   const accessScope = getHostedAccessScope();
   return {
-    workspaceId: getHostedWorkspaceId(),
+    projectId,
     serverId,
     serverName:
-      hostedApiContext.serverIdsByName[serverNameOrId] !== undefined
+      apiContext.serverIdsByName[serverNameOrId] !== undefined
         ? serverNameOrId
         : (findHostedServerName(serverId) ?? serverNameOrId),
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
-    ...(hostedApiContext.clientCapabilities
-      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+    ...(apiContext.clientCapabilities
+      ? { clientCapabilities: apiContext.clientCapabilities }
+      : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(apiContext.mcpProtocolVersionsByServerId?.[serverId]
+      ? {
+          mcpProtocolVersion:
+            apiContext.mcpProtocolVersionsByServerId[serverId],
+        }
       : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
-    ...(chatboxToken ? { chatboxToken } : {}),
+    ...(chatboxId ? { chatboxId } : {}),
+    ...(chatboxId && Number.isFinite(accessVersion)
+      ? { accessVersion }
+      : {}),
   };
 }
 
-export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
-  workspaceId: string;
+export function buildServerBatchRequest(serverNamesOrIds: string[]): {
+  projectId: string;
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  shareToken?: string;
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
 } {
-  assertHostedClientConfigSynced();
+  assertClientConfigSynced();
+  const projectId = getHostedProjectId();
   const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
-  const shareToken = getHostedShareToken();
-  const chatboxToken = getHostedChatboxToken();
+  const chatboxId = getHostedChatboxId();
+  const accessVersion = getHostedChatboxAccessVersion();
   const accessScope = getHostedAccessScope();
   return {
-    workspaceId: getHostedWorkspaceId(),
+    projectId,
     serverIds,
     serverNames,
-    ...(hostedApiContext.clientCapabilities
-      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+    ...(apiContext.clientCapabilities
+      ? { clientCapabilities: apiContext.clientCapabilities }
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
-    ...(chatboxToken ? { chatboxToken } : {}),
+    ...(chatboxId ? { chatboxId } : {}),
+    ...(chatboxId && Number.isFinite(accessVersion)
+      ? { accessVersion }
+      : {}),
   };
 }
 
 export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
-  workspaceId: string;
+  projectId: string;
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  shareToken?: string;
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
 } {
-  assertHostedClientConfigSynced();
+  assertClientConfigSynced();
+  const projectId = getHostedProjectId();
   const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
-  const shareToken = getHostedShareToken();
-  const chatboxToken = getHostedChatboxToken();
+  const chatboxId = getHostedChatboxId();
+  const accessVersion = getHostedChatboxAccessVersion();
   const accessScope = getHostedAccessScope();
 
   return {
-    workspaceId: getHostedWorkspaceId(),
+    projectId,
     serverIds,
     serverNames,
-    ...(hostedApiContext.clientCapabilities
-      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+    ...(apiContext.clientCapabilities
+      ? { clientCapabilities: apiContext.clientCapabilities }
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
-    ...(chatboxToken ? { chatboxToken } : {}),
+    ...(chatboxId ? { chatboxId } : {}),
+    ...(chatboxId && Number.isFinite(accessVersion)
+      ? { accessVersion }
+      : {}),
   };
 }
 
@@ -472,9 +460,10 @@ export function buildHostedOAuthTokensMap(
   return Object.keys(map).length > 0 ? map : undefined;
 }
 
-export async function getHostedAuthorizationHeader(): Promise<string | null> {
-  if (!HOSTED_MODE) return null;
-
+export async function getApiAuthorizationHeader(): Promise<string | null> {
+  // Single bearer-resolution path for hosted and local. authFetch decides
+  // whether to attach the result based on the request's loopback/origin and
+  // whether a token is available; this function never short-circuits on mode.
   const now = Date.now();
   if (cachedBearerToken && cachedBearerToken.expiresAt > now) {
     return `Bearer ${cachedBearerToken.token}`;
@@ -495,7 +484,7 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
   }
 
   // Try WorkOS (logged-in user)
-  const getAccessToken = hostedApiContext.getAccessToken;
+  const getAccessToken = apiContext.getAccessToken;
   if (getAccessToken) {
     try {
       const token = await getAccessToken();

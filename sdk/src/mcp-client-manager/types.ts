@@ -50,6 +50,32 @@ export type BaseServerConfig = {
   timeout?: number;
   /** Client version to report */
   version?: string;
+  /**
+   * Per-server override of `clientInfo` sent in MCP `initialize`. When set,
+   * takes precedence over the manager's `defaultClientName` /
+   * `defaultClientVersion` and the per-server `version`. Extra fields
+   * (e.g. `title`) are passed through verbatim so future spec additions
+   * land here without an SDK bump.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.initialize.clientInfo`.
+   * Leaving this undefined means "use the manager defaults" (which is what
+   * historical callers expect).
+   */
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  /**
+   * Supported protocol versions accept-list passed into the upstream Client
+   * as `ClientOptions.supportedProtocolVersions`. The Client sends
+   * `supportedProtocolVersions[0]` as `initialize.params.protocolVersion`
+   * and accepts any of the listed versions in the server's response.
+   *
+   * Wired into the inspector verbatim from
+   * `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. Order is
+   * semantic — preserve it. A pin like `["2025-11-25", "2025-06-18"]`
+   * proposes the newer version but still accepts the older one if the
+   * server negotiates it; the prior shape (`proposedProtocolVersion:
+   * string`) collapsed this to a singleton and silently broke that case.
+   */
+  supportedProtocolVersions?: string[];
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
@@ -85,7 +111,17 @@ export type StdioServerConfig = BaseServerConfig & {
   refreshToken?: never;
   clientId?: never;
   clientSecret?: never;
+  onUnauthorized?: never;
 };
+
+export type UnauthorizedRefreshResult = {
+  accessToken: string;
+};
+
+export type UnauthorizedRefreshHandler = (args: {
+  serverId: string;
+  error: unknown;
+}) => Promise<UnauthorizedRefreshResult>;
 
 /**
  * Configuration for HTTP-based MCP servers (SSE or Streamable HTTP)
@@ -110,12 +146,32 @@ export type HttpServerConfig = BaseServerConfig & {
   clientId?: string;
   /** OAuth client secret. Optional, used with refreshToken. */
   clientSecret?: string;
+  /**
+   * Optional 401 recovery hook. When provided for access-token based HTTP
+   * configs, MCPClientManager calls it once after an operation fails with a
+   * strict HTTP 401, then rebuilds the transport with the returned token.
+   */
+  onUnauthorized?: UnauthorizedRefreshHandler;
   /** Reconnection options for Streamable HTTP */
   reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
   /** Session ID for Streamable HTTP */
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
   /** Prefer SSE transport over Streamable HTTP */
   preferSSE?: boolean;
+  /**
+   * Pinned MCP protocol version (wire literal that lands in `_meta` +
+   * `MCP-Protocol-Version` header). Absent → SDK default at request
+   * time. Stateful values (per `isStatelessProtocolVersion`) use the
+   * legacy upstream Client + initialize handshake; stateless values
+   * select the preview Streamable HTTP POST transport
+   * (`StatelessMcpHttpPreviewClient`) and are incompatible with
+   * `preferSSE`. Already validated by `isKnownProtocolVersion` at the
+   * trust boundary (`local-server-resolver.ts` + Convex validator);
+   * the manager does not re-validate. Resolved upstream (per-server
+   * override > host default > undefined) and stamped onto the config
+   * passed to `MCPClientManager`.
+   */
+  mcpProtocolVersion?: import("./mcp-protocol-version.js").McpProtocolVersion;
 
   // Discriminator fields - these should never be set for HTTP
   command?: never;
@@ -155,9 +211,16 @@ export type ServerSummary = {
 
 /**
  * Shared state for managed client connections.
+ *
+ * `client` is typed as the `ManagedMcpClient` interface so the manager
+ * can swap between the legacy upstream `Client` (via
+ * `OfficialSdkClientAdapter`) and the stateless preview
+ * (`StatelessMcpHttpPreviewClient`) without per-call branching.
+ * `transport` is `undefined` for the stateless preview path — the
+ * preview owns its own fetch and has no separate Transport object.
  */
 export interface BaseClientState {
-  client?: Client;
+  client?: import("./managed-mcp-client.js").ManagedMcpClient;
   transport?: Transport;
   authProvider?: RefreshTokenOAuthProvider;
 }
@@ -167,7 +230,9 @@ export interface BaseClientState {
  * Retained for compatibility with external type consumers.
  */
 export interface ManagedClientState extends BaseClientState {
-  promise?: Promise<Client>;
+  promise?: Promise<
+    import("./managed-mcp-client.js").ManagedMcpClient
+  >;
 }
 
 /**
@@ -183,8 +248,12 @@ export interface RegisteredServerState {
  */
 export interface LiveClientState extends BaseClientState {
   stdioStderrCleanup?: () => void;
-  connectPromise?: Promise<Client>;
-  retryPromise?: Promise<Client>;
+  connectPromise?: Promise<
+    import("./managed-mcp-client.js").ManagedMcpClient
+  >;
+  retryPromise?: Promise<
+    import("./managed-mcp-client.js").ManagedMcpClient
+  >;
   initializedClientCapabilities?: ClientCapabilityOptions;
 }
 
@@ -238,6 +307,20 @@ export interface MCPClientManagerOptions {
   defaultClientName?: string;
   /** Default client version to report */
   defaultClientVersion?: string;
+  /**
+   * Default `clientInfo` extra fields (e.g. `title`) to advertise to servers.
+   * Per-server `clientInfo.name` / `clientInfo.version` override this. Extra
+   * keys here are merged into the per-server clientInfo at connect time so
+   * future MCP spec additions don't require an SDK bump.
+   */
+  defaultClientInfoExtras?: Record<string, unknown>;
+  /**
+   * Default supported protocol versions accept-list. Per-server
+   * `supportedProtocolVersions` overrides this. When neither is set, the
+   * upstream Client's built-in `SUPPORTED_PROTOCOL_VERSIONS` default is
+   * used and historical behavior is preserved verbatim.
+   */
+  defaultSupportedProtocolVersions?: string[];
   /** Default capabilities to advertise */
   defaultCapabilities?: ClientCapabilityOptions;
   /** Default request timeout in milliseconds */

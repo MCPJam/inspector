@@ -1,5 +1,4 @@
 import { type UIMessage } from "@ai-sdk/react";
-import { generateId } from "ai";
 
 /**
  * Convert a persisted transcript blob (array of message objects from the
@@ -22,7 +21,95 @@ interface TranscriptMessage {
   id?: string;
   role?: string;
   content?: string | TranscriptPart[];
+  /** Stamped by the backend on persisted user messages in shared sessions. */
+  senderUserId?: string;
   [key: string]: unknown;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
+    .join(",")}}`;
+}
+
+function stableHash(value: unknown): string {
+  const input = stableStringify(value);
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function readUiPartToolCallId(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const candidate = part as { toolCallId?: unknown };
+  if (
+    typeof candidate.toolCallId === "string" &&
+    candidate.toolCallId.length > 0
+  ) {
+    return candidate.toolCallId;
+  }
+  return undefined;
+}
+
+function normalizeUiPartForContinuity(part: unknown): unknown {
+  if (!part || typeof part !== "object" || Array.isArray(part)) {
+    return part;
+  }
+
+  const {
+    id: _id,
+    toolCallId: _toolCallId,
+    ...rest
+  } = part as Record<string, unknown>;
+  return rest;
+}
+
+function getUiMessageContinuityKey(message: UIMessage): string {
+  const toolCallIds = (message.parts ?? [])
+    .map(readUiPartToolCallId)
+    .filter((id): id is string => !!id);
+
+  if (toolCallIds.length > 0) {
+    return `${message.role}:tools:${toolCallIds.join("|")}`;
+  }
+
+  return `${message.role}:parts:${stableHash(
+    (message.parts ?? []).map(normalizeUiPartForContinuity)
+  )}`;
+}
+
+function getStableMessageId(msg: TranscriptMessage, index: number): string {
+  if (typeof msg.id === "string" && msg.id.length > 0) {
+    return msg.id;
+  }
+  return `transcript-${index}-${msg.role ?? "unknown"}-${stableHash(
+    msg.content
+  )}`;
+}
+
+function getStableToolCallId(
+  part: TranscriptPart,
+  messageIndex: number,
+  partIndex: number
+): string {
+  const explicitId = readToolCallId(part);
+  if (explicitId) return explicitId;
+
+  return `transcript-tool-${messageIndex}-${partIndex}-${stableHash({
+    args: part.args ?? part.input,
+    toolName: part.toolName,
+  })}`;
 }
 
 function readToolCallId(part: TranscriptPart): string | undefined {
@@ -133,7 +220,10 @@ function extractTextContent(content: unknown): string {
     .join("\n");
 }
 
-function convertParts(content: unknown): UIMessage["parts"] {
+function convertParts(
+  content: unknown,
+  messageIndex: number
+): UIMessage["parts"] {
   if (typeof content === "string") {
     return [{ type: "text", text: content }];
   }
@@ -143,7 +233,7 @@ function convertParts(content: unknown): UIMessage["parts"] {
   }
 
   const parts: UIMessage["parts"] = [];
-  for (const part of content) {
+  for (const [partIndex, part] of content.entries()) {
     if (typeof part === "string") {
       parts.push({ type: "text", text: part });
       continue;
@@ -161,7 +251,7 @@ function convertParts(content: unknown): UIMessage["parts"] {
       // widget metadata like `_meta.ui.resourceUri` and `_serverId`.
       parts.push({
         type: "dynamic-tool",
-        toolCallId: part.toolCallId ?? part.id ?? generateId(),
+        toolCallId: getStableToolCallId(part, messageIndex, partIndex),
         toolName: part.toolName ?? "unknown",
         state: "output-available" as const,
         input: part.args ?? part.input ?? {},
@@ -189,7 +279,7 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
 
   const mergedTranscript = mergeTranscriptToolResults(transcript);
   const messages: UIMessage[] = [];
-  for (const raw of mergedTranscript) {
+  for (const [index, raw] of mergedTranscript.entries()) {
     const msg = raw as TranscriptMessage;
     if (!msg || typeof msg !== "object") continue;
 
@@ -201,15 +291,50 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
       role === "system"
         ? ("system" as const)
         : role === "user"
-          ? ("user" as const)
-          : ("assistant" as const);
+        ? ("user" as const)
+        : ("assistant" as const);
+
+    const senderUserId =
+      typeof msg.senderUserId === "string" && msg.senderUserId.length > 0
+        ? msg.senderUserId
+        : undefined;
 
     messages.push({
-      id: msg.id ?? generateId(),
+      id: getStableMessageId(msg, index),
       role: uiRole,
-      parts: convertParts(msg.content),
+      parts: convertParts(msg.content, index),
+      ...(senderUserId
+        ? { metadata: { senderUserId } as Record<string, unknown> }
+        : {}),
     } as UIMessage);
   }
 
   return messages;
+}
+
+export function preserveHydratedMessageIds(
+  currentMessages: UIMessage[],
+  hydratedMessages: UIMessage[]
+): UIMessage[] {
+  if (currentMessages.length === 0 || hydratedMessages.length === 0) {
+    return hydratedMessages;
+  }
+
+  const currentIdsByContinuityKey = new Map<string, string[]>();
+  for (const message of currentMessages) {
+    const key = getUiMessageContinuityKey(message);
+    const ids = currentIdsByContinuityKey.get(key);
+    if (ids) {
+      ids.push(message.id);
+    } else {
+      currentIdsByContinuityKey.set(key, [message.id]);
+    }
+  }
+
+  return hydratedMessages.map((message) => {
+    const key = getUiMessageContinuityKey(message);
+    const existingId = currentIdsByContinuityKey.get(key)?.shift();
+    if (!existingId || existingId === message.id) return message;
+    return { ...message, id: existingId };
+  });
 }

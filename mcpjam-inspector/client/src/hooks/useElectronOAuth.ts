@@ -8,12 +8,21 @@ export function useElectronOAuth() {
     }
 
     const handleOAuthCallback = (url: string) => {
-      console.log("Electron OAuth callback received:", url);
-
       try {
         // Parse the callback URL to extract tokens/parameters
         const urlObj = new URL(url);
+        const flow = urlObj.searchParams.get("flow");
         const params = new URLSearchParams(urlObj.search);
+
+        window.dispatchEvent(
+          new CustomEvent<string>("electron-oauth-callback", {
+            detail: url,
+          }),
+        );
+
+        if (flow === "mcp" || flow === "debug") {
+          return;
+        }
 
         // Extract the code and state from the callback
         const code = params.get("code");
@@ -26,8 +35,6 @@ export function useElectronOAuth() {
         }
 
         if (code) {
-          console.log("OAuth code received, redirecting to callback page");
-
           // Redirect to the callback page with the code and state
           // This mimics what would happen in a browser OAuth flow
           const callbackUrl = new URL("/callback", window.location.origin);

@@ -102,7 +102,7 @@ function createMockServer(
 
 describe("RegistryTab", () => {
   const defaultProps = {
-    workspaceId: "ws_123",
+    projectId: "ws_123",
     isAuthenticated: true,
     onConnect: vi.fn(),
     onDisconnect: vi.fn(),
@@ -348,7 +348,7 @@ describe("RegistryTab", () => {
       expect(screen.getByText("Connected")).toBeInTheDocument();
     });
 
-    it("shows Connect for servers in workspace but not live", () => {
+    it("shows Connect for servers in project but not live", () => {
       mockHookReturn = {
         catalogCards: [
           toCatalogCard([createMockServer({ connectionStatus: "added" })]),
@@ -366,7 +366,7 @@ describe("RegistryTab", () => {
       expect(connectBtn).toBeInTheDocument();
       expect(connectBtn).toHaveAttribute(
         "title",
-        "Server is in your workspace — click to connect",
+        "Server is in your project — click to connect",
       );
     });
   });

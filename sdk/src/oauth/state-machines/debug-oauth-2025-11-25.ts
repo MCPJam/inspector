@@ -47,6 +47,7 @@ import {
   parseScopeString,
   resolveRequestedScopeValue,
 } from "./shared/challenges.js";
+import { resolvePreregisteredClientAuthMethod } from "./shared/client-auth.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 export type { OAuthFlowStep, OAuthFlowState };
@@ -538,6 +539,7 @@ export const createDebugOAuthStateMachine = (
     customScopes,
     customHeaders,
     authMode,
+    hasClientSecret = false,
     strictConformance = false,
     registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
   } = config;
@@ -577,6 +579,18 @@ export const createDebugOAuthStateMachine = (
       body: options.body as any,
     });
 
+  const resolvePreregisteredClientAuth = (clientSecret?: string) => {
+    const result = resolvePreregisteredClientAuthMethod({
+      authorizationServerMetadata: getCurrentState()
+        .authorizationServerMetadata as Record<string, unknown> | undefined,
+      hasClientSecret: Boolean(clientSecret || hasClientSecret),
+    });
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+    return result.method;
+  };
+
   const loadFallbackPreregisteredClient = async (note: string) => {
     const { clientId, clientSecret } =
       (await loadPreregisteredCredentials?.({
@@ -588,19 +602,21 @@ export const createDebugOAuthStateMachine = (
       return undefined;
     }
 
+    const tokenEndpointAuthMethod =
+      resolvePreregisteredClientAuth(clientSecret);
     const preregInfo: Record<string, any> = {
       "Client ID": clientId,
-      "Client Secret": clientSecret
+      "Client Secret": clientSecret || hasClientSecret
         ? "Configured"
         : "Not provided (public client)",
-      "Token Auth Method": clientSecret ? "client_secret_post" : "none",
+      "Token Auth Method": tokenEndpointAuthMethod,
       Note: note,
     };
 
     return {
       clientId,
       clientSecret: clientSecret || undefined,
-      tokenEndpointAuthMethod: clientSecret ? "client_secret_post" : "none",
+      tokenEndpointAuthMethod,
       infoLogs: addInfoLog(
         getCurrentState(),
         "received_client_credentials",
@@ -1234,6 +1250,23 @@ export const createDebugOAuthStateMachine = (
 
             // Check registration strategy - 2025-11-25 priority: CIMD > Pre-registered > DCR
             if (registrationStrategy === "cimd") {
+              // Per spec: clients SHOULD check client_id_metadata_document_supported
+              // before using CIMD. Fail early instead of redirecting to an AS that
+              // will reject the URL-formatted client_id.
+              if (
+                state.authorizationServerMetadata
+                  .client_id_metadata_document_supported !== true
+              ) {
+                updateState({
+                  error:
+                    "The authorization server does not support Client ID Metadata Documents " +
+                    "(client_id_metadata_document_supported is not advertised in AS metadata). " +
+                    "Try using 'dcr' or 'preregistered' registration strategy instead.",
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
               // CIMD Step 1: Prepare client_id URL
               updateState({
                 currentStep: "cimd_prepare",
@@ -1261,15 +1294,16 @@ export const createDebugOAuthStateMachine = (
                 return;
               }
 
+              const tokenEndpointAuthMethod =
+                resolvePreregisteredClientAuth(clientSecret);
+
               // Add info log for pre-registered client
               const preregInfo: Record<string, any> = {
                 "Client ID": clientId,
-                "Client Secret": clientSecret
+                "Client Secret": clientSecret || hasClientSecret
                   ? "Configured"
                   : "Not provided (public client)",
-                "Token Auth Method": clientSecret
-                  ? "client_secret_post"
-                  : "none",
+                "Token Auth Method": tokenEndpointAuthMethod,
                 Note: "Using pre-registered client credentials from server config (skipped DCR)",
               };
 
@@ -1285,9 +1319,7 @@ export const createDebugOAuthStateMachine = (
                 currentStep: "received_client_credentials",
                 clientId,
                 clientSecret: clientSecret || undefined,
-                tokenEndpointAuthMethod: clientSecret
-                  ? "client_secret_post"
-                  : "none",
+                tokenEndpointAuthMethod,
                 infoLogs,
                 isInitiatingAuth: false,
               });

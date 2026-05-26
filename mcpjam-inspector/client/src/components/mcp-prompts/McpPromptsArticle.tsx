@@ -22,7 +22,7 @@ export function McpPromptsArticle() {
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>The user chooses the prompt.</li>
           <li>A prompt can have a name, description, and arguments.</li>
-          <li>Hosts often show prompts as slash commands or menu items.</li>
+          <li>Clients often show prompts as slash commands or menu items.</li>
         </ul>
       </Section>
 

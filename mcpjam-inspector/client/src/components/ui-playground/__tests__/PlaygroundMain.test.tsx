@@ -9,6 +9,8 @@ import {
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
+import { useHostContextStore } from "@/stores/client-context-store";
+import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -22,6 +24,8 @@ const mockThread = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockTraceViewer = vi.fn();
+const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
+const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
@@ -52,6 +56,14 @@ vi.mock("lucide-react", () => ({
   Maximize2: () => <span data-testid="icon-maximize" />,
   Minimize2: () => <span data-testid="icon-minimize" />,
   ChevronRight: () => <span data-testid="icon-chevron-right" />,
+  // Icons used by PlaygroundCenterHeaderBar
+  ArrowLeft: () => <span data-testid="icon-arrow-left" />,
+  Code2: () => <span data-testid="icon-code2" />,
+  MessageSquare: () => <span data-testid="icon-message-square" />,
+  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
+  // header `leading` slot)
+  Server: () => <span data-testid="icon-server" />,
+  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -119,12 +131,14 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 // Mock PosthogUtils
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: vi.fn().mockReturnValue("test"),
   detectPlatform: vi.fn().mockReturnValue("web"),
+  standardEventProps: vi.fn().mockReturnValue({}),
 }));
 
 // Mock authkit
@@ -142,13 +156,26 @@ vi.mock("convex/react", () => ({
     isAuthenticated: false,
     isLoading: false,
   }),
+  // `useHost` (and any other Convex-backed hook PlaygroundMain pulls in)
+  // calls useQuery. The test doesn't exercise auth flows, so a static
+  // null is enough — the consumer treats it as "no host resolved yet".
+  useQuery: (_name: string, args: unknown) =>
+    args === "skip" ? undefined : null,
+  useMutation: () => () => Promise.resolve(),
 }));
 
-// Mock useViews (useWorkspaceServers)
+// Mock useViews (useProjectServers)
 vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => ({
+  useProjectServers: () => ({
     serversByName: new Map(),
+    serversById: new Map(),
   }),
+}));
+
+vi.mock("@/lib/apis/web/chat-history-api", () => ({
+  getChatHistoryDetail: (...args: unknown[]) =>
+    mockGetChatHistoryDetail(...args),
+  chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
 }));
 
 // Mock useChatSession hook
@@ -184,6 +211,10 @@ const mockUseChatSession = {
   toolServerMap: {},
   tokenUsage: null,
   resetChat: vi.fn(),
+  loadChatSession: vi.fn(async () => undefined),
+  syncResumedVersion: vi.fn(),
+  resumedVersion: null,
+  restoredToolRenderOverrides: {},
   chatSessionId: "chat-session-1",
   liveTraceEnvelope: null,
   requestPayloadHistory: [],
@@ -193,6 +224,7 @@ const mockUseChatSession = {
   requireToolApproval: false,
   setRequireToolApproval: vi.fn(),
   addToolApprovalResponse: vi.fn(),
+  isSessionBootstrapComplete: true,
   isStreaming: false,
   disableForAuthentication: false,
   submitBlocked: false,
@@ -311,6 +343,8 @@ vi.mock("@/components/evals/trace-viewer", () => ({
     trace?: unknown;
     displayMode?: "inline" | "pip" | "fullscreen";
     onDisplayModeChange?: (mode: "inline" | "pip" | "fullscreen") => void;
+    traceStartedAtMs?: number | null;
+    traceEndedAtMs?: number | null;
   }) => {
     mockTraceViewer(props);
     return (
@@ -426,13 +460,6 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector ? selector(mockPreferencesState) : mockPreferencesState,
 }));
 
-// Mock theme-utils
-const mockUpdateThemeMode = vi.fn();
-
-vi.mock("@/lib/theme-utils", () => ({
-  updateThemeMode: mockUpdateThemeMode,
-}));
-
 // Mock UI Playground store
 const mockUIPlaygroundStore = {
   deviceType: "mobile",
@@ -443,7 +470,6 @@ const mockUIPlaygroundStore = {
   setCspMode: vi.fn(),
   mcpAppsCspMode: "widget-declared",
   setMcpAppsCspMode: vi.fn(),
-  selectedProtocol: null,
   capabilities: { hover: true, touch: true },
   setCapabilities: vi.fn(),
 };
@@ -458,28 +484,16 @@ vi.mock("@/stores/ui-playground-store", () => ({
   },
 }));
 
-// Mock DisplayContextHeader which exports PRESET_DEVICE_CONFIGS
-vi.mock("@/components/shared/DisplayContextHeader", () => ({
-  DisplayContextHeader: ({
+// Mock ClientContextHeader which exports PRESET_DEVICE_CONFIGS
+vi.mock("@/components/shared/ClientContextHeader", () => ({
+  ClientContextHeader: ({
     showThemeToggle,
-    themeModeOverride,
-    onThemeToggleOverride,
   }: {
     showThemeToggle?: boolean;
-    themeModeOverride?: string;
-    onThemeToggleOverride?: () => void;
   }) => (
-    <div
-      data-testid="display-context-header"
-      data-theme-mode-override={themeModeOverride ?? ""}
-    >
+    <div data-testid="host-context-header">
       {showThemeToggle ? (
-        <button
-          data-testid="display-context-theme-toggle"
-          onClick={() => onThemeToggleOverride?.()}
-        >
-          Toggle theme
-        </button>
+        <button data-testid="host-context-theme-toggle">Toggle theme</button>
       ) : null}
     </div>
   ),
@@ -488,6 +502,14 @@ vi.mock("@/components/shared/DisplayContextHeader", () => ({
     tablet: { width: 768, height: 1024, label: "Tablet", icon: () => null },
     desktop: { width: 1280, height: 800, label: "Desktop", icon: () => null },
   },
+}));
+
+// Stub the playground host picker — its data hooks (Convex auth, host list,
+// previewed-host storage) are out of scope for these PlaygroundMain tests.
+vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
+  PlaygroundHostPicker: () => (
+    <div data-testid="playground-host-picker-stub" />
+  ),
 }));
 
 // Mock traffic log store
@@ -503,8 +525,8 @@ const mockSharedAppState = {
   servers: {
     "test-server": { connectionStatus: "connected" },
   } as Record<string, { connectionStatus: string }>,
-  workspaces: {},
-  activeWorkspaceId: "default",
+  projects: {},
+  activeProjectId: "default",
 };
 
 vi.mock("@/state/app-state-context", () => ({
@@ -532,6 +554,8 @@ vi.mock("@/lib/utils", () => ({
 
 const sampleLiveTraceEnvelope = {
   traceVersion: 1 as const,
+  traceStartedAtMs: 1_700_000_000_000,
+  traceEndedAtMs: 1_700_000_000_120,
   messages: [
     { role: "user", content: "Draw the diagram" },
     { role: "assistant", content: "Here is the diagram." },
@@ -560,9 +584,26 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedChatSessionOptions = null;
+    usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
+    mockGetChatHistoryDetail.mockReset();
+    mockChatHistoryAction.mockReset();
+    mockChatHistoryAction.mockResolvedValue({ ok: true });
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
     mockPreferencesState.hostStyle = "claude";
+    useHostContextStore.setState({
+      activeProjectId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingProjectId: null,
+      pendingSavedHostContext: undefined,
+      isAwaitingRemoteEcho: false,
+    });
     mockSharedAppState.servers["test-server"] = {
       connectionStatus: "connected",
     };
@@ -608,93 +649,227 @@ describe("PlaygroundMain", () => {
     it("renders device controls", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Device controls are rendered by DisplayContextHeader (mocked)
-      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
+      // Device controls are rendered by ClientContextHeader (mocked)
+      expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
 
     it("renders theme toggle button", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
+      expect(screen.getByTestId("host-context-theme-toggle")).toBeInTheDocument();
+    });
+
+    it("starts shared-session rail chats with project visibility", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+      expect(capturedChatSessionOptions.directVisibility).toBe("private");
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onNewChat({ shared: true }));
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
+      expect(mockUseChatSession.resetChat).toHaveBeenCalled();
+    });
+
+    it("hides the multi-host compare picker after the active session is shared", async () => {
+      const privateSessionLocal = {
+        _id: "history-share-gate-1",
+        chatSessionId: "chat-session-share-gate-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      const sharedSessionLocal = {
+        ...privateSessionLocal,
+        directVisibility: "project" as const,
+        version: 5,
+      };
+      mockGetChatHistoryDetail
+        .mockResolvedValueOnce({
+          ok: true,
+          session: privateSessionLocal,
+          widgetSnapshots: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          session: sharedSessionLocal,
+          widgetSnapshots: [],
+        });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      // Private sessions show the host picker by default.
       expect(
-        screen.getByTestId("display-context-theme-toggle"),
+        screen.getByTestId("playground-host-picker-stub"),
       ).toBeInTheDocument();
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(privateSessionLocal));
+      });
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("private");
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(
+          bridge?.onSessionAction?.({
+            action: "share",
+            session: privateSessionLocal,
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
+      expect(
+        screen.queryByTestId("playground-host-picker-stub"),
+      ).toBeNull();
     });
 
-    it("passes the requested loading indicator variant to Thread", () => {
-      mockUseChatSession.messages = [
-        { id: "m1", role: "assistant", parts: [] },
-      ];
+    it("keeps active playground thread visibility in sync after sharing", async () => {
+      const privateSession = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["test-server"],
+        },
+      };
+      const sharedSession = {
+        ...privateSession,
+        directVisibility: "project" as const,
+        version: 5,
+      };
+      mockGetChatHistoryDetail
+        .mockResolvedValueOnce({
+          ok: true,
+          session: privateSession,
+          widgetSnapshots: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          session: sharedSession,
+          widgetSnapshots: [],
+        });
 
-      render(
-        <PlaygroundMain
-          {...defaultProps}
-          loadingIndicatorVariant="chatgpt-dot"
-        />,
-      );
+      render(<PlaygroundMain {...defaultProps} />);
 
-      expect(mockThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          loadingIndicatorVariant: "chatgpt-dot",
-        }),
-      );
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(privateSession));
+      });
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("private");
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(
+          bridge?.onSessionAction?.({
+            action: "share",
+            session: privateSession,
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
     });
+
+    // Removed: "passes the requested loading indicator variant to Thread".
+    // PlaygroundMain no longer accepts a `loadingIndicatorVariant` prop —
+    // the inner Thread reads the host id from `ChatboxHostStyleProvider`
+    // context. Brand-indicator behavior is covered in
+    // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
   });
 
-  describe("thread theme override", () => {
-    it("scopes theme changes to the thread shell and composer surface", () => {
+  describe("thread theme from host context", () => {
+    it("scopes hostContext theme changes to the thread shell and composer surface", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       const header = screen.getByTestId("playground-main-header");
-      const displayContextHeader = screen.getByTestId("display-context-header");
       const threadShell = screen.getByTestId("playground-thread-shell");
 
-      expect(displayContextHeader).toHaveAttribute(
-        "data-theme-mode-override",
-        "light",
-      );
       expect(threadShell).toHaveAttribute("data-host-style", "claude");
       expect(threadShell).toHaveAttribute("data-theme-preset", "soft-pop");
       expect(threadShell).toHaveAttribute("data-thread-theme", "light");
       expect(threadShell).not.toHaveClass("dark");
       expect(header).not.toHaveClass("dark");
 
-      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
+      act(() => {
+        useHostContextStore.getState().patchHostContext({ theme: "dark" });
+      });
 
-      expect(displayContextHeader).toHaveAttribute(
-        "data-theme-mode-override",
-        "dark",
-      );
       expect(threadShell).toHaveAttribute("data-thread-theme", "dark");
       expect(threadShell).toHaveClass("dark");
       expect(header).not.toHaveClass("dark");
       expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
-      expect(mockUpdateThemeMode).not.toHaveBeenCalled();
     });
 
-    it("resets the local thread theme override on remount", () => {
-      const firstRender = render(<PlaygroundMain {...defaultProps} />);
-
-      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
-      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
-        "data-thread-theme",
-        "dark",
-      );
-
-      firstRender.unmount();
-
+    it("falls back to the global theme when hostContext.theme is removed", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      expect(screen.getByTestId("display-context-header")).toHaveAttribute(
-        "data-theme-mode-override",
-        "light",
+      act(() => {
+        useHostContextStore.getState().patchHostContext({ theme: "dark" });
+      });
+      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
+        "data-thread-theme",
+        "dark",
       );
+
+      act(() => {
+        useHostContextStore.getState().setHostContextText("{}");
+      });
+
       expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
         "data-thread-theme",
         "light",
       );
-      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass(
-        "dark",
-      );
+      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass("dark");
     });
   });
 
@@ -707,11 +882,6 @@ describe("PlaygroundMain", () => {
         screen.getByRole("heading", {
           name: /This is your playground for MCP./i,
         }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          /Test prompts, inspect tools, and debug AI-powered apps/i,
-        ),
       ).toBeInTheDocument();
     });
 
@@ -896,12 +1066,17 @@ describe("PlaygroundMain", () => {
         <PlaygroundMain {...defaultProps} enableTraceViews={true} />,
       );
 
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      // Trace / Chat / Raw row in PlaygroundCenterHeaderBar (second strip).
+      expect(
+        screen.getByTestId("playground-trace-view-tabs"),
+      ).toBeInTheDocument();
 
       mockUseChatSession.traceViewsSupported = false;
       rerender(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
-      expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("playground-trace-view-tabs"),
+      ).not.toBeInTheDocument();
     });
 
     it("shows trace mode tabs on an empty thread when trace views are supported", () => {
@@ -910,7 +1085,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-trace-view-tabs"),
+      ).toBeInTheDocument();
     });
 
     it("renders the shared trace header tabs", () => {
@@ -920,9 +1097,11 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
       expect(
-        screen.getByTestId("chat-trace-view-mode-header-bar"),
+        screen.getByTestId("playground-main-header"),
       ).toBeInTheDocument();
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-trace-view-tabs"),
+      ).toBeInTheDocument();
     });
 
     it("shows the sample raw JSON empty state on an empty thread when Raw is selected", () => {
@@ -988,6 +1167,39 @@ describe("PlaygroundMain", () => {
       const props = mockTraceViewer.mock.calls.at(-1)?.[0];
       expect(props.displayMode).toBe("inline");
       expect(props.onDisplayModeChange).toEqual(expect.any(Function));
+    });
+
+    it("forwards live trace start/end timestamps into the trace viewer for timeline and raw modes", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.traceViewsSupported = true;
+      mockUseChatSession.hasTraceSnapshot = true;
+      mockUseChatSession.hasLiveTimelineContent = true;
+      mockUseChatSession.liveTraceEnvelope = sampleLiveTraceEnvelope;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Trace" }));
+
+      const timelineProps = mockTraceViewer.mock.calls.at(-1)?.[0];
+      expect(timelineProps.traceStartedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceStartedAtMs,
+      );
+      expect(timelineProps.traceEndedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceEndedAtMs,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+      const rawProps = mockTraceViewer.mock.calls.at(-1)?.[0];
+      expect(rawProps.forcedViewMode).toBe("raw");
+      expect(rawProps.traceStartedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceStartedAtMs,
+      );
+      expect(rawProps.traceEndedAtMs).toBe(
+        sampleLiveTraceEnvelope.traceEndedAtMs,
+      );
     });
 
     it("prefers the streamed live trace over the prelude trace once a snapshot exists", async () => {
@@ -1103,7 +1315,9 @@ describe("PlaygroundMain", () => {
       expect(grid.className.includes("hidden")).toBe(false);
       expect(grid).toHaveClass("xl:grid-cols-3");
       expect(grid).not.toHaveClass("2xl:grid-cols-3");
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-trace-view-tabs"),
+      ).toBeInTheDocument();
       expect(screen.getAllByTestId("chat-input")).not.toHaveLength(0);
       expect(
         screen.queryByText(
@@ -1589,8 +1803,8 @@ describe("PlaygroundMain", () => {
     it("renders with default mobile device type", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Device controls are rendered by DisplayContextHeader (mocked)
-      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
+      // Device controls are rendered by ClientContextHeader (mocked)
+      expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
 
     it("renders with device frame using mobile dimensions", () => {
@@ -1606,8 +1820,8 @@ describe("PlaygroundMain", () => {
     it("shows display context header for locale controls", () => {
       render(<PlaygroundMain {...defaultProps} locale="en-US" />);
 
-      // Locale controls are rendered by DisplayContextHeader (mocked)
-      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
+      // Locale controls are rendered by ClientContextHeader (mocked)
+      expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
   });
 

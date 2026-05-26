@@ -9,6 +9,7 @@ const sdkSkillReferenceEntry = path.resolve(
   rootDir,
   "../sdk/src/skill-reference.ts",
 );
+const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -21,6 +22,11 @@ const mcpSdkSharedAuthEntry = path.resolve(
 export default defineConfig({
   define: {
     __MCPJAM_SDK_VERSION__: JSON.stringify("test"),
+    // Mirrors the Vite build-time constant injected into `client-templates`
+    // and `mcp-apps-renderer`. Tests that exercise the host-style seed
+    // (e.g. via the render-gate scope wrapper) need this defined or the
+    // codex/mcpjam templates throw a `ReferenceError`.
+    __APP_VERSION__: JSON.stringify("test"),
   },
   plugins: [
     {
@@ -59,6 +65,7 @@ export default defineConfig({
         replacement: sdkSkillReferenceEntry,
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
+      { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       {
         find: "@modelcontextprotocol/sdk/client/auth.js",
         replacement: mcpSdkClientAuthEntry,

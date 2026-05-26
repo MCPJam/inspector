@@ -2,12 +2,11 @@
  * SelectedToolHeader
  *
  * Compact header showing the currently selected tool with expand action,
- * optional tool-switch dropdown, save, and optional protocol selector.
+ * optional tool-switch dropdown, and save.
  */
 
 import { ChevronDown, ChevronLeft, Save } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Switch } from "@mcpjam/design-system/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import {
   DropdownMenu,
@@ -15,8 +14,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { cn } from "@/lib/utils";
 
 export interface ToolSwitchListProps {
@@ -33,8 +30,6 @@ interface SelectedToolHeaderProps {
   description?: string;
   // Optional save action
   onSave?: () => void;
-  // Protocol selector (optional)
-  showProtocolSelector?: boolean;
 }
 
 export function SelectedToolHeader({
@@ -43,13 +38,7 @@ export function SelectedToolHeader({
   toolSwitchList,
   description,
   onSave,
-  showProtocolSelector = false,
 }: SelectedToolHeaderProps) {
-  const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
-  const setSelectedProtocol = useUIPlaygroundStore(
-    (s) => s.setSelectedProtocol,
-  );
-
   const toolNameControl =
     toolSwitchList && toolSwitchList.names.length > 0 ? (
       <DropdownMenu>
@@ -140,73 +129,6 @@ export function SelectedToolHeader({
           </Tooltip>
         )}
       </div>
-
-      {/* Protocol selector (shown when tool supports both protocols) */}
-      {showProtocolSelector && (
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-          <p className="flex-1 text-[11px] leading-tight text-muted-foreground">
-            This tool contains ChatGPT Apps & MCP Apps (ext-apps) metadata.
-            Toggle between.
-          </p>
-          <div className="flex flex-shrink-0 items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div
-                  className={`transition-opacity ${
-                    selectedProtocol === UIType.OPENAI_SDK ||
-                    selectedProtocol === null
-                      ? "opacity-100"
-                      : "opacity-40"
-                  }`}
-                >
-                  <img
-                    src="/openai_logo.png"
-                    alt="ChatGPT Apps"
-                    className="h-4 w-4 object-contain"
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="font-medium">ChatGPT Apps</p>
-                <p className="text-xs text-muted-foreground">OpenAI SDK</p>
-              </TooltipContent>
-            </Tooltip>
-
-            <Switch
-              checked={selectedProtocol === UIType.MCP_APPS}
-              onCheckedChange={(checked) => {
-                setSelectedProtocol(
-                  checked ? UIType.MCP_APPS : UIType.OPENAI_SDK,
-                );
-              }}
-              aria-label="Toggle between ChatGPT Apps and MCP Apps"
-              className="data-[state=checked]:bg-input data-[state=unchecked]:bg-input dark:data-[state=checked]:bg-input/80"
-            />
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div
-                  className={`transition-opacity ${
-                    selectedProtocol === UIType.MCP_APPS
-                      ? "opacity-100"
-                      : "opacity-40"
-                  }`}
-                >
-                  <img
-                    src="/mcp.svg"
-                    alt="MCP Apps"
-                    className="h-4 w-4 object-contain"
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="font-medium">MCP Apps</p>
-                <p className="text-xs text-muted-foreground">SEP-1865</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

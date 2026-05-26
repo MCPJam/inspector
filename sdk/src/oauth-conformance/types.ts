@@ -152,7 +152,17 @@ export interface ConformanceResult {
   steps: StepResult[];
   summary: string;
   durationMs: number;
+  credentials?: OAuthConformanceCredentials;
   verification?: VerificationResult;
+}
+
+export interface OAuthConformanceCredentials {
+  clientId?: string;
+  clientSecret?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  tokenType?: string;
+  expiresIn?: number;
 }
 
 export interface NormalizedOAuthConformanceConfig {

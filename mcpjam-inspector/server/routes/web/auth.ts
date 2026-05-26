@@ -1,13 +1,26 @@
 import { z } from "zod";
-import { MCPClientManager } from "@mcpjam/sdk";
-import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
+import type { Context } from "hono";
+import {
+  MCPClientManager,
+  isKnownProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk";
+import type {
+  HttpServerConfig,
+  RpcLogger,
+  UnauthorizedRefreshHandler,
+} from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
-import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { setRequestLogContext } from "../../utils/request-logger.js";
+import {
+  type InternalLogContext,
+  mapInternalToRequestContext,
+} from "../../utils/internal-log-context.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -18,111 +31,114 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
+import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
-function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
-  return schema.superRefine((value, ctx) => {
-    const hostedValue = value as {
-      shareToken?: string;
-      chatboxToken?: string;
-    };
-
-    if (hostedValue.shareToken && hostedValue.chatboxToken) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["chatboxToken"],
-        message: "shareToken and chatboxToken cannot both be provided",
-      });
-    }
-  });
-}
-
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
-export const GUEST_SERVER_ID = "__guest__";
 
-export const workspaceServerSchema = refineHostedTokens(
-  z.object({
-    workspaceId: z.string().min(1),
-    serverId: z.string().min(1),
-    serverName: z.string().min(1).optional(),
-    clientCapabilities: clientCapabilitiesSchema.optional(),
-    oauthAccessToken: z.string().optional(),
-    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-    shareToken: z.string().min(1).optional(),
-    chatboxToken: z.string().min(1).optional(),
-  })
-);
+export const projectServerSchema = z.object({
+  projectId: z.string().min(1),
+  serverId: z.string().min(1),
+  serverName: z.string().min(1).optional(),
+  clientCapabilities: clientCapabilitiesSchema.optional(),
+  oauthAccessToken: z.string().optional(),
+  accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+  // Callers identify chatboxes by `chatboxId` (resolved via
+  // /web/chatbox/redeem) plus the backend-owned `accessVersion`. The
+  // link token is consumed only at redemption; no read-path callsite
+  // accepts it.
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
+  // mcpProfile.initialize pins, resolved client-side from
+  // `hostConfig.mcpProfile.initialize.*` and forwarded on every hosted
+  // route call. Declared here (rather than per-route) so Zod doesn't
+  // strip them — the inspector client now ALWAYS includes them on
+  // /validate, /check-oauth, /doctor, /tools/*, /resources/*, /prompts/*
+  // when the active hostConfig has a profile pinned. `passthrough()` on
+  // clientInfo so forward-compat MCP spec additions (e.g. `title`,
+  // future fields) survive to `toHttpConfig` without a schema bump.
+  clientInfo: z
+    .object({
+      name: z.string().min(1).optional(),
+      version: z.string().min(1).optional(),
+    })
+    .passthrough()
+    .optional(),
+  supportedProtocolVersions: z.array(z.string().min(1)).optional(),
+  // Per-server pinned MCP protocol version. Resolved client-side from
+  // `hostConfig.mcpProfile.mcpProtocolVersion` + per-server override.
+  // Membership-gated via `MCP_PROTOCOL_VERSIONS` (mirror of the SDK +
+  // backend constant); typo values are rejected at this trust boundary
+  // and never reach the SDK's open-routing predicate. Absent means
+  // "use SDK default (negotiates at request time)".
+  mcpProtocolVersion: z
+    .enum([
+      "2025-03-26",
+      "2025-06-18",
+      "2025-11-25",
+      "DRAFT-2026-v1",
+    ])
+    .optional(),
+});
 
-export const toolsListSchema = workspaceServerSchema.extend({
+export const toolsListSchema = projectServerSchema.extend({
   modelId: z.string().optional(),
   cursor: z.string().optional(),
 });
 
-export const toolsExecuteSchema = workspaceServerSchema.extend({
+export const toolsExecuteSchema = projectServerSchema.extend({
   toolName: z.string().min(1),
   parameters: z.record(z.string(), z.unknown()).default({}),
   taskOptions: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const resourcesListSchema = workspaceServerSchema.extend({
+export const resourcesListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const resourcesReadSchema = workspaceServerSchema.extend({
+export const resourcesReadSchema = projectServerSchema.extend({
   uri: z.string().min(1),
 });
 
-export const promptsListSchema = workspaceServerSchema.extend({
+export const promptsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const promptsListMultiSchema = refineHostedTokens(
-  z.object({
-    workspaceId: z.string().min(1),
-    serverIds: z.array(z.string().min(1)).min(1),
-    serverNames: z.array(z.string().min(1)).optional(),
-    clientCapabilities: clientCapabilitiesSchema.optional(),
-    oauthTokens: z.record(z.string(), z.string()).optional(),
-    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-    shareToken: z.string().min(1).optional(),
-    chatboxToken: z.string().min(1).optional(),
-  })
-);
+export const promptsListMultiSchema = z.object({
+  projectId: z.string().min(1),
+  serverIds: z.array(z.string().min(1)).min(1),
+  serverNames: z.array(z.string().min(1)).optional(),
+  clientCapabilities: clientCapabilitiesSchema.optional(),
+  oauthTokens: z.record(z.string(), z.string()).optional(),
+  accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+  // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
+});
 
-export const promptsGetSchema = workspaceServerSchema.extend({
+export const promptsGetSchema = projectServerSchema.extend({
   promptName: z.string().min(1),
   arguments: z
     .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
     .optional(),
 });
 
-export const hostedChatSchema = refineHostedTokens(
-  z
-    .object({
-      workspaceId: z.string().min(1),
-      selectedServerIds: z.array(z.string().min(1)),
-      selectedServerNames: z.array(z.string().min(1)).optional(),
-      clientCapabilities: clientCapabilitiesSchema.optional(),
-      chatSessionId: z.string().min(1).optional(),
-      surface: z.enum(["preview", "share_link"]).optional(),
-      oauthTokens: z.record(z.string(), z.string()).optional(),
-      accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-      shareToken: z.string().min(1).optional(),
-      chatboxToken: z.string().min(1).optional(),
-    })
-    .passthrough()
-);
-
-// ── Guest Schema ─────────────────────────────────────────────────────
-
-export const guestServerInputSchema = z.object({
-  serverUrl: z.string().min(1),
-  serverName: z.string().min(1).optional(),
-  serverHeaders: z.record(z.string(), z.string()).optional(),
-  oauthAccessToken: z.string().optional(),
-  clientCapabilities: clientCapabilitiesSchema.optional(),
-});
+export const hostedChatSchema = z
+  .object({
+    projectId: z.string().min(1),
+    selectedServerIds: z.array(z.string().min(1)),
+    selectedServerNames: z.array(z.string().min(1)).optional(),
+    clientCapabilities: clientCapabilitiesSchema.optional(),
+    chatSessionId: z.string().min(1).optional(),
+    surface: z.enum(["preview", "share_link"]).optional(),
+    oauthTokens: z.record(z.string(), z.string()).optional(),
+    accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+    // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
+    chatboxId: z.string().min(1).optional(),
+    accessVersion: z.number().int().nonnegative().optional(),
+  })
+  .passthrough();
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -132,7 +148,7 @@ export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
 
 function buildServerNamesById(
   serverIds: string[],
-  serverNames?: readonly string[],
+  serverNames?: readonly string[]
 ): Record<string, string> | undefined {
   if (!Array.isArray(serverNames) || serverNames.length === 0) {
     return undefined;
@@ -155,91 +171,12 @@ function buildServerNamesById(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-export function isGuestServerRequestBody(
-  rawBody: Record<string, unknown>,
-): boolean {
-  return typeof rawBody.serverUrl === "string" && !rawBody.workspaceId;
-}
-
-function requireGuestId(c: any): string {
-  const guestId = c.get("guestId") as string | undefined;
-  if (!guestId) {
-    throw new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      "Valid guest token required. Please refresh the page to obtain a new session.",
-    );
-  }
-  return guestId;
-}
-
-export async function createGuestEphemeralManager(
-  c: any,
-  rawBody: Record<string, unknown>,
-  options?: { timeoutMs?: number; rpcLogger?: RpcLogger },
-): Promise<{
-  manager: InstanceType<typeof MCPClientManager>;
-  augmentedBody: Record<string, unknown>;
-}> {
-  requireGuestId(c);
-
-  const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
-
-  try {
-    await validateUrl(guestInput.serverUrl, true);
-  } catch (err) {
-    if (err instanceof OAuthProxyError) {
-      throw new WebRouteError(
-        err.status,
-        ErrorCode.VALIDATION_ERROR,
-        err.message,
-      );
-    }
-    throw err;
-  }
-
-  const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-  const headers: Record<string, string> = {
-    ...(guestInput.serverHeaders ?? {}),
-  };
-
-  if (guestInput.oauthAccessToken) {
-    headers["Authorization"] = `Bearer ${guestInput.oauthAccessToken}`;
-  }
-
-  const httpConfig: HttpServerConfig = {
-    url: guestInput.serverUrl,
-    capabilities: guestInput.clientCapabilities,
-    requestInit: {
-      headers,
-    },
-    timeout: timeoutMs,
-  };
-
-  return {
-    manager: new MCPClientManager(
-      { [GUEST_SERVER_ID]: httpConfig },
-      {
-        defaultTimeout: timeoutMs,
-        rpcLogger: options?.rpcLogger,
-        retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-      },
-    ),
-    augmentedBody: {
-      ...rawBody,
-      workspaceId: GUEST_SERVER_ID,
-      serverId: GUEST_SERVER_ID,
-      serverIds: [GUEST_SERVER_ID],
-    },
-  };
-}
-
 // ── Authorization ────────────────────────────────────────────────────
 
 export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
-  accessLevel: "workspace_member" | "shared_chat";
+  accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
   permissions: {
     chatOnly: boolean;
@@ -250,7 +187,13 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     useOAuth?: boolean;
   };
+  internalLogContext?: InternalLogContext;
 };
+
+export type ClientSafeAuthorizeResponse = Omit<
+  ConvexAuthorizeResponse,
+  "internalLogContext"
+>;
 
 type AuthorizedServerConfigHolder = {
   serverConfig: ConvexAuthorizeResponse["serverConfig"];
@@ -266,12 +209,16 @@ export type ConvexBatchAuthorizeFailure = {
 export type ConvexBatchAuthorizeSuccess = {
   ok: true;
   role: "owner" | "admin" | "member";
-  accessLevel: "workspace_member" | "shared_chat";
+  accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
   permissions: {
     chatOnly: boolean;
   };
-  serverConfig: ConvexAuthorizeResponse["serverConfig"];
+  serverConfig: Omit<
+    ConvexAuthorizeResponse,
+    "internalLogContext"
+  >["serverConfig"];
+  internalLogContext?: InternalLogContext;
 };
 
 export type ConvexBatchAuthorizeResult =
@@ -282,16 +229,41 @@ export type ConvexBatchAuthorizeResponse = {
   results: Record<string, ConvexBatchAuthorizeResult>;
 };
 
+// Defense-in-depth: hosted /web/authorize-batch is contractually meant to
+// return an HTTP-only `serverConfig` — Convex strips command/args/env via
+// `normalizeAuthorizeResult`. If a backend regression ever lets those fields
+// through, we drop them here so they can never reach the hosted client or be
+// fed into a transport. Local mode uses /web/authorize-batch-local instead,
+// which is allowed to carry STDIO fields and goes through a different code
+// path (`local-server-resolver.ts`).
+const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
+function stripStdioFieldsFromHostedConfig<
+  T extends { serverConfig?: Record<string, unknown> }
+>(holder: T): T {
+  const cfg = holder.serverConfig;
+  if (!cfg || typeof cfg !== "object") return holder;
+  let cleaned: Record<string, unknown> | undefined;
+  for (const field of STDIO_ONLY_FIELDS) {
+    if (field in cfg) {
+      if (!cleaned) cleaned = { ...cfg };
+      delete cleaned[field];
+    }
+  }
+  if (!cleaned) return holder;
+  return { ...holder, serverConfig: cleaned };
+}
+
 export async function authorizeServer(
+  c: Context,
   bearerToken: string,
-  workspaceId: string,
+  projectId: string,
   serverId: string,
   options?: {
-    accessScope?: "workspace_member" | "chat_v2";
-    shareToken?: string;
-    chatboxToken?: string;
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+    accessVersion?: number;
   }
-): Promise<ConvexAuthorizeResponse> {
+): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -303,14 +275,6 @@ export async function authorizeServer(
 
   let response: Response;
   try {
-    if (options?.shareToken && options?.chatboxToken) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "shareToken and chatboxToken cannot both be provided"
-      );
-    }
-
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
       headers: {
@@ -318,12 +282,12 @@ export async function authorizeServer(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        workspaceId,
+        projectId,
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options?.chatboxToken
-          ? { chatboxToken: options.chatboxToken }
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(typeof options?.accessVersion === "number"
+          ? { accessVersion: options.accessVersion }
           : {}),
       }),
     });
@@ -360,17 +324,24 @@ export async function authorizeServer(
     );
   }
 
-  return body as ConvexAuthorizeResponse;
+  const { internalLogContext, ...clientSafe } = body as ConvexAuthorizeResponse;
+  if (internalLogContext) {
+    setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
+  }
+  return stripStdioFieldsFromHostedConfig(
+    clientSafe
+  ) as ClientSafeAuthorizeResponse;
 }
 
 export async function authorizeBatch(
+  c: Context,
   bearerToken: string,
-  workspaceId: string,
+  projectId: string,
   serverIds: string[],
   options?: {
-    accessScope?: "workspace_member" | "chat_v2";
-    shareToken?: string;
-    chatboxToken?: string;
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+    accessVersion?: number;
   }
 ): Promise<ConvexBatchAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -384,14 +355,6 @@ export async function authorizeBatch(
 
   let response: Response;
   try {
-    if (options?.shareToken && options?.chatboxToken) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "shareToken and chatboxToken cannot both be provided"
-      );
-    }
-
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
       headers: {
@@ -399,12 +362,12 @@ export async function authorizeBatch(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        workspaceId,
+        projectId,
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options?.chatboxToken
-          ? { chatboxToken: options.chatboxToken }
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(typeof options?.accessVersion === "number"
+          ? { accessVersion: options.accessVersion }
           : {}),
       }),
     });
@@ -441,14 +404,81 @@ export async function authorizeBatch(
     );
   }
 
-  return body as ConvexBatchAuthorizeResponse;
+  const raw = body as ConvexBatchAuthorizeResponse;
+
+  // Project-level fields (auth/user/org/project/accessLevel/surface) are
+  // identical across batch results by construction — same Convex auth call,
+  // same project. Take them from the first successful result.
+  //
+  // Per-server fields (serverId, serverTransport, chatboxId) are only well-
+  // defined when the batch authorizes a single server. For multi-server
+  // batches they would non-deterministically attribute to whichever server
+  // iterated last, so we null them out at the request envelope; per-server
+  // attribution belongs on per-server child events.
+  const successful = Object.entries(raw.results).filter(
+    (entry): entry is [string, ConvexBatchAuthorizeSuccess] => entry[1].ok
+  );
+  // Use the first result that actually carries internalLogContext rather than
+  // strictly successful[0]; during a backend rollout the field may be present
+  // on some results and absent on others, and we'd rather log project
+  // attribution than nothing.
+  const sourceCtx = successful.find(([, r]) => r.internalLogContext)?.[1]
+    .internalLogContext;
+  if (sourceCtx) {
+    const partial = mapInternalToRequestContext(sourceCtx);
+    if (successful.length > 1) {
+      partial.serverId = null;
+      partial.serverTransport = null;
+      partial.chatboxId = null;
+    }
+    setRequestLogContext(c, partial);
+  }
+
+  const strippedResults: Record<string, ConvexBatchAuthorizeResult> = {};
+  for (const [serverId, result] of Object.entries(raw.results)) {
+    if (result.ok) {
+      const { internalLogContext: _omit, ...clientSafeResult } = result;
+      strippedResults[serverId] = stripStdioFieldsFromHostedConfig(
+        clientSafeResult
+      ) as ConvexBatchAuthorizeSuccess;
+    } else {
+      strippedResults[serverId] = result;
+    }
+  }
+  return { results: strippedResults };
 }
 
 export function toHttpConfig(
   authResponse: AuthorizedServerConfigHolder,
   timeoutMs: number,
   oauthAccessToken?: string,
-  clientCapabilities?: Record<string, unknown>
+  clientCapabilities?: Record<string, unknown>,
+  onUnauthorized?: UnauthorizedRefreshHandler,
+  /**
+   * Per-connection MCP `initialize.params.clientInfo` and
+   * `supportedProtocolVersions` pins resolved from
+   * `hostConfig.mcpProfile.initialize.*`. Forwarded verbatim to the SDK
+   * Client config so hosted connects honor the same pin as the
+   * local-resolver path.
+   *
+   * Without this, the client was sending the pins on the wire but the
+   * hosted handler dropped them at the route boundary (codex P2): Zod
+   * stripped fields not declared on the schema, and `toHttpConfig`
+   * had no parameters that could place them on the SDK config.
+   */
+  initializePins?: {
+    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+    supportedProtocolVersions?: string[];
+    /**
+     * Outbound wire mode (DRAFT-2026-v1 stateless preview). Forwarded
+     * onto `HttpServerConfig.mcpProtocolVersion` so the SDK factory branches
+     * to `StatelessMcpHttpPreviewClient` when set. Without this,
+     * the hosted handler dropped the pin at the route boundary and
+     * hosted connects always ran the legacy `initialize` handshake
+     * regardless of the client-level toggle.
+     */
+    mcpProtocolVersion?: McpProtocolVersion;
+  }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     throw new WebRouteError(
@@ -477,10 +507,27 @@ export function toHttpConfig(
   return {
     url: authResponse.serverConfig.url,
     capabilities: clientCapabilities,
+    clientCapabilities: clientCapabilities,
     requestInit: {
       headers,
     },
     timeout: timeoutMs,
+    ...(onUnauthorized ? { onUnauthorized } : {}),
+    // mcpProfile.initialize.* pins, forwarded to the SDK's
+    // `BaseServerConfig.clientInfo` / `.supportedProtocolVersions` per
+    // `sdk/src/mcp-client-manager/types.ts`. Undefined → SDK defaults.
+    ...(initializePins?.clientInfo
+      ? { clientInfo: initializePins.clientInfo }
+      : {}),
+    ...(initializePins?.supportedProtocolVersions &&
+    initializePins.supportedProtocolVersions.length > 0
+      ? {
+          supportedProtocolVersions: initializePins.supportedProtocolVersions,
+        }
+      : {}),
+    ...(initializePins?.mcpProtocolVersion
+      ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
+      : {}),
   };
 }
 
@@ -488,21 +535,39 @@ export interface AuthorizedManagerResult {
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
   oauthServerUrls: Record<string, string>;
+  /** Server-authenticated Convex user/guest id for this request, when known. */
+  authenticatedUserId?: string | null;
 }
 
 export async function createAuthorizedManager(
+  c: Context,
   bearerToken: string,
-  workspaceId: string,
+  projectId: string,
   serverIds: string[],
   timeoutMs: number,
   oauthTokens?: Record<string, string>,
   clientCapabilities?: Record<string, unknown>,
   options?: {
-    accessScope?: "workspace_member" | "chat_v2";
-    shareToken?: string;
-    chatboxToken?: string;
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+    accessVersion?: number;
     rpcLogger?: RpcLogger;
     serverNames?: string[];
+    /**
+     * mcpProfile.initialize.* pins, applied uniformly to every
+     * authorized server in this batch. The same pins flow into every
+     * HttpServerConfig because hosted batches resolve under one
+     * profile context — we don't currently support per-server
+     * mcpProfile overrides.
+     */
+    initializePins?: {
+      clientInfo?: { name?: string; version?: string } & Record<
+        string,
+        unknown
+      >;
+      supportedProtocolVersions?: string[];
+      mcpProtocolVersion?: McpProtocolVersion;
+    };
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -518,18 +583,20 @@ export async function createAuthorizedManager(
         }
       ),
       oauthServerUrls: {},
+      authenticatedUserId: null,
     };
   }
 
   const oauthServerUrls: Record<string, string> = {};
   const batch = await authorizeBatch(
+    c,
     bearerToken,
-    workspaceId,
+    projectId,
     uniqueServerIds,
     {
       accessScope: options?.accessScope,
-      shareToken: options?.shareToken,
-      chatboxToken: options?.chatboxToken,
+      chatboxId: options?.chatboxId,
+      accessVersion: options?.accessVersion,
     }
   );
 
@@ -553,6 +620,19 @@ export async function createAuthorizedManager(
 
     const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
+    const onUnauthorized =
+      auth.serverConfig.useOAuth && auth.oauthAccessToken
+        ? buildHostedOAuthUnauthorizedHandler({
+            bearerToken,
+            projectId,
+            serverId,
+            serverName: displayServerName,
+            accessScope: options?.accessScope,
+            shareToken: (options as { shareToken?: string })?.shareToken,
+            chatboxId: options?.chatboxId,
+            accessVersion: options?.accessVersion,
+          })
+        : undefined;
 
     if (auth.serverConfig.useOAuth) {
       if (auth.serverConfig.url) {
@@ -575,7 +655,14 @@ export async function createAuthorizedManager(
 
     return [
       serverId,
-      toHttpConfig(auth, timeoutMs, oauthToken, clientCapabilities),
+      toHttpConfig(
+        auth,
+        timeoutMs,
+        oauthToken,
+        clientCapabilities,
+        onUnauthorized,
+        options?.initializePins
+      ),
     ] as const;
   });
 
@@ -584,7 +671,11 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
   });
-  return { manager, oauthServerUrls };
+  return {
+    manager,
+    oauthServerUrls,
+    authenticatedUserId: c.var.requestLogContext?.userId ?? null,
+  };
 }
 
 export async function withManager<T>(
@@ -673,10 +764,8 @@ function resolveConnectionParams(body: Record<string, unknown>): {
  *   6. Disconnect all servers (finally)
  *   7. Return JSON response (or structured error)
  *
- * Guest users (identified by guestId in Hono context) bypass Convex authorization
- * entirely. They provide a `serverUrl` (+optional `serverHeaders`) directly in the
- * request body, which is validated for safety (HTTPS-only, no private IPs) before
- * creating a direct ephemeral connection.
+ * Guest users and signed-in users both flow through Convex authorization. The
+ * bearer token determines which backend actor owns the requested project.
  *
  * Not suitable for streaming routes (chat-v2) — those need manual lifecycle
  * management via `onStreamComplete` because the Response is returned before
@@ -693,7 +782,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     timeoutMs?: number;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
-  },
+  }
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
 
@@ -704,91 +793,115 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
 
-    // Detect guest requests by body shape: presence of serverUrl without workspaceId.
-    // This is more robust than relying solely on guestId from middleware, which
-    // may not be set when the guest token is expired/invalid but the client still
-    // sends a guest-shaped body.
-    const isGuestRequest = isGuestServerRequestBody(rawBody);
-
-    let result: T;
-
-    if (isGuestRequest) {
-      // ── Guest path: direct connection, no Convex ────────────────
-      const guestId = c.get("guestId") as string | undefined;
-      if (!guestId) {
-        throw new WebRouteError(
-          401,
-          ErrorCode.UNAUTHORIZED,
-          "Valid guest token required. Please refresh the page to obtain a new session."
-        );
-      }
-
-      if (options?.guestUnsupportedMessage) {
-        throw new WebRouteError(
-          403,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          options.guestUnsupportedMessage,
-        );
-      }
-
-      const { manager, augmentedBody } = await createGuestEphemeralManager(
-        c,
-        rawBody,
-        {
-          timeoutMs: options?.timeoutMs,
-          rpcLogger: rpcCollector?.rpcLogger,
-        },
-      );
-
-      try {
-        const body = parseWithSchema(schema, augmentedBody);
-        result = await fn(manager, body as z.infer<S>);
-      } finally {
-        await manager.disconnectAllServers();
-      }
-    } else {
-      // ── Authenticated path: Convex authorization ──────────────────
-      const bearerToken = assertBearerToken(c);
-      const body = parseWithSchema(schema, rawBody);
-      // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
-      // The strongly-typed `body` is passed through to `fn` unchanged.
-      const raw = body as Record<string, unknown>;
-      const { serverIds, oauthTokens, serverNames } =
-        resolveConnectionParams(raw);
-      const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-      const accessScope =
-        raw.accessScope === "workspace_member" || raw.accessScope === "chat_v2"
-          ? raw.accessScope
-          : undefined;
-      const shareToken =
-        typeof raw.shareToken === "string" && raw.shareToken.trim()
-          ? raw.shareToken
-          : undefined;
-      const chatboxToken =
-        typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
-          ? raw.chatboxToken
-          : undefined;
-
-      result = await withManager(
-        createAuthorizedManager(
-          bearerToken,
-          raw.workspaceId as string,
-          serverIds,
-          timeoutMs,
-          oauthTokens,
-          (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-            undefined,
-          {
-            accessScope,
-            shareToken,
-            chatboxToken,
-            rpcLogger: rpcCollector?.rpcLogger,
-            serverNames,
-          }
-        ),
-        (manager) => fn(manager, body as z.infer<S>)
+    // Both guest and signed-in actors flow through the same Convex
+    // authorization path: the bearer token (guest JWT or WorkOS bearer) is
+    // forwarded to /web/authorize-batch, which dispatches to the right
+    // authorize* query based on the JWT issuer. Routes that legitimately
+    // gate guests out (e.g. evals) opt in via `guestUnsupportedMessage`.
+    if (options?.guestUnsupportedMessage && c.get("guestId")) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        options.guestUnsupportedMessage
       );
     }
+
+    const bearerToken = assertBearerToken(c);
+    const body = parseWithSchema(schema, rawBody);
+    // Cast for internal plumbing — all web schemas include projectId + serverId(s).
+    // The strongly-typed `body` is passed through to `fn` unchanged.
+    const raw = body as Record<string, unknown>;
+    const { serverIds, oauthTokens, serverNames } =
+      resolveConnectionParams(raw);
+    const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+    const accessScope =
+      raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
+        ? raw.accessScope
+        : undefined;
+    const chatboxId =
+      typeof raw.chatboxId === "string" && raw.chatboxId.trim()
+        ? raw.chatboxId
+        : undefined;
+    const accessVersion =
+      typeof raw.accessVersion === "number" &&
+      Number.isFinite(raw.accessVersion)
+        ? raw.accessVersion
+        : undefined;
+
+    // Extract mcpProfile.initialize.* pins so they flow into every
+    // HttpServerConfig created by createAuthorizedManager. The schema
+    // (projectServerSchema or any extension thereof) declares
+    // `clientInfo` / `supportedProtocolVersions` as optional fields —
+    // when present, the client has resolved them from the active
+    // hostConfig and wants the hosted route to honor them on
+    // `initialize`. Defensive shape gating: only forward an object
+    // `clientInfo` and only a non-empty string array for
+    // `supportedProtocolVersions`. A malformed payload silently falls
+    // back to SDK defaults rather than failing the whole route.
+    const rawClientInfo = raw.clientInfo;
+    const initializeClientInfo =
+      rawClientInfo &&
+      typeof rawClientInfo === "object" &&
+      !Array.isArray(rawClientInfo)
+        ? (rawClientInfo as { name?: string; version?: string } & Record<
+            string,
+            unknown
+          >)
+        : undefined;
+    const rawSupportedVersions = raw.supportedProtocolVersions;
+    const initializeSupportedVersions =
+      Array.isArray(rawSupportedVersions) &&
+      rawSupportedVersions.every((v) => typeof v === "string" && v.length > 0)
+        ? (rawSupportedVersions as string[])
+        : undefined;
+    // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
+    // so typo values fall back to SDK default rather than reach the
+    // SDK's open-routing predicate. Same defensive pattern as the
+    // other initializePins fields above.
+    const rawProtocolVersion = raw.mcpProtocolVersion;
+    const initializeWireMode: McpProtocolVersion | undefined =
+      typeof rawProtocolVersion === "string" &&
+      isKnownProtocolVersion(rawProtocolVersion)
+        ? rawProtocolVersion
+        : undefined;
+    const initializePins =
+      initializeClientInfo ||
+      initializeSupportedVersions ||
+      initializeWireMode
+        ? {
+            ...(initializeClientInfo
+              ? { clientInfo: initializeClientInfo }
+              : {}),
+            ...(initializeSupportedVersions
+              ? { supportedProtocolVersions: initializeSupportedVersions }
+              : {}),
+            ...(initializeWireMode
+              ? { mcpProtocolVersion: initializeWireMode }
+              : {}),
+          }
+        : undefined;
+
+    const result = await withManager(
+      createAuthorizedManager(
+        c,
+        bearerToken,
+        raw.projectId as string,
+        serverIds,
+        timeoutMs,
+        oauthTokens,
+        (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+          undefined,
+        {
+          accessScope,
+          chatboxId,
+          accessVersion,
+          rpcLogger: rpcCollector?.rpcLogger,
+          serverNames,
+          initializePins,
+        }
+      ),
+      (manager) => fn(manager, body as z.infer<S>)
+    );
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {

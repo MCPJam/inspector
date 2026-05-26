@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
 
-export type SharedChatSourceType = "serverShare" | "chatbox";
+export type SharedChatSourceType = "chatbox";
 
 export interface SharedChatThread {
   _id: string;
@@ -35,6 +35,48 @@ export interface SharedChatThread {
   visitorRecency?: "new" | "returning";
   visitorSegment?: string;
   language?: string;
+  /**
+   * The hostConfigId that was active on the chatbox's referenced host
+   * when this session opened. Pinned at session-insert time; survives
+   * host edits forward so the UI can show "this session ran against
+   * config rev #N". Use `useSessionHistoricalHostConfig` to resolve it
+   * to model / server / etc.
+   */
+  hostConfigIdAtStart?: string;
+}
+
+/**
+ * The pinned historical hostConfig a session was opened against — the
+ * shape the chip / "view config" deep-link reads from. Backend resolves
+ * `chatSessions.hostConfigIdAtStart` through the (append-only)
+ * hostConfigs table, so even after the host has rotated forward the
+ * row this points at is still readable.
+ */
+export interface SessionHistoricalHostConfig {
+  hostConfigId: string;
+  hostStyle: string;
+  modelId: string;
+  systemPrompt: string;
+  temperature: number;
+  requireToolApproval: boolean;
+  serverIds: string[];
+  optionalServerIds: string[];
+  serverCount: number;
+  /** Name of the host the chatbox *currently* references, if any. */
+  currentHostName: string | null;
+}
+
+export function useSessionHistoricalHostConfig({
+  sessionId,
+}: {
+  sessionId: string | null;
+}) {
+  const config = useQuery(
+    "chatSessions:getSessionHistoricalHostConfig" as any,
+    sessionId ? ({ sessionId } as any) : "skip",
+  ) as SessionHistoricalHostConfig | null | undefined;
+
+  return { config };
 }
 
 export interface SharedChatWidgetSnapshot {
@@ -53,28 +95,19 @@ export interface SharedChatWidgetSnapshot {
 }
 
 export function useSharedChatThreadList({
-  sourceType,
   sourceId,
 }: {
-  sourceType: SharedChatSourceType;
+  sourceType?: SharedChatSourceType;
   sourceId: string | null;
 }) {
-  const queryName =
-    sourceType === "chatbox"
-      ? "chatSessions:listByChatbox"
-      : "chatSessions:listByShare";
-  const queryArgs =
-    sourceType === "chatbox"
-      ? sourceId
-        ? ({ chatboxId: sourceId, limit: 50, includeInternal: true } as any)
-        : "skip"
-      : sourceId
-        ? ({ shareId: sourceId, limit: 50 } as any)
-        : "skip";
+  const queryArgs = sourceId
+    ? ({ chatboxId: sourceId, limit: 50, includeInternal: true } as any)
+    : "skip";
 
-  const threads = useQuery(queryName as any, queryArgs) as
-    | SharedChatThread[]
-    | undefined;
+  const threads = useQuery(
+    "chatSessions:listByChatbox" as any,
+    queryArgs,
+  ) as SharedChatThread[] | undefined;
 
   return { threads };
 }

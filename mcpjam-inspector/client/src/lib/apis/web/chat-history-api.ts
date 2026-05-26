@@ -1,16 +1,29 @@
 import { authFetch } from "@/lib/session-token";
-import { HOSTED_MODE } from "@/lib/config";
-import { getGuestBearerToken } from "@/lib/guest-session";
 import { WebApiError } from "./base";
+
+/**
+ * Per-message shape inside the JSON pointed at by `messagesBlobUrl`.
+ * The backend currently produces `{ role, content, ... }`; once Convex begins
+ * stamping `senderUserId` on user-role messages, the transcript reader will
+ * surface it directly via this type.
+ */
+export interface PersistedChatMessage {
+  id?: string;
+  role?: string;
+  content?: unknown;
+  /** Set by the backend on newly appended user messages once shipped. */
+  senderUserId?: string;
+  [key: string]: unknown;
+}
 
 export interface ChatHistorySession {
   _id: string;
   chatSessionId: string;
-  workspaceId?: string;
+  projectId?: string;
   customTitle?: string;
   firstMessagePreview: string;
   status: "active" | "archived";
-  directVisibility: "private" | "workspace";
+  directVisibility: "private" | "project";
   modelId?: string;
   modelSource?: string;
   messageCount: number;
@@ -29,7 +42,7 @@ export interface ChatHistorySession {
 export interface ChatHistoryListResponse {
   ok: boolean;
   personal: ChatHistorySession[];
-  workspace: ChatHistorySession[];
+  project: ChatHistorySession[];
 }
 
 export interface ResumeConfig {
@@ -119,18 +132,10 @@ interface ChatHistoryRequestOptions {
   headers?: HeadersInit;
 }
 
-async function buildChatHistoryHeaders(
+function buildChatHistoryHeaders(
   initHeaders?: HeadersInit,
-): Promise<HeadersInit | undefined> {
+): HeadersInit | undefined {
   const headers = new Headers(initHeaders);
-
-  if (!HOSTED_MODE && !headers.has("Authorization")) {
-    const guestToken = await getGuestBearerToken();
-    if (guestToken) {
-      headers.set("Authorization", `Bearer ${guestToken}`);
-    }
-  }
-
   return Array.from(headers.keys()).length > 0 ? headers : undefined;
 }
 
@@ -140,7 +145,7 @@ async function webGet<T>(
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "GET",
-    headers: await buildChatHistoryHeaders(options?.headers),
+    headers: buildChatHistoryHeaders(options?.headers),
   });
 
   let body: any = null;
@@ -171,7 +176,7 @@ async function webPost<TRequest, TResponse>(
 ): Promise<TResponse> {
   const initHeaders = new Headers(options?.headers);
   initHeaders.set("Content-Type", "application/json");
-  const headers = new Headers(await buildChatHistoryHeaders(initHeaders));
+  const headers = new Headers(buildChatHistoryHeaders(initHeaders));
   const response = await authFetch(path, {
     method: "POST",
     headers,
@@ -201,7 +206,7 @@ async function webPost<TRequest, TResponse>(
 
 export async function listChatHistory(
   params: {
-    workspaceId?: string;
+    projectId?: string;
     status: "active" | "archived";
     limit?: number;
     before?: number;
@@ -209,7 +214,7 @@ export async function listChatHistory(
   requestOptions?: ChatHistoryRequestOptions,
 ): Promise<ChatHistoryListResponse> {
   const searchParams = new URLSearchParams();
-  if (params.workspaceId) searchParams.set("workspaceId", params.workspaceId);
+  if (params.projectId) searchParams.set("projectId", params.projectId);
   searchParams.set("status", params.status);
   if (params.limit) searchParams.set("limit", String(params.limit));
   if (params.before) searchParams.set("before", String(params.before));
@@ -224,14 +229,14 @@ export async function getChatHistoryDetail(
   params: {
     sessionId?: string;
     chatSessionId: string;
-    workspaceId?: string;
+    projectId?: string;
   },
   requestOptions?: ChatHistoryRequestOptions,
 ): Promise<ChatHistoryDetailResponse> {
   const searchParams = new URLSearchParams();
   if (params.sessionId) searchParams.set("sessionId", params.sessionId);
   searchParams.set("chatSessionId", params.chatSessionId);
-  if (params.workspaceId) searchParams.set("workspaceId", params.workspaceId);
+  if (params.projectId) searchParams.set("projectId", params.projectId);
 
   return webGet<ChatHistoryDetailResponse>(
     `/api/web/chat-history/detail?${searchParams.toString()}`,

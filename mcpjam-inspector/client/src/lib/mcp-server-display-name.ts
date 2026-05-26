@@ -1,8 +1,8 @@
-import type { RemoteServer } from "@/hooks/useWorkspaces";
+import type { RemoteServer } from "@/hooks/useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import { tryGetHostedServerDisplayName } from "@/lib/apis/web/context";
 
-/** In comma-separated lists, after “no longer in this workspace: …” */
+/** In comma-separated lists, after “no longer in this project: …” */
 const REMOVED_SERVER_LIST_LABEL = "a removed server";
 
 function isLikelyOpaqueServerId(ref: string): boolean {
@@ -11,7 +11,7 @@ function isLikelyOpaqueServerId(ref: string): boolean {
 
 /**
  * True when we only have a stored id (or similar) and cannot map it to a
- * current workspace server or hosted name.
+ * current project server or hosted name.
  */
 export function isUnresolvableMcpServerRef(
   serverRef: string,
@@ -37,7 +37,7 @@ export function isUnresolvableMcpServerRef(
 
 /**
  * Returns a human-readable label for an MCP server reference (name, Convex
- * `_id`, or other opaque id), for toasts and inline copy. Prefers workspace
+ * `_id`, or other opaque id), for toasts and inline copy. Prefers project
  * registry data, then hosted name↔id mappings, then the raw ref. Unresolvable
  * opaque ids use a generic "removed" phrase instead of exposing long ids.
  */

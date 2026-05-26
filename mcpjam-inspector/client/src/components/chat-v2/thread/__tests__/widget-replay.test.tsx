@@ -1,15 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { WidgetReplay } from "../widget-replay";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 
 const mockDetectUIType = vi.fn();
 
-vi.mock("../chatgpt-app-renderer", () => ({
-  ChatGPTAppRenderer: ({ toolName }: { toolName: string }) => (
-    <div data-testid="chatgpt-renderer">{toolName}</div>
-  ),
-}));
+// After the renderer consolidation (Phase 3), every UI-bearing tool —
+// Apps SDK, MCP Apps, or dual-metadata — routes through MCPAppsRenderer.
+// The previous chatgpt-vs-mcp branching by chatbox style is gone.
 
 vi.mock("../mcp-apps/mcp-apps-renderer", () => ({
   MCPAppsRenderer: ({ toolName }: { toolName: string }) => (
@@ -24,6 +23,7 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
     MCP_APPS: "mcp-apps",
     OPENAI_SDK: "openai-sdk",
     OPENAI_SDK_AND_MCP_APPS: "openai-sdk-and-mcp-apps",
+    MCP_UI: "mcp-ui",
   },
 }));
 
@@ -47,28 +47,59 @@ describe("WidgetReplay", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDetectUIType.mockReturnValue("openai-sdk-and-mcp-apps");
   });
 
-  it("prefers the OpenAI renderer for ChatGPT chatboxes", () => {
-    render(
-      <ChatboxHostStyleProvider value="chatgpt">
-        <WidgetReplay {...baseProps} />
-      </ChatboxHostStyleProvider>,
-    );
-
-    expect(screen.getByTestId("chatgpt-renderer")).toBeInTheDocument();
-    expect(screen.queryByTestId("mcp-apps-renderer")).not.toBeInTheDocument();
-  });
-
-  it("prefers the MCP Apps renderer for Claude chatboxes", () => {
-    render(
-      <ChatboxHostStyleProvider value="claude">
-        <WidgetReplay {...baseProps} />
-      </ChatboxHostStyleProvider>,
-    );
-
+  it("routes Apps-SDK-only widgets through MCPAppsRenderer", () => {
+    mockDetectUIType.mockReturnValue("openai-sdk");
+    render(<WidgetReplay {...baseProps} />);
     expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
-    expect(screen.queryByTestId("chatgpt-renderer")).not.toBeInTheDocument();
+  });
+
+  it("routes MCP-Apps-only widgets through MCPAppsRenderer", () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    render(<WidgetReplay {...baseProps} />);
+    expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
+  });
+
+  it("routes dual-metadata widgets through MCPAppsRenderer", () => {
+    mockDetectUIType.mockReturnValue("openai-sdk-and-mcp-apps");
+    render(<WidgetReplay {...baseProps} />);
+    expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
+  });
+
+  it("renders nothing when detectUIType returns null", () => {
+    mockDetectUIType.mockReturnValue(null);
+    const { container } = render(<WidgetReplay {...baseProps} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  describe("host capability gate (Bug 1)", () => {
+    it("renders when the host advertises the MCP UI extension", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const caps = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      };
+      render(
+        <ActiveHostCapsResolverProvider value={() => caps}>
+          <WidgetReplay {...baseProps} />
+        </ActiveHostCapsResolverProvider>
+      );
+      expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
+    });
+
+    it("renders nothing when the host strips the UI extension (Codex)", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const codexCaps = { elicitation: {} };
+      const { container } = render(
+        <ActiveHostCapsResolverProvider value={() => codexCaps}>
+          <WidgetReplay {...baseProps} />
+        </ActiveHostCapsResolverProvider>
+      );
+      expect(container.firstChild).toBeNull();
+    });
   });
 });

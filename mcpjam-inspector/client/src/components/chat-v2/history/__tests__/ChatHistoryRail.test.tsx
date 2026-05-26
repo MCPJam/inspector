@@ -8,13 +8,15 @@ const {
   refetchMock,
   archiveManySessionIdsMock,
   useChatHistoryMock,
-  useWorkspaceMembersMock,
+  useProjectMembersMock,
+  useFeatureFlagEnabledMock,
   chatHistoryRowPropsSpy,
 } = vi.hoisted(() => {
   const refetchMock = vi.fn();
   const archiveManySessionIdsMock = vi.fn();
   const chatHistoryRowPropsSpy = vi.fn();
-  const useWorkspaceMembersMock = vi.fn(() => ({
+  const useFeatureFlagEnabledMock = vi.fn(() => true);
+  const useProjectMembersMock = vi.fn(() => ({
     members: [],
     activeMembers: [],
     pendingMembers: [],
@@ -24,7 +26,7 @@ const {
   }));
   const useChatHistoryMock = vi.fn(() => ({
     personal: [] as ChatHistorySession[],
-    workspace: [] as ChatHistorySession[],
+    project: [] as ChatHistorySession[],
     loading: false,
     error: null,
     isReactive: false,
@@ -45,13 +47,19 @@ const {
     refetchMock,
     archiveManySessionIdsMock,
     useChatHistoryMock,
-    useWorkspaceMembersMock,
+    useProjectMembersMock,
+    useFeatureFlagEnabledMock,
     chatHistoryRowPropsSpy,
   };
 });
 
-vi.mock("@/hooks/useWorkspaces", () => ({
-  useWorkspaceMembers: (...args: unknown[]) => useWorkspaceMembersMock(...args),
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    useFeatureFlagEnabledMock(...args),
+}));
+
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: (...args: unknown[]) => useProjectMembersMock(...args),
 }));
 
 vi.mock("../use-chat-history", () => ({
@@ -113,8 +121,10 @@ describe("ChatHistoryRail", () => {
     refetchMock.mockReset();
     archiveManySessionIdsMock.mockReset();
     chatHistoryRowPropsSpy.mockReset();
-    useWorkspaceMembersMock.mockReset();
-    useWorkspaceMembersMock.mockReturnValue({
+    useProjectMembersMock.mockReset();
+    useFeatureFlagEnabledMock.mockReset();
+    useFeatureFlagEnabledMock.mockReturnValue(true);
+    useProjectMembersMock.mockReturnValue({
       members: [],
       activeMembers: [],
       pendingMembers: [],
@@ -124,7 +134,7 @@ describe("ChatHistoryRail", () => {
     });
     useChatHistoryMock.mockImplementation(() => ({
       personal: [],
-      workspace: [],
+      project: [],
       loading: false,
       error: null,
       isReactive: false,
@@ -151,7 +161,7 @@ describe("ChatHistoryRail", () => {
           activeSessionId={null}
           isAuthenticated
           isStreaming={false}
-          workspaceId="workspace-1"
+          projectId="project-1"
           onSelectThread={vi.fn()}
           onNewChat={vi.fn()}
         />,
@@ -164,7 +174,7 @@ describe("ChatHistoryRail", () => {
           activeSessionId={null}
           isAuthenticated
           isStreaming
-          workspaceId="workspace-1"
+          projectId="project-1"
           onSelectThread={vi.fn()}
           onNewChat={vi.fn()}
         />,
@@ -177,7 +187,7 @@ describe("ChatHistoryRail", () => {
           activeSessionId={null}
           isAuthenticated
           isStreaming={false}
-          workspaceId="workspace-1"
+          projectId="project-1"
           onSelectThread={vi.fn()}
           onNewChat={vi.fn()}
         />,
@@ -198,10 +208,10 @@ describe("ChatHistoryRail", () => {
     }
   });
 
-  it("only exposes chat-to-test-case conversion when authenticated", () => {
+  it("only exposes chat-to-test-case conversion when authenticated and playground flag is on", () => {
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("personal-1")],
-      workspace: [],
+      project: [],
       loading: false,
       error: null,
       isReactive: false,
@@ -224,7 +234,7 @@ describe("ChatHistoryRail", () => {
         activeSessionId={null}
         isAuthenticated={false}
         isStreaming={false}
-        workspaceId={null}
+        projectId={null}
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
       />,
@@ -243,7 +253,7 @@ describe("ChatHistoryRail", () => {
         activeSessionId={null}
         isAuthenticated
         isStreaming={false}
-        workspaceId={null}
+        projectId={null}
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
       />,
@@ -254,13 +264,33 @@ describe("ChatHistoryRail", () => {
         canConvertToTestCase: true,
       }),
     );
+
+    chatHistoryRowPropsSpy.mockReset();
+    useFeatureFlagEnabledMock.mockReturnValue(false);
+
+    rerender(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated
+        isStreaming={false}
+        projectId={null}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(chatHistoryRowPropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canConvertToTestCase: false,
+      }),
+    );
   });
 
   it("skips fallback refetch retries when history is reactive", async () => {
     vi.useFakeTimers();
     useChatHistoryMock.mockImplementation(() => ({
       personal: [],
-      workspace: [],
+      project: [],
       loading: false,
       error: null,
       isReactive: true,
@@ -284,7 +314,7 @@ describe("ChatHistoryRail", () => {
           activeSessionId={null}
           isAuthenticated
           isStreaming={false}
-          workspaceId="workspace-1"
+          projectId="project-1"
           onSelectThread={vi.fn()}
           onNewChat={vi.fn()}
         />,
@@ -295,7 +325,7 @@ describe("ChatHistoryRail", () => {
           activeSessionId={null}
           isAuthenticated
           isStreaming
-          workspaceId="workspace-1"
+          projectId="project-1"
           onSelectThread={vi.fn()}
           onNewChat={vi.fn()}
         />,
@@ -306,7 +336,7 @@ describe("ChatHistoryRail", () => {
           activeSessionId={null}
           isAuthenticated
           isStreaming={false}
-          workspaceId="workspace-1"
+          projectId="project-1"
           onSelectThread={vi.fn()}
           onNewChat={vi.fn()}
         />,
@@ -319,23 +349,23 @@ describe("ChatHistoryRail", () => {
     }
   });
 
-  it("passes workspaceThreadOwner into workspace rows from member roster", () => {
-    useWorkspaceMembersMock.mockReturnValue({
+  it("passes projectThreadOwner into project rows from member roster", () => {
+    useProjectMembersMock.mockReturnValue({
       members: [],
       activeMembers: [
         {
           _id: "mem-peer",
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           userId: "user-peer",
           email: "peer@test.com",
-          workspaceRole: "editor",
+          projectRole: "editor",
           canChangeRole: false,
           addedBy: "x",
           addedAt: 0,
           isOwner: false,
           isPending: false,
           hasAccess: true,
-          accessSource: "workspace",
+          accessSource: "project",
           canRemove: false,
           user: {
             name: "Peer User",
@@ -352,9 +382,9 @@ describe("ChatHistoryRail", () => {
 
     useChatHistoryMock.mockImplementation(() => ({
       personal: [],
-      workspace: [
+      project: [
         sessionStub("ws-row-1", {
-          directVisibility: "workspace",
+          directVisibility: "project",
           userId: "user-peer",
         }),
       ],
@@ -380,18 +410,18 @@ describe("ChatHistoryRail", () => {
         activeSessionId={null}
         isAuthenticated
         isStreaming={false}
-        workspaceId="workspace-1"
+        projectId="project-1"
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
       />,
     );
 
-    const workspaceCalls = chatHistoryRowPropsSpy.mock.calls
+    const projectCalls = chatHistoryRowPropsSpy.mock.calls
       .map((c) => c[0] as { session?: ChatHistorySession })
       .filter((p) => p.session?._id === "ws-row-1");
-    expect(workspaceCalls).toHaveLength(1);
-    expect(workspaceCalls[0]).toMatchObject({
-      workspaceThreadOwner: {
+    expect(projectCalls).toHaveLength(1);
+    expect(projectCalls[0]).toMatchObject({
+      projectThreadOwner: {
         status: "show",
         displayName: "Peer User",
         imageUrl: "https://example.com/p.png",
@@ -399,10 +429,10 @@ describe("ChatHistoryRail", () => {
     });
   });
 
-  it("omits workspaceThreadOwner for personal history rows", () => {
+  it("omits projectThreadOwner for personal history rows", () => {
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("p-only")],
-      workspace: [],
+      project: [],
       loading: false,
       error: null,
       isReactive: false,
@@ -425,7 +455,7 @@ describe("ChatHistoryRail", () => {
         activeSessionId={null}
         isAuthenticated
         isStreaming={false}
-        workspaceId="workspace-1"
+        projectId="project-1"
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
       />,
@@ -435,13 +465,13 @@ describe("ChatHistoryRail", () => {
       (c) =>
         (c[0] as { session?: ChatHistorySession }).session?._id === "p-only",
     );
-    expect(personalCall?.[0]).not.toHaveProperty("workspaceThreadOwner");
+    expect(personalCall?.[0]).not.toHaveProperty("projectThreadOwner");
   });
 
   it("renders archive-all buttons in both history sections", () => {
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("p1")],
-      workspace: [sessionStub("w1")],
+      project: [sessionStub("w1")],
       loading: false,
       error: null,
       isReactive: false,
@@ -464,7 +494,7 @@ describe("ChatHistoryRail", () => {
         activeSessionId={null}
         isAuthenticated
         isStreaming={false}
-        workspaceId="workspace-1"
+        projectId="project-1"
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
       />,
@@ -490,7 +520,7 @@ describe("ChatHistoryRail", () => {
         activeSessionId={null}
         isAuthenticated
         isStreaming={false}
-        workspaceId="workspace-1"
+        projectId="project-1"
         onSelectThread={vi.fn()}
         onNewChat={onNewChat}
       />,
@@ -510,7 +540,7 @@ describe("ChatHistoryRail", () => {
   it("hides the shared sessions section when shared threads are disabled", () => {
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("p1")],
-      workspace: [sessionStub("w1", { directVisibility: "workspace" })],
+      project: [sessionStub("w1", { directVisibility: "project" })],
       loading: false,
       error: null,
       isReactive: false,
@@ -534,7 +564,7 @@ describe("ChatHistoryRail", () => {
         isAuthenticated
         isStreaming={false}
         sharedThreadsEnabled={false}
-        workspaceId="workspace-1"
+        projectId="project-1"
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
       />,
@@ -560,12 +590,62 @@ describe("ChatHistoryRail", () => {
     ).toBe(false);
   });
 
+  it("hides project sharing when there is no project scope", () => {
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("p1")],
+      project: [sessionStub("w1", { directVisibility: "project" })],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    render(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated
+        isStreaming={false}
+        projectId={null}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.queryByText("Shared Sessions")).not.toBeInTheDocument();
+
+    const personalCall = chatHistoryRowPropsSpy.mock.calls.find(
+      (c) =>
+        (c[0] as { session?: ChatHistorySession }).session?._id === "p1",
+    );
+    expect(personalCall?.[0]).toMatchObject({
+      sharedThreadsEnabled: false,
+    });
+    expect(
+      chatHistoryRowPropsSpy.mock.calls.some(
+        (c) =>
+          (c[0] as { session?: ChatHistorySession }).session?._id === "w1",
+      ),
+    ).toBe(false);
+  });
+
   it("awaits async beforeResetChatAfterArchiveAll and skips archive-all when false", async () => {
     archiveManySessionIdsMock.mockResolvedValue(undefined);
     const beforeReset = vi.fn().mockResolvedValue(false);
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("p1")],
-      workspace: [],
+      project: [],
       loading: false,
       error: null,
       isReactive: false,
@@ -588,7 +668,7 @@ describe("ChatHistoryRail", () => {
         activeSessionId="p1"
         isAuthenticated
         isStreaming={false}
-        workspaceId="workspace-1"
+        projectId="project-1"
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
         beforeResetChatAfterArchiveAll={beforeReset}
@@ -610,7 +690,7 @@ describe("ChatHistoryRail", () => {
     const beforeReset = vi.fn().mockResolvedValue(true);
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("p1")],
-      workspace: [],
+      project: [],
       loading: false,
       error: null,
       isReactive: false,
@@ -633,7 +713,7 @@ describe("ChatHistoryRail", () => {
         activeSessionId="p1"
         isAuthenticated
         isStreaming={false}
-        workspaceId="workspace-1"
+        projectId="project-1"
         onSelectThread={vi.fn()}
         onNewChat={vi.fn()}
         beforeResetChatAfterArchiveAll={beforeReset}

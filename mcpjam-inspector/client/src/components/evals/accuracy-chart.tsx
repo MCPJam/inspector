@@ -26,7 +26,7 @@ interface AccuracyChartProps {
 export function AccuracyChart({
   data,
   isLoading = false,
-  title,
+  title: _title,
   height = "h-32",
   onClick,
   showLabel = false,

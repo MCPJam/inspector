@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +61,24 @@ export function SystemPromptSelector({
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
   const [draftTemperature, setDraftTemperature] = useState(temperature);
   const [confirmReset, setConfirmReset] = useState(false);
+
+  // Re-seed the draft from the live `systemPrompt`/`temperature` whenever the
+  // dialog transitions from closed to open. Radix's `onOpenChange` does NOT
+  // fire when `open` is controlled and flipped externally, so the equivalent
+  // sync inside `handleOpenChange` only covers internally-driven opens. Surfaces
+  // that drive `open` themselves (chat-input passes a controlled `open`) would
+  // otherwise show whatever `systemPrompt` was at the selector's mount time —
+  // e.g. the default literal — even after the host-driven state moved on.
+  const previousOpenRef = useRef(isOpen);
+  useEffect(() => {
+    const wasOpen = previousOpenRef.current;
+    previousOpenRef.current = isOpen;
+    if (isOpen && !wasOpen) {
+      setDraftPrompt(systemPrompt);
+      setDraftTemperature(temperature);
+      setConfirmReset(false);
+    }
+  }, [isOpen, systemPrompt, temperature]);
 
   const effectiveSelectedModels =
     multiModelEnabled && selectedModels && selectedModels.length > 0

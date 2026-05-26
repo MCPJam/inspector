@@ -5,11 +5,18 @@ import {
   type OutputFormat,
   usageError,
 } from "./output.js";
+import {
+  assertNoCredentialsFileAuthConflicts,
+  resolveCredentialsFileAuth,
+} from "./credentials-file.js";
+import { parseJsonInputRecord } from "./json-input.js";
 
 export interface GlobalOptions {
   format: OutputFormat;
   timeout: number;
   rpc: boolean;
+  quiet: boolean;
+  telemetry: boolean;
 }
 
 type TransportType = "http" | "stdio";
@@ -22,6 +29,7 @@ export interface SharedServerTargetOptions {
   refreshToken?: string;
   clientId?: string;
   clientSecret?: string;
+  credentialsFile?: string;
   header?: string[];
   clientCapabilities?: string | Record<string, unknown>;
   command?: string;
@@ -62,6 +70,10 @@ export function addSharedServerOptions(command: Command): Command {
       "OAuth client secret used with --refresh-token",
     )
     .option(
+      "--credentials-file <path>",
+      "Load OAuth credentials from a file created by oauth login or oauth conformance --credentials-out",
+    )
+    .option(
       "--header <header>",
       'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
       collectString,
@@ -69,7 +81,7 @@ export function addSharedServerOptions(command: Command): Command {
     )
     .option(
       "--client-capabilities <json>",
-      "Client capabilities advertised to the server as a JSON object",
+      "Client capabilities as JSON, @path, or - for stdin",
     )
     .option("--command <command>", "Command for a stdio MCP server")
     .option(
@@ -97,6 +109,8 @@ export function getGlobalOptions(command: Command): GlobalOptions {
     ),
     timeout: options.timeout ?? 30_000,
     rpc: options.rpc ?? false,
+    quiet: options.quiet ?? false,
+    telemetry: options.telemetry ?? true,
   };
 }
 
@@ -168,24 +182,7 @@ export function parseJsonRecord(
   value: string | undefined,
   label: string,
 ): Record<string, unknown> | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw usageError(`${label} must be valid JSON.`, {
-      source: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw usageError(`${label} must be a JSON object.`);
-  }
-
-  return parsed as Record<string, unknown>;
+  return parseJsonInputRecord(value, label);
 }
 
 export function parseUnknownRecord(
@@ -293,10 +290,20 @@ export function parseServerConfig(
     }
 
     const headers = parseHeadersOption(options.header);
-    const accessToken = resolveHttpAccessToken(options);
-    const refreshToken = options.refreshToken?.trim();
-    const clientId = options.clientId?.trim();
-    const clientSecret = options.clientSecret?.trim();
+    assertNoCredentialsFileAuthConflicts(options);
+    const fileCredentials = options.credentialsFile
+      ? resolveCredentialsFileAuth(options.credentialsFile, url)
+      : undefined;
+    const accessToken =
+      resolveHttpAccessToken(options) ?? fileCredentials?.accessToken;
+    const refreshToken =
+      normalizeOptionalAuthValue(options.refreshToken) ??
+      fileCredentials?.refreshToken;
+    const clientId =
+      normalizeOptionalAuthValue(options.clientId) ?? fileCredentials?.clientId;
+    const clientSecret =
+      normalizeOptionalAuthValue(options.clientSecret) ??
+      fileCredentials?.clientSecret;
 
     if (refreshToken && accessToken) {
       throw usageError(
@@ -336,10 +343,11 @@ export function parseServerConfig(
     options.refreshToken ||
     options.clientId ||
     options.clientSecret ||
+    options.credentialsFile ||
     (options.header?.length ?? 0) > 0
   ) {
     throw usageError(
-      "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, and --header can only be used together with --url.",
+      "--access-token, --oauth-access-token, --refresh-token, --client-id, --client-secret, --credentials-file, and --header can only be used together with --url.",
     );
   }
 
@@ -363,6 +371,8 @@ export function addGlobalOptions(program: Command): Command {
       30_000,
     )
     .option("--rpc", "Include RPC logs in JSON output")
+    .option("--quiet", "Suppress non-result progress output")
+    .option("--no-telemetry", "Disable anonymous usage telemetry")
     .option("--format <format>", "Output format");
 }
 
@@ -502,8 +512,8 @@ function resolveTransportOption(
 export function resolveHttpAccessToken(
   options: Pick<SharedServerTargetOptions, "accessToken" | "oauthAccessToken">,
 ): string | undefined {
-  const accessToken = options.accessToken?.trim();
-  const oauthAccessToken = options.oauthAccessToken?.trim();
+  const accessToken = normalizeOptionalAuthValue(options.accessToken);
+  const oauthAccessToken = normalizeOptionalAuthValue(options.oauthAccessToken);
 
   if (accessToken && oauthAccessToken && accessToken !== oauthAccessToken) {
     throw usageError(
@@ -512,4 +522,11 @@ export function resolveHttpAccessToken(
   }
 
   return accessToken ?? oauthAccessToken;
+}
+
+function normalizeOptionalAuthValue(
+  value: string | undefined,
+): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }

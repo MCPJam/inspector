@@ -63,7 +63,10 @@ export function registerPromptCommands(program: Command): void {
         .description("Get a named prompt from an MCP server")
         .option("--prompt-name <prompt>", "Prompt name")
         .option("--name <prompt>", "Alias for --prompt-name")
-        .option("--prompt-args <json>", "Prompt arguments as a JSON object"),
+        .option(
+          "--prompt-args <json>",
+          "Prompt arguments as JSON, @path, or - for stdin",
+        ),
     ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);

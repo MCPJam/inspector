@@ -28,6 +28,7 @@ ARG VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS
 ARG VITE_WORKOS_API_HOSTNAME
 ARG VITE_CONVEX_URL
 ARG VITE_WORKOS_CLIENT_ID
+ARG VITE_MCPJAM_SANDBOX_ORIGIN
 
 COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ./sdk/
 COPY cli/package.json ./cli/package.json
@@ -61,6 +62,7 @@ RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; f
     if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \
     if [ -n "$VITE_CONVEX_URL" ]; then export VITE_CONVEX_URL; fi; \
     if [ -n "$VITE_WORKOS_CLIENT_ID" ]; then export VITE_WORKOS_CLIENT_ID; fi; \
+    if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
     npm run build:client -w @mcpjam/inspector
 
 ################################################################################

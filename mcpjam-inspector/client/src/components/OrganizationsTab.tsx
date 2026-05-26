@@ -45,7 +45,6 @@ import {
   type BillingInterval,
   type OrganizationBillingStatus,
   type OrganizationPlan,
-  type PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import {
   formatPlanName,
@@ -53,7 +52,7 @@ import {
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
-import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import type { OrganizationRouteSection } from "@/lib/app-navigation";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import {
   getBillingUpsellCtaLabel,
@@ -64,6 +63,8 @@ import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
+import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
+import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -75,22 +76,9 @@ interface OrganizationsTabProps {
   onOrganizationDeleted?: (organizationId: string) => void;
 }
 
-function getOrganizationRouteHash(
-  organizationId: string,
-  section: OrganizationRouteSection,
-): string {
-  return section === "billing"
-    ? `organizations/${organizationId}/billing`
-    : `organizations/${organizationId}`;
-}
-
-interface PendingPaidUpgradeConfirmation {
-  tier: "team";
-  billingInterval: BillingInterval;
-}
 
 interface PendingDowngradeConfirmation {
-  targetPlan: "free" | "starter";
+  targetPlan: "free";
   targetBillingInterval: BillingInterval | null;
   currentPlan: OrganizationPlan;
   currentBillingInterval: BillingInterval | null;
@@ -102,27 +90,6 @@ interface ScheduledBillingChangeCancellationState {
   dialogTitle: string;
   dialogDescription: string;
   successMessage: string;
-}
-
-function shouldConfirmPaidUpgrade(
-  billingStatus: OrganizationBillingStatus | undefined,
-  tier: "starter" | "team",
-): boolean {
-  return (
-    tier === "team" &&
-    billingStatus?.plan === "starter" &&
-    (billingStatus.subscriptionStatus === "active" ||
-      billingStatus.subscriptionStatus === "trialing")
-  );
-}
-
-function formatCurrencyAmount(amount: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
 }
 
 function formatBillingDate(timestampMs: number | null): string | null {
@@ -169,7 +136,7 @@ function getScheduledBillingChangeCancellationState(
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
 
   if (
-    (currentPlan !== "starter" && currentPlan !== "team") ||
+    currentPlan !== "team" ||
     currentBillingInterval == null ||
     scheduledPlan == null ||
     scheduledBillingInterval == null
@@ -211,27 +178,6 @@ function getScheduledBillingChangeCancellationState(
   };
 }
 
-function getPaidUpgradeConfirmationSummary(
-  planCatalog: PlanCatalog | undefined,
-  billingInterval: BillingInterval,
-): string {
-  const teamPlan = planCatalog?.plans.team;
-  const seatMinimum = teamPlan?.seatMinimum ?? 4;
-  const priceCents = teamPlan?.prices[billingInterval];
-
-  if (typeof priceCents !== "number") {
-    return billingInterval === "annual"
-      ? `Team with annual billing (${seatMinimum}-seat minimum)`
-      : `Team with monthly billing (${seatMinimum}-seat minimum)`;
-  }
-
-  const billedAmount = (priceCents * seatMinimum) / 100;
-  const cadence = billingInterval === "annual" ? "year" : "month";
-  const currency = planCatalog?.currency ?? "usd";
-
-  return `Team at ${formatCurrencyAmount(billedAmount, currency)}/${cadence} (${seatMinimum}-seat minimum)`;
-}
-
 export function OrganizationsTab({
   organizationId,
   section = "overview",
@@ -241,6 +187,7 @@ export function OrganizationsTab({
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationsTabProps) {
+  const appNavigate = useAppNavigate();
   const { user, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
@@ -300,7 +247,7 @@ export function OrganizationsTab({
             This organization may have been deleted or you don't have access to
             it.
           </p>
-          <Button onClick={() => (window.location.hash = "servers")}>
+          <Button onClick={() => (appNavigate("/servers"))}>
             Go to Servers
           </Button>
         </div>
@@ -321,7 +268,7 @@ export function OrganizationsTab({
             You don't have permission to view organization settings. Contact an
             admin or owner for access.
           </p>
-          <Button onClick={() => (window.location.hash = "servers")}>
+          <Button onClick={() => (appNavigate("/servers"))}>
             Go to Servers
           </Button>
         </div>
@@ -370,6 +317,7 @@ function OrganizationPage({
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationPageProps) {
+  const appNavigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const currentUserEmail = user?.email;
@@ -406,7 +354,6 @@ function OrganizationPage({
   const canInvite = canEdit;
   const {
     billingStatus,
-    entitlements,
     organizationPremiumness,
     planCatalog,
     isLoadingBilling,
@@ -428,8 +375,12 @@ function OrganizationPage({
     "billing-entitlements-ui",
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
-  const activeSection =
-    billingUiEnabled && section === "billing" ? "billing" : "overview";
+  const activeSection: OrganizationRouteSection =
+    section === "models"
+      ? "models"
+      : billingUiEnabled && section === "billing"
+        ? "billing"
+        : "overview";
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -492,8 +443,6 @@ function OrganizationPage({
     scheduledBillingChangeConfirmOpen,
     setScheduledBillingChangeConfirmOpen,
   ] = useState(false);
-  const [pendingPaidUpgradeConfirmation, setPendingPaidUpgradeConfirmation] =
-    useState<PendingPaidUpgradeConfirmation | null>(null);
   const [pendingDowngradeConfirmation, setPendingDowngradeConfirmation] =
     useState<PendingDowngradeConfirmation | null>(null);
   const scheduledBillingChangeCancellation =
@@ -689,7 +638,7 @@ function OrganizationPage({
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
       if (!onOrganizationDeleted) {
-        window.location.hash = "servers";
+        appNavigate("/servers");
       }
     } catch (error) {
       toast.error((error as Error).message || "Failed to delete organization");
@@ -709,7 +658,7 @@ function OrganizationPage({
       });
       toast.success("You have left the organization");
       setLeaveConfirmOpen(false);
-      window.location.hash = "servers";
+      appNavigate("/servers");
     } catch (error) {
       toast.error((error as Error).message || "Failed to leave organization");
     } finally {
@@ -721,10 +670,7 @@ function OrganizationPage({
   const auditLogLocked =
     billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
-    window.location.hash = getOrganizationRouteHash(
-      organization._id,
-      nextSection,
-    );
+    appNavigate(buildOrganizationPath(organization._id, nextSection));
   };
   const handleViewBilling = () => navigateToSection("billing");
 
@@ -745,7 +691,7 @@ function OrganizationPage({
 
   const getBillingReturnUrl = useCallback(
     () =>
-      `${window.location.origin}${window.location.pathname}#${getOrganizationRouteHash(
+      `${window.location.origin}${buildOrganizationPath(
         organization._id,
         "billing",
       )}`,
@@ -785,28 +731,11 @@ function OrganizationPage({
 
   const handleDowngradePlan = async (
     targetPlan: OrganizationPlan,
-    targetBillingInterval: BillingInterval,
+    _targetBillingInterval: BillingInterval,
   ) => {
     const currentPlan = billingStatus?.plan;
 
-    if (
-      currentPlan === "team" &&
-      targetPlan === "starter" &&
-      billingStatus?.billingInterval != null
-    ) {
-      setPendingDowngradeConfirmation({
-        targetPlan: "starter",
-        targetBillingInterval,
-        currentPlan,
-        currentBillingInterval: billingStatus.billingInterval,
-      });
-      return;
-    }
-
-    if (
-      (currentPlan === "starter" || currentPlan === "team") &&
-      targetPlan === "free"
-    ) {
+    if (currentPlan === "team" && targetPlan === "free" && billingStatus) {
       setPendingDowngradeConfirmation({
         targetPlan: "free",
         targetBillingInterval: null,
@@ -844,42 +773,9 @@ function OrganizationPage({
     if (!pendingDowngradeConfirmation) return;
 
     try {
-      if (pendingDowngradeConfirmation.targetPlan === "free") {
-        const billingUrl = await openCancellationPortal(getBillingReturnUrl());
-        openBillingUrl(billingUrl);
-        setPendingDowngradeConfirmation(null);
-        return;
-      }
-
-      const result = await startPlanChange(
-        getBillingReturnUrl(),
-        "starter",
-        pendingDowngradeConfirmation.targetBillingInterval ?? "monthly",
-        { confirmPaidPlanChange: false },
-      );
-
-      if (result.kind === "updated") {
-        toast.success(
-          `Plan updated to ${formatPlanName(
-            result.subscription.plan ?? pendingDowngradeConfirmation.targetPlan,
-          )}.`,
-        );
-        setPendingDowngradeConfirmation(null);
-        return;
-      }
-
-      if (result.kind === "scheduled") {
-        const targetLabel = formatPlanDescriptor(
-          pendingDowngradeConfirmation.targetPlan,
-          pendingDowngradeConfirmation.targetBillingInterval,
-        );
-        toast.success(`Downgrade to ${targetLabel} scheduled for renewal.`);
-        setPendingDowngradeConfirmation(null);
-        return;
-      }
-
-      const billingUrl =
-        result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+      // Only path is targetPlan === "free": send the user to the Stripe
+      // cancellation portal. Paid-tier downgrades no longer exist.
+      const billingUrl = await openCancellationPortal(getBillingReturnUrl());
       openBillingUrl(billingUrl);
       setPendingDowngradeConfirmation(null);
     } catch (error) {
@@ -890,7 +786,7 @@ function OrganizationPage({
   };
 
   const executeManualPlanChange = async (
-    tier: "starter" | "team",
+    tier: "team",
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
@@ -926,40 +822,13 @@ function OrganizationPage({
   };
 
   const handlePlanChange = async (
-    tier: "starter" | "team",
+    tier: "team",
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
-    if (shouldConfirmPaidUpgrade(billingStatus, tier)) {
-      setPendingPaidUpgradeConfirmation({
-        tier,
-        billingInterval,
-      });
-      return;
-    }
-
     await executeManualPlanChange(tier, billingInterval, options);
   };
 
-  const handleConfirmPaidUpgrade = async () => {
-    if (!pendingPaidUpgradeConfirmation) return;
-
-    try {
-      await executeManualPlanChange(
-        pendingPaidUpgradeConfirmation.tier,
-        pendingPaidUpgradeConfirmation.billingInterval,
-      );
-    } finally {
-      setPendingPaidUpgradeConfirmation(null);
-    }
-  };
-
-  const paidUpgradeConfirmationSummary = pendingPaidUpgradeConfirmation
-    ? getPaidUpgradeConfirmationSummary(
-        planCatalog,
-        pendingPaidUpgradeConfirmation.billingInterval,
-      )
-    : null;
   const pendingDowngradeEffectiveDate = formatBillingDate(
     billingStatus?.stripeCurrentPeriodEnd ?? null,
   );
@@ -977,7 +846,7 @@ function OrganizationPage({
     : null;
 
   const handleAutoPlanChange = useCallback(
-    async (tier: "starter" | "team", billingInterval: "monthly" | "annual") => {
+    async (tier: "team", billingInterval: "monthly" | "annual") => {
       try {
         const result = await startPlanChange(
           getBillingReturnUrl(),
@@ -1087,24 +956,37 @@ function OrganizationPage({
               </div>
             </div>
           </CardContent>
-          {billingUiEnabled ? (
-            <nav
-              className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
-              aria-label="Organization settings sections"
+          <nav
+            className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
+            aria-label="Organization settings sections"
+          >
+            <button
+              type="button"
+              onClick={() => navigateToSection("overview")}
+              aria-current={activeSection === "overview" ? "page" : undefined}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                activeSection === "overview"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
             >
-              <button
-                type="button"
-                onClick={() => navigateToSection("overview")}
-                aria-current={activeSection === "overview" ? "page" : undefined}
-                className={cn(
-                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                  activeSection === "overview"
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-              >
-                General
-              </button>
+              General
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToSection("models")}
+              aria-current={activeSection === "models" ? "page" : undefined}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                activeSection === "models"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Models
+            </button>
+            {billingUiEnabled ? (
               <button
                 type="button"
                 onClick={() => navigateToSection("billing")}
@@ -1118,11 +1000,16 @@ function OrganizationPage({
               >
                 Billing
               </button>
-            </nav>
-          ) : null}
+            ) : null}
+          </nav>
         </Card>
 
-        {activeSection === "billing" ? (
+        {activeSection === "models" ? (
+          <OrganizationModelsSection
+            organizationId={organization._id}
+            isAdmin={canEdit}
+          />
+        ) : activeSection === "billing" ? (
           <>
             <OrganizationBillingSection
               billingStatus={billingStatus}
@@ -1188,6 +1075,15 @@ function OrganizationPage({
                         {isInviting ? "Inviting..." : "Add member"}
                       </Button>
                     </div>
+
+                    {billingStatus?.plan &&
+                    planCatalog?.plans[billingStatus.plan]?.billingModel ===
+                      "per_seat" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Pending invites are free. You'll be billed for this
+                        seat once the invite is accepted.
+                      </p>
+                    ) : null}
 
                     {memberInviteGate.isDenied ? (
                       <Alert
@@ -1527,7 +1423,7 @@ function OrganizationPage({
             <AlertDialogTitle>
               {pendingDowngradeConfirmation?.targetPlan === "free"
                 ? "Return to Free at renewal?"
-                : "Downgrade to Starter?"}
+                : "Downgrade to Team?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               {pendingDowngradeConfirmation?.targetPlan === "free" ? (
@@ -1552,7 +1448,7 @@ function OrganizationPage({
                     This downgrade takes effect at renewal, not now.
                   </span>
                   <span className="block">
-                    {pendingDowngradeTargetLabel ?? "Starter"} begins{" "}
+                    {pendingDowngradeTargetLabel ?? "Team"} begins{" "}
                     {pendingDowngradeEffectiveDate ??
                       "at the end of the current billing period"}
                     .
@@ -1569,7 +1465,7 @@ function OrganizationPage({
             <span className="font-medium text-foreground">
               {pendingDowngradeConfirmation?.targetPlan === "free"
                 ? "Stripe will open a cancellation flow that keeps paid access active until renewal."
-                : `${pendingDowngradeTargetLabel ?? "Starter"} will replace ${
+                : `${pendingDowngradeTargetLabel ?? "Team"} will replace ${
                     pendingDowngradeCurrentLabel ?? "the current plan"
                   } at renewal.`}
             </span>
@@ -1592,55 +1488,6 @@ function OrganizationPage({
                 : pendingDowngradeConfirmation?.targetPlan === "free"
                   ? "Open cancellation flow"
                   : "Schedule downgrade"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={pendingPaidUpgradeConfirmation !== null}
-        onOpenChange={(open) => {
-          if (!open && !isStartingPlanChange) {
-            setPendingPaidUpgradeConfirmation(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Upgrade to Team?</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <span className="block">
-                This upgrade takes effect immediately and updates your existing
-                Starter subscription in place.
-              </span>
-              <span className="block">
-                We do not send you through Stripe Checkout.
-              </span>
-              <span className="block">
-                Stripe prorates the rest of your current billing period instead
-                of waiting until renewal, so unused Starter time is factored
-                into the Team change.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
-            <span className="font-medium text-foreground">
-              {paidUpgradeConfirmationSummary ??
-                "Team billing will apply with the 4-seat minimum."}
-            </span>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isStartingPlanChange}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void handleConfirmPaidUpgrade();
-              }}
-              disabled={isStartingPlanChange}
-            >
-              {isStartingPlanChange ? "Upgrading..." : "Upgrade now"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

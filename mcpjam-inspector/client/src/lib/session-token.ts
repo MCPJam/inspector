@@ -14,11 +14,13 @@
 
 import { HOSTED_MODE } from "@/lib/config";
 import {
-  getHostedAuthorizationHeader,
+  getApiAuthorizationHeader,
   resetTokenCache,
-  shouldRetryHostedAuth401,
+  shouldRetryApiAuth401,
 } from "@/lib/apis/web/context";
+import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
+import posthog from "posthog-js";
 
 // Extend window type for the injected token
 declare global {
@@ -29,6 +31,32 @@ declare global {
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
+
+type AuthFetchSurface = "chatbox";
+
+const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
+  "/api/web/chatboxes/bootstrap": "chatbox",
+};
+
+function resolveAuthFetchSurface(
+  input: RequestInfo | URL
+): AuthFetchSurface | null {
+  const rawUrl =
+    input instanceof URL
+      ? input.toString()
+      : typeof Request !== "undefined" && input instanceof Request
+      ? input.url
+      : String(input);
+  const baseOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+
+  try {
+    const parsed = new URL(rawUrl, baseOrigin);
+    return AUTH_FETCH_SURFACE_BY_PATH[parsed.pathname] ?? null;
+  } catch {
+    return AUTH_FETCH_SURFACE_BY_PATH[rawUrl] ?? null;
+  }
+}
 
 function mergeHeaders(
   ...headersList: Array<HeadersInit | undefined>
@@ -70,18 +98,22 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
   }
 
   return Object.keys(headers).some(
-    (key) => key.toLowerCase() === "authorization",
+    (key) => key.toLowerCase() === "authorization"
   );
 }
 
 function buildAuthFetchInit(
+  input: RequestInfo | URL,
   init: RequestInit | undefined,
-  hostedAuthorizationHeader: string | null,
+  hostedAuthorizationHeader: string | null
 ): RequestInit {
-  const sessionHeaders = getAuthHeaders();
-  const hostedHeaders = hostedAuthorizationHeader
-    ? ({ Authorization: hostedAuthorizationHeader } as HeadersInit)
+  const sessionHeaders = shouldAttachSessionHeaders(input)
+    ? getAuthHeaders()
     : undefined;
+  const hostedHeaders =
+    hostedAuthorizationHeader && shouldAttachHostedAuthorization(input)
+      ? ({ Authorization: hostedAuthorizationHeader } as HeadersInit)
+      : undefined;
 
   return {
     ...init,
@@ -175,6 +207,120 @@ export function getAuthHeaders(): HeadersInit {
   return { "X-MCP-Session-Auth": `Bearer ${token}` };
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+function resolveRequestUrl(input: RequestInfo | URL): URL | null {
+  const baseOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+  try {
+    return input instanceof URL
+      ? input
+      : typeof Request !== "undefined" && input instanceof Request
+      ? new URL(input.url, baseOrigin)
+      : new URL(String(input), baseOrigin);
+  } catch {
+    return null;
+  }
+}
+
+// The session token is a single-process secret for the local CLI/Inspector
+// build; only attach it to loopback `/api/*` calls. Non-hosted Inspector is
+// not supported behind a public origin — relaxing this would expose the token
+// to any reachable client.
+function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
+  if (HOSTED_MODE) {
+    return false;
+  }
+
+  const parsed = resolveRequestUrl(input);
+  if (parsed) {
+    return isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/");
+  }
+  return typeof input === "string" && input.startsWith("/api/");
+}
+
+// Paths that need the hosted (Convex) Authorization bearer attached. In
+// hosted mode every `/api/web/*` route is Convex-backed; in local mode the
+// inspector forwards the bearer for routes that re-call Convex
+// (`/web/authorize-batch-local`, OAuth bookkeeping). Anything not listed
+// here — `/api/session-token`, `/api/health`, the local-only MCP read paths
+// — does NOT participate in Convex auth, so we don't want to mint or refresh
+// a guest session for those calls.
+//
+// `/api/web/*` paths are same-origin (proxied by the inspector's own Hono
+// server). The `/web/oauth/` paths cover absolute Convex HTTP-action URLs
+// (`https://*.convex.site/web/oauth/...`) that the OAuth flow hits directly
+// — gated by the same-origin/Convex-host check below so the bearer never
+// crosses to a foreign origin.
+const HOSTED_AUTH_PATH_PREFIXES = [
+  "/api/web/",
+  // Local resolver path that calls Convex /web/authorize-batch-local.
+  "/api/mcp/connect",
+  "/api/mcp/servers/reconnect",
+  // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
+  "/web/oauth/",
+];
+
+/**
+ * Returns true when `parsed` is safe to receive a hosted Authorization
+ * header — same origin as the app, a loopback host, or the configured
+ * Convex `*.convex.site` hostname. Without this, an absolute foreign URL
+ * matching one of the path prefixes would receive the bearer (credential
+ * exfiltration risk).
+ */
+function isHostedAuthAllowedOrigin(parsed: URL): boolean {
+  if (
+    typeof window !== "undefined" &&
+    parsed.origin === window.location.origin
+  ) {
+    return true;
+  }
+  if (isLoopbackHostname(parsed.hostname)) return true;
+  const convexSite = getConvexSiteUrl();
+  if (convexSite) {
+    try {
+      const convexHost = new URL(convexSite).hostname;
+      if (parsed.hostname === convexHost) return true;
+    } catch {
+      // Malformed configured URL — fall through to deny.
+    }
+  }
+  return false;
+}
+
+function pathMatchesHostedPrefix(pathname: string): boolean {
+  return HOSTED_AUTH_PATH_PREFIXES.some((prefix) => {
+    if (prefix.endsWith("/")) return pathname.startsWith(prefix);
+    // Non-trailing-slash entries match the literal path AND any sub-path
+    // (`/api/mcp/connect`, `/api/mcp/connect/`, `/api/mcp/connect/foo`) so a
+    // browser/proxy normalization or future sub-route doesn't silently drop
+    // the bearer. `/api/mcp/connecting` still won't match — boundary is `/`.
+    return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  });
+}
+
+function shouldAttachHostedAuthorization(input: RequestInfo | URL): boolean {
+  const parsed = resolveRequestUrl(input);
+  // Relative paths starting with "/" resolve same-origin via resolveRequestUrl
+  // (which uses window.location.origin). For odd inputs that don't parse,
+  // fall back to a literal pathname match — but only for relative paths,
+  // since an unparseable absolute URL shouldn't get credentials.
+  if (parsed) {
+    if (!isHostedAuthAllowedOrigin(parsed)) return false;
+    return pathMatchesHostedPrefix(parsed.pathname);
+  }
+  if (typeof input !== "string" || !input.startsWith("/")) return false;
+  const pathname = input.split("?")[0];
+  return pathMatchesHostedPrefix(pathname);
+}
+
 /**
  * Add token to URL as query parameter.
  * Required for SSE/EventSource which doesn't support custom headers.
@@ -215,7 +361,8 @@ export function addTokenToUrl(url: string): string {
 
 /**
  * Authenticated fetch wrapper.
- * Automatically adds session auth headers to all requests.
+ * Adds local session auth only for loopback `/api/*` requests and hosted auth
+ * where applicable.
  * Use this instead of native fetch for API calls.
  *
  * @param input - URL or Request object
@@ -224,18 +371,33 @@ export function addTokenToUrl(url: string): string {
  */
 export async function authFetch(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init?: RequestInit
 ): Promise<Response> {
-  const hostedAuthHeader = await getHostedAuthorizationHeader();
+  const surface = resolveAuthFetchSurface(input);
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
-  const mergedInit = buildAuthFetchInit(init, hostedAuthHeader);
+  // Only resolve the hosted bearer for paths that actually call Convex on
+  // the user's behalf. Skipping this for unrelated local paths
+  // (`/api/session-token`, `/api/health`, local-only MCP read paths) means
+  // those calls don't block on minting a guest session at cold boot and
+  // don't trigger guest refresh on unrelated 401s.
+  const hostedAuthEligible = shouldAttachHostedAuthorization(input);
+  const hostedAuthHeader = hostedAuthEligible
+    ? await getApiAuthorizationHeader()
+    : null;
+  const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
 
+  // Retry on 401 only for paths we actually attached a hosted bearer to —
+  // a 401 from `/api/health` shouldn't trigger a guest-session refresh.
+  // Also skip when the server flagged the 401 as OAuth-required: that's the
+  // upstream MCP server demanding the user complete its OAuth flow, not a
+  // session-auth failure, and a guest refresh would just hit the same 401.
   if (
     response.status !== 401 ||
-    !HOSTED_MODE ||
-    !shouldRetryHostedAuth401() ||
-    callerProvidedAuthorization
+    !hostedAuthEligible ||
+    !shouldRetryApiAuth401() ||
+    callerProvidedAuthorization ||
+    response.headers?.get("X-MCP-Auth-Required") === "oauth"
   ) {
     return response;
   }
@@ -245,9 +407,29 @@ export async function authFetch(
   resetTokenCache();
   const refreshedGuestToken = await forceRefreshGuestSession();
   if (!refreshedGuestToken) {
+    if (surface) {
+      posthog.capture("guest_refresh_failure", {
+        surface,
+        auth_mode: "guest",
+        status: "failure",
+        error_kind: "guest_refresh_unavailable",
+      });
+    }
     return response;
   }
 
-  const retryInit = buildAuthFetchInit(init, `Bearer ${refreshedGuestToken}`);
+  if (surface) {
+    posthog.capture("guest_refresh_success", {
+      surface,
+      auth_mode: "guest",
+      status: "success",
+    });
+  }
+
+  const retryInit = buildAuthFetchInit(
+    input,
+    init,
+    `Bearer ${refreshedGuestToken}`,
+  );
   return fetch(input, retryInit);
 }

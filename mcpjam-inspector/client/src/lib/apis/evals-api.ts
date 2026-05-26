@@ -3,14 +3,14 @@ import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
 import {
   buildHostedEvalServerBatchRequest,
-  buildHostedServerRequest,
-  buildHostedServerBatchRequest,
-  isGuestMode,
+  buildServerBatchRequest,
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/prompt-turns";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
 
 export const EVALS_API_ENDPOINTS = {
   local: {
@@ -36,11 +36,8 @@ export const EVALS_API_ENDPOINTS = {
 } as const;
 
 type JsonRecord = Record<string, unknown>;
-const GUEST_UNSUPPORTED_MESSAGE =
-  "Not available for guests yet. Sign in to use this.";
-
 type EvalRequestWithServers = {
-  workspaceId?: string | null;
+  projectId?: string | null;
   serverIds: string[];
 };
 
@@ -65,6 +62,32 @@ type RunEvalsRequest = EvalRequestWithServers & {
   passCriteria?: {
     minimumPassRate: number;
   };
+  /**
+   * True for suite reruns of already-persisted cases. Tells the server to
+   * skip the per-case upsert path so suite-default-derived wire fields
+   * (substituted models, merged advancedConfig) don't get baked into
+   * per-case overrides.
+   */
+  suiteRerun?: boolean;
+  /**
+   * Transient per-run iteration count (1-10). Server overlays `runs` on
+   * every test case in the run snapshot; persisted `EvalCase.runs`
+   * default is not mutated.
+   */
+  iterationOverride?: number;
+  /**
+   * One-off match-option override applied to every iteration of this run
+   * (layered on top of suite default + case override). Does not mutate
+   * persisted suite/case records.
+   */
+  matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * Scope this run to a single host attached to the suite. The backend
+   * snapshots the host's current config and derives the run's server
+   * environment from it. When the suite has multiple host attachments,
+   * the UI makes one parallel request per host.
+   */
+  namedHostId?: string;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
@@ -91,6 +114,30 @@ type RunTestCaseRequest = EvalRequestWithServers & {
       expectedOutput?: string;
     }>;
     advancedConfig?: Record<string, unknown>;
+    matchOptions?: EvalMatchOptions;
+  };
+  /** One-off run override; does not persist on the case. */
+  matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * One-off, per-Run override for the suite's hostConfig. Edited live in
+   * the test case editor's host header. Recorded on the iteration
+   * snapshot so the trace shows which config the run actually used.
+   *
+   * Subset of HostConfigInputV2 — only the fields the run uses (or could
+   * use). model / system prompt / temperature stay routed via
+   * `advancedConfig` to avoid two paths to the same field.
+   */
+  hostConfigOverride?: {
+    hostStyle?: string;
+    hostContext?: Record<string, unknown>;
+    clientCapabilities?: Record<string, unknown>;
+    hostCapabilitiesOverride?: Record<string, unknown>;
+    chatUiOverride?: Record<string, unknown>;
+    mcpProfile?: Record<string, unknown>;
+    connectionDefaults?: {
+      headers?: Record<string, string>;
+      requestTimeout?: number;
+    };
   };
 };
 
@@ -144,8 +191,8 @@ function mergeHostedServerBatch<
 >(
   request: T,
 ): Omit<T, "serverIds" | "convexAuthToken"> &
-  ReturnType<typeof buildHostedServerBatchRequest> {
-  const hostedBatch = buildHostedServerBatchRequest(request.serverIds);
+  ReturnType<typeof buildServerBatchRequest> {
+  const hostedBatch = buildServerBatchRequest(request.serverIds);
   const {
     convexAuthToken: _convexAuthToken,
     serverIds: _serverIds,
@@ -155,31 +202,6 @@ function mergeHostedServerBatch<
   return {
     ...requestWithoutConvexAuthToken,
     ...hostedBatch,
-    workspaceId: request.workspaceId ?? hostedBatch.workspaceId,
-  };
-}
-
-function mergeHostedEvalServerRequest<
-  T extends EvalRequestWithServers & { convexAuthToken?: string | null },
->(request: T): JsonRecord {
-  if (!isGuestMode()) {
-    return mergeHostedServerBatch(request) as JsonRecord;
-  }
-
-  const {
-    convexAuthToken: _convexAuthToken,
-    serverIds,
-    workspaceId: _workspaceId,
-    ...requestWithoutHostedAuth
-  } = request;
-
-  if (serverIds.length !== 1) {
-    throw new Error("Guest eval playground supports one server at a time");
-  }
-
-  return {
-    ...requestWithoutHostedAuth,
-    ...buildHostedServerRequest(serverIds[0]!),
   };
 }
 
@@ -215,6 +237,17 @@ async function postEvalRequest<TResponse>(
         : typeof errorBody?.error === "string"
           ? errorBody.error
           : `Request failed (${response.status})`;
+    const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
+      ?.limitKind;
+    notifyMCPJamLimitError({
+      code: typeof errorBody?.code === "string" ? errorBody.code : undefined,
+      details: body,
+      message,
+      limitKind:
+        limitKind === "total" || limitKind === "concurrency"
+          ? limitKind
+          : undefined,
+    });
     throw new Error(message);
   }
 
@@ -256,10 +289,6 @@ export async function runEvals(request: RunEvalsRequest): Promise<any> {
     local: () =>
       postEvalRequest(EVALS_API_ENDPOINTS.local.run, request as JsonRecord),
     hosted: () => {
-      if (isGuestMode()) {
-        throw new Error(GUEST_UNSUPPORTED_MESSAGE);
-      }
-
       return postEvalRequest(EVALS_API_ENDPOINTS.hosted.run, {
         ...mergeHostedServerBatch(request),
         storageServerIds: request.storageServerIds ?? request.serverIds,
@@ -280,7 +309,7 @@ export async function runEvalTestCase(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.runTestCase,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -297,7 +326,7 @@ export async function generateEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -314,7 +343,7 @@ export async function generateNegativeEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -375,7 +404,7 @@ export async function streamEvalTestCase(
     : EVALS_API_ENDPOINTS.local.streamTestCase;
 
   const payload = isHostedMode()
-    ? mergeHostedEvalServerRequest(request)
+    ? mergeHostedServerBatch(request) as JsonRecord
     : (request as JsonRecord);
 
   const response = await authFetch(endpoint, {
@@ -387,13 +416,47 @@ export async function streamEvalTestCase(
 
   if (!response.ok) {
     let errorMessage = `Request failed (${response.status})`;
+    let errorBody: unknown = null;
+    let errorText = "";
     try {
-      const body = await response.json();
-      if (typeof body?.error === "string") errorMessage = body.error;
-      else if (typeof body?.message === "string") errorMessage = body.message;
+      errorText = await response.text();
+      errorBody = errorText ? JSON.parse(errorText) : null;
+      if (
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { error?: unknown }).error === "string"
+      ) {
+        errorMessage = (errorBody as { error: string }).error;
+      } else if (
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { message?: unknown }).message === "string"
+      ) {
+        errorMessage = (errorBody as { message: string }).message;
+      }
     } catch {
-      // ignore parse errors
+      if (errorText) {
+        errorBody = errorText;
+      }
     }
+    const limitKindRaw =
+      errorBody && typeof errorBody === "object"
+        ? (errorBody as { limitKind?: unknown }).limitKind
+        : undefined;
+    notifyMCPJamLimitError({
+      code:
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { code?: unknown }).code === "string"
+          ? (errorBody as { code: string }).code
+          : undefined,
+      details: errorBody ?? errorText,
+      message: errorMessage,
+      limitKind:
+        limitKindRaw === "total" || limitKindRaw === "concurrency"
+          ? limitKindRaw
+          : undefined,
+    });
     throw new Error(errorMessage);
   }
 
@@ -415,6 +478,30 @@ export async function streamEvalTestCase(
     }
     try {
       const event = JSON.parse(data) as EvalStreamEvent;
+      if (event.type === "error") {
+        // Best-effort recovery of structured limitKind from JSON-shaped
+        // details so the concurrency carve-out is honored on the SSE
+        // error path. Untouched if details aren't JSON.
+        let limitKind: "total" | "concurrency" | undefined;
+        if (typeof event.details === "string") {
+          try {
+            const parsed = JSON.parse(event.details);
+            if (parsed && typeof parsed === "object") {
+              const value = (parsed as { limitKind?: unknown }).limitKind;
+              if (value === "total" || value === "concurrency") {
+                limitKind = value;
+              }
+            }
+          } catch {
+            // not JSON; ignore
+          }
+        }
+        notifyMCPJamLimitError({
+          details: event.details,
+          message: event.message,
+          limitKind,
+        });
+      }
       onEvent(event);
     } catch {
       // ignore malformed lines

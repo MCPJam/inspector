@@ -26,12 +26,18 @@ vi.mock("../run-detail-view", () => ({
 }));
 
 const routerMocks = vi.hoisted(() => ({
-  navigateToCiEvalsRoute: vi.fn(),
+  navigateApp: vi.fn(),
 }));
 
-vi.mock("@/lib/ci-evals-router", () => ({
-  navigateToCiEvalsRoute: routerMocks.navigateToCiEvalsRoute,
-}));
+vi.mock("@/lib/app-navigation", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/app-navigation")>(
+    "@/lib/app-navigation",
+  );
+  return {
+    ...actual,
+    navigateApp: routerMocks.navigateApp,
+  };
+});
 
 import { CommitDetailView } from "../commit-detail-view";
 
@@ -83,7 +89,7 @@ describe("CommitDetailView", () => {
 
     expect(screen.getByText(/Select a suite from the sidebar/i)).toBeVisible();
     expect(screen.queryByTestId("run-detail-view")).not.toBeInTheDocument();
-    expect(routerMocks.navigateToCiEvalsRoute).not.toHaveBeenCalled();
+    expect(routerMocks.navigateApp).not.toHaveBeenCalled();
   });
 
   it("renders run detail without commit triage summary affordances", () => {
@@ -106,6 +112,6 @@ describe("CommitDetailView", () => {
     expect(
       screen.queryByText(/Run AI triage when you want a summary/i),
     ).not.toBeInTheDocument();
-    expect(routerMocks.navigateToCiEvalsRoute).not.toHaveBeenCalled();
+    expect(routerMocks.navigateApp).not.toHaveBeenCalled();
   });
 });

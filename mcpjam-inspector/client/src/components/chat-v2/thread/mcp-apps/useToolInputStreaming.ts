@@ -7,9 +7,17 @@
  * without touching the renderer component.
  */
 
-import { useRef, useState, useMemo, useCallback, useEffect } from "react";
+import {
+  useRef,
+  useState,
+  useMemo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
+import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -139,8 +147,35 @@ export interface UseToolInputStreamingParams {
   toolOutput: unknown;
   toolErrorText: string | undefined;
   toolCallId: string;
+  /**
+   * Whether this View should receive the one-shot complete tool-input
+   * notification for the current render. Resource-scoped persistent Views
+   * keep the iframe alive across tool calls, but each new tool call still
+   * gets a complete input notification before its result.
+   */
+  sendToolInput: boolean;
+  onToolInputSent?: () => void;
   /** Incremented when the guest re-initializes (e.g. SDK app after openai-compat shim) */
   reinitCount: number;
+  /**
+   * Resolved SEP-1865 MCP Apps spec-bridge matrix. Gates the
+   * notifications this hook emits to the View:
+   *   - `toolInputPartial: false` → suppress
+   *     `bridge.sendToolInputPartial` (Microsoft 365 Copilot does
+   *     not deliver this notification — widgets running under that
+   *     simulated surface must not see partials).
+   *   - `toolCancelled: false` → suppress `bridge.sendToolCancelled`
+   *     (Copilot does not deliver this either).
+   *
+   * Passed as a ref so the hook reads the latest resolved value
+   * without rebuilding the effect closures on every host-style /
+   * profile change. Null while the renderer is still resolving the
+   * matrix (e.g. before host context is wired) — null reads as
+   * "default on" so the inspector keeps emitting notifications by
+   * default, matching the pre-matrix behavior for any host the
+   * renderer hasn't classified yet.
+   */
+  mcpAppsCapabilitiesRef: React.RefObject<ResolvedMcpAppsCapabilities | null>;
 }
 
 export interface UseToolInputStreamingReturn {
@@ -162,7 +197,10 @@ export function useToolInputStreaming({
   toolOutput,
   toolErrorText,
   toolCallId,
+  sendToolInput,
+  onToolInputSent,
   reinitCount,
+  mcpAppsCapabilitiesRef,
 }: UseToolInputStreamingParams): UseToolInputStreamingReturn {
   // ── Internal refs ────────────────────────────────────────────────────────
 
@@ -178,10 +216,13 @@ export function useToolInputStreaming({
   const lastToolErrorRef = useRef<string | null>(null);
   const toolInputSentRef = useRef(false);
   const previousToolStateRef = useRef<ToolState | undefined>(toolState);
+  const previousToolCallIdRef = useRef(toolCallId);
 
   // ── Internal state ───────────────────────────────────────────────────────
 
   const [streamingRenderSignaled, setStreamingRenderSignaled] = useState(false);
+  const [streamingRevealFallbackElapsed, setStreamingRevealFallbackElapsed] =
+    useState(false);
   const [hasDeliveredStreamingInput, setHasDeliveredStreamingInput] =
     useState(false);
 
@@ -194,8 +235,20 @@ export function useToolInputStreaming({
 
   const canRenderStreamingInput = useMemo(() => {
     if (toolState !== "input-streaming") return true;
-    return streamingRenderSignaled && hasDeliveredStreamingInput;
-  }, [hasDeliveredStreamingInput, streamingRenderSignaled, toolState]);
+    if (!sendToolInput) return true;
+    // Prefer revealing after the first delivered partial, but do not keep the
+    // iframe hidden forever when a provider streams no parseable partial args.
+    return (
+      streamingRevealFallbackElapsed ||
+      (streamingRenderSignaled && hasDeliveredStreamingInput)
+    );
+  }, [
+    hasDeliveredStreamingInput,
+    sendToolInput,
+    streamingRevealFallbackElapsed,
+    streamingRenderSignaled,
+    toolState,
+  ]);
 
   // ── Callbacks ────────────────────────────────────────────────────────────
 
@@ -216,6 +269,7 @@ export function useToolInputStreaming({
     lastToolErrorRef.current = null;
     toolInputSentRef.current = false;
     setStreamingRenderSignaled(false);
+    setStreamingRevealFallbackElapsed(false);
     setHasDeliveredStreamingInput(false);
   }, []);
 
@@ -237,26 +291,41 @@ export function useToolInputStreaming({
     toolInputSentRef.current = false;
   }, [reinitCount]);
 
-  // 1. Clear reveal timer when signaled
+  // 1. Clear reveal timer once the iframe is allowed to become visible. A
+  // render signal alone can come from size-changed before any parseable streamed
+  // args arrive, so keep the fallback alive for that case.
   useEffect(() => {
-    if (!streamingRenderSignaled) return;
+    if (!hasDeliveredStreamingInput && !streamingRevealFallbackElapsed) return;
     if (streamingRevealTimerRef.current !== null) {
       window.clearTimeout(streamingRevealTimerRef.current);
       streamingRevealTimerRef.current = null;
     }
-  }, [streamingRenderSignaled]);
+  }, [hasDeliveredStreamingInput, streamingRevealFallbackElapsed]);
 
   // 2. Fallback reveal timer
   useEffect(() => {
-    if (!isReady || toolState !== "input-streaming" || streamingRenderSignaled)
+    if (!sendToolInput) return;
+    if (
+      !isReady ||
+      toolState !== "input-streaming" ||
+      hasDeliveredStreamingInput ||
+      streamingRevealFallbackElapsed
+    )
       return;
     if (streamingRevealTimerRef.current !== null) return;
 
     streamingRevealTimerRef.current = window.setTimeout(() => {
       streamingRevealTimerRef.current = null;
       setStreamingRenderSignaled(true);
+      setStreamingRevealFallbackElapsed(true);
     }, STREAMING_REVEAL_FALLBACK_MS);
-  }, [isReady, streamingRenderSignaled, toolState]);
+  }, [
+    hasDeliveredStreamingInput,
+    isReady,
+    sendToolInput,
+    streamingRevealFallbackElapsed,
+    toolState,
+  ]);
 
   // 3. Re-entry detection
   useEffect(() => {
@@ -277,7 +346,12 @@ export function useToolInputStreaming({
 
   // 4. Partial input throttled delivery
   useEffect(() => {
-    if (!isReady || toolState !== "input-streaming" || toolInputSentRef.current)
+    if (
+      !sendToolInput ||
+      !isReady ||
+      toolState !== "input-streaming" ||
+      toolInputSentRef.current
+    )
       return;
     if (!hasToolInputData) return;
     const resolvedToolInput = toolInput ?? {};
@@ -295,6 +369,18 @@ export function useToolInputStreaming({
       lastToolInputPartialSentAtRef.current = Date.now();
       setHasDeliveredStreamingInput(true);
       setStreamingRenderSignaled(true);
+      // Matrix gate: SEP-1865 hosts that don't deliver
+      // `ui/notifications/tool-input-partial` (notably Microsoft 365
+      // Copilot per its published Component-bridge table) flip this
+      // dimension off in the matrix. Null ref → default on (matches
+      // pre-matrix behavior for any host the renderer hasn't
+      // classified yet). The streaming signature / streaming-render
+      // gating above still fires regardless so the inspector's
+      // internal streaming UX (which mirrors the bridge
+      // notification cadence) doesn't go silent on Copilot-style
+      // hosts — it's only the wire emission that's suppressed.
+      const matrix = mcpAppsCapabilitiesRef.current;
+      if (matrix !== null && matrix.toolInputPartial === false) return;
       Promise.resolve(
         bridge.sendToolInputPartial({ arguments: pending }),
       ).catch(() => {});
@@ -321,7 +407,16 @@ export function useToolInputStreaming({
       partialInputTimerRef.current = null;
       flushPartialInput();
     }, PARTIAL_INPUT_THROTTLE_MS - elapsed);
-  }, [hasToolInputData, isReady, toolInput, toolState, bridgeRef, isReadyRef]);
+  }, [
+    hasToolInputData,
+    isReady,
+    sendToolInput,
+    toolCallId,
+    toolInput,
+    toolState,
+    bridgeRef,
+    isReadyRef,
+  ]);
 
   // 5. Complete input delivery
   useEffect(() => {
@@ -337,6 +432,7 @@ export function useToolInputStreaming({
       streamingRevealTimerRef.current = null;
     }
     pendingToolInputPartialRef.current = null;
+    if (!sendToolInput) return;
     const bridge = bridgeRef.current;
     if (!bridge) return;
 
@@ -350,13 +446,23 @@ export function useToolInputStreaming({
     }
     lastToolInputRef.current = serialized;
     toolInputSentRef.current = true;
+    onToolInputSent?.();
     Promise.resolve(
       bridge.sendToolInput({ arguments: resolvedToolInput }),
     ).catch(() => {
       toolInputSentRef.current = false;
       lastToolInputRef.current = null;
     });
-  }, [isReady, toolInput, toolState, bridgeRef, reinitCount]);
+  }, [
+    isReady,
+    toolCallId,
+    toolInput,
+    toolState,
+    bridgeRef,
+    reinitCount,
+    sendToolInput,
+    onToolInputSent,
+  ]);
 
   // 6. Tool result delivery
   useEffect(() => {
@@ -365,10 +471,11 @@ export function useToolInputStreaming({
     if (!bridge || !toolOutput) return;
 
     const serialized = JSON.stringify(toolOutput);
-    if (lastToolOutputRef.current === serialized) return;
-    lastToolOutputRef.current = serialized;
+    const outputKey = `${toolCallId}:${serialized}`;
+    if (lastToolOutputRef.current === outputKey) return;
+    lastToolOutputRef.current = outputKey;
     bridge.sendToolResult(toolOutput as CallToolResult);
-  }, [isReady, toolOutput, toolState, bridgeRef, reinitCount]);
+  }, [isReady, toolCallId, toolOutput, toolState, bridgeRef, reinitCount]);
 
   // 7. Tool error/cancellation delivery
   useEffect(() => {
@@ -384,15 +491,35 @@ export function useToolInputStreaming({
           ? toolOutput
           : "Tool execution failed");
 
-    if (lastToolErrorRef.current === errorMessage) return;
-    lastToolErrorRef.current = errorMessage;
+    const errorKey = `${toolCallId}:${errorMessage}`;
+    if (lastToolErrorRef.current === errorKey) return;
+    lastToolErrorRef.current = errorKey;
 
-    // SEP-1865: Send tool-cancelled for errors instead of tool-result with isError
+    // SEP-1865: Send tool-cancelled for errors instead of tool-result
+    // with isError. Matrix gate: Microsoft 365 Copilot does not
+    // deliver this notification per its published Component-bridge
+    // table; widgets running under that simulated surface must not
+    // see a cancelled callback. Null matrix ref → default on (same
+    // fail-open contract as the partial-input gate above).
+    const matrix = mcpAppsCapabilitiesRef.current;
+    if (matrix !== null && matrix.toolCancelled === false) return;
     bridge.sendToolCancelled({ reason: errorMessage });
-  }, [isReady, toolErrorText, toolOutput, toolState, bridgeRef, reinitCount]);
+  }, [
+    isReady,
+    toolCallId,
+    toolErrorText,
+    toolOutput,
+    toolState,
+    bridgeRef,
+    reinitCount,
+    mcpAppsCapabilitiesRef,
+  ]);
 
-  // 8. Reset on toolCallId change
-  useEffect(() => {
+  // 8. Reset on toolCallId change. Do this before paint so a recycled renderer
+  // cannot briefly expose the previous call's delivery guards.
+  useLayoutEffect(() => {
+    if (previousToolCallIdRef.current === toolCallId) return;
+    previousToolCallIdRef.current = toolCallId;
     resetStreamingState();
   }, [toolCallId, resetStreamingState]);
 

@@ -11,18 +11,25 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
-import { groupAssistantPartsIntoSteps } from "./thread-helpers";
+} from "@/contexts/chatbox-client-style-context";
+import {
+  groupAssistantPartsIntoSteps,
+  isHiddenInternalMessage,
+} from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
-import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
+import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
+import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
+import { CopilotMessageHeader } from "./copilot-message-header";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
+type MessagePart = UIMessage["parts"][number];
 
 interface MessageViewProps {
+  chatSessionId?: string;
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
@@ -34,7 +41,7 @@ interface MessageViewProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
@@ -42,9 +49,10 @@ interface MessageViewProps {
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
@@ -52,6 +60,23 @@ interface MessageViewProps {
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
   claudeFooterMode?: ClaudeFooterMode;
+  /**
+   * Optional slot rendered below each user message's bubble. The host
+   * (ChatTabV2) wires this when it has a persisted chat session, so a
+   * per-message "Save as test case" affordance can render with access to
+   * sessionId + per-message id.
+   */
+  renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
+  /**
+   * Resolved sender for this message (shared sessions only). When absent, the
+   * transcript renders today's identical-bubble behavior.
+   */
+  senderAvatar?: ProjectThreadOwnerAvatar;
+  /**
+   * Render the avatar above the bubble. Used by `TranscriptThread` to
+   * coalesce consecutive prompts from the same sender (Slack/Linear style).
+   */
+  showSenderAvatar?: boolean;
 }
 
 function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
@@ -63,15 +88,49 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
   );
 }
 
+function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
+  const candidate = part as {
+    type?: string;
+    toolCallId?: unknown;
+    id?: unknown;
+  };
+  if (
+    typeof candidate.toolCallId === "string" &&
+    candidate.toolCallId.length > 0
+  ) {
+    return `tool-${candidate.toolCallId}`;
+  }
+  if (typeof candidate.id === "string" && candidate.id.length > 0) {
+    return `${candidate.type ?? "part"}-${candidate.id}`;
+  }
+  return `${stepIndex}-${partIndex}`;
+}
+
+function isSameSenderAvatar(
+  prev: ProjectThreadOwnerAvatar | undefined,
+  next: ProjectThreadOwnerAvatar | undefined
+) {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  if (prev.status !== next.status) return false;
+  if (prev.status === "show" && next.status === "show") {
+    return (
+      prev.displayName === next.displayName && prev.imageUrl === next.imageUrl
+    );
+  }
+  return true;
+}
+
 function areMessageViewPropsEqual(
   prev: Readonly<MessageViewProps>,
-  next: Readonly<MessageViewProps>,
+  next: Readonly<MessageViewProps>
 ) {
   return (
     !shouldRerenderMessage(prev.message, next.message) &&
     prev.model === next.model &&
     prev.onSendFollowUp === next.onSendFollowUp &&
     prev.toolsMetadata === next.toolsMetadata &&
+    prev.chatSessionId === next.chatSessionId &&
     prev.toolServerMap === next.toolServerMap &&
     prev.onWidgetStateChange === next.onWidgetStateChange &&
     prev.onModelContextUpdate === next.onModelContextUpdate &&
@@ -81,21 +140,25 @@ function areMessageViewPropsEqual(
     prev.onExitPip === next.onExitPip &&
     prev.onRequestFullscreen === next.onRequestFullscreen &&
     prev.onExitFullscreen === next.onExitFullscreen &&
+    prev.onRequestTeardown === next.onRequestTeardown &&
+    prev.tornDownWidgetIds === next.tornDownWidgetIds &&
     prev.displayMode === next.displayMode &&
     prev.onDisplayModeChange === next.onDisplayModeChange &&
-    prev.selectedProtocolOverrideIfBothExists ===
-      next.selectedProtocolOverrideIfBothExists &&
     prev.onToolApprovalResponse === next.onToolApprovalResponse &&
     prev.toolRenderOverrides === next.toolRenderOverrides &&
     prev.showSaveViewButton === next.showSaveViewButton &&
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
-    prev.claudeFooterMode === next.claudeFooterMode
+    prev.claudeFooterMode === next.claudeFooterMode &&
+    prev.renderUserMessageActions === next.renderUserMessageActions &&
+    isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
+    prev.showSenderAvatar === next.showSenderAvatar
   );
 }
 
 function MessageViewImpl({
+  chatSessionId,
   message,
   model,
   onSendFollowUp,
@@ -109,9 +172,10 @@ function MessageViewImpl({
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
@@ -119,6 +183,9 @@ function MessageViewImpl({
   interactive = true,
   reasoningDisplayMode = "inline",
   claudeFooterMode = "none",
+  renderUserMessageActions,
+  senderAvatar,
+  showSenderAvatar = false,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -129,10 +196,11 @@ function MessageViewImpl({
     chatboxHostStyle,
   });
   const shouldRenderAssistantAvatar = chatboxHostStyle === null;
-  // Hide widget state messages (these are internal and sent to the model)
-  if (message.id?.startsWith("widget-state-")) return null;
-  // Hide model context messages (these are internal and sent to the model)
-  if (message.id?.startsWith("model-context-")) return null;
+  // Copilot mimics show their own "Copilot + mascot" row above the
+  // message content (faithful to real M365 Copilot's avatar/name header).
+  // Other host styles keep the inspector's existing layout.
+  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
+  if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
 
@@ -144,7 +212,12 @@ function MessageViewImpl({
       message.parts?.filter((part) => part.type !== "file") ?? [];
 
     return (
-      <div className="flex w-full min-w-0 flex-col items-end gap-2">
+      <div className="group/user-message flex w-full min-w-0 flex-col items-end gap-2">
+        {showSenderAvatar && senderAvatar ? (
+          <div className="flex max-w-[min(100%,48rem)] justify-end">
+            <SenderAvatar avatar={senderAvatar} />
+          </div>
+        ) : null}
         {/* File attachments above the bubble */}
         {fileParts.length > 0 && (
           <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
@@ -153,6 +226,7 @@ function MessageViewImpl({
                 key={`file-${i}`}
                 part={part}
                 role={role}
+                chatSessionId={chatSessionId}
                 onSendFollowUp={onSendFollowUp}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
@@ -164,11 +238,10 @@ function MessageViewImpl({
                 onExitPip={onExitPip}
                 onRequestFullscreen={onRequestFullscreen}
                 onExitFullscreen={onExitFullscreen}
+                onRequestTeardown={onRequestTeardown}
+                tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
@@ -186,6 +259,7 @@ function MessageViewImpl({
                 key={i}
                 part={part}
                 role={role}
+                chatSessionId={chatSessionId}
                 onSendFollowUp={onSendFollowUp}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
@@ -197,11 +271,10 @@ function MessageViewImpl({
                 onExitPip={onExitPip}
                 onRequestFullscreen={onRequestFullscreen}
                 onExitFullscreen={onExitFullscreen}
+                onRequestTeardown={onRequestTeardown}
+                tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
@@ -211,6 +284,11 @@ function MessageViewImpl({
             ))}
           </UserMessageBubble>
         )}
+        {renderUserMessageActions ? (
+          <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+            {renderUserMessageActions(message)}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -246,14 +324,20 @@ function MessageViewImpl({
       ) : null}
 
       <div className="flex-1 min-w-0">
+        {shouldRenderCopilotHeader ? (
+          <div className="mb-2">
+            <CopilotMessageHeader />
+          </div>
+        ) : null}
         <div className="space-y-6 text-sm leading-6">
           {steps.map((stepParts, sIdx) => (
             <div key={sIdx} className="space-y-3">
               {stepParts.map((part, pIdx) => (
                 <PartSwitch
-                  key={`${sIdx}-${pIdx}`}
+                  key={getPartKey(part, sIdx, pIdx)}
                   part={part}
                   role={role}
+                  chatSessionId={chatSessionId}
                   onSendFollowUp={onSendFollowUp}
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}
@@ -265,11 +349,10 @@ function MessageViewImpl({
                   onExitPip={onExitPip}
                   onRequestFullscreen={onRequestFullscreen}
                   onExitFullscreen={onExitFullscreen}
+                  onRequestTeardown={onRequestTeardown}
+                  tornDownWidgetIds={tornDownWidgetIds}
                   displayMode={displayMode}
                   onDisplayModeChange={onDisplayModeChange}
-                  selectedProtocolOverrideIfBothExists={
-                    selectedProtocolOverrideIfBothExists
-                  }
                   onToolApprovalResponse={onToolApprovalResponse}
                   messageParts={message.parts}
                   toolRenderOverrides={toolRenderOverrides}

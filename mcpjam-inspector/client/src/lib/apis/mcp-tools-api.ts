@@ -5,6 +5,7 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/client";
 import type { MCPTask, TaskOptions } from "@mcpjam/sdk/browser";
+import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { authFetch } from "@/lib/session-token";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
@@ -20,6 +21,43 @@ export type { TaskOptions };
 
 // Re-export SDK type for task data
 export type TaskData = MCPTask;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function attachToolMetadata(
+  result: ListToolsResultWithMetadata,
+): ListToolsResultWithMetadata {
+  const toolsMetadata = result.toolsMetadata;
+  if (!toolsMetadata || !Array.isArray(result.tools)) return result;
+
+  return {
+    ...result,
+    tools: result.tools.map((tool) => {
+      const metadata = toolsMetadata[tool.name];
+      if (!metadata) return tool;
+      const toolMeta = tool._meta as Record<string, unknown> | undefined;
+      const toolUi = toolMeta?.ui;
+      const metadataUi = metadata.ui;
+      return {
+        ...tool,
+        _meta: {
+          ...toolMeta,
+          ...metadata,
+          ...(isRecord(toolUi) || isRecord(metadataUi)
+            ? {
+                ui: {
+                  ...(isRecord(toolUi) ? toolUi : {}),
+                  ...(isRecord(metadataUi) ? metadataUi : {}),
+                },
+              }
+            : {}),
+        },
+      };
+    }),
+  };
+}
 
 export type ToolExecutionResponse =
   | {
@@ -61,11 +99,11 @@ export async function listTools({
       if (!serverId) {
         throw new Error("serverId is required in hosted mode");
       }
-      return (await listHostedTools({
+      return attachToolMetadata(await listHostedTools({
         serverNameOrId: serverId,
         modelId,
         cursor,
-      })) as ListToolsResultWithMetadata;
+      }));
     },
     local: async () => {
       const res = await authFetch("/api/mcp/tools/list", {
@@ -81,7 +119,7 @@ export async function listTools({
         const message = body?.error || `List tools failed (${res.status})`;
         throw new Error(message);
       }
-      return body as ListToolsResultWithMetadata;
+      return attachToolMetadata(body as ListToolsResultWithMetadata);
     },
   });
 }
@@ -178,8 +216,20 @@ export async function respondToElicitationApi(
 
 export interface ToolsMetadataAggregate {
   metadata: Record<string, Record<string, any>>;
+  /** Bare-name → serverId. Collision-prone (last-seen wins) — see `scopedMetadata` for unambiguous lookups. */
   toolServerMap: ToolServerMap;
+  /** `${serverId}:${toolName}` → metadata. Multi-server collision-safe. */
+  scopedMetadata: Record<string, Record<string, unknown>>;
+  /** Bare tool names that appear on more than one server. */
+  collidingToolNames: string[];
   tokenCounts: Record<string, number> | null;
+  /**
+   * Tool schemas advertised to the model (name + description + inputSchema),
+   * keyed by bare tool name. Used by the Raw view when rendering rehydrated
+   * sessions that never replayed `request_payload`. Last-seen wins on name
+   * collisions, mirroring `toolServerMap`.
+   */
+  serializedTools: Record<string, SerializedModelRequestTool>;
 }
 
 export function getToolServerId(
@@ -189,6 +239,10 @@ export function getToolServerId(
   return map[toolName];
 }
 
+export function scopedToolKey(serverId: string, toolName: string): string {
+  return `${serverId}:${toolName}`;
+}
+
 export async function getToolsMetadata(
   serverIds: string[],
   modelId?: string,
@@ -196,8 +250,15 @@ export async function getToolsMetadata(
   const aggregate: ToolsMetadataAggregate = {
     metadata: {},
     toolServerMap: {},
+    scopedMetadata: {},
+    collidingToolNames: [],
     tokenCounts: modelId ? {} : null,
+    serializedTools: {},
   };
+  // Track which servers have seen each tool name so we can surface collisions
+  // to callers (e.g. the Playground tools pane uses this to disambiguate via
+  // a server badge).
+  const seenOn = new Map<string, Set<string>>();
 
   await Promise.all(
     serverIds.map(async (serverId) => {
@@ -207,6 +268,19 @@ export async function getToolsMetadata(
       for (const [toolName, meta] of Object.entries(toolsMetadata)) {
         aggregate.metadata[toolName] = meta as Record<string, unknown>;
         aggregate.toolServerMap[toolName] = serverId;
+        aggregate.scopedMetadata[scopedToolKey(serverId, toolName)] =
+          meta as Record<string, unknown>;
+        const servers = seenOn.get(toolName) ?? new Set<string>();
+        servers.add(serverId);
+        seenOn.set(toolName, servers);
+      }
+
+      for (const tool of data.tools ?? []) {
+        aggregate.serializedTools[tool.name] = {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+        };
       }
 
       // Collect token counts if modelId was provided
@@ -215,6 +289,10 @@ export async function getToolsMetadata(
       }
     }),
   );
+
+  aggregate.collidingToolNames = Array.from(seenOn.entries())
+    .filter(([, servers]) => servers.size > 1)
+    .map(([name]) => name);
 
   return aggregate;
 }

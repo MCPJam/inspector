@@ -3,7 +3,7 @@ import {
   getChatboxHostLabel,
   getChatboxHostLogo,
   type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+} from "@/lib/chatbox-client-style";
 import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
 
 type ThemeMode = "light" | "dark" | "system";

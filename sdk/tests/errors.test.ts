@@ -3,6 +3,7 @@ import {
   MCPAuthError,
   isMCPAuthError,
   isAuthError,
+  isUnauthorized401,
 } from "../src/mcp-client-manager/errors";
 import { EvalReportingError, SdkError } from "../src/errors";
 
@@ -239,6 +240,43 @@ describe("isAuthError", () => {
       // The regex uses word boundary so this should not match
       expect(isAuthError(error)).toEqual({ isAuth: false });
     });
+  });
+});
+
+describe("isUnauthorized401", () => {
+  it("detects strict 401 errors", () => {
+    expect(isUnauthorized401(new MCPAuthError("Unauthorized", 401))).toBe(true);
+    expect(isUnauthorized401(Object.assign(new Error("nope"), { code: 401 }))).toBe(
+      true
+    );
+    expect(
+      isUnauthorized401(Object.assign(new Error("nope"), { statusCode: 401 }))
+    ).toBe(true);
+    expect(isUnauthorized401(new Error("Server returned HTTP 401"))).toBe(true);
+  });
+
+  it("does not treat 403 as refreshable", () => {
+    expect(isUnauthorized401(new MCPAuthError("Forbidden", 403))).toBe(false);
+    expect(isUnauthorized401(Object.assign(new Error("nope"), { code: 403 }))).toBe(
+      false
+    );
+    expect(
+      isUnauthorized401(
+        Object.assign(new Error("Forbidden"), {
+          name: "UnauthorizedError",
+          statusCode: 403,
+        })
+      )
+    ).toBe(false);
+    expect(isUnauthorized401(new Error("Server returned HTTP 403"))).toBe(false);
+  });
+
+  it("does not treat generic auth-looking messages as refreshable", () => {
+    expect(isUnauthorized401(new Error("invalid_token received"))).toBe(false);
+    expect(isUnauthorized401(new Error("unauthorized"))).toBe(false);
+    expect(isUnauthorized401(new Error("tool returned 401 records"))).toBe(
+      false
+    );
   });
 });
 

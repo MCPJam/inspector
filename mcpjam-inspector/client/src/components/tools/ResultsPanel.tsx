@@ -5,6 +5,9 @@ import { Button } from "@mcpjam/design-system/button";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
+import { navigateApp } from "@/lib/app-navigation";
+import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 interface ResultsPanelProps {
   error: string;
@@ -12,6 +15,13 @@ interface ResultsPanelProps {
   structuredContentValid: boolean | undefined;
   toolMeta?: Record<string, any>;
   responseDurationMs?: number | null;
+  /**
+   * Name of the server this panel is showing results for. Passed into
+   * the host caps resolver so per-server `clientCapabilities` overrides
+   * are honored — keeps the "Use the App Builder" affordance gated on
+   * the same effective capabilities as `initialize`.
+   */
+  serverName?: string;
 }
 
 export function ResultsPanel({
@@ -20,6 +30,7 @@ export function ResultsPanel({
   structuredContentValid,
   toolMeta,
   responseDurationMs,
+  serverName,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
   const extractedDisplay = rawResult
@@ -30,13 +41,27 @@ export function ResultsPanel({
   const uiType = detectUIType(toolMeta, rawResult);
   const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
-  const hasUIComponent = hasOpenAIComponent || hasMCPAppsComponent;
+  // Same gate as the chat thread (PartSwitch/WidgetReplay): suppress the
+  // "Use the App Builder" affordance when the active host (resolved
+  // against this server's per-server cap overrides) doesn't advertise
+  // the MCP UI extension. Codex etc. won't render the widget in the chat
+  // surface either, so pointing the user there is misleading.
+  //
+  // `serverName` is the key into `appState.servers` and matches the
+  // serverId the resolver looks up. The tools tab is single-server per
+  // panel, so one lookup per render is all we need.
+  const resolveHostCaps = useActiveHostCapsResolver();
+  const hostSupportsWidgets = hostSupportsWidgetRendering(
+    resolveHostCaps(serverName)
+  );
+  const hasUIComponent =
+    hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);
   const formattedResponseTime =
     responseDurationMs == null
       ? null
       : responseDurationMs < 1000
-        ? `${Math.round(responseDurationMs)} ms`
-        : `${(responseDurationMs / 1000).toFixed(2)} s`;
+      ? `${Math.round(responseDurationMs)} ms`
+      : `${(responseDurationMs / 1000).toFixed(2)} s`;
 
   return (
     <div className="h-full flex flex-col bg-background break-all">
@@ -80,7 +105,7 @@ export function ResultsPanel({
                   {hasMCPAppsComponent
                     ? "with MCP Apps extension"
                     : "with OpenAI Apps SDK"}
-                  . Use the <strong>App Builder</strong>.
+                  . Use the <strong>Playground</strong>.
                 </span>
               </div>
               <Button
@@ -88,11 +113,11 @@ export function ResultsPanel({
                 size="sm"
                 className="h-6 text-xs px-2"
                 onClick={() => {
-                  window.location.hash = "app-builder";
+                  navigateApp("/playground");
                 }}
               >
                 <ExternalLink className="h-3 w-3 mr-1" />
-                App Builder
+                Playground
               </Button>
             </div>
           )}

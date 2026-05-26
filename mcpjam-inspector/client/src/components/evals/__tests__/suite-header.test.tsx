@@ -302,37 +302,38 @@ describe("SuiteHeader", () => {
     });
     expect(runAll).toBeEnabled();
     await user.click(runAll);
-    expect(onRerun).toHaveBeenCalledWith(baseSuite);
+    expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
   });
 
-  it("shows the suite model bar on overview when test cases exist", () => {
+  it("forwards iterationOverride on Run all even without a match-options override", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-        readOnlyConfig={false}
+        onRerun={onRerun}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
         testCases={[
-          {
-            _id: "c1",
-            title: "Case",
-            models: [{ provider: "openai", model: "gpt-4" }],
-          } as any,
+          { _id: "c1", models: [{ provider: "openai", model: "gpt-4" }] } as any,
         ]}
-        availableModels={
-          [
-            { id: "gpt-4", name: "GPT-4", provider: "openai" },
-            { id: "gpt-5-nano", name: "GPT-5 Nano", provider: "openai" },
-          ] as any
-        }
-        onSuiteModelsUpdate={vi.fn()}
+        connectedServerNames={new Set(["asana"])}
+        iterationOverride={3}
       />,
     );
 
-    expect(screen.getByText("GPT-4")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Add model" }),
-    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /Run all cases in this suite/i }),
+    );
+
+    expect(onRerun).toHaveBeenCalledWith(baseSuite, { iterationOverride: 3 });
   });
 
 });

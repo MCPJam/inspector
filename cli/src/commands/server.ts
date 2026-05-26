@@ -32,7 +32,13 @@ import {
   parseServerConfig,
   parsePositiveInteger,
   resolveHttpAccessToken,
+  type SharedServerTargetOptions,
 } from "../lib/server-config.js";
+import {
+  assertNoCredentialsFileAuthConflicts,
+  resolveCredentialsFileAccessToken,
+} from "../lib/credentials-file.js";
+import { redactSensitiveValue } from "../lib/redaction.js";
 import {
   parseReporterFormat,
   writeJsonArtifact,
@@ -63,6 +69,10 @@ export function registerServerCommands(program: Command): void {
         "OAuth bearer access token for HTTP servers",
       )
       .option(
+        "--credentials-file <path>",
+        "Load OAuth access token from a file created by oauth login or oauth conformance --credentials-out",
+      )
+      .option(
         "--header <header>",
         'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
         (value: string, previous: string[] = []) => [...previous, value],
@@ -70,7 +80,7 @@ export function registerServerCommands(program: Command): void {
       )
       .option(
         "--client-capabilities <json>",
-        "Client capabilities advertised in the initialize probe as a JSON object",
+        "Client capabilities as JSON, @path, or - for stdin",
       )
       .option(
         "--protocol-version <version>",
@@ -93,8 +103,12 @@ export function registerServerCommands(program: Command): void {
         | "2025-03-26"
         | "2025-06-18"
         | "2025-11-25";
+      const accessToken = resolveServerProbeAccessToken(options);
       const config = parseServerConfig({
         ...options,
+        ...(options.credentialsFile
+          ? { accessToken, credentialsFile: undefined }
+          : {}),
         timeout: options.timeout ?? globalOptions.timeout,
       });
       const target = describeTarget(options);
@@ -126,7 +140,7 @@ export function registerServerCommands(program: Command): void {
           url: probeUrl,
           protocolVersion,
           headers: parseHeadersOption(options.header),
-          accessToken: resolveHttpAccessToken(options),
+          accessToken,
           clientCapabilities:
             "clientCapabilities" in config
               ? config.clientCapabilities
@@ -141,6 +155,7 @@ export function registerServerCommands(program: Command): void {
       await writeCommandDebugArtifact({
         outputPath: options.debugOut as string | undefined,
         format: globalOptions.format,
+        quiet: globalOptions.quiet,
         commandName: "server probe",
         commandInput: {
           protocolVersion,
@@ -187,7 +202,10 @@ export function registerServerCommands(program: Command): void {
         throw operationalError("Probe did not return a result.");
       }
 
-      writeResult(result, globalOptions.format);
+      writeResult(
+        redactSensitiveValue(result) as typeof result,
+        globalOptions.format,
+      );
       if (result.status === "error") {
         setProcessExitCode(1);
       }
@@ -221,16 +239,17 @@ export function registerServerCommands(program: Command): void {
       retryPolicy,
     });
 
-    const jsonPayload = globalOptions.rpc
+    const rawPayload = globalOptions.rpc
       ? attachCliRpcLogs(result, collector)
       : result;
+    const jsonPayload = redactSensitiveValue(rawPayload) as typeof rawPayload;
     const artifactPath = options.out
       ? await writeDebugArtifact(options.out as string, jsonPayload)
       : undefined;
 
     if (globalOptions.format === "human") {
       process.stdout.write(
-        `${formatServerDoctorHuman(result, { artifactPath })}\n`,
+        `${formatServerDoctorHuman(jsonPayload, { artifactPath })}\n`,
       );
     } else {
       writeResult(jsonPayload, globalOptions.format);
@@ -344,6 +363,7 @@ export function registerServerCommands(program: Command): void {
       await writeCommandDebugArtifact({
         outputPath: options.debugOut as string | undefined,
         format: globalOptions.format,
+        quiet: globalOptions.quiet,
         commandName: "server validate",
         commandInput: {},
         target: targetSummary,
@@ -611,6 +631,26 @@ export function registerServerCommands(program: Command): void {
       setProcessExitCode(1);
     }
   });
+}
+
+export function resolveServerProbeAccessToken(
+  options: Pick<
+    SharedServerTargetOptions,
+    "url" | "accessToken" | "oauthAccessToken" | "credentialsFile"
+  >,
+): string | undefined {
+  assertNoCredentialsFileAuthConflicts(options);
+
+  if (options.credentialsFile) {
+    const url = options.url?.trim();
+    if (!url) {
+      throw usageError("--credentials-file requires --url.");
+    }
+
+    return resolveCredentialsFileAccessToken(options.credentialsFile, url);
+  }
+
+  return resolveHttpAccessToken(options);
 }
 
 function hasServerTargetOptions(options: Record<string, unknown>): boolean {

@@ -12,7 +12,9 @@ Complete flag tables for every `mcpjam` command. For guides and recipes, see the
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC logs in JSON output under `_rpcLogs` |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on protocol, OAuth, and apps conformance commands) |
+| `--quiet` | off | Suppress non-result progress output on stderr |
+| `--no-telemetry` | off | Disable anonymous telemetry for this invocation |
+| `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
 | `-v, --version` | | Print the CLI version |
 
 ---
@@ -32,8 +34,9 @@ All server commands accept the shared connection flags below, plus command-speci
 | `--refresh-token <token>` | OAuth refresh token |
 | `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
-| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Stdio server command |
 | `--args <arg...>` | Preferred stdio command arguments |
 | `--command-args <arg>` | Legacy stdio command argument (repeatable) |
@@ -47,6 +50,10 @@ explicit validation step.
 For stdio targets, child processes inherit the parent shell environment by
 default. `-e/--env` adds or overrides child env values, and structured debug
 artifacts only record the explicit env keys you passed on the command line.
+
+`--credentials-file` cannot be combined with individual token flags
+(`--access-token`, `--oauth-access-token`, `--refresh-token`, `--client-id`,
+`--client-secret`). The CLI rejects conflicting auth sources upfront.
 
 ### `server probe`
 
@@ -92,11 +99,71 @@ Uses shared connection flags.
 |------|-------------|
 | `--tool-name <name>` | Name of the tool to call |
 | `--name <name>` | Legacy alias for `--tool-name` |
-| `--tool-args <json>` | Tool arguments as a JSON string |
+| `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
 | `--params <json>` | Legacy alias for `--tool-args` |
+| `--tool-args-stdin` | Read tool arguments JSON from stdin |
+| `--validate-response` | Validate the MCP tool-call envelope returned by the server |
+| `--expect-success` | Fail when the tool result reports `isError` |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` validation report output |
 | `--debug-out <path>` | Write debug artifact to file |
+| `--ui` | Attach to Inspector and render the completed tool result in App Builder; opens a browser by default in a TTY |
+| `--require-render` | Treat skipped Inspector renders as errors (requires `--ui`) |
+| `--open` | Open Inspector in the system browser before rendering (default with `--ui` in a TTY) |
+| `--no-open` | Start/use Inspector without opening a system browser |
+| `--attach-only` | Require an already-running Inspector browser client; do not start or open Inspector |
+| `--inspector-url <url>` | Local Inspector backend/API base URL |
+| `--frontend-url <url>` | Inspector frontend/browser base URL; skips frontend discovery |
+| `--server-name <name>` | Server name to use inside Inspector |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` or `openai-sdk` |
+| `--device <device>` | Render device: `mobile`, `tablet`, `desktop`, or `custom` |
+| `--theme <theme>` | Render theme: `light` or `dark` |
+| `--locale <locale>` | Render locale |
+| `--time-zone <iana>` | Render IANA timezone |
 
 Plus shared connection flags.
+
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default in a TTY and returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. `inspectorRender.status` is `rendered` when Inspector accepted the render, `skipped` when the tool succeeded but Inspector had no active browser client, an unsatisfied render precondition, or a render timeout, and `error` for non-recoverable render command failures. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders are emitted as a stable root `warning` plus `inspectorRender.warning`, both with the shape `{ code, message, remediation, browserUrl?, hasActiveClient?, inspectorStarted? }`. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Skipped renders keep the tool-call exit code unless `--require-render` is set; tool failures, validation failures, non-skippable render command errors, and `--require-render` skipped renders all exit nonzero. `--attach-only` is an exception to the skipped-render rule for `no_active_client`: by default a missing browser client yields `inspectorRender.status = "skipped"` with `inspectorRender.remediation = "open_browser"`, but when `--attach-only` is set, `no_active_client` is treated as non-skippable, surfaces as a root `error` (not a downgraded `warning`), and exits nonzero like other non-skippable render failures. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. Use `--no-open` when browser automation already opened `inspectorBrowserUrl`; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. When `--open` is in effect (default in TTYs, opt-in elsewhere), the App Builder URL and the initial browser-client wait progress are emitted to stderr unless `--quiet` is set, regardless of whether stderr is a TTY; only the elapsed-seconds heartbeat is gated on stderr being a TTY. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
+
+### Reading `tools call --ui` output as an agent
+
+Treat the tool result and the Inspector render as separate outcomes. An exit code of `0` means the tool call succeeded and no hard render error occurred; it does not, by itself, prove the UI rendered. Confirm UI delivery with `inspectorRender.status === "rendered"`. If `inspectorRender.status === "skipped"`, branch on `inspectorRender.remediation` or the stable root `warning.code`. If `--require-render` is set, the same skipped-render issue moves from root `warning` to root `error` and the command exits with code `1`.
+
+```json
+{
+  "success": true,
+  "command": "tools call",
+  "inspectorUi": true,
+  "inspectorBrowserUrl": "http://127.0.0.1:6274/#app-builder",
+  "result": {
+    "content": [{ "type": "text", "text": "view created" }]
+  },
+  "inspectorRender": {
+    "status": "skipped",
+    "remediation": "open_browser",
+    "mode": "active-client",
+    "urlHydratesRender": false,
+    "browserUrl": "http://127.0.0.1:6274/#app-builder",
+    "hasActiveClient": false,
+    "inspectorStarted": false,
+    "warning": {
+      "code": "no_active_client",
+      "message": "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+      "remediation": "open_browser",
+      "browserUrl": "http://127.0.0.1:6274/#app-builder",
+      "hasActiveClient": false,
+      "inspectorStarted": false
+    }
+  },
+  "warning": {
+    "code": "no_active_client",
+    "message": "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+    "remediation": "open_browser",
+    "browserUrl": "http://127.0.0.1:6274/#app-builder",
+    "hasActiveClient": false,
+    "inspectorStarted": false
+  }
+}
+```
 
 ---
 
@@ -133,7 +200,7 @@ Uses shared connection flags.
 |------|-------------|
 | `--prompt-name <name>` | Name of the prompt |
 | `--name <name>` | Legacy alias for `--prompt-name` |
-| `--prompt-args <json>` | Prompt arguments as a JSON string |
+| `--prompt-args <json>` | Prompt arguments as inline JSON, `@path`, or `-` for stdin |
 
 Plus shared connection flags.
 
@@ -158,6 +225,7 @@ Plus shared connection flags.
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After login, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--debug-out <path>` | No | | Write debug artifact to file |
 
 ### `oauth conformance`
@@ -178,7 +246,9 @@ Plus shared connection flags.
 | `--verify-tools` | No | | After OAuth, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
 | `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr (interactive only) |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ### `oauth conformance-suite`
 
@@ -187,6 +257,8 @@ Plus shared connection flags.
 | `--config <path>` | Yes | | Path to JSON config file |
 | `--verify-tools` | No | | Enable tool listing on all flows |
 | `--verify-call-tool <name>` | No | | Call the named tool after listing |
+| `--credentials-out <path>` | No | | Write OAuth credentials from the first flow that returns credentials to file (mode 0600) |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ### `oauth metadata`
 
@@ -201,7 +273,7 @@ Plus shared connection flags.
 | `--url <url>` | Yes | | OAuth request URL |
 | `--method <method>` | No | `GET` | HTTP method |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
-| `--body <value>` | No | | Request body (JSON or raw string) |
+| `--body <value>` | No | | Request body as JSON, raw string, `@path`, or `-` for stdin |
 
 ---
 
@@ -213,19 +285,21 @@ Plus shared connection flags.
 |------|----------|---------|-------------|
 | `--url <url>` | Yes | | MCP server URL |
 | `--access-token <token>` | No | | Bearer access token |
+| `--credentials-file <path>` | No | | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
 | `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
-Supports `--format json`, `--format human`, and `--format junit-xml`.
+Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
 
 ### `protocol conformance-suite`
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--config <path>` | Yes | | Path to JSON config file |
-| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 ---
 
@@ -242,16 +316,17 @@ Supports `--format json`, `--format human`, and `--format junit-xml`.
 | `--refresh-token <token>` | OAuth refresh token |
 | `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
 | `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
 | `--header <header>` | HTTP header `Key: Value` (repeatable) |
-| `--client-capabilities <json>` | Client capabilities JSON object |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
 | `--command <command>` | Stdio server command |
 | `--args <arg...>` | Preferred stdio command arguments |
 | `--command-args <arg>` | Legacy stdio command argument (repeatable) |
 | `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
 | `--cwd <path>` | Working directory for the stdio child process |
 
-Apps conformance shares the same transport inference rules as the rest of the
-CLI: `--url` implies HTTP, `--command` implies stdio, and `--transport` is an
+Apps commands share the same transport inference rules as the rest of the CLI:
+`--url` implies HTTP, `--command` implies stdio, and `--transport` is an
 optional explicit override.
 
 ### `apps conformance`
@@ -262,55 +337,63 @@ MCP Apps server-side conformance checks. Uses shared connection flags plus:
 |------|-------------|
 | `--category <category>` | Check category to run (`tools`, `resources`). Repeatable |
 | `--check-id <id>` | Specific check id to run. Repeatable |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
 
-Supports `--format json`, `--format human`, and `--format junit-xml`.
+Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
 
 ### `apps conformance-suite`
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--config <path>` | Yes | | Path to JSON config file |
-| `--format <fmt>` | No | Auto-detected | `json`, `human`, or `junit-xml` |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
-### `apps mcp-widget`
+---
 
-Fetch hosted-style MCP App widget content.
+## `inspector` commands
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--resource-uri <uri>` | Yes | Widget resource URI |
-| `--uri <uri>` | No | Legacy alias for `--resource-uri` |
-| `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
-| `--tool-name <name>` | Yes | Tool name used for runtime injection |
-| `--tool-input <json>` | No | Tool input payload as JSON |
-| `--tool-output <json>` | No | Tool output payload as JSON |
-| `--theme <theme>` | No | Widget theme: `light` or `dark` |
-| `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
-| `--template <uri>` | No | Optional `ui://` template override |
-| `--view-mode <mode>` | No | Widget view mode |
-| `--view-params <json>` | No | Widget view params as JSON |
+### `inspector open`
 
-Plus shared connection flags.
-
-### `apps chatgpt-widget`
-
-Fetch hosted-style ChatGPT App widget content.
+Start or attach to the local Inspector and open the UI.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--resource-uri <uri>` | Yes | Widget resource URI |
-| `--uri <uri>` | No | Legacy alias for `--resource-uri` |
-| `--tool-id <id>` | Yes | Tool call ID used for runtime injection |
-| `--tool-name <name>` | Yes | Tool name used for runtime injection |
-| `--tool-input <json>` | No | Tool input payload as JSON |
-| `--tool-output <json>` | No | Tool output payload as JSON |
-| `--tool-response-metadata <json>` | No | Tool response metadata as a JSON object |
-| `--theme <theme>` | No | Widget theme: `light` or `dark` |
-| `--csp-mode <mode>` | No | CSP mode: `permissive` or `widget-declared` |
-| `--locale <locale>` | No | Locale override |
-| `--device-type <type>` | No | Device type: `mobile`, `tablet`, or `desktop` |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+| `--tab <tab>` | No | Open Inspector on a specific tab |
 
-Plus shared connection flags.
+### `inspector start`
+
+Start the local Inspector in the background without opening a browser.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
+### `inspector stop`
+
+Stop the local Inspector if it is running.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
+---
+
+## `telemetry` commands
+
+Telemetry commands inspect and configure anonymous CLI telemetry. They never emit telemetry events themselves.
+
+### `telemetry status`
+
+Shows the effective telemetry state, install ID state, state file path, debug mode, and disable reason when disabled. This command does not create an install ID.
+
+### `telemetry disable`
+
+Persistently disables anonymous CLI telemetry by writing `enabled: false` to the telemetry state file. If no install ID exists yet, this command does not create one.
+
+### `telemetry enable`
+
+Persistently enables anonymous CLI telemetry. If no install ID exists yet, this command creates a random install UUID.
 
 ---
 

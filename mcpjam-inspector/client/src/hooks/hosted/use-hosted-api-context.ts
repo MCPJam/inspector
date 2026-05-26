@@ -1,81 +1,85 @@
 import { useLayoutEffect } from "react";
-import { HOSTED_MODE } from "@/lib/config";
-import { setHostedApiContext } from "@/lib/apis/web/context";
+import { setApiContext } from "@/lib/apis/web/context";
+import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 
-interface UseHostedApiContextOptions {
-  workspaceId: string | null;
+interface UseApiContextOptions {
+  projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
-  guestOauthTokensByServerName?: Record<string, string>;
-  shareToken?: string;
-  chatboxToken?: string;
+  // Resolved chatbox identity (post-redeem) — drives chatbox-aware request
+  // shaping inside the API context.
+  chatboxId?: string;
+  accessVersion?: number;
   isAuthenticated?: boolean;
-  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
-  serverConfigs?: Record<string, unknown>;
+  hasSession?: boolean;
   enabled?: boolean;
 }
 
-export function useHostedApiContext({
-  workspaceId,
+export function useApiContext({
+  projectId,
   serverIdsByName,
   clientCapabilities,
+  clientInfo,
+  supportedProtocolVersions,
+  mcpProtocolVersionsByServerId,
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
-  guestOauthTokensByServerName,
-  shareToken,
-  chatboxToken,
+  chatboxId,
+  accessVersion,
   isAuthenticated,
-  serverConfigs,
+  hasSession,
   enabled = true,
-}: UseHostedApiContextOptions): void {
+}: UseApiContextOptions): void {
   // useLayoutEffect so the global hosted context is set synchronously before
   // any child useEffect hooks fire (e.g. fetchToolsMetadata in useChatSession).
   // With useEffect, React's bottom-up ordering means child passive effects run
   // between this effect's cleanup (which nulls the context) and its setup,
   // causing "Hosted server not found" errors for shared-chat OAuth servers.
   useLayoutEffect(() => {
-    if (!HOSTED_MODE) {
-      setHostedApiContext(null);
-      return;
-    }
-
     if (!enabled) {
       return;
     }
 
-    setHostedApiContext({
-      workspaceId,
+    setApiContext({
+      projectId,
       serverIdsByName,
       clientCapabilities,
+      clientInfo,
+      supportedProtocolVersions,
+      mcpProtocolVersionsByServerId,
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
-      guestOauthTokensByServerName,
-      shareToken,
-      chatboxToken,
+      chatboxId,
+      accessVersion,
       isAuthenticated,
-      serverConfigs,
+      hasSession,
     });
 
     return () => {
-      setHostedApiContext(null);
+      setApiContext(null);
     };
   }, [
     enabled,
-    workspaceId,
+    projectId,
     serverIdsByName,
     clientCapabilities,
+    clientInfo,
+    supportedProtocolVersions,
+    mcpProtocolVersionsByServerId,
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    guestOauthTokensByServerName,
-    shareToken,
-    chatboxToken,
+    chatboxId,
+    accessVersion,
     isAuthenticated,
-    serverConfigs,
+    hasSession,
   ]);
 }

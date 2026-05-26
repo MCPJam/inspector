@@ -8,7 +8,7 @@ function makeOverviewEntry(): EvalSuiteOverviewEntry {
     suite: {
       _id: "suite-1",
       createdBy: "user-1",
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       name: "Greeting Suite",
       description: "A suite for greetings",
       configRevision: "rev-1",
@@ -21,7 +21,7 @@ function makeOverviewEntry(): EvalSuiteOverviewEntry {
       _id: "run-1",
       suiteId: "suite-1",
       createdBy: "user-1",
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       runNumber: 1,
       configRevision: "rev-1",
       configSnapshot: {
@@ -39,7 +39,7 @@ function makeOverviewEntry(): EvalSuiteOverviewEntry {
         _id: "run-1",
         suiteId: "suite-1",
         createdBy: "user-1",
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         runNumber: 1,
         configRevision: "rev-1",
         configSnapshot: {

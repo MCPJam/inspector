@@ -4,10 +4,16 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   validateHostedServer,
+  type HostedServerValidateContext,
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
-import { webPost } from "@/lib/apis/web/base";
-import { buildGuestServerRequest, isGuestMode } from "@/lib/apis/web/context";
+import {
+  getHostedChatboxAccessVersion,
+  getHostedChatboxId,
+  getHostedOAuthToken,
+} from "@/lib/apis/web/context";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
+import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
 
@@ -27,11 +33,8 @@ function extractOAuthToken(serverConfig: MCPServerConfig): string | undefined {
 }
 
 function normalizeHostedValidationError(error: unknown): string {
-  if (
-    error instanceof Error &&
-    error.message === "Hosted workspace is not available yet"
-  ) {
-    return "Hosted workspace is still loading. Please try again in a moment.";
+  if (error instanceof BootstrapNotReadyError) {
+    return "Hosted project is still loading. Please try again in a moment.";
   }
 
   if (
@@ -48,33 +51,67 @@ function normalizeHostedValidationError(error: unknown): string {
   return "Hosted validation failed";
 }
 
+function buildHostedValidationContext(
+  serverId: string,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
+): HostedServerValidateContext | undefined {
+  if (!options?.projectId) return undefined;
+
+  const chatboxId = getHostedChatboxId();
+  return {
+    projectId: options.projectId,
+    serverId,
+    ...(options.serverName ? { serverName: options.serverName } : {}),
+    ...(chatboxId ? { accessScope: "chat_v2" } : {}),
+    ...(chatboxId ? { chatboxId } : {}),
+    ...(chatboxId ? { accessVersion: getHostedChatboxAccessVersion() } : {}),
+    // Surface the resolver-path `mcpProfile.initialize.*` pins to the
+    // hosted validate request. Without this the hosted branch dropped
+    // them silently: `connectionDefaults` was computed by
+    // `buildResolverConnectionDefaults` in `use-server-state.ts` and
+    // passed through `testConnection`/`reconnectServer`, but only the
+    // local-resolver path forwarded it (`buildResolverBody`). Hosted
+    // connects therefore always initialized with SDK defaults even
+    // when the active host profile pinned an explicit clientInfo /
+    // supportedProtocolVersions.
+    ...(options.connectionDefaults?.clientInfo
+      ? { clientInfo: options.connectionDefaults.clientInfo }
+      : {}),
+    ...(options.connectionDefaults?.supportedProtocolVersions &&
+    options.connectionDefaults.supportedProtocolVersions.length > 0
+      ? {
+          supportedProtocolVersions:
+            options.connectionDefaults.supportedProtocolVersions,
+        }
+      : {}),
+    // mcpProtocolVersion — same drop-on-the-floor bug as clientInfo /
+    // supportedProtocolVersions had before being plumbed here. Without
+    // this, hosted connects ignored the client-level Stateless toggle
+    // and always initialized via the legacy upstream Client.
+    ...(options.connectionDefaults?.mcpProtocolVersion
+      ? { mcpProtocolVersion: options.connectionDefaults.mcpProtocolVersion }
+      : {}),
+  };
+}
+
 async function safeValidateHostedServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  hostedContext?: HostedServerValidateContext,
 ): Promise<HostedServerValidateResponse & { error?: string }> {
   try {
-    if (isGuestMode()) {
-      const request = buildGuestServerRequest(
-        serverConfig,
-        extractOAuthToken(serverConfig),
-        serverConfig.capabilities as Record<string, unknown> | undefined,
-        serverId,
-      );
-
-      return await withTimeout(
-        webPost<typeof request, HostedServerValidateResponse>(
-          "/api/web/servers/validate",
-          request,
-        ),
-        HOSTED_VALIDATE_TIMEOUT_MS,
-      );
-    }
-
+    const oauthToken =
+      extractOAuthToken(serverConfig) ?? getHostedOAuthToken(serverId);
     return await withTimeout(
       validateHostedServer(
         serverId,
-        extractOAuthToken(serverConfig),
+        oauthToken,
         serverConfig.capabilities as Record<string, unknown> | undefined,
+        hostedContext,
       ),
       HOSTED_VALIDATE_TIMEOUT_MS,
     );
@@ -106,7 +143,9 @@ async function authFetchWithTimeout(
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(
-        `Connection attempt timed out after ${timeoutMs / 1000} seconds. The server may not exist or is not responding.`,
+        `Connection attempt timed out after ${
+          timeoutMs / 1000
+        } seconds. The server may not exist or is not responding.`,
       );
     }
     throw error;
@@ -121,7 +160,9 @@ async function withTimeout<T>(
     const timeoutId = window.setTimeout(() => {
       reject(
         new Error(
-          `Connection attempt timed out after ${timeoutMs / 1000} seconds. The server may not exist or is not responding.`,
+          `Connection attempt timed out after ${
+            timeoutMs / 1000
+          } seconds. The server may not exist or is not responding.`,
         ),
       );
     }, timeoutMs);
@@ -139,20 +180,59 @@ async function withTimeout<T>(
   });
 }
 
+function buildResolverBody(
+  serverId: string,
+  options: {
+    projectId: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
+): Record<string, unknown> {
+  return {
+    projectId: options.projectId,
+    serverId,
+    ...(options.serverName ? { serverName: options.serverName } : {}),
+    ...(options.connectionDefaults
+      ? { connectionDefaults: options.connectionDefaults }
+      : {}),
+  };
+}
+
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
-    return safeValidateHostedServer(serverId, serverConfig);
+    return safeValidateHostedServer(
+      serverId,
+      serverConfig,
+      buildHostedValidationContext(serverId, options),
+    );
   }
+
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverConfig, serverId }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );
@@ -174,6 +254,51 @@ export async function deleteServer(serverId: string) {
   return res.json();
 }
 
+export async function disconnectAllRuntimeServers() {
+  if (HOSTED_MODE) {
+    return { success: true, servers: [] };
+  }
+
+  const result = await listServers();
+  if (!result?.success || !Array.isArray(result.servers)) {
+    return result;
+  }
+
+  const listedServers = result.servers as Array<{
+    id?: unknown;
+    name?: unknown;
+  }>;
+  const serverIds: string[] = listedServers.reduce(
+    (ids: string[], server) => {
+      if (typeof server.id === "string" && server.id) {
+        ids.push(server.id);
+      } else if (typeof server.name === "string" && server.name) {
+        ids.push(server.name);
+      }
+      return ids;
+    },
+    [] as string[],
+  );
+
+  const disconnectResults = await Promise.allSettled(
+    serverIds.map((serverId) => deleteServer(serverId)),
+  );
+  const failures = disconnectResults.filter((disconnectResult) => {
+    if (disconnectResult.status === "rejected") {
+      return true;
+    }
+    return disconnectResult.value?.success === false;
+  });
+
+  return {
+    success: failures.length === 0,
+    servers: result.servers,
+    ...(failures.length > 0
+      ? { error: `Failed to disconnect ${failures.length} server(s)` }
+      : {}),
+  };
+}
+
 export async function listServers() {
   if (HOSTED_MODE) {
     return { success: true, servers: [] };
@@ -186,17 +311,38 @@ export async function listServers() {
 export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
-    return safeValidateHostedServer(serverId, serverConfig);
+    return safeValidateHostedServer(
+      serverId,
+      serverConfig,
+      buildHostedValidationContext(serverId, options),
+    );
   }
+
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverId, serverConfig }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );

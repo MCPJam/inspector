@@ -9,14 +9,18 @@ import {
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { GlobalClientBar } from "@/components/clients/GlobalClientBar";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import type { GlobalHostBarProps } from "@/components/Header";
 
 interface AuthUpperAreaProps {
   activeServerSelectorProps?: ActiveServerSelectorProps;
+  globalHostBarProps?: GlobalHostBarProps;
 }
 
 export function AuthUpperArea({
   activeServerSelectorProps,
+  globalHostBarProps,
 }: AuthUpperAreaProps) {
   const { user, signIn, signUp } = useAuth();
   const { isLoading } = useConvexAuth();
@@ -41,15 +45,45 @@ export function AuthUpperArea({
 
   return (
     <div className="ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0">
-      {activeServerSelectorProps && (
+      {globalHostBarProps ? (
+        <div className="flex shrink-0 items-center pr-1">
+          <GlobalClientBar {...globalHostBarProps} />
+        </div>
+      ) : null}
+      {activeServerSelectorProps ? (
         <div className="flex-1 min-w-0 h-full pr-2">
           <ActiveServerSelector
             {...activeServerSelectorProps}
             className="h-full"
           />
         </div>
+      ) : (
+        <div className="flex-1 min-w-0 h-full pr-2" />
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="agents-cta-link hidden px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground min-[520px]:inline-flex"
+        >
+          <a
+            href="https://docs.mcpjam.com/cli/overview"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open MCPJam CLI documentation"
+            title="MCPJam CLI"
+            onClick={() => {
+              posthog.capture("agents_cta_clicked", {
+                location: "header",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+              });
+            }}
+          >
+            <span>MCPJam CLI</span>
+          </a>
+        </Button>
         {communityLinks}
         <NotificationBell />
         {!user && !isLoading && (

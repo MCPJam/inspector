@@ -112,8 +112,10 @@ export const OAuthFlowTab = ({
     useState(false);
   const [isApplyingTokens, setIsApplyingTokens] = useState(false);
 
-  const httpServers = useMemo(
-    () => Object.values(serverConfigs).filter((server) => isHttpServer(server)),
+  const httpServerCount = useMemo(
+    () =>
+      Object.values(serverConfigs).filter((server) => isHttpServer(server))
+        .length,
     [serverConfigs],
   );
 
@@ -124,12 +126,6 @@ export const OAuthFlowTab = ({
   const activeServer = isHttpServer(selectedServer)
     ? selectedServer
     : undefined;
-
-  useEffect(() => {
-    if (!isHttpServer(selectedServer) && httpServers.length > 0) {
-      onSelectServer(httpServers[0].name);
-    }
-  }, [selectedServer, httpServers, onSelectServer]);
 
   useEffect(() => {
     if (
@@ -143,10 +139,10 @@ export const OAuthFlowTab = ({
   }, [pendingServerSelection, serverConfigs, onSelectServer]);
 
   useEffect(() => {
-    if (httpServers.length === 0) {
+    if (httpServerCount === 0) {
       setIsProfileModalOpen(true);
     }
-  }, [httpServers.length]);
+  }, [httpServerCount]);
 
   const profile = useMemo(
     () => deriveOAuthProfileFromServer(activeServer),
@@ -433,6 +429,42 @@ export const OAuthFlowTab = ({
       }
     };
 
+    const handleElectronOAuthCallback = (event: Event) => {
+      const callbackUrl = (event as CustomEvent<string>).detail;
+      if (!callbackUrl) {
+        return;
+      }
+
+      try {
+        const parsed = new URL(callbackUrl);
+        if (parsed.searchParams.get("flow") !== "debug") {
+          return;
+        }
+
+        const error = parsed.searchParams.get("error");
+        const errorDescription = parsed.searchParams.get("error_description");
+        if (error) {
+          if (exchangeTimeoutRef.current) {
+            clearTimeout(exchangeTimeoutRef.current);
+            exchangeTimeoutRef.current = null;
+          }
+
+          updateOAuthFlowState({
+            error: errorDescription ?? error,
+          });
+          return;
+        }
+
+        const code = parsed.searchParams.get("code");
+        const state = parsed.searchParams.get("state");
+        if (code) {
+          processOAuthCallback(code, state ?? undefined);
+        }
+      } catch (error) {
+        console.error("Failed to process Electron OAuth callback:", error);
+      }
+    };
+
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel("oauth_callback_channel");
@@ -446,8 +478,16 @@ export const OAuthFlowTab = ({
     }
 
     window.addEventListener("message", handleMessage);
+    window.addEventListener(
+      "electron-oauth-callback",
+      handleElectronOAuthCallback as EventListener,
+    );
     return () => {
       window.removeEventListener("message", handleMessage);
+      window.removeEventListener(
+        "electron-oauth-callback",
+        handleElectronOAuthCallback as EventListener,
+      );
       channel?.close();
     };
   }, [oauthStateMachine, updateOAuthFlowState]);

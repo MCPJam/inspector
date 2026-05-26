@@ -40,23 +40,18 @@ import {
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
+import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
+import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlow";
 
-const PLAN_ORDER: OrganizationPlan[] = [
-  "free",
-  "starter",
-  "team",
-  "enterprise",
-];
+const PLAN_ORDER: OrganizationPlan[] = ["free", "team", "enterprise"];
 
 /** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
 const POPULAR_PLAN: OrganizationPlan = "team";
 
-/** Defines org as the billed scope for plans and limits (vs workspaces). */
+/** Defines org as the billed scope for plans and limits (vs projects). */
 const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
-
-const LLM_USAGE_SECTION_TITLE = "LLM Usage";
-const LLM_USAGE_SECTION_TOOLTIP =
-  "LLM usage billing isn’t live yet, so models are currently free. For paid plans, the table reflects the intended $5 per user per day rate limit and may change before billing launches.";
 
 function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
@@ -74,7 +69,7 @@ function getPlanColumnCta(params: {
     billingInterval: BillingInterval,
   ) => void;
   onStartPlanChange: (
-    plan: "starter" | "team",
+    plan: "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   billingInterval: BillingInterval;
@@ -83,6 +78,7 @@ function getPlanColumnCta(params: {
   disabled: boolean;
   variant: "default" | "outline" | "secondary";
   onClick?: () => void;
+  tooltip?: string;
 } {
   const {
     plan,
@@ -128,7 +124,7 @@ function getPlanColumnCta(params: {
   }
 
   if (isHigherTier && entry.isSelfServe) {
-    if (plan !== "starter" && plan !== "team") {
+    if (plan !== "team") {
       return { label: "Unavailable", disabled: true, variant: "outline" };
     }
     return {
@@ -156,23 +152,37 @@ function formatCurrency(
   }).format(amount);
 }
 
-/** Price line for the compare table; Starter uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
+function formatBillingDate(timestampMs: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestampMs));
+}
+
+function getDeferredTrialBillingCopy(
+  billingStatus: OrganizationBillingStatus | undefined,
+): string | null {
+  const deferredTrialBillingStartsAt =
+    billingStatus?.deferredTrialBillingStartsAt;
+  if (typeof deferredTrialBillingStartsAt !== "number") {
+    return null;
+  }
+
+  return `$0 today. First bill charged in advance on ${formatBillingDate(
+    deferredTrialBillingStartsAt,
+  )}.`;
+}
+
+/** Price line for the compare table; Team uses `/seat/mo`. */
 function formatPlanPriceLabel(
-  plan: OrganizationPlan,
+  _plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
 ): string {
   if (amountInCents == null) {
     return interval === "annual" ? "Custom annual" : "Custom pricing";
-  }
-
-  if (plan === "starter") {
-    if (interval === "monthly") {
-      return `${formatCurrency(amountInCents / 100, currency, 0)}/mo`;
-    }
-    const monthlyEquivalentDollars = amountInCents / 12 / 100;
-    return `${formatCurrency(Math.round(monthlyEquivalentDollars), currency, 0)}/mo`;
   }
 
   if (interval === "monthly") {
@@ -298,16 +308,16 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
       "Custom branding (e.g. logo and colors) on shared chatbox experiences.",
     contentClassName: "max-w-[18rem]",
   },
-  Workspaces: {
-    ariaLabel: "What is a workspace?",
+  Projects: {
+    ariaLabel: "What is a project?",
     content:
-      "Workspaces are containers for your MCP servers and related objects.",
+      "Projects are containers for your MCP servers and related objects.",
     contentClassName: "max-w-[16rem]",
   },
   "Seat limit": {
     ariaLabel: "About seat limits",
     content:
-      "Seats don't need to be filled by a member. To add a new member, you'll need to have one empty seat.",
+      "You're charged only for active members. Pending invites are free until accepted.",
     contentClassName: "max-w-[18rem]",
   },
   "SSO / SAML": {
@@ -429,7 +439,7 @@ function BillingIntervalToggle({
         Annual
         <span
           className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
-          title="Starter: savings vs paying the monthly rate for 12 months (e.g. $61×12 vs $588/year)."
+          title="Team: savings vs paying the monthly rate for 12 months."
         >
           -{annualDiscountPct}%
         </span>
@@ -457,18 +467,18 @@ interface OrganizationBillingSectionProps {
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
   isStartingPlanChange: boolean;
-  pendingPlanChangeTarget: "starter" | "team" | null;
+  pendingPlanChangeTarget: "team" | null;
   isOpeningPortal: boolean;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartPlanChange: (
-    plan: "starter" | "team",
+    plan: "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartAutoPlanChange?: (
-    plan: "starter" | "team",
+    plan: "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
@@ -490,6 +500,8 @@ export function OrganizationBillingSection({
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
+  useCreditTopupReturnFlowBilling();
+
   const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
@@ -617,6 +629,7 @@ export function OrganizationBillingSection({
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
+  const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
 
   return (
     <div className="space-y-5">
@@ -697,6 +710,14 @@ export function OrganizationBillingSection({
         ) : null}
       </Dialog>
 
+      <ErrorBoundary fallback={null}>
+        <CreditBalanceCard />
+      </ErrorBoundary>
+
+      <ErrorBoundary fallback={null}>
+        <PaymentsHistorySection />
+      </ErrorBoundary>
+
       {checkoutIntent ? (
         <div
           className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
@@ -750,7 +771,7 @@ export function OrganizationBillingSection({
                   Compare plans
                 </p>
                 <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                  Find the right plan for your team
+                  Compare Free vs Team
                 </CardTitle>
                 <p className="pt-1 text-xs leading-snug text-muted-foreground">
                   {ORG_COMPARE_PLANS_NOTE}
@@ -769,7 +790,7 @@ export function OrganizationBillingSection({
             </div>
           ) : (
             <div className="relative w-full overflow-x-auto overscroll-x-contain">
-              <div className="min-w-[56rem] px-4 pb-6 sm:px-6">
+              <div className="min-w-[44rem] px-4 pb-6 sm:px-6">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
@@ -781,7 +802,7 @@ export function OrganizationBillingSection({
                                 Compare plans
                               </p>
                               <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                                Find the right plan for your team
+                                Compare Free vs Team
                               </CardTitle>
                               <p className="pt-1 text-xs leading-snug text-muted-foreground">
                                 {ORG_COMPARE_PLANS_NOTE}
@@ -850,9 +871,15 @@ export function OrganizationBillingSection({
                           pendingPlanChangeTarget === plan &&
                           (cta.label === "Upgrade" ||
                             cta.label === "Downgrade") &&
-                          (plan === "starter" || plan === "team");
+                          (plan === "team");
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
+                        const showDeferredTrialBillingCopy =
+                          deferredTrialBillingCopy != null &&
+                          cta.label === "Upgrade" &&
+                          !cta.disabled &&
+                          !cta.tooltip &&
+                          (plan === "team");
                         return (
                           <TableHead
                             key={plan}
@@ -884,24 +911,59 @@ export function OrganizationBillingSection({
                                       {entry.seatMinimum} seat minimum
                                     </p>
                                   ) : null}
+                                  {showDeferredTrialBillingCopy ? (
+                                    <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+                                      {deferredTrialBillingCopy}
+                                    </p>
+                                  ) : null}
                                 </div>
                               </div>
-                              <Button
-                                className="w-full shrink-0 rounded-lg"
-                                size="sm"
-                                variant={cta.variant}
-                                disabled={cta.disabled}
-                                onClick={cta.onClick}
-                              >
-                                {showCtaSpinner ? (
-                                  <>
-                                    <Loader2 className="size-4 animate-spin" />
-                                    Loading...
-                                  </>
-                                ) : (
-                                  cta.label
-                                )}
-                              </Button>
+                              {cta.tooltip ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      className="w-full shrink-0 rounded-lg"
+                                      size="sm"
+                                      variant={cta.variant}
+                                      aria-disabled={true}
+                                      tabIndex={0}
+                                      onClick={undefined}
+                                    >
+                                      {showCtaSpinner ? (
+                                        <>
+                                          <Loader2 className="size-4 animate-spin" />
+                                          Loading...
+                                        </>
+                                      ) : (
+                                        cta.label
+                                      )}
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side="top"
+                                    className="max-w-[14rem] text-center"
+                                  >
+                                    {cta.tooltip}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Button
+                                  className="w-full shrink-0 rounded-lg"
+                                  size="sm"
+                                  variant={cta.variant}
+                                  disabled={cta.disabled}
+                                  onClick={cta.onClick}
+                                >
+                                  {showCtaSpinner ? (
+                                    <>
+                                      <Loader2 className="size-4 animate-spin" />
+                                      Loading...
+                                    </>
+                                  ) : (
+                                    cta.label
+                                  )}
+                                </Button>
+                              )}
                             </div>
                           </TableHead>
                         );
@@ -917,38 +979,13 @@ export function OrganizationBillingSection({
                             colSpan={PLAN_ORDER.length + 1}
                           >
                             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              {section.title === LLM_USAGE_SECTION_TITLE ? (
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span>{section.title}</span>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        type="button"
-                                        className="inline-flex shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                        aria-label="LLM usage pricing note"
-                                      >
-                                        <Info className="size-3.5" />
-                                      </button>
-                                    </TooltipTrigger>
-                                    <TooltipContent
-                                      side="right"
-                                      sideOffset={6}
-                                      className="max-w-[22rem] text-balance"
-                                    >
-                                      {LLM_USAGE_SECTION_TOOLTIP}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </span>
-                              ) : (
-                                section.title
-                              )}
+                              {section.title}
                             </div>
                           </TableCell>
                         </TableRow>
                         {section.rows.map((row, rowIndex) => {
                           const cells: ComparePlanCell[] = [
                             row.free,
-                            row.starter,
                             row.team,
                             row.enterprise,
                           ];

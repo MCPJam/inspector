@@ -21,6 +21,17 @@ export const options = {
 export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
+/** Normalize PostHog boolean flags (`useFeatureFlagEnabled` may not be strict `true` in dev). */
+export function isPostHogBooleanFlagOn(value: unknown): boolean {
+  if (value === true) return true;
+  if (value === false || value === undefined || value === null) return false;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    return v === "true" || v === "1" || v === "yes" || v === "on";
+  }
+  return false;
+}
+
 // Conditional PostHog key and options
 // Always use the real PostHog key so feature flags evaluate properly via /decide
 export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;
@@ -30,8 +41,11 @@ export const getPostHogOptions = () =>
         api_host: VITE_PUBLIC_POSTHOG_HOST,
         capture_pageview: false,
         person_profiles: "always" as const,
-        // Disable event capture but keep /decide enabled for feature flag evaluation
-        opt_out_capturing: true,
+        // Disable event capture but keep /decide enabled for feature flag evaluation.
+        // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
+        // not a config field, so passing it here was silently ignored and dev
+        // events flowed into prod PostHog from 2026-03-12 until this fix.
+        opt_out_capturing_by_default: true,
       }
     : options;
 

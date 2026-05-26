@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 
 const mockGetToolsMetadata = vi.fn();
 const mockCountTextTokens = vi.fn();
@@ -8,6 +10,7 @@ const mockSetMessages = vi.fn();
 const mockStop = vi.fn();
 const mockAddToolApprovalResponse = vi.fn();
 const mockAuthFetch = vi.fn();
+const mockWindowFetch = vi.fn();
 const mockGetSessionAuthHeaders = vi.fn(() => ({}));
 const mockGetAccessToken = vi.fn(async () => null);
 const mockGetGuestBearerToken = vi.fn(async () => "guest-token");
@@ -26,11 +29,17 @@ const mockTransportInstances: Array<{
   sendMessages: ReturnType<typeof vi.fn>;
   requests: any[];
 }> = [];
+const mockUseChatErrorHandlers: Array<(error: Error) => void> = [];
 
 const baseModel = {
   id: "gpt-4",
   name: "GPT-4",
   provider: "openai" as const,
+};
+const orgAnthropicModel = {
+  id: "claude-sonnet-4-6",
+  name: "Claude Sonnet 4.6",
+  provider: "anthropic" as const,
 };
 const mcpJamModel = {
   id: "openai/gpt-5-mini",
@@ -87,6 +96,19 @@ vi.mock("@/lib/config", () => ({
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => mockModelState.availableModels),
+  buildAvailableModelsFromOrgConfig: vi.fn((orgConfig: any) => {
+    if (
+      orgConfig?.providers?.some(
+        (provider: any) =>
+          provider.providerKey === "anthropic" &&
+          provider.enabled &&
+          provider.hasSecret,
+      )
+    ) {
+      return [mcpJamModel, orgAnthropicModel];
+    }
+    return [mcpJamModel];
+  }),
   getDefaultModel: vi.fn(() => baseModel),
 }));
 
@@ -156,14 +178,20 @@ vi.mock("@ai-sdk/react", async () => {
       ({
         id,
         transport,
+        onError,
       }: {
         id: string;
         transport: {
           sendMessages: (options: any) => Promise<unknown>;
         };
+        onError?: (error: Error) => void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
+
+        if (onError) {
+          mockUseChatErrorHandlers.push(onError);
+        }
 
         if (latchedIdRef.current !== id) {
           latchedIdRef.current = id;
@@ -250,7 +278,18 @@ describe("useChatSession minimal mode parity", () => {
     mockGetGuestBearerToken.mockReset();
     mockGetGuestBearerToken.mockResolvedValue("guest-token");
     mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockWindowFetch.mockReset();
+    mockWindowFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", mockWindowFetch);
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "guest",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
     mockTransportInstances.length = 0;
+    mockUseChatErrorHandlers.length = 0;
     mockGetToolsMetadata.mockResolvedValue({
       metadata: { create_view: { title: "Create view" } },
       toolServerMap: { create_view: "server-1" },
@@ -265,7 +304,9 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "You are a helpful assistant.",
+        executionConfig: {
+          systemPrompt: "You are a helpful assistant.",
+        },
       }),
     );
 
@@ -284,7 +325,9 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "Custom prompt",
+        executionConfig: {
+          systemPrompt: "Custom prompt",
+        },
       }),
     );
 
@@ -292,6 +335,42 @@ describe("useChatSession minimal mode parity", () => {
       expect(mockCountTextTokens).toHaveBeenCalledWith(
         "Custom prompt",
         "openai/gpt-4",
+      );
+    });
+  });
+
+  it("uses the default system prompt when execution config has a blank prompt", async () => {
+    const selectedServers = ["server-1"];
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers,
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        },
+      }),
+    );
+
+    expect(result.current.systemPrompt).toBe(DEFAULT_SYSTEM_PROMPT);
+
+    await waitFor(() => {
+      expect(mockCountTextTokens).toHaveBeenCalledWith(
+        DEFAULT_SYSTEM_PROMPT,
+        "openai/gpt-4",
+      );
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toContainEqual(
+        expect.objectContaining({
+          systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        }),
       );
     });
   });
@@ -308,8 +387,12 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        hostedShareToken: "share-token",
-        initialSystemPrompt: "Prompt",
+        hostedContext: {
+          chatboxId: "cbx_test", accessVersion: 1,
+        },
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
       }),
     );
 
@@ -327,13 +410,15 @@ describe("useChatSession minimal mode parity", () => {
     warnSpy.mockRestore();
   });
 
-  it("keeps non-hosted chat off authFetch and includes a guest bearer header", async () => {
+  it("keeps non-hosted chat off authFetch while using modal-aware fetch", async () => {
     const selectedServers = ["server-1"];
     const { result } = renderHook(() =>
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
       }),
     );
 
@@ -343,7 +428,7 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(latestTransport.options.fetch).toBeUndefined();
+    expect(latestTransport.options.fetch).toEqual(expect.any(Function));
     expect(await resolveConfig(latestTransport.options.headers)).toEqual({
       Authorization: "Bearer guest-token",
     });
@@ -360,7 +445,227 @@ describe("useChatSession minimal mode parity", () => {
       ).toBe(true);
     });
     expect(getUsedTransport().options.api).toBe("/api/mcp/chat-v2");
+    expect(mockWindowFetch).toHaveBeenCalledWith(
+      "/api/mcp/chat-v2",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer guest-token" },
+      }),
+    );
     expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("attaches widget model context to the next request only", async () => {
+    const selectedServers = ["server-1"];
+    const widgetModelContext = [
+      {
+        toolCallId: "call-1",
+        context: {
+          content: [{ type: "text", text: "board: X________" }],
+          structuredContent: { board: ["X", "", "", "", "", "", "", "", ""] },
+        },
+      },
+    ];
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers,
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    act(() => {
+      result.current.sendMessage({
+        text: "hello",
+        widgetModelContext,
+      });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(1);
+    });
+
+    expect(getTransportRequests().at(-1)).toMatchObject({
+      widgetModelContext,
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello again" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(2);
+    });
+
+    expect(getTransportRequests().at(-1)).not.toHaveProperty(
+      "widgetModelContext",
+    );
+  });
+
+  it("opens the mcpjam-limit dialog for non-hosted chat-v2 limit responses", async () => {
+    mockWindowFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          error:
+            "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+          isRetryable: true,
+          retryAfter: 86400000,
+          details: "Try again in 1440 minutes.",
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    });
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("opens the mcpjam-limit dialog for chat-v2 stream limit errors", async () => {
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatErrorHandlers.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      mockUseChatErrorHandlers.at(-1)?.(
+        new Error(
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        ),
+      );
+    });
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("opens the topup variant for signed-in user_rate_limit responses", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    mockWindowFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          error: "Daily credit limit reached.",
+          limitKind: "total",
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
+    });
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("does not open the modal for signed-in concurrency-throttle responses", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    mockWindowFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          error: "Another credit-funded chat is finishing.",
+          limitKind: "concurrency",
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    // Give the error path a chance to run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().intent).toBeNull();
   });
 
   it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {
@@ -380,7 +685,9 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers,
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
       }),
     );
 
@@ -426,6 +733,96 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
+  it("uses org config and the org-aware route for BYOK in non-hosted local dev", async () => {
+    mockModelState.selectedModelId = orgAnthropicModel.id;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              providerKey: "anthropic",
+              enabled: true,
+              hasSecret: true,
+            },
+          ],
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      mcpJamModel.id,
+      orgAnthropicModel.id,
+    ]);
+    expect(result.current.selectedModel.id).toBe(orgAnthropicModel.id);
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "hello" });
+    });
+
+    const transport = getUsedTransport();
+    expect(transport.options.api).toBe("/api/web/chat-v2");
+    expect(transport.requests[0]).toMatchObject({
+      model: orgAnthropicModel,
+      projectId: "project-1",
+      selectedServerIds: ["server-id-1"],
+      selectedServerNames: ["server-1"],
+      accessScope: "chat_v2",
+    });
+    expect(transport.requests[0]).not.toHaveProperty("apiKey");
+    expect(mockWindowFetch).toHaveBeenCalledWith(
+      "/api/web/chat-v2",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer guest-token" },
+      }),
+    );
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("falls back to local provider keys when non-hosted org config is empty", async () => {
+    mockModelState.availableModels = [baseModel];
+    mockModelState.selectedModelId = baseModel.id;
+    mockGetToken.mockReturnValue("sk-local");
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: { providers: [] },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "hello" });
+    });
+
+    const transport = getUsedTransport();
+    expect(transport.options.api).toBe("/api/mcp/chat-v2");
+    expect(transport.requests[0]).toMatchObject({
+      model: baseModel,
+      apiKey: "sk-local",
+      projectId: "project-1",
+      selectedServerIds: ["server-id-1"],
+    });
+  });
+
   it("keeps an initialModelId authoritative even when that model is guest-locked", async () => {
     mockModelState.availableModels = [
       baseModel,
@@ -441,8 +838,10 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers: ["server-1"],
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
-        initialModelId: gatedMcpJamModel.id,
+        executionConfig: {
+          systemPrompt: "Prompt",
+          modelId: gatedMcpJamModel.id,
+        },
       }),
     );
 
@@ -473,8 +872,10 @@ describe("useChatSession minimal mode parity", () => {
       useChatSession({
         selectedServers: ["server-1"],
         minimalMode: true,
-        initialSystemPrompt: "Prompt",
-        initialModelId: gatedMcpJamModel.id,
+        executionConfig: {
+          systemPrompt: "Prompt",
+          modelId: gatedMcpJamModel.id,
+        },
       }),
     );
 
@@ -499,7 +900,9 @@ describe("useChatSession minimal mode parity", () => {
         useChatSession({
           selectedServers,
           minimalMode: true,
-          initialSystemPrompt: "Prompt",
+          executionConfig: {
+            systemPrompt: "Prompt",
+          },
         }),
       {
         initialProps: {

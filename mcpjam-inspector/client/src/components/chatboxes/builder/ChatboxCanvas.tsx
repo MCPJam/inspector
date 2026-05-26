@@ -53,10 +53,10 @@ import {
 } from "@mcpjam/design-system/collapsible";
 import { HOSTED_MODE } from "@/lib/config";
 import { listTools } from "@/lib/apis/mcp-tools-api";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
-import { WorkspaceServerPickerList } from "@/components/chatboxes/builder/setup-checklist-panel";
+import type { RemoteServer } from "@/hooks/useProjects";
+import { ProjectServerPickerList } from "@/components/chatboxes/builder/setup-checklist-panel";
 import { MCPIcon } from "@/components/ui/mcp-icon";
-import { getChatboxHostLogo } from "@/lib/chatbox-host-style";
+import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import type {
   ChatboxBuilderNodeData,
@@ -72,10 +72,10 @@ import {
 } from "./chatbox-canvas-viewport";
 
 export type ChatboxCanvasServerPickerProps = {
-  workspaceServers: RemoteServer[];
+  projectServers: RemoteServer[];
   selectedServerIds: string[];
   onToggleServer: (serverId: string, checked: boolean) => void;
-  onOpenAddWorkspaceServer: () => void;
+  onOpenAddProjectServer: () => void;
 };
 
 const ChatboxCanvasContext = createContext<{
@@ -111,12 +111,12 @@ async function fetchAllToolNames(
 function ServerNodeToolsCollapsible({
   nodeId,
   serverDocumentId,
-  workspaceServers,
+  projectServers,
   builderModelId,
 }: {
   nodeId: string;
   serverDocumentId: string;
-  workspaceServers: RemoteServer[] | undefined;
+  projectServers: RemoteServer[] | undefined;
   builderModelId: string | undefined;
 }) {
   const updateNodeInternals = useUpdateNodeInternals();
@@ -124,9 +124,9 @@ function ServerNodeToolsCollapsible({
     () =>
       HOSTED_MODE
         ? serverDocumentId
-        : (workspaceServers?.find((s) => s._id === serverDocumentId)?.name ??
+        : (projectServers?.find((s) => s._id === serverDocumentId)?.name ??
           serverDocumentId),
-    [serverDocumentId, workspaceServers],
+    [serverDocumentId, projectServers],
   );
 
   const [open, setOpen] = useState(false);
@@ -382,7 +382,7 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
             <ServerNodeToolsCollapsible
               nodeId={id}
               serverDocumentId={data.serverId}
-              workspaceServers={canvasServerPicker?.workspaceServers}
+              projectServers={canvasServerPicker?.projectServers}
               builderModelId={builderModelId}
             />
           ) : null}
@@ -407,7 +407,7 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    aria-label="Add workspace servers to chatbox"
+                    aria-label="Add project servers to chatbox"
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
                     className={plusHandleButtonClass}
@@ -422,11 +422,11 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
                   className="w-80 p-0 z-[100]"
                 >
                   <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
-                    Pick HTTPS servers from your workspace for this chatbox.
+                    Pick HTTPS servers from your project for this chatbox.
                   </p>
                   <div className="p-1">
-                    <WorkspaceServerPickerList
-                      workspaceServers={canvasServerPicker.workspaceServers}
+                    <ProjectServerPickerList
+                      projectServers={canvasServerPicker.projectServers}
                       selectedServerIds={canvasServerPicker.selectedServerIds}
                       onToggleSelection={(serverId, checked) => {
                         canvasServerPicker.onToggleServer(serverId, checked);
@@ -440,11 +440,11 @@ const ChatboxNode = memo((props: NodeProps<Node<ChatboxBuilderNodeData>>) => {
                       className="h-9 w-full justify-start gap-2 rounded-md px-2 text-sm text-muted-foreground hover:text-foreground"
                       onClick={() => {
                         setCanvasPickerOpen(false);
-                        canvasServerPicker.onOpenAddWorkspaceServer();
+                        canvasServerPicker.onOpenAddProjectServer();
                       }}
                     >
                       <Plus className="size-4 shrink-0" />
-                      Add server to workspace…
+                      Add server to project…
                     </Button>
                   </div>
                 </PopoverContent>

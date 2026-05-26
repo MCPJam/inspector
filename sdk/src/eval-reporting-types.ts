@@ -1,4 +1,5 @@
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
+import type { EvalMatchOptions } from "./matchers.js";
 
 export type EvalExpectedToolCall = {
   toolName: string;
@@ -75,6 +76,7 @@ export type EvalWidgetSnapshotInput = {
   prefersBorder: boolean;
   widgetHtml?: string;
   widgetHtmlBlobId?: string;
+  injectedOpenAiCompat?: boolean;
 };
 
 export type EvalResultInput = {
@@ -96,6 +98,12 @@ export type EvalResultInput = {
   isNegativeTest?: boolean;
   advancedConfig?: Record<string, unknown>;
   widgetSnapshots?: EvalWidgetSnapshotInput[];
+  /**
+   * Per-result match options. When present, the inspector snapshots
+   * these onto the appended iteration's `testCaseSnapshot.matchOptions`
+   * so historical pass/fail computation honors them.
+   */
+  matchOptions?: EvalMatchOptions;
 };
 
 export type MCPServerReplayConfig = {

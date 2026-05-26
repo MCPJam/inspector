@@ -1,12 +1,16 @@
 /**
  * Guest Session Client Module Tests
  *
- * Tests for the client-side guest session manager.
- * Covers localStorage persistence, token fetching, expiry handling,
- * request deduplication, and session cleanup.
+ * Cookie-backed guest sessions: the JWT lives only in module memory and
+ * the persistent identity is the HttpOnly cookie owned by the backend.
+ * Tests cover memory caching, credentials passthrough, lookup_only,
+ * legacy localStorage migration (one-time), force refresh, and
+ * deduplication.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const LEGACY_STORAGE_KEY = "mcpjam_guest_session_v1";
 
 describe("guest-session module", () => {
   let guestSession: typeof import("../guest-session");
@@ -14,14 +18,10 @@ describe("guest-session module", () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.mocked(global.fetch).mockReset();
-
-    // Clear localStorage
     localStorage.clear();
     vi.mocked(localStorage.getItem).mockClear();
     vi.mocked(localStorage.setItem).mockClear();
     vi.mocked(localStorage.removeItem).mockClear();
-
-    // Import fresh module
     guestSession = await import("../guest-session");
   });
 
@@ -30,386 +30,499 @@ describe("guest-session module", () => {
   });
 
   describe("getOrCreateGuestSession", () => {
-    it("fetches a new session when localStorage is empty", async () => {
+    it("requests with credentials:include and lookup_or_create body", async () => {
       const mockSession = {
-        guestId: "test-guest-id",
-        token: "test-token",
+        guestId: "guest-1",
+        token: "token-1",
         expiresAt: Date.now() + 24 * 60 * 60 * 1000,
       };
 
       vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
+        status: 200,
         json: () => Promise.resolve(mockSession),
       } as Response);
 
       const session = await guestSession.getOrCreateGuestSession();
-
       expect(session).toEqual(mockSession);
-      expect(global.fetch).toHaveBeenCalledWith("/api/web/guest-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/web/guest-session",
+        expect.objectContaining({
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "lookup_or_create" }),
+        }),
+      );
     });
 
-    it("stores fetched session in localStorage", async () => {
-      const mockSession = {
-        guestId: "stored-guest-id",
-        token: "stored-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-
+    it("never persists session to localStorage", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve(mockSession),
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "g",
+            token: "t",
+            expiresAt: Date.now() + 60_000,
+          }),
       } as Response);
 
       await guestSession.getOrCreateGuestSession();
-
-      expect(localStorage.setItem).toHaveBeenCalledWith(
-        "mcpjam_guest_session_v1",
-        JSON.stringify(mockSession),
-      );
+      expect(localStorage.setItem).not.toHaveBeenCalled();
     });
 
-    it("returns cached session from localStorage when not expired", async () => {
-      const cachedSession = {
-        guestId: "cached-guest-id",
-        token: "cached-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24h from now
-      };
-
-      vi.mocked(localStorage.getItem).mockReturnValue(
-        JSON.stringify(cachedSession),
-      );
-
-      const session = await guestSession.getOrCreateGuestSession();
-
-      expect(session).toEqual(cachedSession);
-      expect(global.fetch).not.toHaveBeenCalled();
-    });
-
-    it("refreshes session when within 5-minute expiry buffer", async () => {
-      const almostExpired = {
-        guestId: "expiring-guest-id",
-        token: "expiring-token",
-        expiresAt: Date.now() + 4 * 60 * 1000, // Only 4 minutes left
-      };
-
-      vi.mocked(localStorage.getItem).mockReturnValue(
-        JSON.stringify(almostExpired),
-      );
-
-      const newSession = {
-        guestId: "new-guest-id",
-        token: "new-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-
+    it("returns the in-memory session on subsequent calls without re-fetching", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve(newSession),
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "g",
+            token: "memory-token",
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+          }),
       } as Response);
 
-      const session = await guestSession.getOrCreateGuestSession();
-
-      expect(session).toEqual(newSession);
-      expect(global.fetch).toHaveBeenCalled();
+      const a = await guestSession.getOrCreateGuestSession();
+      const b = await guestSession.getOrCreateGuestSession();
+      expect(a).toEqual(b);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
-    it("refreshes session when already expired", async () => {
-      const expired = {
-        guestId: "expired-guest-id",
-        token: "expired-token",
-        expiresAt: Date.now() - 1000, // Already expired
-      };
+    it("refetches when within 5-minute expiry buffer", async () => {
+      const frozen = 1_700_000_000_000;
+      vi.useFakeTimers({ now: frozen });
 
-      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(expired));
+      vi.mocked(global.fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              guestId: "g1",
+              token: "almost-expired",
+              expiresAt: frozen + 4 * 60 * 1000,
+            }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              guestId: "g2",
+              token: "fresh",
+              expiresAt: frozen + 24 * 60 * 60 * 1000,
+            }),
+        } as Response);
 
-      const newSession = {
-        guestId: "fresh-guest-id",
-        token: "fresh-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
+      await guestSession.getOrCreateGuestSession();
+      const second = await guestSession.getOrCreateGuestSession();
+      expect(second?.token).toBe("fresh");
+      expect(global.fetch).toHaveBeenCalledTimes(2);
 
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(newSession),
-      } as Response);
-
-      const session = await guestSession.getOrCreateGuestSession();
-
-      expect(session).toEqual(newSession);
+      vi.useRealTimers();
     });
 
-    it("returns null when fetch fails with non-ok response", async () => {
+    it("returns null on non-ok response", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: false,
-        status: 429,
-        statusText: "Too Many Requests",
+        status: 503,
+        statusText: "Service Unavailable",
       } as Response);
 
       const session = await guestSession.getOrCreateGuestSession();
-
       expect(session).toBeNull();
     });
 
-    it("returns null when fetch throws network error", async () => {
-      vi.mocked(global.fetch).mockRejectedValue(new Error("Network error"));
-
+    it("returns null on network error", async () => {
+      vi.mocked(global.fetch).mockRejectedValue(new Error("network"));
       const session = await guestSession.getOrCreateGuestSession();
-
       expect(session).toBeNull();
     });
 
-    it("handles invalid JSON in localStorage gracefully", async () => {
-      vi.mocked(localStorage.getItem).mockReturnValue("not valid json{{{");
-
-      const newSession = {
-        guestId: "recovery-guest-id",
-        token: "recovery-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(newSession),
-      } as Response);
-
-      const session = await guestSession.getOrCreateGuestSession();
-
-      expect(session).toEqual(newSession);
-      expect(global.fetch).toHaveBeenCalled();
-    });
-
-    it("deduplicates concurrent fetch requests", async () => {
+    it("deduplicates concurrent calls", async () => {
       vi.mocked(global.fetch).mockImplementation(
         () =>
           new Promise((resolve) => {
-            setTimeout(() => {
-              resolve({
-                ok: true,
-                json: () =>
-                  Promise.resolve({
-                    guestId: "dedup-guest",
-                    token: "dedup-token",
-                    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-                  }),
-              } as Response);
-            }, 10);
+            setTimeout(
+              () =>
+                resolve({
+                  ok: true,
+                  status: 200,
+                  json: () =>
+                    Promise.resolve({
+                      guestId: "dedup",
+                      token: "dedup-token",
+                      expiresAt: Date.now() + 60_000,
+                    }),
+                } as Response),
+              5,
+            );
           }),
       );
 
-      const results = await Promise.all([
+      const [a, b, c] = await Promise.all([
         guestSession.getOrCreateGuestSession(),
         guestSession.getOrCreateGuestSession(),
         guestSession.getOrCreateGuestSession(),
       ]);
-
-      // All should get the same result
-      expect(results[0]).toEqual(results[1]);
-      expect(results[1]).toEqual(results[2]);
-
-      // Only one fetch should have been made
+      expect(a).toEqual(b);
+      expect(b).toEqual(c);
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
+  });
 
-    it("allows retry after failed fetch", async () => {
-      // First call fails
-      vi.mocked(global.fetch).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        statusText: "Internal Server Error",
-      } as Response);
+  describe("legacy migration", () => {
+    it("forwards legacyToken from localStorage exactly once and deletes it after fetch", async () => {
+      vi.mocked(localStorage.getItem).mockImplementation((key) =>
+        key === LEGACY_STORAGE_KEY
+          ? JSON.stringify({
+              guestId: "legacy-id",
+              token: "legacy-token",
+              expiresAt: Date.now() - 1000,
+            })
+          : null,
+      );
 
-      const result1 = await guestSession.getOrCreateGuestSession();
-      expect(result1).toBeNull();
-
-      // Second call succeeds
-      const newSession = {
-        guestId: "retry-guest",
-        token: "retry-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-      vi.mocked(global.fetch).mockResolvedValueOnce({
+      vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve(newSession),
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "legacy-id",
+            token: "fresh",
+            expiresAt: Date.now() + 60_000,
+          }),
       } as Response);
 
-      const result2 = await guestSession.getOrCreateGuestSession();
-      expect(result2).toEqual(newSession);
+      const a = await guestSession.getOrCreateGuestSession();
+      expect(a?.token).toBe("fresh");
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/web/guest-session",
+        expect.objectContaining({
+          body: JSON.stringify({
+            mode: "lookup_or_create",
+            legacyToken: "legacy-token",
+          }),
+        }),
+      );
+      expect(localStorage.removeItem).toHaveBeenCalledWith(LEGACY_STORAGE_KEY);
+
+      // Force a refetch to ensure legacy token isn't sent twice.
+      vi.mocked(global.fetch).mockClear();
+      await guestSession.forceRefreshGuestSession();
+      const lastCall = vi.mocked(global.fetch).mock.calls.at(-1);
+      expect(lastCall?.[1]?.body).toBe(
+        JSON.stringify({ mode: "lookup_or_create" }),
+      );
     });
 
-    it("uses session with exactly 5 min + 1ms remaining (valid)", async () => {
-      const frozenNow = 1_700_000_000_000;
-      vi.useFakeTimers({ now: frozenNow });
+    it("keeps legacy token when the migration fetch throws", async () => {
+      vi.mocked(localStorage.getItem).mockReturnValue(
+        JSON.stringify({
+          guestId: "legacy",
+          token: "legacy-token",
+          expiresAt: Date.now() - 1000,
+        }),
+      );
+      vi.mocked(global.fetch).mockRejectedValue(new Error("offline"));
 
-      const session = {
-        guestId: "edge-guest",
-        token: "edge-token",
-        expiresAt: frozenNow + 5 * 60 * 1000 + 1, // 5 min + 1ms past buffer threshold
-      };
+      await guestSession.getOrCreateGuestSession();
+      expect(localStorage.removeItem).not.toHaveBeenCalledWith(
+        LEGACY_STORAGE_KEY,
+      );
+    });
 
-      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
+    it("keeps legacy token when the migration fetch returns 503", async () => {
+      vi.mocked(localStorage.getItem).mockReturnValue(
+        JSON.stringify({
+          guestId: "legacy",
+          token: "legacy-token",
+          expiresAt: Date.now() - 1000,
+        }),
+      );
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+      } as Response);
 
-      const result = await guestSession.getOrCreateGuestSession();
+      await guestSession.getOrCreateGuestSession();
+      expect(localStorage.removeItem).not.toHaveBeenCalledWith(
+        LEGACY_STORAGE_KEY,
+      );
+    });
 
-      expect(result).toEqual(session);
-      expect(global.fetch).not.toHaveBeenCalled();
+    it("keeps legacy token when the migration response body is malformed", async () => {
+      vi.mocked(localStorage.getItem).mockReturnValue(
+        JSON.stringify({
+          guestId: "legacy",
+          token: "legacy-token",
+          expiresAt: Date.now() - 1000,
+        }),
+      );
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ guestId: "legacy" }),
+      } as Response);
 
-      vi.useRealTimers();
+      await guestSession.getOrCreateGuestSession();
+      expect(localStorage.removeItem).not.toHaveBeenCalledWith(
+        LEGACY_STORAGE_KEY,
+      );
+    });
+
+    it("retries legacy migration after a transient failure and deletes after success", async () => {
+      vi.mocked(localStorage.getItem).mockReturnValue(
+        JSON.stringify({
+          guestId: "legacy",
+          token: "legacy-token",
+          expiresAt: Date.now() - 1000,
+        }),
+      );
+      vi.mocked(global.fetch)
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              guestId: "legacy",
+              token: "fresh",
+              expiresAt: Date.now() + 60_000,
+            }),
+        } as Response);
+
+      const first = await guestSession.getOrCreateGuestSession();
+      expect(first).toBeNull();
+      expect(localStorage.removeItem).not.toHaveBeenCalledWith(
+        LEGACY_STORAGE_KEY,
+      );
+
+      const second = await guestSession.getOrCreateGuestSession();
+      expect(second?.token).toBe("fresh");
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      for (const call of vi.mocked(global.fetch).mock.calls) {
+        expect(call[1]?.body).toBe(
+          JSON.stringify({
+            mode: "lookup_or_create",
+            legacyToken: "legacy-token",
+          }),
+        );
+      }
+      expect(localStorage.removeItem).toHaveBeenCalledWith(LEGACY_STORAGE_KEY);
     });
   });
 
-  describe("getGuestBearerToken", () => {
-    it("returns just the token string from a valid session", async () => {
-      const mockSession = {
-        guestId: "token-guest",
-        token: "the-bearer-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-
+  describe("getExistingGuestBearerToken (lookup_only)", () => {
+    it("sends mode:lookup_only and returns null on 204", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve(mockSession),
+        status: 204,
+        statusText: "No Content",
       } as Response);
 
-      const token = await guestSession.getGuestBearerToken();
-
-      expect(token).toBe("the-bearer-token");
-    });
-
-    it("returns null when session creation fails", async () => {
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        status: 500,
-        statusText: "Error",
-      } as Response);
-
-      const token = await guestSession.getGuestBearerToken();
-
+      const token = await guestSession.getExistingGuestBearerToken();
       expect(token).toBeNull();
-    });
-
-    it("returns cached token from localStorage", async () => {
-      const session = {
-        guestId: "cached",
-        token: "cached-bearer",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-
-      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
-
-      const token = await guestSession.getGuestBearerToken();
-
-      expect(token).toBe("cached-bearer");
-      expect(global.fetch).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("clearGuestSession", () => {
-    it("removes session from localStorage", () => {
-      guestSession.clearGuestSession();
-
-      expect(localStorage.removeItem).toHaveBeenCalledWith(
-        "mcpjam_guest_session_v1",
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/web/guest-session",
+        expect.objectContaining({
+          credentials: "include",
+          body: JSON.stringify({ mode: "lookup_only" }),
+        }),
       );
     });
 
-    it("can be called safely when no session exists", () => {
-      expect(() => guestSession.clearGuestSession()).not.toThrow();
-      expect(localStorage.removeItem).toHaveBeenCalledWith(
-        "mcpjam_guest_session_v1",
-      );
-    });
-
-    it("after clearing, next getOrCreate fetches a new session", async () => {
-      // First, create a cached session
-      const session1 = {
-        guestId: "first",
-        token: "first-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session1));
-
-      const result1 = await guestSession.getGuestBearerToken();
-      expect(result1).toBe("first-token");
-      expect(global.fetch).not.toHaveBeenCalled();
-
-      // Clear the session
-      guestSession.clearGuestSession();
-
-      // Now localStorage should return null
-      vi.mocked(localStorage.getItem).mockReturnValue(null);
-
-      const session2 = {
-        guestId: "second",
-        token: "second-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
+    it("returns existing cached token without re-fetching", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve(session2),
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "g",
+            token: "cached-token",
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+          }),
       } as Response);
 
-      const result2 = await guestSession.getGuestBearerToken();
-      expect(result2).toBe("second-token");
-      expect(global.fetch).toHaveBeenCalled();
+      await guestSession.getOrCreateGuestSession();
+      vi.mocked(global.fetch).mockClear();
+
+      const token = await guestSession.getExistingGuestBearerToken();
+      expect(token).toBe("cached-token");
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 
   describe("forceRefreshGuestSession", () => {
-    it("clears localStorage and fetches a new token", async () => {
-      // Seed a cached session that looks valid by time
-      const staleSession = {
-        guestId: "stale",
-        token: "stale-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-      vi.mocked(localStorage.getItem).mockReturnValue(
-        JSON.stringify(staleSession),
+    it("clears in-memory cache and re-requests with credentials", async () => {
+      vi.mocked(global.fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              guestId: "g",
+              token: "stale",
+              expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+            }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              guestId: "g",
+              token: "fresh",
+              expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+            }),
+        } as Response);
+
+      await guestSession.getOrCreateGuestSession();
+      const refreshed = await guestSession.forceRefreshGuestSession();
+      expect(refreshed).toBe("fresh");
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        "/api/web/guest-session",
+        expect.objectContaining({ credentials: "include" }),
       );
-
-      // Verify the stale session would be returned normally
-      const before = await guestSession.getOrCreateGuestSession();
-      expect(before?.token).toBe("stale-token");
-      expect(global.fetch).not.toHaveBeenCalled();
-
-      // Now simulate localStorage returning null after clear
-      vi.mocked(localStorage.getItem).mockReturnValue(null);
-
-      const freshSession = {
-        guestId: "fresh",
-        token: "fresh-token",
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(freshSession),
-      } as Response);
-
-      const result = await guestSession.forceRefreshGuestSession();
-
-      expect(localStorage.removeItem).toHaveBeenCalledWith(
-        "mcpjam_guest_session_v1",
-      );
-      expect(result).toBe("fresh-token");
-      expect(global.fetch).toHaveBeenCalledWith("/api/web/guest-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
     });
 
-    it("returns null when server is unreachable", async () => {
-      vi.mocked(localStorage.getItem).mockReturnValue(null);
+    it("dedupes concurrent force-refresh calls", async () => {
+      vi.mocked(global.fetch).mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  ok: true,
+                  status: 200,
+                  json: () =>
+                    Promise.resolve({
+                      guestId: "g",
+                      token: "fresh",
+                      expiresAt: Date.now() + 60_000,
+                    }),
+                } as Response),
+              5,
+            ),
+          ),
+      );
+
+      const [a, b] = await Promise.all([
+        guestSession.forceRefreshGuestSession(),
+        guestSession.forceRefreshGuestSession(),
+      ]);
+      expect(a).toBe("fresh");
+      expect(b).toBe("fresh");
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("clearGuestSession", () => {
+    it("drops only the in-memory cache, no localStorage call needed", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        status: 500,
-        statusText: "Internal Server Error",
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "g",
+            token: "memory",
+            expiresAt: Date.now() + 60_000,
+          }),
       } as Response);
 
-      const result = await guestSession.forceRefreshGuestSession();
+      await guestSession.getOrCreateGuestSession();
+      guestSession.clearGuestSession();
+      expect(localStorage.removeItem).not.toHaveBeenCalledWith(
+        LEGACY_STORAGE_KEY,
+      );
+    });
+  });
 
-      expect(result).toBeNull();
+  describe("generation guard", () => {
+    it("does not resurrect cachedSession when a stale fetch resolves after clearGuestSession", async () => {
+      let resolveFetch: (value: Response) => void = () => {};
+      vi.mocked(global.fetch).mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFetch = resolve;
+          }),
+      );
+
+      const pending = guestSession.getOrCreateGuestSession();
+      // Clear before the in-flight request resolves.
+      guestSession.clearGuestSession();
+      // Now resolve the original request with what would have been a valid
+      // session — the stale generation should prevent it from landing in
+      // the cache.
+      resolveFetch({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "stale",
+            token: "stale-token",
+            expiresAt: Date.now() + 60_000,
+          }),
+      } as Response);
+      await pending;
+
+      // Subsequent lookup must not return the resurrected stale token.
+      vi.mocked(global.fetch).mockReset();
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+      } as Response);
+      const token = await guestSession.getExistingGuestBearerToken();
+      expect(token).toBeNull();
+    });
+
+    it("does not resurrect cachedSession after forceRefreshGuestSession", async () => {
+      // Prime an in-flight lookup_or_create whose response is delayed.
+      let resolveStale: (value: Response) => void = () => {};
+      vi.mocked(global.fetch).mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveStale = resolve;
+          }),
+      );
+      const stalePending = guestSession.getOrCreateGuestSession();
+
+      // Refresh fires a new fetch that resolves immediately with a fresh
+      // token. The stale fetch is still pending.
+      vi.mocked(global.fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "fresh",
+            token: "fresh-token",
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+          }),
+      } as Response);
+      const refreshed = await guestSession.forceRefreshGuestSession();
+      expect(refreshed).toBe("fresh-token");
+
+      // Now resolve the stale request — its session must not overwrite
+      // the freshly refreshed cache.
+      resolveStale({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "stale",
+            token: "stale-token",
+            expiresAt: Date.now() + 60_000,
+          }),
+      } as Response);
+      await stalePending;
+
+      const token = await guestSession.getGuestBearerToken();
+      expect(token).toBe("fresh-token");
     });
   });
 });

@@ -1,8 +1,17 @@
 ---
 title: "App Builder"
-description: "Build and test ChatGPT apps and MCP apps locally with a full widget emulator"
+description: "Deprecated — see Playground"
 icon: "anvil"
 ---
+
+<Warning>
+  **The App Builder tab is deprecated.** It has been replaced by the
+  [Playground](/inspector/playground), which keeps the full widget emulator,
+  display context controls, and per-widget debugging tools, and adds chat,
+  manual tool invocation, multi-host compare, sessions, and the JSON-RPC
+  logger in a single workspace. This page is kept for reference; new
+  development happens in the Playground.
+</Warning>
 
 The App Builder is a local development environment for building [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps](https://modelcontextprotocol.io/docs/extensions/apps). It emulates how a host like ChatGPT or Claude would render your widgets, and wraps them in a full suite of debugging tools — widget state, model context, CSP violations, device viewports, themes, locales, and more — so you can see exactly what's happening under the hood. Everything runs locally, without needing ngrok or a ChatGPT/Claude subscription.
 

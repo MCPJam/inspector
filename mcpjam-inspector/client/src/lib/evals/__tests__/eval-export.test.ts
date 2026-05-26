@@ -167,7 +167,7 @@ describe("eval-export", () => {
   it("builds a mixed suite file with single-turn, multi-turn, and negative cases", () => {
     const sdkFile = buildSdkTestFile({
       suite: {
-        name: "Workspace export",
+        name: "Project export",
         description: "Generated from MCPJam",
       },
       cases: [

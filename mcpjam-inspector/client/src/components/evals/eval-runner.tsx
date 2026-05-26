@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { navigateApp } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -48,10 +49,12 @@ import type { PromptTurn } from "@/shared/prompt-turns";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
-  workspaceId: string;
+  projectId: string;
   inline?: boolean;
   onSuccess?: (suiteId?: string) => void;
   preselectedServer?: string;
+  /** Pre-populate model selection from suite.defaultConfig.modelId. User can still change it. */
+  defaultModelId?: string;
 }
 
 type StepKey = (typeof WIZARD_STEPS)[number]["key"];
@@ -147,10 +150,11 @@ function mapGeneratedTemplate(
 
 export function EvalRunner({
   availableModels,
-  workspaceId,
+  projectId,
   inline = false,
   onSuccess,
   preselectedServer,
+  defaultModelId,
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -260,6 +264,18 @@ export function EvalRunner({
       return;
     }
 
+    // Suite defaultConfig takes precedence over stored preferences when present
+    if (defaultModelId) {
+      const suiteDefault = availableModels.find(
+        (m) => String(m.id) === defaultModelId,
+      );
+      if (suiteDefault) {
+        setSelectedModels([suiteDefault]);
+        setHasRestoredPreferences(true);
+        return;
+      }
+    }
+
     if (savedPreferences?.modelIds && savedPreferences.modelIds.length > 0) {
       const matches = availableModels.filter((model) =>
         savedPreferences.modelIds.includes(model.id),
@@ -270,7 +286,7 @@ export function EvalRunner({
     }
 
     setHasRestoredPreferences(true);
-  }, [availableModels, savedPreferences, hasRestoredPreferences]);
+  }, [availableModels, savedPreferences, hasRestoredPreferences, defaultModelId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -301,7 +317,7 @@ export function EvalRunner({
 
       try {
         const data = await listEvalTools({
-          workspaceId,
+          projectId,
           serverIds: selectedServers,
         });
         setAvailableTools(data.tools || []);
@@ -311,7 +327,7 @@ export function EvalRunner({
     }
 
     fetchTools();
-  }, [selectedServers, workspaceId]);
+  }, [selectedServers, projectId]);
 
   useEffect(() => {
     if (!inline && !open) {
@@ -477,7 +493,7 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
       const result = await generateEvalTests({
-        workspaceId,
+        projectId,
         serverIds: selectedServers,
         convexAuthToken: accessToken,
       });
@@ -524,7 +540,7 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
       const result = await generateNegativeEvalTests({
-        workspaceId,
+        projectId,
         serverIds: selectedServers,
         convexAuthToken: accessToken,
       });
@@ -616,7 +632,7 @@ export function EvalRunner({
     // Switch view immediately before starting the API call
     if (!inline) {
       setOpen(false);
-      window.location.hash = "evals";
+      navigateApp("/evals");
     } else {
       // In inline mode, call the callback to switch view immediately
       onSuccess?.();
@@ -651,7 +667,7 @@ export function EvalRunner({
       const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
       const result = await runEvals({
-        workspaceId,
+        projectId,
         suiteName: suiteName.trim(),
         suiteDescription: suiteDescription.trim() || undefined,
         tests: expandedTests,

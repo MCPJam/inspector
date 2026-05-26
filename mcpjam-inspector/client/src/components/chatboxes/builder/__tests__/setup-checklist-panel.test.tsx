@@ -6,7 +6,7 @@ import {
   SetupChecklistPanel,
 } from "../setup-checklist-panel";
 import { CHATBOX_STARTERS } from "../drafts";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
+import type { RemoteServer } from "@/hooks/useProjects";
 
 const baseDraft = CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
   "openai/gpt-5-mini",
@@ -18,7 +18,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -38,7 +38,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -59,10 +59,19 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={{
           ...baseDraft,
-          welcomeDialog: { ...baseDraft.welcomeDialog, enabled: false },
+          chatUi: {
+            ...baseDraft.chatUi,
+            surfaces: {
+              ...baseDraft.chatUi.surfaces,
+              welcome: {
+                ...baseDraft.chatUi.surfaces.welcome,
+                enabled: false,
+              },
+            },
+          },
         }}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -80,12 +89,10 @@ describe("SetupChecklistPanel", () => {
     const feedbackRow = screen.getByRole("button", { name: /Feedback Default on/i });
     expect(within(feedbackRow).getByText("Default on")).toBeInTheDocument();
     expect(feedbackRow.querySelector('[data-slot="badge"]')).toBeNull();
-
-    const advancedRow = screen.getByRole("button", {
-      name: /Advanced Collapsed/i,
-    });
-    expect(within(advancedRow).getByText("Collapsed")).toBeInTheDocument();
-    expect(advancedRow.querySelector('[data-slot="badge"]')).toBeNull();
+    // The legacy "Advanced" section (host-style / model / system prompt /
+    // temperature / requireToolApproval) was removed with the 1:1
+    // host↔chatbox consolidation — those fields are host-owned and edit
+    // through the Host detail page's Definition tab now.
   });
 
   it("renders mobile Done header when onCloseMobile is provided", () => {
@@ -93,7 +100,7 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -112,8 +119,8 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={baseDraft}
         savedChatbox={null}
-        workspaceServers={[]}
-        workspaceName="Acme"
+        projectServers={[]}
+        projectName="Acme"
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -133,14 +140,17 @@ describe("SetupChecklistPanel", () => {
   });
 
   it("shows invite-only save prompt in Access when chatbox is unsaved", () => {
-    const internalDraft = CHATBOX_STARTERS.find(
-      (s) => s.id === "internal-qa",
-    )!.createDraft("openai/gpt-5-mini");
+    const internalDraft = {
+      ...CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
+        "openai/gpt-5-mini",
+      ),
+      mode: "invited_only" as const,
+    };
     render(
       <SetupChecklistPanel
         chatboxDraft={internalDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -159,14 +169,17 @@ describe("SetupChecklistPanel", () => {
   });
 
   it("shows invite email field when inviteChatboxMember is wired (e.g. saved chatbox id)", () => {
-    const internalDraft = CHATBOX_STARTERS.find(
-      (s) => s.id === "internal-qa",
-    )!.createDraft("openai/gpt-5-mini");
+    const internalDraft = {
+      ...CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
+        "openai/gpt-5-mini",
+      ),
+      mode: "invited_only" as const,
+    };
     render(
       <SetupChecklistPanel
         chatboxDraft={internalDraft}
         savedChatbox={null}
-        workspaceServers={[]}
+        projectServers={[]}
         focusedSection={null}
         isUnsavedNewDraft
         onDraftChange={() => {}}
@@ -187,7 +200,7 @@ describe("SetupChecklistPanel", () => {
 describe("ServerSelectionEditor", () => {
   const httpServer: RemoteServer = {
     _id: "srv-1",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "Linear MCP",
     enabled: true,
     transportType: "http",
@@ -197,7 +210,7 @@ describe("ServerSelectionEditor", () => {
 
   const httpServerB: RemoteServer = {
     _id: "srv-2",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "Other MCP",
     enabled: true,
     transportType: "http",
@@ -208,7 +221,7 @@ describe("ServerSelectionEditor", () => {
   it("lists selected servers with remove actions", () => {
     render(
       <ServerSelectionEditor
-        workspaceServers={[httpServer, httpServerB]}
+        projectServers={[httpServer, httpServerB]}
         selectedServerIds={[httpServer._id, httpServerB._id]}
         onToggleSelection={() => {}}
         onOpenAdd={() => {}}
@@ -224,7 +237,7 @@ describe("ServerSelectionEditor", () => {
 describe("computeSectionStatuses", () => {
   const httpsServer: RemoteServer = {
     _id: "srv-https",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "HTTPS MCP",
     enabled: true,
     transportType: "http",

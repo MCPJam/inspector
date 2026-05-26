@@ -1,19 +1,12 @@
 /**
  * AppBuilderTab
  *
- * Main orchestrator component for the UI Playground tab.
- * Combines deterministic tool execution with ChatTabV2-style chat,
- * allowing users to execute tools and then chat about the results.
+ * Thin presentational shell around `useAppBuilderState`. Owns nothing beyond
+ * JSX composition + early-return branching on `loadingState`. All orchestration
+ * lives in the hook so `PlaygroundTab` can render its own composition over the
+ * same state.
  */
 
-import {
-  useEffect,
-  useCallback,
-  useMemo,
-  useState,
-  useLayoutEffect,
-} from "react";
-import type { Tool } from "@modelcontextprotocol/client";
 import { Wrench } from "lucide-react";
 import {
   ResizablePanel,
@@ -24,50 +17,48 @@ import { EmptyState } from "../ui/empty-state";
 import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
-import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { listTools } from "@/lib/apis/mcp-tools-api";
-import { generateFormFieldsFromSchema } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { usePostHog } from "posthog-js/react";
-import { motion, useReducedMotion } from "framer-motion";
+import type { ProjectHostContextDraft } from "@/lib/client-config";
+import { motion } from "framer-motion";
 
-// Custom hooks
-import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
-
-// Constants
 import { PANEL_SIZES } from "./constants";
-import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
-
-// Onboarding
-import { useOnboarding } from "@/hooks/use-onboarding";
 import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton";
 import type { ServerFormData } from "@/shared/types.js";
 import type {
   EnsureServersReadyResult,
   ServerWithName,
 } from "@/hooks/use-app-state";
-import { useSidebar } from "@/components/ui/sidebar";
-import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
-import { toast } from "sonner";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
+import {
+  APP_BUILDER_FIRST_RUN_PROMPT,
+  useAppBuilderState,
+} from "./hooks/use-app-builder-state";
 
 interface AppBuilderTabProps {
+  activeProjectId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
-  isAuthenticated?: boolean;
-  isAuthLoading?: boolean;
+  /** WorkOS sign-in state only; Convex guest auth must not skip NUX. */
+  isSignedInWithWorkOs?: boolean;
+  isWorkOsAuthLoading?: boolean;
+  isConvexAuthenticated?: boolean;
+  isProjectProvisioned?: boolean;
+  hasSeenFirstRunOnboarding?: boolean;
   /**
    * True while the currently selected server exists in runtime state but has
-   * not yet appeared in the persisted workspace servers (Convex round-trip
+   * not yet appeared in the persisted project servers (Convex round-trip
    * pending). Used to show a loading skeleton instead of the "No Server
    * Selected" empty state during the sync window.
    */
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
+  onSaveHostContext?: (
+    projectId: string,
+    hostContext: ProjectHostContextDraft,
+  ) => Promise<void>;
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
@@ -76,246 +67,44 @@ interface AppBuilderTabProps {
   enableMultiModelChat?: boolean;
 }
 
-/**
- * Match the sync echo timeout used elsewhere (see
- * `use-workspace-state.ts`'s CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS). If the
- * Convex round-trip doesn't land within this window, fall through to an
- * explanatory empty state rather than spinning forever.
- */
-const SERVER_SYNC_TIMEOUT_MS = 10000;
-
-const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
-
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
 
 export function AppBuilderTab({
+  activeProjectId = null,
   serverConfig,
   serverName,
   servers = {},
-  isAuthenticated = false,
-  isAuthLoading = false,
+  isSignedInWithWorkOs = false,
+  isWorkOsAuthLoading = false,
+  isConvexAuthenticated = false,
+  isProjectProvisioned = true,
+  hasSeenFirstRunOnboarding,
   isServerSyncing = false,
   onConnect,
+  onSaveHostContext,
   ensureServersReady,
   onOnboardingChange,
   playgroundServerSelectorProps,
   enableMultiModelChat = false,
 }: AppBuilderTabProps) {
-  const posthog = usePostHog();
-  const prefersReducedMotion = useReducedMotion();
-  // Compute server key for saved requests storage
-  const serverKey = useServerKey(serverConfig);
-
-  // Onboarding state machine
-  const onboarding = useOnboarding({
+  const state = useAppBuilderState({
+    activeProjectId,
+    serverConfig,
+    serverName,
     servers,
-    onConnect: onConnect ?? (() => {}),
-    isAuthenticated,
-    isAuthLoading,
+    isSignedInWithWorkOs,
+    isWorkOsAuthLoading,
+    isConvexAuthenticated,
+    isProjectProvisioned,
+    hasSeenFirstRunOnboarding,
+    isServerSyncing,
+    onConnect,
+    onSaveHostContext,
+    ensureServersReady,
+    onOnboardingChange,
   });
 
-  const firstRunComposerSeed =
-    onboarding.phase === "connecting_excalidraw" ||
-    onboarding.phase === "connected_guided";
-
-  // Get store state and actions
-  const {
-    selectedTool,
-    tools,
-    formFields,
-    isExecuting,
-    deviceType,
-    isSidebarVisible,
-    selectedProtocol,
-    setTools,
-    setSelectedTool,
-    setFormFields,
-    updateFormField,
-    updateFormFieldIsSet,
-    setIsExecuting,
-    setToolOutput,
-    setToolResponseMetadata,
-    setExecutionError,
-    setWidgetState,
-    setDeviceType,
-    toggleSidebar,
-    setSelectedProtocol,
-    reset,
-    setSidebarVisible,
-  } = useUIPlaygroundStore();
-  const hostStyle = usePreferencesStore((s) => s.hostStyle);
-
-  const { setOpen: setMcpSidebarOpen } = useSidebar();
-
-  useLayoutEffect(() => {
-    onOnboardingChange?.(false);
-    setMcpSidebarOpen(true);
-  }, [onOnboardingChange, setMcpSidebarOpen]);
-
-  useLayoutEffect(() => {
-    // NUX: collapse tools sidebar for the whole first-run connect + guided flow. While the server is
-    // still connecting, `isGuidedPostConnect` is false (no connected server yet); include phase so we
-    // don't flash the sidebar open until connect completes.
-    const collapsePlaygroundToolsForNux =
-      onboarding.phase === "connecting_excalidraw" ||
-      onboarding.isGuidedPostConnect;
-    if (collapsePlaygroundToolsForNux) {
-      setSidebarVisible(false);
-    } else {
-      setSidebarVisible(true);
-    }
-  }, [
-    onboarding.phase,
-    onboarding.isGuidedPostConnect,
-    setSidebarVisible,
-  ]);
-
-  useLayoutEffect(() => {
-    return () => {
-      onOnboardingChange?.(false);
-      setSidebarVisible(true);
-      setMcpSidebarOpen(true);
-    };
-  }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
-
-  // Log when App Builder tab is viewed
-  useEffect(() => {
-    posthog.capture("app_builder_tab_viewed", {
-      location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    });
-  }, []);
-
-  // Loading state for tool fetching
-  const [fetchingTools, setFetchingTools] = useState(false);
-
-  // Tools metadata used for deterministic injection and invocation messaging
-  const [toolsMetadata, setToolsMetadata] = useState<
-    Record<string, Record<string, unknown>>
-  >({});
-
-  // Tool execution hook
-  const { pendingExecution, clearPendingExecution, executeTool } =
-    useToolExecution({
-      serverName,
-      selectedTool,
-      toolsMetadata,
-      formFields,
-      setIsExecuting,
-      setExecutionError,
-      setToolOutput,
-      setToolResponseMetadata,
-    });
-
-  // Saved requests hook
-  const savedRequestsHook = useSavedRequests({
-    serverKey,
-    tools,
-    formFields,
-    selectedTool,
-    setSelectedTool,
-    setFormFields,
-  });
-
-  // Fetch tools when server changes
-  const fetchTools = useCallback(async () => {
-    if (!serverName) return;
-
-    reset();
-    setToolsMetadata({});
-    setFetchingTools(true);
-    try {
-      const data = await listTools({ serverId: serverName });
-      const toolArray = data.tools ?? [];
-      const dictionary = Object.fromEntries(
-        toolArray.map((tool: Tool) => [tool.name, tool]),
-      );
-      setTools(dictionary);
-      setToolsMetadata(data.toolsMetadata ?? {});
-    } catch (err) {
-      console.error("Failed to fetch tools:", err);
-      setExecutionError(
-        err instanceof Error ? err.message : "Failed to fetch tools",
-      );
-    } finally {
-      setFetchingTools(false);
-    }
-  }, [serverName, reset, setTools, setExecutionError]);
-
-  const serverConnectionStatus = serverName
-    ? servers[serverName]?.connectionStatus
-    : undefined;
-
-  useEffect(() => {
-    if (serverConfig && serverName && serverConnectionStatus === "connected") {
-      fetchTools();
-    } else {
-      reset();
-      setToolsMetadata({});
-    }
-  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset]);
-
-  // Update form fields when tool is selected
-  useEffect(() => {
-    if (selectedTool && tools[selectedTool]) {
-      setFormFields(
-        generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
-      );
-    } else {
-      setFormFields([]);
-    }
-  }, [selectedTool, tools, setFormFields]);
-
-  // Detect app protocol - from selected tool OR from server's available tools
-  useEffect(() => {
-    // If a specific tool is selected, detect its protocol
-    if (selectedTool) {
-      const tool = tools[selectedTool];
-      const uiType = detectUiTypeFromTool(tool);
-      if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
-        // Tool supports both protocols - only set default if no stored preference
-        const validProtocols = [UIType.MCP_APPS, UIType.OPENAI_SDK];
-        if (!selectedProtocol || !validProtocols.includes(selectedProtocol)) {
-          setSelectedProtocol(UIType.OPENAI_SDK);
-        }
-      } else {
-        setSelectedProtocol(uiType);
-      }
-      return;
-    }
-
-    // No tool selected - keep the stored protocol preference
-    // Don't reset to null here as it would clear the persisted user preference
-  }, [selectedTool, tools, setSelectedProtocol, selectedProtocol]);
-
-  // Get invoking message from tool metadata
-  const invokingMessage = useMemo(() => {
-    if (!selectedTool) return null;
-    const meta = toolsMetadata[selectedTool];
-    return (meta?.["openai/toolInvocation/invoking"] as string) ?? null;
-  }, [selectedTool, toolsMetadata]);
-
-  // Compute center panel default size based on sidebar/inspector visibility
-  const centerPanelDefaultSize = isSidebarVisible
-    ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
-    : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
-
-  // Track whether the in-flight server sync has exceeded the timeout. Resets
-  // whenever the selected server changes or syncing stops, so a successful
-  // echo never leaves a stale "taking longer" banner behind.
-  const [syncTimedOut, setSyncTimedOut] = useState(false);
-  useEffect(() => {
-    setSyncTimedOut(false);
-    if (!isServerSyncing) return;
-    const id = setTimeout(
-      () => setSyncTimedOut(true),
-      SERVER_SYNC_TIMEOUT_MS,
-    );
-    return () => clearTimeout(id);
-  }, [serverName, isServerSyncing]);
-
-  if (onboarding.isResolvingRemoteCompletion) {
+  if (state.loadingState.kind === "skeleton") {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
         <AppBuilderSkeleton />
@@ -323,28 +112,7 @@ export function AppBuilderTab({
     );
   }
 
-  if (onboarding.isBootstrappingFirstRunConnection && onConnect) {
-    return (
-      <div className="h-full flex flex-col overflow-hidden relative">
-        <AppBuilderSkeleton />
-      </div>
-    );
-  }
-
-  // Server is in runtime state but not yet reflected in the persisted
-  // workspace (Convex round-trip pending). Show a skeleton instead of the
-  // misleading "No Server Selected" empty state during the sync window.
-  if (!serverConfig && isServerSyncing && !syncTimedOut) {
-    return (
-      <div className="h-full flex flex-col overflow-hidden relative">
-        <AppBuilderSkeleton />
-      </div>
-    );
-  }
-
-  // Sync is taking unusually long — surface an explanation so the user
-  // isn't staring at an infinite spinner.
-  if (!serverConfig && isServerSyncing && syncTimedOut) {
+  if (state.loadingState.kind === "sync-timed-out") {
     return (
       <EmptyState
         icon={Wrench}
@@ -354,8 +122,7 @@ export function AppBuilderTab({
     );
   }
 
-  // No server selected — show empty state once onboarding is not active
-  if (!serverConfig) {
+  if (state.loadingState.kind === "no-server") {
     return (
       <EmptyState
         icon={Wrench}
@@ -365,7 +132,7 @@ export function AppBuilderTab({
     );
   }
 
-  const sidebarMotionProps = prefersReducedMotion
+  const sidebarMotionProps = state.prefersReducedMotion
     ? {
         initial: false as const,
         animate: { opacity: 1 },
@@ -381,7 +148,7 @@ export function AppBuilderTab({
     <div className="relative flex h-full flex-col overflow-hidden">
       <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
         {/* Left Panel - Tools Sidebar */}
-        {isSidebarVisible ? (
+        {state.isSidebarVisible ? (
           <>
             <ResizablePanel
               id="playground-left"
@@ -391,28 +158,32 @@ export function AppBuilderTab({
               maxSize={PANEL_SIZES.LEFT.MAX}
               collapsible
               collapsedSize={0}
-              onCollapse={() => setSidebarVisible(false)}
+              onCollapse={() => state.setSidebarVisible(false)}
             >
               <motion.div className="h-full min-w-0" {...sidebarMotionProps}>
                 <PlaygroundLeft
-                  tools={tools}
-                  selectedToolName={selectedTool}
-                  fetchingTools={fetchingTools}
-                  onRefresh={fetchTools}
-                  onSelectTool={setSelectedTool}
-                  formFields={formFields}
-                  onFieldChange={updateFormField}
-                  onToggleField={updateFormFieldIsSet}
-                  isExecuting={isExecuting}
-                  onExecute={executeTool}
-                  onSave={savedRequestsHook.openSaveDialog}
-                  savedRequests={savedRequestsHook.savedRequests}
-                  highlightedRequestId={savedRequestsHook.highlightedRequestId}
-                  onLoadRequest={savedRequestsHook.handleLoadRequest}
-                  onRenameRequest={savedRequestsHook.handleRenameRequest}
-                  onDuplicateRequest={savedRequestsHook.handleDuplicateRequest}
-                  onDeleteRequest={savedRequestsHook.handleDeleteRequest}
-                  onClose={toggleSidebar}
+                  tools={state.tools}
+                  selectedToolName={state.selectedTool}
+                  fetchingTools={state.fetchingTools}
+                  onRefresh={state.fetchTools}
+                  onSelectTool={state.setSelectedTool}
+                  formFields={state.formFields}
+                  onFieldChange={state.updateFormField}
+                  onToggleField={state.updateFormFieldIsSet}
+                  isExecuting={state.isExecuting}
+                  onExecute={state.executeTool}
+                  onSave={state.savedRequestsHook.openSaveDialog}
+                  savedRequests={state.savedRequestsHook.savedRequests}
+                  highlightedRequestId={
+                    state.savedRequestsHook.highlightedRequestId
+                  }
+                  onLoadRequest={state.savedRequestsHook.handleLoadRequest}
+                  onRenameRequest={state.savedRequestsHook.handleRenameRequest}
+                  onDuplicateRequest={
+                    state.savedRequestsHook.handleDuplicateRequest
+                  }
+                  onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
+                  onClose={state.toggleSidebar}
                 />
               </motion.div>
             </ResizablePanel>
@@ -425,7 +196,7 @@ export function AppBuilderTab({
           >
             <CollapsedPanelStrip
               side="left"
-              onOpen={toggleSidebar}
+              onOpen={state.toggleSidebar}
               tooltipText="Show tools sidebar"
             />
           </motion.div>
@@ -435,55 +206,62 @@ export function AppBuilderTab({
         <ResizablePanel
           id="playground-center"
           order={2}
-          defaultSize={centerPanelDefaultSize}
+          defaultSize={state.centerPanelDefaultSize}
           minSize={PANEL_SIZES.CENTER.MIN}
           className="min-h-0 min-w-0 overflow-hidden"
         >
-          <PlaygroundMain
-            serverName={serverName || ""}
-            enableMultiModelChat={enableMultiModelChat}
-            isExecuting={isExecuting}
-            executingToolName={selectedTool}
-            invokingMessage={invokingMessage}
-            pendingExecution={pendingExecution}
-            onExecutionInjected={clearPendingExecution}
-            onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
-            deviceType={deviceType}
-            onDeviceTypeChange={setDeviceType}
-            playgroundServerSelectorProps={playgroundServerSelectorProps}
-            initialInput={
-              firstRunComposerSeed ? APP_BUILDER_FIRST_RUN_PROMPT : undefined
-            }
-            initialInputTypewriter={firstRunComposerSeed}
-            blockSubmitUntilServerConnected={firstRunComposerSeed}
-            loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-              hostStyle,
-            )}
-            ensureServersReady={ensureServersReady}
-            pulseSubmit={firstRunComposerSeed}
-            showPostConnectGuide={false}
-            onFirstMessageSent={
-              onboarding.isGuidedPostConnect
-                ? () => {
-                    setSidebarVisible(true);
-                    onboarding.completeOnboarding();
-                  }
-                : undefined
-            }
-          />
+          {/* Provide chatbox host style context so the brand loading
+              indicator and family-keyed chrome resolve correctly without
+              tunneling props. PlaygroundTab uses the same wrapping
+              pattern. */}
+          <ChatboxHostStyleProvider value={state.hostStyle}>
+            <PlaygroundMain
+              activeProjectId={activeProjectId}
+              serverName={serverName || ""}
+              onSaveHostContext={onSaveHostContext}
+              enableMultiModelChat={enableMultiModelChat}
+              isExecuting={state.isExecuting}
+              executingToolName={state.selectedTool}
+              invokingMessage={state.invokingMessage}
+              pendingExecution={state.pendingExecution}
+              onExecutionInjected={state.handleExecutionInjected}
+              onWidgetStateChange={(_toolCallId, widgetState) =>
+                state.setWidgetState(widgetState)
+              }
+              deviceType={state.deviceType}
+              onDeviceTypeChange={state.setDeviceType}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
+              initialInput={
+                state.firstRunComposerSeed
+                  ? APP_BUILDER_FIRST_RUN_PROMPT
+                  : undefined
+              }
+              initialInputTypewriter={state.firstRunComposerSeed}
+              blockSubmitUntilServerConnected={state.firstRunComposerSeed}
+              ensureServersReady={ensureServersReady}
+              pulseSubmit={state.firstRunComposerSeed}
+              showPostConnectGuide={false}
+              onFirstMessageSent={
+                state.onboarding.isGuidedPostConnect
+                  ? () => {
+                      state.setSidebarVisible(true);
+                      state.onboarding.completeOnboarding();
+                    }
+                  : undefined
+              }
+            />
+          </ChatboxHostStyleProvider>
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      {/* Post-connect guide is now rendered inside PlaygroundMain */}
-
       <SaveRequestDialog
-        open={savedRequestsHook.saveDialogState.isOpen}
-        defaultTitle={savedRequestsHook.saveDialogState.defaults.title}
+        open={state.savedRequestsHook.saveDialogState.isOpen}
+        defaultTitle={state.savedRequestsHook.saveDialogState.defaults.title}
         defaultDescription={
-          savedRequestsHook.saveDialogState.defaults.description
+          state.savedRequestsHook.saveDialogState.defaults.description
         }
-        onCancel={savedRequestsHook.closeSaveDialog}
-        onSave={savedRequestsHook.handleSaveDialogSubmit}
+        onCancel={state.savedRequestsHook.closeSaveDialog}
+        onSave={state.savedRequestsHook.handleSaveDialogSubmit}
       />
     </div>
   );

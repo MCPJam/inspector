@@ -2,13 +2,17 @@ import { useState, useCallback } from "react";
 import { toast } from "sonner";
 import {
   useViewMutations,
-  useWorkspaceServers,
+  useProjectServers,
   useServerMutations,
   type DisplayContext,
   type WidgetCsp,
   type ServerInfo,
 } from "./useViews";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  resolveCanonicalResourceUri,
+  synthesizeFallbackResourceUri,
+} from "@/lib/mcp-ui/synthesize-fallback-uri";
 import { useCurrentDisplayContext } from "@/lib/display-context-utils";
 
 // Data extracted from ToolPart for saving
@@ -35,6 +39,23 @@ export interface ToolDataForSave {
   serverInfo?: ServerInfo;
   // Cached widget HTML for offline rendering
   widgetHtml?: string;
+  /**
+   * Whether the cached `widgetHtml` was captured with the OpenAI Apps
+   * SDK `window.openai` shim injected. Persisted alongside the blob so
+   * replay agrees with the bytes on disk under a different host
+   * config. Sourced from `widgetDebugStore.widgets[toolCallId].
+   * injectedOpenAiCompat`, which is stamped by the renderer at fetch
+   * time.
+   */
+  injectedOpenAiCompat?: boolean;
+  /**
+   * Per-method `window.openai.*` surface the runtime exposed when
+   * `widgetHtml` was captured. Sibling of `injectedOpenAiCompat`; the
+   * boolean alone only answers "was a shim injected?", whereas the
+   * matrix tells replay/debug WHICH surface was injected. Sourced
+   * from the same widget-debug-store entry.
+   */
+  injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
   // Tool metadata (contains openai/outputTemplate and other metadata)
   toolMetadata?: Record<string, unknown>;
 }
@@ -51,7 +72,7 @@ export interface SaveViewFormData {
 
 interface UseSaveViewOptions {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
   serverName: string;
   existingViewNames?: Set<string>;
 }
@@ -69,7 +90,7 @@ function generateUniqueViewName(
 
 export function useSaveView({
   isAuthenticated,
-  workspaceId,
+  projectId,
   serverName,
   existingViewNames = new Set(),
 }: UseSaveViewOptions) {
@@ -78,16 +99,13 @@ export function useSaveView({
   // Get current display context from shared utility
   const currentDisplayContext = useCurrentDisplayContext();
 
-  const {
-    createMcpView,
-    createOpenaiView,
-    generateMcpUploadUrl,
-    generateOpenaiUploadUrl,
-  } = useViewMutations();
+  // `createMcpView` is now the only write path; the OpenAI mutation is
+  // kept on the hook for legacy read/delete callers only.
+  const { createMcpView, generateMcpUploadUrl } = useViewMutations();
 
-  const { serversByName } = useWorkspaceServers({
+  const { serversByName } = useProjectServers({
     isAuthenticated,
-    workspaceId,
+    projectId,
   });
 
   const { createServer } = useServerMutations();
@@ -102,12 +120,12 @@ export function useSaveView({
       }
 
       // Create new server
-      if (!workspaceId) {
-        throw new Error("No workspace selected");
+      if (!projectId) {
+        throw new Error("No project selected");
       }
 
       const serverId = await createServer({
-        workspaceId,
+        projectId,
         name,
         enabled: true,
         transportType: "http", // Default to HTTP for views
@@ -115,27 +133,20 @@ export function useSaveView({
 
       return serverId;
     },
-    [serversByName, workspaceId, createServer],
+    [serversByName, projectId, createServer],
   );
 
-  // Upload output blob to Convex storage
+  // Upload output blob to Convex storage. The protocol arg is kept on
+  // the signature for compatibility with callers but the upload URL
+  // now always comes from the canonical mcpAppViews path.
   const uploadOutputBlob = useCallback(
-    async (
-      output: unknown,
-      protocol: "mcp-apps" | "openai-apps",
-    ): Promise<string> => {
-      // Generate upload URL based on protocol
-      const uploadUrl =
-        protocol === "mcp-apps"
-          ? await generateMcpUploadUrl({})
-          : await generateOpenaiUploadUrl({});
+    async (output: unknown): Promise<string> => {
+      const uploadUrl = await generateMcpUploadUrl({});
 
-      // Create blob from output
       const blob = new Blob([JSON.stringify(output)], {
         type: "application/json",
       });
 
-      // Upload blob
       const response = await fetch(uploadUrl, {
         method: "POST",
         body: blob,
@@ -148,27 +159,18 @@ export function useSaveView({
       const result = await response.json();
       return result.storageId;
     },
-    [generateMcpUploadUrl, generateOpenaiUploadUrl],
+    [generateMcpUploadUrl],
   );
 
-  // Upload widget HTML blob to Convex storage (for offline rendering)
+  // Upload widget HTML blob to Convex storage (for offline rendering).
   const uploadWidgetHtmlBlob = useCallback(
-    async (
-      html: string,
-      protocol: "mcp-apps" | "openai-apps",
-    ): Promise<string> => {
-      // Both MCP and OpenAI apps now support widget HTML caching
-      const uploadUrl =
-        protocol === "mcp-apps"
-          ? await generateMcpUploadUrl({})
-          : await generateOpenaiUploadUrl({});
+    async (html: string): Promise<string> => {
+      const uploadUrl = await generateMcpUploadUrl({});
 
-      // Create blob from HTML
       const blob = new Blob([html], {
         type: "text/html",
       });
 
-      // Upload blob
       const response = await fetch(uploadUrl, {
         method: "POST",
         body: blob,
@@ -181,14 +183,14 @@ export function useSaveView({
       const result = await response.json();
       return result.storageId;
     },
-    [generateMcpUploadUrl, generateOpenaiUploadUrl],
+    [generateMcpUploadUrl],
   );
 
   // Save view
   const saveView = useCallback(
     async (toolData: ToolDataForSave, formData: SaveViewFormData) => {
-      if (!workspaceId) {
-        toast.error("No workspace selected");
+      if (!projectId) {
+        toast.error("No project selected");
         return null;
       }
 
@@ -208,23 +210,17 @@ export function useSaveView({
         const serverId = await getOrCreateServerId(serverName);
 
         // Upload output blob
-        const toolOutputBlobId = await uploadOutputBlob(
-          toolData.output,
-          protocol,
-        );
+        const toolOutputBlobId = await uploadOutputBlob(toolData.output);
 
         // Upload widget HTML blob (for offline rendering - both MCP and OpenAI apps)
         let widgetHtmlBlobId: string | undefined;
         if (toolData.widgetHtml) {
-          widgetHtmlBlobId = await uploadWidgetHtmlBlob(
-            toolData.widgetHtml,
-            protocol,
-          );
+          widgetHtmlBlobId = await uploadWidgetHtmlBlob(toolData.widgetHtml);
         }
 
         // Prepare base args
         const baseArgs = {
-          workspaceId,
+          projectId,
           serverId,
           name: formData.name.trim(),
           description: formData.description,
@@ -240,42 +236,73 @@ export function useSaveView({
           toolMetadata: toolData.toolMetadata,
         };
 
-        let viewId: string;
+        // Unified save path per SEP-1865 (MCP Apps, Stable 2026-01-26):
+        // all writes go through `mcpAppViews:create`. OpenAI-origin
+        // tool results pass `outputTemplate` as a legacy alias which
+        // the backend normalizer maps to `resourceUri`. Renderer
+        // choice at read time is driven by `injectedOpenAiCompat` and
+        // `detectUIType(toolMetadata)` — never by a protocol field.
+        const rawCsp = toolData.widgetDebugInfo?.csp;
+        const filteredWidgetCsp = rawCsp
+          ? {
+              connectDomains: rawCsp.connectDomains,
+              resourceDomains: rawCsp.resourceDomains,
+              frameDomains: rawCsp.frameDomains,
+              baseUriDomains: rawCsp.baseUriDomains,
+            }
+          : undefined;
 
-        if (protocol === "mcp-apps") {
-          // Filter widgetCsp to only include schema-allowed fields
-          // (excludes runtime debug data like mode, violations, widgetDeclared)
-          const rawCsp = toolData.widgetDebugInfo?.csp;
-          const filteredWidgetCsp = rawCsp
-            ? {
-                connectDomains: rawCsp.connectDomains,
-                resourceDomains: rawCsp.resourceDomains,
-                frameDomains: rawCsp.frameDomains,
-                baseUriDomains: rawCsp.baseUriDomains,
-              }
-            : undefined;
+        // Canonical fallback URI is `ui://` per SEP-1865. The previous
+        // `mcp://` fallback was a SEP violation; this form is also
+        // collision-safe (uses the immutable `serverId` rather than
+        // the display `serverName`) and URI-safe (`toolName` is hashed
+        // so spaces, slashes, and other unescaped characters cannot
+        // produce ambiguous paths). Two saves of the same tool on the
+        // same server are idempotent because the hash is
+        // deterministic.
+        const fallbackResourceUri = synthesizeFallbackResourceUri({
+          serverId,
+          toolName: toolData.toolName,
+        });
+        const liveOutputTemplate = toolData.outputTemplate?.trim();
+        // `toolData.resourceUri` comes from `getUIResourceUri()` in
+        // part-switch.tsx, which for OpenAI-origin tools returns the
+        // raw `openai/outputTemplate` value verbatim — any scheme. We
+        // must gate on `ui://` here, otherwise a non-compliant
+        // template like `https://...` lands in the canonical column
+        // bypassing the fallback synthesizer entirely.
+        const resourceUri = resolveCanonicalResourceUri({
+          candidate: toolData.resourceUri,
+          legacyOutputTemplate: liveOutputTemplate,
+          fallback: fallbackResourceUri,
+        });
 
-          // MCP-specific save
-          viewId = await createMcpView({
-            ...baseArgs,
-            resourceUri:
-              toolData.resourceUri ||
-              `mcp://${serverName}/${toolData.toolName}`,
-            toolsMetadata: toolData.toolsMetadata,
-            widgetCsp: filteredWidgetCsp,
-            widgetPermissions: toolData.widgetPermissions,
-            widgetPermissive: toolData.widgetPermissive,
-            widgetHtmlBlobId, // Include cached widget HTML for offline rendering
-          });
-        } else {
-          // OpenAI-specific save
-          viewId = await createOpenaiView({
-            ...baseArgs,
-            outputTemplate: toolData.outputTemplate || "",
-            serverInfo: toolData.serverInfo,
-            widgetHtmlBlobId, // Include cached widget HTML for offline rendering
-          });
-        }
+        const isOpenAIOrigin = protocol === "openai-apps";
+
+        const viewId: string = await createMcpView({
+          ...baseArgs,
+          resourceUri,
+          toolsMetadata: toolData.toolsMetadata,
+          widgetCsp: filteredWidgetCsp,
+          widgetPermissions: toolData.widgetPermissions,
+          widgetPermissive: toolData.widgetPermissive,
+          widgetHtmlBlobId,
+          // Persist the shim flag + per-method capability surface
+          // alongside the cached HTML so replay can reproduce the
+          // original `window.openai` API surface even after the
+          // active host config has changed. Only meaningful when
+          // `widgetHtmlBlobId` is present; the backend tolerates
+          // either field being absent (pre-feature rows hash
+          // identically).
+          injectedOpenAiCompat: widgetHtmlBlobId
+            ? toolData.injectedOpenAiCompat
+            : undefined,
+          injectedOpenAiCompatCapabilities: widgetHtmlBlobId
+            ? toolData.injectedOpenAiCompatCapabilities
+            : undefined,
+          // Documentation-only provenance:
+          viewOriginProtocol: isOpenAIOrigin ? "openai-apps" : "mcp-apps",
+        });
 
         toast.success(`View "${formData.name}" saved successfully`);
         return viewId;
@@ -290,13 +317,12 @@ export function useSaveView({
       }
     },
     [
-      workspaceId,
+      projectId,
       serverName,
       getOrCreateServerId,
       uploadOutputBlob,
       uploadWidgetHtmlBlob,
       createMcpView,
-      createOpenaiView,
     ],
   );
 

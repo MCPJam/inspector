@@ -21,10 +21,9 @@ describe("useEvalQueries", () => {
     const { result } = renderHook(() =>
       useEvalQueries({
         isAuthenticated: false,
-        user: null,
         selectedSuiteId: null,
         deletingSuiteId: null,
-        workspaceId: null,
+        projectId: null,
         organizationId: null,
       }),
     );
@@ -38,15 +37,29 @@ describe("useEvalQueries", () => {
     const { result } = renderHook(() =>
       useEvalQueries({
         isAuthenticated: true,
-        user: { id: "user-1" },
         selectedSuiteId: null,
         deletingSuiteId: null,
-        workspaceId: "ws-1",
+        projectId: "ws-1",
         organizationId: null,
       }),
     );
 
     expect(result.current.enableOverviewQuery).toBe(true);
     expect(result.current.isOverviewLoading).toBe(true);
+  });
+
+  it("enables the overview query for hosted guests (Convex-authenticated, no WorkOS user)", () => {
+    const { result } = renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: null,
+        deletingSuiteId: null,
+        projectId: "guest-project",
+        organizationId: null,
+        isDirectGuest: false,
+      }),
+    );
+
+    expect(result.current.enableOverviewQuery).toBe(true);
   });
 });

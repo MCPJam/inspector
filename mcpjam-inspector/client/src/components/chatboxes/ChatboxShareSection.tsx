@@ -32,21 +32,20 @@ const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface ChatboxShareSectionProps {
   chatbox: ChatboxSettings;
   onUpdated?: (chatbox: ChatboxSettings) => void;
-  /** Shown as the workspace-wide access option label (e.g. current workspace name). */
-  workspaceName?: string | null;
+  /** Shown as the project-wide access option label (e.g. current project name). */
+  projectName?: string | null;
 }
 
 export function ChatboxShareSection({
   chatbox,
   onUpdated,
-  workspaceName,
+  projectName,
 }: ChatboxShareSectionProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const {
     setChatboxMode,
-    updateChatbox,
     upsertChatboxMember,
     removeChatboxMember,
   } = useChatboxMutations();
@@ -61,7 +60,7 @@ export function ChatboxShareSection({
     setSettings(chatbox);
   }, [chatbox]);
 
-  const workspaceLabel = workspaceName?.trim() || "Workspace";
+  const projectLabel = projectName?.trim() || "Project";
 
   const accessPreset = chatboxAccessPresetFromSettings(
     settings.mode,
@@ -110,12 +109,6 @@ export function ChatboxShareSection({
         next = (await setChatboxMode({
           chatboxId: settings.chatboxId,
           mode: target.mode,
-        })) as ChatboxSettings;
-      }
-      if (target.allowGuestAccess !== next.allowGuestAccess) {
-        next = (await updateChatbox({
-          chatboxId: settings.chatboxId,
-          allowGuestAccess: target.allowGuestAccess,
         })) as ChatboxSettings;
       }
       updateSettings(next);
@@ -170,8 +163,8 @@ export function ChatboxShareSection({
 
   const accessTriggerSummary = () => {
     switch (accessPreset) {
-      case "workspace":
-        return workspaceLabel;
+      case "project":
+        return projectLabel;
       case "invited_only":
         return "Invited users only";
       case "link_guests":
@@ -180,7 +173,7 @@ export function ChatboxShareSection({
   };
 
   const AccessIcon =
-    accessPreset === "workspace"
+    accessPreset === "project"
       ? Users
       : accessPreset === "link_guests"
         ? Globe
@@ -256,14 +249,14 @@ export function ChatboxShareSection({
                 void handleAccessPresetChange(v as ChatboxAccessPreset)
               }
             >
-              <DropdownMenuRadioItem value="workspace" className="items-start">
+              <DropdownMenuRadioItem value="project" className="items-start">
                 <div>
                   <div className="flex items-center gap-2 font-medium">
                     <Users className="size-4" />
-                    {workspaceLabel}
+                    {projectLabel}
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Signed-in members of this workspace can open the chatbox
+                    Signed-in members of this project can open the chatbox
                     with the link. Guests cannot.
                   </p>
                 </div>

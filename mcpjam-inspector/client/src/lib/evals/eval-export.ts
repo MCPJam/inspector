@@ -189,7 +189,7 @@ export function buildSdkEnvSnippet(
   );
 
   const lines = [
-    "export MCPJAM_API_KEY=<workspace-api-key>",
+    "export MCPJAM_API_KEY=<project-api-key>",
     "export EVAL_MODEL=<provider/model-id>",
     "# Use the API key variable your provider expects; rename in the test file if needed.",
     "export LLM_API_KEY=<your-llm-api-key>",

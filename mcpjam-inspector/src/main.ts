@@ -8,17 +8,32 @@ Sentry.init({
 });
 
 import { app, BrowserWindow, shell, Menu } from "electron";
+import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
 import path from "path";
 import { createHonoApp } from "../server/app.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
-import { setupAutoUpdaterEvents } from "./ipc/update/update-listeners.js";
+import {
+  installUpdateOnQuit,
+  setTrustedUpdateWindow,
+  setupAutoUpdaterEvents,
+} from "./ipc/update/update-listeners.js";
+import {
+  buildProtocolOAuthCallbackUrl,
+  buildRendererCallbackUrl,
+  ELECTRON_HOSTED_AUTH_STATE_KEY,
+  isElectronMcpCallbackUrl,
+} from "./oauth-callback-routing.js";
 
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+
+// Wire autoUpdater event handlers BEFORE update-electron-app starts polling,
+// otherwise an early `update-available` event could fire before our listener exists.
+setupAutoUpdaterEvents();
 
 // Enable auto-updater (with custom notification handling)
 updateElectronApp({
@@ -39,8 +54,192 @@ if (!app.isDefaultProtocolClient("mcpjam")) {
 let mainWindow: BrowserWindow | null = null;
 let server: any = null;
 let serverPort: number = 0;
+let pendingProtocolUrl: string | null = null;
+let appBootstrapped = false;
 
 const isDev = process.env.NODE_ENV === "development";
+
+function shouldForceElectronOAuthFallback(): boolean {
+  return (
+    !app.isPackaged &&
+    process.env.MCPJAM_FORCE_ELECTRON_OAUTH_FALLBACK === "true"
+  );
+}
+
+function getServerUrl(): string {
+  return `http://127.0.0.1:${serverPort}`;
+}
+
+function getRendererBaseUrl(): string {
+  return isDev ? MAIN_WINDOW_VITE_DEV_SERVER_URL : getServerUrl();
+}
+
+function findOAuthCallbackUrl(args: string[]): string | undefined {
+  return args.find((arg) => arg.startsWith("mcpjam://oauth/callback"));
+}
+
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.protocol === "http:" || urlObj.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isHostedAuthNavigation(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    return (
+      (urlObj.protocol === "http:" || urlObj.protocol === "https:") &&
+      urlObj.pathname.endsWith("/user_management/authorize") &&
+      urlObj.searchParams.has("client_id") &&
+      urlObj.searchParams.has("redirect_uri") &&
+      urlObj.searchParams.get("response_type") === "code"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isRendererAppNavigation(url: string): boolean {
+  try {
+    return new URL(url).origin === new URL(getRendererBaseUrl()).origin;
+  } catch {
+    return false;
+  }
+}
+
+function createElectronHostedAuthNavigationUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    const rawState = urlObj.searchParams.get("state");
+    let parsedState: unknown = undefined;
+
+    if (rawState) {
+      try {
+        parsedState = JSON.parse(rawState);
+      } catch {
+        parsedState = rawState;
+      }
+    }
+
+    const nextState =
+      parsedState &&
+      typeof parsedState === "object" &&
+      !Array.isArray(parsedState)
+        ? {
+            ...(parsedState as Record<string, unknown>),
+            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+          }
+        : parsedState === undefined
+        ? {
+            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+          }
+        : {
+            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+            originalState: parsedState,
+          };
+
+    urlObj.searchParams.set("state", JSON.stringify(nextState));
+    return urlObj.toString();
+  } catch {
+    return url;
+  }
+}
+
+function installSafeOAuthCallbackRouting(
+  authWindow: BrowserWindow,
+  source: string
+): void {
+  const routeIfOAuthCallback = (
+    event: { preventDefault: () => void },
+    url: string,
+    isMainFrame?: boolean
+  ) => {
+    if (isMainFrame === false) {
+      return;
+    }
+
+    const protocolCallbackUrl = buildProtocolOAuthCallbackUrl(
+      url,
+      getRendererBaseUrl()
+    );
+    if (!protocolCallbackUrl) {
+      return;
+    }
+
+    event.preventDefault();
+    log.info(`Routing ${source} OAuth callback back to MCPJam Desktop`);
+    void handleOAuthCallbackUrl(protocolCallbackUrl).finally(() => {
+      if (!authWindow.isDestroyed()) {
+        authWindow.close();
+      }
+    });
+  };
+
+  authWindow.webContents.on(
+    "will-navigate",
+    (event, url, _isInPlace, isMainFrame) => {
+      routeIfOAuthCallback(event, url, isMainFrame);
+    }
+  );
+
+  authWindow.webContents.on(
+    "will-redirect",
+    (event, url, _isInPlace, isMainFrame) => {
+      routeIfOAuthCallback(event, url, isMainFrame);
+    }
+  );
+}
+
+function createSafeOAuthWindow(
+  options: BrowserWindowConstructorOptions = {},
+  source = "Electron fallback"
+): BrowserWindow {
+  const { webPreferences: _unsafeWebPreferences, ...safeOptions } = options;
+  const authWindow = new BrowserWindow({
+    width: 600,
+    height: 760,
+    ...safeOptions,
+    parent: safeOptions.parent ?? mainWindow ?? undefined,
+    modal: false,
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+
+  installSafeOAuthCallbackRouting(authWindow, source);
+
+  authWindow.once("ready-to-show", () => {
+    authWindow.show();
+  });
+
+  return authWindow;
+}
+
+function openSafeOAuthWindow(
+  url: string,
+  parent: BrowserWindow | null,
+  source: string
+): void {
+  const authWindow = createSafeOAuthWindow(
+    {
+      parent: parent ?? undefined,
+    },
+    source
+  );
+
+  void authWindow.loadURL(url).catch((error) => {
+    log.error(`Failed to load ${source} OAuth fallback window:`, error);
+    if (!authWindow.isDestroyed()) {
+      authWindow.close();
+    }
+  });
+}
 
 async function startHonoServer(): Promise<number> {
   try {
@@ -96,6 +295,76 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     window.webContents.openDevTools();
   }
 
+  const maybeOpenExternalNavigation = (
+    event: { preventDefault: () => void },
+    url: string,
+    isMainFrame: boolean
+  ) => {
+    if (!isMainFrame) {
+      return;
+    }
+
+    if (isHostedAuthNavigation(url)) {
+      log.info("Opening hosted auth in system browser");
+      event.preventDefault();
+      const hostedAuthUrl = createElectronHostedAuthNavigationUrl(url);
+      const openExternalPromise = shouldForceElectronOAuthFallback()
+        ? Promise.reject(
+            new Error("Forced open-external failure for OAuth fallback test")
+          )
+        : shell.openExternal(hostedAuthUrl);
+
+      void openExternalPromise.catch((error) => {
+        log.warn(
+          "Failed to open hosted auth in system browser; continuing in a safe Electron auth window:",
+          error
+        );
+        openSafeOAuthWindow(hostedAuthUrl, window, "hosted auth");
+      });
+      return;
+    }
+
+    if (isRendererAppNavigation(url)) {
+      return;
+    }
+
+    if (!isSafeExternalUrl(url)) {
+      log.warn("Blocking unsafe navigation from main window");
+      event.preventDefault();
+      return;
+    }
+
+    log.info("Opening external navigation in system browser");
+    event.preventDefault();
+    const openExternalPromise = shouldForceElectronOAuthFallback()
+      ? Promise.reject(
+          new Error("Forced open-external failure for OAuth fallback test")
+        )
+      : shell.openExternal(url);
+
+    void openExternalPromise.catch((error) => {
+      log.warn(
+        "Failed to open external navigation in system browser; continuing in a safe Electron window:",
+        error
+      );
+      openSafeOAuthWindow(url, window, "external navigation");
+    });
+  };
+
+  window.webContents.on(
+    "will-navigate",
+    (event, url, _isInPlace, isMainFrame) => {
+      maybeOpenExternalNavigation(event, url, isMainFrame);
+    }
+  );
+
+  window.webContents.on(
+    "will-redirect",
+    (event, url, _isInPlace, isMainFrame) => {
+      maybeOpenExternalNavigation(event, url, isMainFrame);
+    }
+  );
+
   // Show window when ready
   window.once("ready-to-show", () => {
     window.show();
@@ -111,6 +380,67 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   });
 
   return window;
+}
+
+async function handleOAuthCallbackUrl(url: string): Promise<void> {
+  if (!url.startsWith("mcpjam://oauth/callback")) {
+    return;
+  }
+
+  if (!appBootstrapped) {
+    pendingProtocolUrl = url;
+    return;
+  }
+
+  try {
+    log.info("OAuth callback received");
+
+    const parsed = new URL(url);
+    const callbackFlow = parsed.searchParams.get("flow");
+    const isMcpCallback = isElectronMcpCallbackUrl(parsed);
+    const hadMainWindow = Boolean(mainWindow);
+
+    if (serverPort === 0) {
+      serverPort = await startHonoServer();
+    }
+
+    const baseUrl = getRendererBaseUrl();
+    const rendererCallbackUrl = buildRendererCallbackUrl(parsed, baseUrl);
+
+    if (!mainWindow) {
+      if (rendererCallbackUrl) {
+        mainWindow = createMainWindow(baseUrl);
+        setTrustedUpdateWindow(mainWindow);
+        mainWindow.loadURL(rendererCallbackUrl.toString());
+      } else {
+        const debugCallbackUrl = new URL("/oauth/callback/debug", baseUrl);
+        for (const [key, value] of parsed.searchParams.entries()) {
+          if (key === "flow") continue;
+          debugCallbackUrl.searchParams.append(key, value);
+        }
+        mainWindow = createMainWindow(baseUrl);
+        setTrustedUpdateWindow(mainWindow);
+        mainWindow.loadURL(debugCallbackUrl.toString());
+      }
+    } else if (rendererCallbackUrl) {
+      mainWindow.loadURL(rendererCallbackUrl.toString());
+    }
+
+    if (mainWindow?.webContents && callbackFlow === "debug" && hadMainWindow) {
+      mainWindow.webContents.send("oauth-callback", url);
+    } else if (
+      mainWindow?.webContents &&
+      !isMcpCallback &&
+      callbackFlow !== "debug"
+    ) {
+      mainWindow.webContents.send("oauth-callback", url);
+    }
+
+    if (mainWindow?.isMinimized()) mainWindow.restore();
+    mainWindow?.focus();
+  } catch (error) {
+    log.error("Failed processing OAuth callback URL:", error);
+  }
 }
 
 function createAppMenu(): void {
@@ -202,17 +532,29 @@ app.whenReady().then(async () => {
   try {
     // Start the embedded Hono server
     serverPort = await startHonoServer();
-    const serverUrl = `http://127.0.0.1:${serverPort}`;
+    const serverUrl = getServerUrl();
 
     // Create the main window
     createAppMenu();
     mainWindow = createMainWindow(serverUrl);
 
     // Register IPC listeners
-    registerListeners(mainWindow);
+    registerListeners(mainWindow, () => mainWindow);
 
-    // Setup auto-updater events to notify renderer when update is ready
-    setupAutoUpdaterEvents(mainWindow);
+    appBootstrapped = true;
+
+    if (pendingProtocolUrl) {
+      const protocolUrl = pendingProtocolUrl;
+      pendingProtocolUrl = null;
+      await handleOAuthCallbackUrl(protocolUrl);
+    }
+
+    if (process.platform !== "darwin") {
+      const protocolUrl = findOAuthCallbackUrl(process.argv);
+      if (protocolUrl) {
+        await handleOAuthCallbackUrl(protocolUrl);
+      }
+    }
 
     log.info("MCPJam Electron app ready");
   } catch (error) {
@@ -238,14 +580,14 @@ app.on("activate", async () => {
   // On macOS, re-create window when the dock icon is clicked
   if (BrowserWindow.getAllWindows().length === 0) {
     if (serverPort > 0) {
-      const serverUrl = `http://127.0.0.1:${serverPort}`;
-      mainWindow = createMainWindow(serverUrl);
+      mainWindow = createMainWindow(getServerUrl());
+      setTrustedUpdateWindow(mainWindow);
     } else {
       // Restart server if needed
       try {
         serverPort = await startHonoServer();
-        const serverUrl = `http://127.0.0.1:${serverPort}`;
-        mainWindow = createMainWindow(serverUrl);
+        mainWindow = createMainWindow(getServerUrl());
+        setTrustedUpdateWindow(mainWindow);
       } catch (error) {
         log.error("Failed to restart server:", error);
       }
@@ -256,134 +598,56 @@ app.on("activate", async () => {
 // Handle OAuth callback URLs
 app.on("open-url", (event, url) => {
   event.preventDefault();
-  log.info("OAuth callback received:", url);
-
-  if (!url.startsWith("mcpjam://oauth/callback")) {
-    return;
-  }
-
-  try {
-    const parsed = new URL(url);
-    const code = parsed.searchParams.get("code") ?? "";
-    const state = parsed.searchParams.get("state") ?? "";
-
-    // Compute the base URL the renderer should load
-    const baseUrl = isDev
-      ? MAIN_WINDOW_VITE_DEV_SERVER_URL
-      : `http://127.0.0.1:${serverPort}`;
-
-    const callbackUrl = new URL("/callback", baseUrl);
-    if (code) callbackUrl.searchParams.set("code", code);
-    if (state) callbackUrl.searchParams.set("state", state);
-
-    // Ensure a window exists, then load the callback route directly
-    if (!mainWindow) {
-      mainWindow = createMainWindow(baseUrl);
-    }
-    mainWindow.loadURL(callbackUrl.toString());
-
-    // Still emit the event for any listeners
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("oauth-callback", url);
-    }
-
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  } catch (e) {
-    log.error("Failed processing OAuth callback URL:", e);
-  }
+  void handleOAuthCallbackUrl(url);
 });
 
 // Security: Prevent new window creation, but allow OAuth popups
 app.on("web-contents-created", (_, contents) => {
-  contents.setWindowOpenHandler(({ url, features }) => {
+  contents.setWindowOpenHandler(({ url, frameName }) => {
     try {
-      const urlObj = new URL(url);
+      // The OAuth debugger popup explicitly names its window with the
+      // `oauth_authorization_` prefix so it can keep window.opener semantics.
+      if (frameName.startsWith("oauth_authorization_")) {
+        return {
+          action: "allow",
+          createWindow: (options) => {
+            const popup = createSafeOAuthWindow(
+              {
+                ...options,
+                parent: mainWindow || undefined,
+              },
+              "OAuth popup"
+            );
 
-      // Allow OAuth authorization popups to be created within Electron
-      // OAuth authorization URLs are typically external HTTPS URLs
-      // Check if this looks like an OAuth flow (external HTTPS URL)
-      const isOAuthFlow =
-        urlObj.protocol === "https:" &&
-        // Common OAuth authorization endpoint patterns
-        (urlObj.pathname.includes("/oauth") ||
-          urlObj.pathname.includes("/authorize") ||
-          urlObj.pathname.includes("/auth") ||
-          urlObj.searchParams.has("client_id") ||
-          urlObj.searchParams.has("response_type"));
-
-      if (isOAuthFlow) {
-        // Parse window features to create popup window
-        const width = features?.includes("width=")
-          ? parseInt(features.match(/width=(\d+)/)?.[1] || "600")
-          : 600;
-        const height = features?.includes("height=")
-          ? parseInt(features.match(/height=(\d+)/)?.[1] || "700")
-          : 700;
-
-        // Create a new BrowserWindow for OAuth popup
-        const popup = new BrowserWindow({
-          width,
-          height,
-          webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            preload: path.join(__dirname, "preload.js"),
+            return popup.webContents;
           },
-          parent: mainWindow || undefined,
-          modal: false,
-          show: false,
-        });
-
-        // Load the OAuth URL
-        popup.loadURL(url);
-
-        // Show window when ready
-        popup.once("ready-to-show", () => {
-          popup.show();
-        });
-
-        // Handle OAuth callback redirects
-        popup.webContents.on("will-redirect", (event, navigationUrl) => {
-          try {
-            const redirectUrl = new URL(navigationUrl);
-            // If redirecting to our callback URL, handle it
-            if (
-              redirectUrl.protocol === "mcpjam:" ||
-              redirectUrl.pathname.includes("/callback") ||
-              redirectUrl.pathname.includes("/oauth/callback")
-            ) {
-              // Let the redirect happen, the callback handler will process it
-              // But we need to ensure the popup can communicate back
-            }
-          } catch (e) {
-            // Invalid URL, ignore
-          }
-        });
-
-        // Clean up when popup closes
-        popup.on("closed", () => {
-          // Popup closed, cleanup handled automatically
-        });
-
-        return { action: "allow" };
+        };
       }
 
-      // For all other URLs, open externally
-      shell.openExternal(url);
+      if (isSafeExternalUrl(url)) {
+        void shell.openExternal(url);
+      } else {
+        log.warn("Refusing to open non-HTTP URL from window.open");
+      }
       return { action: "deny" };
-    } catch (e) {
-      // If URL parsing fails, open externally as fallback
-      shell.openExternal(url);
+    } catch (error) {
+      // Invalid URLs are denied to avoid passing unsafe schemes to the shell.
+      log.error("Failed handling window.open URL:", error);
       return { action: "deny" };
     }
   });
 });
 
 // Handle app shutdown
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  // Safety net: if a new build has been downloaded but the user never clicked the
+  // button, install it during quit so the next launch is on the new version.
+  // quitAndInstall() re-fires before-quit; the helper guards with isQuittingForUpdate
+  // so the second pass falls through and we still close the server.
+  if (installUpdateOnQuit()) {
+    event.preventDefault();
+    return;
+  }
   if (server) {
     server.close?.();
   }
@@ -395,8 +659,12 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    // Someone tried to run a second instance, focus our window instead
+  app.on("second-instance", (_event, argv) => {
+    const protocolUrl = findOAuthCallbackUrl(argv);
+    if (protocolUrl) {
+      void handleOAuthCallbackUrl(protocolUrl);
+    }
+
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
