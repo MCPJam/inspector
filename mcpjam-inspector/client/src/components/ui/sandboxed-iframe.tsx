@@ -201,11 +201,12 @@ export const SandboxedIframe = forwardRef<
         return;
       }
 
-      // File upload/download messages (not JSON-RPC) - forward directly
+      // Whitelisted OpenAI compat messages (not JSON-RPC) - forward directly
       if (
         event.data?.type === "openai:uploadFile" ||
         event.data?.type === "openai:getFileDownloadUrl" ||
-        event.data?.type === "openai:setWidgetState"
+        event.data?.type === "openai:setWidgetState" ||
+        event.data?.type === "openai:setOpenInAppUrl"
       ) {
         onMessage(event);
         return;

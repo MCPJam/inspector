@@ -46,12 +46,13 @@ import type {
  * mode allowed. This is what ChatGPT (the original Apps SDK host) and the
  * MCPJam dev shim advertise.
  *
- * `selectFiles` / `setOpenInAppUrl` are `true` here for type completeness
- * and forward compatibility, but the SDK runtime in
- * `sdk/src/McpAppsOpenAICompatibleRuntime.ts` does NOT install them —
- * widgets that feature-detect on them must see `typeof
+ * `selectFiles` is `true` here for type completeness and forward
+ * compatibility, but the SDK runtime in
+ * `sdk/src/McpAppsOpenAICompatibleRuntime.ts` does NOT install it yet —
+ * widgets that feature-detect on it must see `typeof
  * window.openai.selectFiles === "undefined"` to take their fallback path.
- * See plan §3 (feedback_feature_detection_over_rejection memory).
+ * `setOpenInAppUrl` is implemented by the runtime and host fullscreen
+ * chrome.
  */
 export const OPENAI_APPS_FULL_SURFACE: ResolvedOpenAiAppsCapabilities = {
   callTool: true,

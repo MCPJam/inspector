@@ -387,6 +387,25 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
     });
   });
 
+  it("forwards openai:setOpenInAppUrl", () => {
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, {
+      type: "openai:setOpenInAppUrl",
+      toolId: "tool-1",
+      href: "https://app.example.com/item/42",
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].data).toEqual({
+      type: "openai:setOpenInAppUrl",
+      toolId: "tool-1",
+      href: "https://app.example.com/item/42",
+    });
+  });
+
   it("forwards openai:uploadFile", () => {
     const onMessage = vi.fn();
     const { container } = render(

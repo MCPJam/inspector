@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, act, screen } from "@testing-library/react";
+import { render, act, screen, fireEvent } from "@testing-library/react";
 import React from "react";
 import {
   CHATGPT_HOST_STYLE,
@@ -232,6 +232,7 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
 }));
 
 vi.mock("lucide-react", () => ({
+  ExternalLink: (props: any) => <div {...props} />,
   X: (props: any) => <div {...props} />,
 }));
 
@@ -268,6 +269,7 @@ import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
   serverId: "server-1",
+  serverName: "test-server",
   toolCallId: "call-1",
   toolName: "test-tool",
   toolState: "output-available" as const,
@@ -701,6 +703,157 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.close).not.toHaveBeenCalled();
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();
     expect(sandboxedIframeMountsRef.current).toBe(1);
+  });
+
+  it("uses window.openai.setOpenInAppUrl messages for the fullscreen Open in button", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
+        "function"
+      );
+    });
+    expect(
+      screen.queryByRole("button", { name: "Open in test-server" })
+    ).not.toBeInTheDocument();
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "openai:setOpenInAppUrl",
+          toolId: "call-1",
+          href: "https://app.example.com/trails/42",
+        },
+      } as MessageEvent);
+    });
+
+    const button = screen.getByRole("button", { name: "Open in test-server" });
+    expect(screen.getAllByText("test-server").length).toBeGreaterThanOrEqual(
+      1
+    );
+    expect(screen.queryByText("test-tool")).not.toBeInTheDocument();
+    fireEvent.click(button);
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://app.example.com/trails/42",
+      "_blank",
+      "noopener,noreferrer"
+    );
+    openSpy.mockRestore();
+  });
+
+  it("does not show the Open in button in contained phone fullscreen", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      displayMode: "fullscreen",
+      deviceType: "mobile",
+    });
+
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
+        "function"
+      );
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "openai:setOpenInAppUrl",
+          toolId: "call-1",
+          href: "https://app.example.com/mobile",
+        },
+      } as MessageEvent);
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Open in test-server" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores unsafe and capability-denied setOpenInAppUrl messages", async () => {
+    const disabledProfile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: {
+        compatRuntime: {
+          openaiApps: true,
+          openaiAppsOverrides: { setOpenInAppUrl: false },
+        },
+      },
+    };
+
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
+        "function"
+      );
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "openai:setOpenInAppUrl",
+          toolId: "call-1",
+          href: "javascript:alert(1)",
+        },
+      } as MessageEvent);
+    });
+    expect(
+      screen.queryByRole("button", { name: "Open in test-server" })
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <ActiveMcpProfileProvider value={disabledProfile}>
+        <MCPAppsRenderer
+          {...baseProps}
+          cachedWidgetHtmlUrl="blob:cached"
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+        />
+      </ActiveMcpProfileProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf(
+        "function"
+      );
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "openai:setOpenInAppUrl",
+          toolId: "call-1",
+          href: "https://app.example.com/denied",
+        },
+      } as MessageEvent);
+    });
+    expect(
+      screen.queryByRole("button", { name: "Open in test-server" })
+    ).not.toBeInTheDocument();
   });
 
   it("falls back to the spec-default 'no claims' blob when no style is resolvable", async () => {
