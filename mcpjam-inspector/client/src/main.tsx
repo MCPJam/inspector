@@ -1,28 +1,73 @@
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
+import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { PostHogProvider } from "posthog-js/react";
-import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
+import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
+import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { HOSTED_MODE } from "./lib/config";
-import { GuestConvexAuthBridge } from "./lib/guest-convex-auth";
+import {
+  buildElectronHostedAuthCallbackUrl,
+  resolveWorkosRedirectUri,
+} from "./lib/electron-hosted-auth";
+import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
 import { getRuntimeConvexUrl } from "./lib/runtime-config";
+import { normalizeInitialLegacyHashBookmark } from "./lib/app-navigation";
+import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 
 // Initialize Sentry before React mounts
 initSentry();
 
+function AuthBootstrap({ children }: { children: ReactNode }) {
+  const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+
+  return (
+    <DbUserReadyProvider
+      isEnsuringUser={isEnsuringUser}
+      isUserReady={isUserReady}
+    >
+      {children}
+    </DbUserReadyProvider>
+  );
+}
+
 // Detect if we're inside an iframe - this happens when a user's app uses BrowserRouter
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
+//
+// Exception: same-origin self-embed of the public chatbox runtime
+// (`/chatbox/<slug>/<token>`). The Chatboxes tab's Preview pane iframes the
+// publish link to show a live preview inside the app — that's intentional,
+// not a misrouted-pushState misconfiguration, so we let the normal tree
+// mount. Restricted to the chatbox route + same-origin parent so the
+// "user app accidentally serving inspector index.html" guard still fires
+// for every other shape.
 const isInIframe = (() => {
   try {
-    return window.self !== window.top;
+    if (window.self === window.top) return false;
+    try {
+      const sameOrigin =
+        window.top!.location.origin === window.location.origin;
+      // Match the documented `/chatbox/<slug>/<token>` shape only; a generic
+      // `startsWith("/chatbox/")` would let any unrelated future subpath
+      // slip past the misrouted-pushState guard.
+      const isPublicChatboxRuntimePath =
+        /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(window.location.pathname);
+      if (sameOrigin && isPublicChatboxRuntimePath) {
+        return false;
+      }
+    } catch {
+      // window.top.location throws under cross-origin — definitely an
+      // unrelated embed, keep the guard.
+    }
+    return true;
   } catch {
     // If we can't access window.top due to cross-origin restrictions, we're in an iframe
     return true;
@@ -59,20 +104,40 @@ if (isInIframe) {
     const envRedirect =
       (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
     if (typeof window === "undefined") return envRedirect ?? "/callback";
-    const isBrowserHttp =
-      window.location.protocol === "http:" ||
-      window.location.protocol === "https:";
-    if (isBrowserHttp) return `${window.location.origin}/callback`;
-    if (envRedirect) return envRedirect;
-    if ((window as any)?.isElectron) return "mcpjam://oauth/callback";
-    return `${window.location.origin}/callback`;
+    return resolveWorkosRedirectUri({
+      envRedirect,
+      isElectron: window.isElectron === true,
+      location: window.location,
+    });
   })();
+  const electronHostedAuthCallbackUrl =
+    typeof window === "undefined" || window.isElectron
+      ? null
+      : buildElectronHostedAuthCallbackUrl(window.location);
 
   // Warn if critical env vars are missing
   if (!convexUrl) {
     console.warn(
       "[main] VITE_CONVEX_URL is not set; Convex features may not work."
     );
+  }
+  if (import.meta.env.DEV) {
+    console.info("[main] Convex client config", {
+      convexUrl: convexUrl || "(empty)",
+      source: runtimeConvexUrl
+        ? "runtime"
+        : buildConvexUrl
+          ? "build (VITE_CONVEX_URL)"
+          : "none",
+      HOSTED_MODE,
+    });
+  }
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    (window as unknown as { __mcpjamConvex?: unknown }).__mcpjamConvex = {
+      convexUrl,
+      buildConvexUrl,
+      runtimeConvexUrl,
+    };
   }
   if (
     HOSTED_MODE &&
@@ -119,6 +184,7 @@ if (isInIframe) {
   })();
 
   const convex = new ConvexReactClient(convexUrl);
+  normalizeInitialLegacyHashBookmark();
 
   const Providers = (
     <AuthKitProvider
@@ -127,9 +193,10 @@ if (isInIframe) {
       devMode={workosDevMode}
       {...workosClientOptions}
     >
-      <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
-        <GuestConvexAuthBridge client={convex} />
-        <App />
+      <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
+        <AuthBootstrap>
+          <AppRouterProvider />
+        </AuthBootstrap>
       </ConvexProviderWithAuthKit>
     </AuthKitProvider>
   );
@@ -137,6 +204,17 @@ if (isInIframe) {
   // Async bootstrap to initialize session token before rendering
   async function bootstrap() {
     const root = createRoot(document.getElementById("root")!);
+
+    if (electronHostedAuthCallbackUrl) {
+      root.render(
+        <StrictMode>
+          <OAuthDesktopReturnNotice
+            returnToElectronUrl={electronHostedAuthCallbackUrl}
+          />
+        </StrictMode>,
+      );
+      return;
+    }
 
     try {
       if (!HOSTED_MODE) {

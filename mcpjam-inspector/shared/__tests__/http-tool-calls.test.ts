@@ -708,4 +708,284 @@ describe("executeToolCallsFromMessages", () => {
       expect((messages[2] as any).content[0].toolCallId).toBe("call-1");
     });
   });
+
+  describe("abort signal", () => {
+    it("throws AbortError without calling the tool when the signal is already aborted", async () => {
+      const execute = vi.fn();
+      const tools = {
+        my_tool: { description: "test", execute },
+      };
+      const controller = new AbortController();
+      controller.abort();
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await expect(
+        executeToolCallsFromMessages(messages, {
+          tools,
+          abortSignal: controller.signal,
+        })
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it("forwards the abort signal into tool.execute", async () => {
+      const execute = vi.fn().mockResolvedValue({ ok: true });
+      const tools = {
+        my_tool: { description: "test", execute },
+      };
+      const controller = new AbortController();
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, {
+        tools,
+        abortSignal: controller.signal,
+      });
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      const call = execute.mock.calls[0];
+      expect(call[1]?.abortSignal).toBe(controller.signal);
+    });
+
+    it("drops tool results that resolve after abort (post-await re-check)", async () => {
+      // Regression: if a tool ignores the abort signal and resolves a
+      // result after the signal fired, that result must NOT be
+      // serialized into history. Building it would persist a phantom
+      // "successful tool result" past the cancellation point.
+      const controller = new AbortController();
+      const execute = vi.fn().mockImplementation(async () => {
+        // Tool ignores the signal: aborts mid-flight but still resolves.
+        controller.abort();
+        return { ok: "this should never be persisted" };
+      });
+      const tools = {
+        my_tool: { description: "test", execute },
+      };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await expect(
+        executeToolCallsFromMessages(messages, {
+          tools,
+          abortSignal: controller.signal,
+        })
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      // Crucially: no tool-result message was inserted into history,
+      // even though `execute` resolved successfully.
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("assistant");
+    });
+
+    it("rethrows tool aborts instead of storing them as error-text results", async () => {
+      const abortError = Object.assign(new Error("aborted"), {
+        name: "AbortError",
+      });
+      const execute = vi.fn().mockRejectedValue(abortError);
+      const tools = {
+        my_tool: { description: "test", execute },
+      };
+      const controller = new AbortController();
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await expect(
+        executeToolCallsFromMessages(messages, {
+          tools,
+          abortSignal: controller.signal,
+        })
+      ).rejects.toBe(abortError);
+
+      // Crucially: no synthesized tool-result was inserted. Persisting
+      // an "AbortError" string into history would poison subsequent turns.
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("assistant");
+    });
+  });
+
+  // SEP-1865 App-Provided Tools: the MCPJam free-model handler relies on
+  // this flag to leave app-aliased tool calls unresolved (so the client's
+  // `useChat.onToolCall` can dispatch them into the iframe) instead of
+  // crashing the agent loop with "Tool not found" or
+  // "tool.execute is not a function".
+  describe("skipNonExecutableTools (SEP-1865)", () => {
+    it("silently skips registered app aliases whose tool has no execute function", async () => {
+      const tools = {
+        srv_real: { execute: vi.fn().mockResolvedValue({ ok: true }) },
+        app_abcd1234: {
+          description: "[Demo] ping",
+          // no execute
+        },
+      };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-srv",
+              toolName: "srv_real",
+              input: {},
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+        skipNonExecutableTools: true,
+      });
+
+      expect(tools.srv_real.execute).toHaveBeenCalledTimes(1);
+      // One result inserted for the server tool; the app alias remains
+      // unresolved in messageHistory so the caller can detect it via
+      // hasUnresolvedToolCalls and pause for the client.
+      expect(newMessages).toHaveLength(1);
+      expect((newMessages[0] as any).content[0].toolCallId).toBe("call-srv");
+      // The unresolved app tool call must NOT have produced a synthetic
+      // error result (that would corrupt model context).
+      const allResults = messages.flatMap((m) =>
+        m.role === "tool" ? (m as any).content : [],
+      );
+      const appResult = allResults.find(
+        (c: any) => c.toolCallId === "call-app",
+      );
+      expect(appResult).toBeUndefined();
+    });
+
+    it("does not skip unknown app aliases", async () => {
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, {
+        tools: {},
+        skipNonExecutableTools: true,
+      });
+
+      expect(messages).toHaveLength(2);
+      expect((messages[1] as any).content[0].output.value).toMatch(
+        /not found/i,
+      );
+    });
+
+    it("silently skips registered app tools without an execute function", async () => {
+      // App tools are registered server-side via `tool({...})` with no
+      // execute. Without the flag, the helper would TypeError mid-iteration.
+      const tools = {
+        app_abcd1234: {
+          description: "[Demo] ping",
+          // no execute
+        },
+      };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+        skipNonExecutableTools: true,
+      });
+
+      expect(newMessages).toHaveLength(0);
+      expect(messages).toHaveLength(1); // no synthesized tool-result
+    });
+
+    it("still throws Tool not found when the flag is OFF (default)", async () => {
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, { tools: {} });
+
+      // Helper catches its own throws and writes them as tool-result with
+      // output.type === "error-text" — verify the error string mentions
+      // the unknown tool so this regression is loud.
+      expect(messages).toHaveLength(2);
+      expect((messages[1] as any).content[0].output.value).toMatch(
+        /not found/i,
+      );
+    });
+  });
 });

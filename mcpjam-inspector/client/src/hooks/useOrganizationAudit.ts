@@ -10,7 +10,7 @@ export interface AuditEvent {
   actorEmail?: string;
   action: string;
   organizationId?: string;
-  workspaceId?: string;
+  projectId?: string;
   targetType: string;
   targetId: string;
   metadata?: unknown;

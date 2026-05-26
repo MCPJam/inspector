@@ -1,16 +1,7 @@
-import { useMemo, useState } from "react";
-import {
-  Trash2,
-  Loader2,
-  X,
-  Search,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-} from "lucide-react";
+import { useMemo } from "react";
+import { Trash2, Loader2, X } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { cn } from "@/lib/utils";
-import { Input } from "@mcpjam/design-system/input";
 
 interface SuitesOverviewProps {
   overview: EvalSuiteOverviewEntry[];
@@ -30,7 +21,7 @@ export function SuitesOverview({
   onRerun,
   onCancelRun,
   onDelete,
-  connectedServerNames,
+  connectedServerNames: _connectedServerNames,
   rerunningSuiteId,
   cancellingRunId,
   deletingSuiteId,
@@ -74,11 +65,8 @@ export function SuitesOverview({
         {sortedOverview.map((entry) => {
           const { suite, latestRun, totals } = entry;
 
-          const servers = suite.config?.environment?.servers ?? [];
+          const servers = suite.environment?.servers ?? [];
           const hasServersConfigured = servers.length > 0;
-          const missingServers = servers.filter(
-            (server) => !connectedServerNames.has(server),
-          );
           const canRerun = hasServersConfigured;
           const isRerunning = rerunningSuiteId === suite._id;
 
@@ -92,8 +80,6 @@ export function SuitesOverview({
 
           const runsLabel =
             totals.runs === 1 ? "1 run" : `${totals.runs} runs total`;
-
-          const numberOfTestCases = suite.config?.tests?.length ?? 0;
 
           const isRunInProgress =
             latestRun?.status === "running" || latestRun?.status === "pending";
@@ -143,16 +129,6 @@ export function SuitesOverview({
                       <span>{lastRunLabel}</span>
                       <span>•</span>
                       <span>{runsLabel}</span>
-                      {numberOfTestCases > 0 ? (
-                        <>
-                          <span>•</span>
-                          <span>
-                            {numberOfTestCases === 1
-                              ? "1 test case"
-                              : `${numberOfTestCases} test cases`}
-                          </span>
-                        </>
-                      ) : null}
                       {servers.length > 0 ? (
                         <>
                           <span>•</span>

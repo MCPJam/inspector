@@ -5,19 +5,15 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
-import {
-  LoadingIndicatorContent,
-  type LoadingIndicatorVariant,
-} from "./loading-indicator-content";
+} from "@/contexts/chatbox-client-style-context";
+import { LoadingIndicatorContent } from "./loading-indicator-content";
 import { getAssistantAvatarDescriptor } from "./assistant-avatar";
+import { CopilotMessageHeader } from "@/components/chat-v2/thread/copilot-message-header";
 
 export function ThinkingIndicator({
   model,
-  resolvedVariant,
 }: {
   model: ModelDefinition;
-  resolvedVariant: LoadingIndicatorVariant;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -28,6 +24,27 @@ export function ThinkingIndicator({
     chatboxHostStyle,
   });
   const shouldRenderAssistantAvatar = chatboxHostStyle === null;
+  // Copilot's UI keeps the "Copilot + mascot" row visible during the
+  // thinking state too — the dot sits BELOW it. Matches MessageView's
+  // own conditional render so the header is identical in both phases.
+  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
+
+  if (shouldRenderCopilotHeader) {
+    return (
+      <article
+        className="w-full text-sm leading-6 text-muted-foreground"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="mb-2">
+          <CopilotMessageHeader />
+        </div>
+        <div className="inline-flex items-center gap-2 text-muted-foreground/80">
+          <LoadingIndicatorContent modelProvider={model?.provider ?? null} />
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article
@@ -58,7 +75,7 @@ export function ThinkingIndicator({
       ) : null}
 
       <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-        <LoadingIndicatorContent variant={resolvedVariant} />
+        <LoadingIndicatorContent modelProvider={model?.provider ?? null} />
       </div>
     </article>
   );

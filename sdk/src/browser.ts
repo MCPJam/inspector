@@ -84,6 +84,19 @@ export {
   MCPJAM_LOGO_URI,
   getBrowserDebugDynamicRegistrationMetadata,
 } from "./oauth/client-identity.js";
+export {
+  resolveAuthorizationPlan,
+  resolveRegistrationStrategies,
+} from "./oauth/authorization-plan.js";
+export type {
+  AuthorizationDiscoverySnapshot,
+  AuthorizationPlanCapabilities,
+  AuthorizationPlanInput,
+  OAuthProtocolMode,
+  OAuthRegistrationMode,
+  OAuthRegistrationStrategy,
+  ResolvedAuthorizationPlan,
+} from "./oauth/authorization-plan.js";
 export { buildOAuthSequenceActions } from "./oauth/sequence-actions.js";
 export {
   createOAuthStateMachine,
@@ -91,6 +104,14 @@ export {
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
 } from "./oauth/state-machines/factory.js";
+export type {
+  ProbeHttpAttempt,
+  ProbeInitializeInfo,
+  ProbeMcpServerConfig,
+  ProbeMcpServerResult,
+  ProbeOAuthDetails,
+  ProbeTransportResult,
+} from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 export type {
   OAuthAuthorizationRequestResult,
@@ -122,6 +143,7 @@ export type {
   OAuthFlowStep,
   OAuthProtocolVersion,
   OAuthRequestExecutor,
+  OAuthRequestResult,
   OAuthStateMachine,
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
@@ -138,3 +160,33 @@ export type {
   ConformanceSuiteId,
   ConformanceSupport,
 } from "./mcp-conformance/transport-support.js";
+
+// Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
+// resolver — DOM-free, React-free, Convex-free. Browser-safe by
+// construction. Re-exported here so client renderers can import it
+// without pulling in Node-only entrypoints.
+export {
+  resolveSandboxCsp,
+  resolveSandboxPermissions,
+} from "./sandbox-policy.js";
+export type {
+  SandboxCspMode,
+  SandboxPermissionsMode,
+  SandboxCspDomainSet,
+  SandboxCspPolicy,
+  SandboxPermissionsPolicy,
+  ResourceDeclaredCsp,
+  EffectiveSandboxCsp,
+  EffectiveSandboxPermissions,
+  ResolveSandboxCspArgs,
+  ResolveSandboxPermissionsArgs,
+} from "./sandbox-policy.js";
+
+// MCP protocol-version constants + predicates. Browser-safe by
+// construction (pure data + pure functions, no Node deps).
+export {
+  MCP_PROTOCOL_VERSIONS,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "./mcp-client-manager/mcp-protocol-version.js";

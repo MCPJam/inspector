@@ -8,9 +8,9 @@ vi.mock("../config", () => ({
 
 import {
   buildHostedEvalServerBatchRequest,
-  buildHostedServerBatchRequest,
-  buildHostedServerRequest,
-  setHostedApiContext,
+  buildServerBatchRequest,
+  buildServerRequest,
+  setApiContext,
 } from "../apis/web/context";
 
 describe("hosted web context", () => {
@@ -20,138 +20,118 @@ describe("hosted web context", () => {
   >;
 
   afterEach(() => {
-    setHostedApiContext(null);
+    setApiContext(null);
     localStorage.removeItem("mcp-tokens-myServer");
   });
 
-  it("includes share token and chat_v2 scope for shared-chat requests", () => {
-    setHostedApiContext({
-      workspaceId: "ws_shared",
+  it("includes chatbox id, accessVersion, and chat_v2 scope for chatbox requests", () => {
+    setApiContext({
+      projectId: "ws_shared",
       serverIdsByName: { bench: "srv_bench" },
       getAccessToken: async () => null,
-      shareToken: "share_tok_123",
+      chatboxId: "cbx_123",
+      accessVersion: 7,
     });
 
-    expect(buildHostedServerRequest("bench")).toEqual({
-      workspaceId: "ws_shared",
+    expect(buildServerRequest("bench")).toEqual({
+      projectId: "ws_shared",
       serverId: "srv_bench",
       serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
-      shareToken: "share_tok_123",
+      chatboxId: "cbx_123",
+      accessVersion: 7,
     });
 
-    expect(buildHostedServerBatchRequest(["bench"])).toEqual({
-      workspaceId: "ws_shared",
+    expect(buildServerBatchRequest(["bench"])).toEqual({
+      projectId: "ws_shared",
       serverIds: ["srv_bench"],
       serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
-      shareToken: "share_tok_123",
+      chatboxId: "cbx_123",
+      accessVersion: 7,
     });
 
     expect(buildHostedEvalServerBatchRequest(["bench"])).toEqual({
-      workspaceId: "ws_shared",
+      projectId: "ws_shared",
       serverIds: ["srv_bench"],
       serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
-      shareToken: "share_tok_123",
+      chatboxId: "cbx_123",
+      accessVersion: 7,
     });
   });
 
-  it("omits share scope fields when no share token is present", () => {
-    setHostedApiContext({
-      workspaceId: "ws_regular",
+  it("omits accessVersion when chatboxId is absent", () => {
+    setApiContext({
+      projectId: "ws_regular",
       serverIdsByName: { bench: "srv_bench" },
       getAccessToken: async () => null,
+      // Stray accessVersion without chatboxId — never emitted on the wire.
+      accessVersion: 5,
     });
-
-    expect(buildHostedServerRequest("bench")).toEqual({
-      workspaceId: "ws_regular",
+    expect(buildServerRequest("bench")).toEqual({
+      projectId: "ws_regular",
       serverId: "srv_bench",
       serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
     });
   });
 
-  it("builds guest request from serverConfigs when in guest mode", () => {
-    setHostedApiContext({
-      workspaceId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: { headers: { "X-Api-Key": "key123" } },
-        },
-      },
+  it("rejects non-finite accessVersion even with chatboxId set", () => {
+    setApiContext({
+      projectId: "ws_shared",
+      serverIdsByName: { bench: "srv_bench" },
+      getAccessToken: async () => null,
+      chatboxId: "cbx_123",
+      accessVersion: Number.NaN,
+    });
+    expect(buildServerRequest("bench")).toEqual({
+      projectId: "ws_shared",
+      serverId: "srv_bench",
+      serverName: "bench",
+      clientCapabilities: defaultClientCapabilities,
+      accessScope: "chat_v2",
+      chatboxId: "cbx_123",
+    });
+  });
+
+  it("omits chatbox scope fields when no chatbox id is present", () => {
+    setApiContext({
+      projectId: "ws_regular",
+      serverIdsByName: { bench: "srv_bench" },
+      getAccessToken: async () => null,
     });
 
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: { "X-Api-Key": "key123" },
+    expect(buildServerRequest("bench")).toEqual({
+      projectId: "ws_regular",
+      serverId: "srv_bench",
+      serverName: "bench",
       clientCapabilities: defaultClientCapabilities,
     });
   });
 
-  it("keeps using direct guest requests when AuthKit still reports a session", () => {
-    setHostedApiContext({
-      workspaceId: null,
-      hasSession: true,
+  it("throws BootstrapNotReadyError when projectId is missing", () => {
+    setApiContext({
+      projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: { headers: { "X-Api-Key": "key123" } },
-        },
-      },
     });
 
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: { "X-Api-Key": "key123" },
-      clientCapabilities: defaultClientCapabilities,
-    });
+    expect(() => buildServerRequest("myServer")).toThrow(
+      "hosted projectId is not in the API context yet",
+    );
+    expect(() => buildServerBatchRequest(["myServer"])).toThrow(
+      "hosted projectId is not in the API context yet",
+    );
+    expect(() => buildHostedEvalServerBatchRequest(["myServer"])).toThrow(
+      "hosted projectId is not in the API context yet",
+    );
   });
 
-  it("includes the latest guest OAuth token separately from server headers", () => {
-    setHostedApiContext({
-      workspaceId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      guestOauthTokensByServerName: {
-        myServer: "fresh-access-token",
-      },
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {
-              Authorization: "Bearer stale-access-token",
-              "X-Api-Key": "key123",
-            },
-          },
-        },
-      },
-    });
-
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: {
-        Authorization: "Bearer stale-access-token",
-        "X-Api-Key": "key123",
-      },
-      clientCapabilities: defaultClientCapabilities,
-      oauthAccessToken: "fresh-access-token",
-    });
-  });
-
-  it("prefers persisted guest OAuth token from localStorage when available", () => {
+  it("ignores persisted guest OAuth token from localStorage", () => {
     localStorage.setItem(
       "mcp-tokens-myServer",
       JSON.stringify({
@@ -159,51 +139,15 @@ describe("hosted web context", () => {
       }),
     );
 
-    setHostedApiContext({
-      workspaceId: null,
+    setApiContext({
+      projectId: "ws_regular",
       isAuthenticated: false,
-      serverIdsByName: {},
-      guestOauthTokensByServerName: {
-        myServer: "context-access-token",
-      },
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {
-              "X-Api-Key": "key123",
-            },
-          },
-        },
-      },
+      serverIdsByName: { myServer: "srv_myServer" },
     });
 
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: {
-        "X-Api-Key": "key123",
-      },
-      clientCapabilities: defaultClientCapabilities,
-      oauthAccessToken: "storage-access-token",
-    });
-  });
-
-  it("handles URL objects in guest server configs", () => {
-    setHostedApiContext({
-      workspaceId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: new URL("https://example.com/mcp"),
-          requestInit: { headers: {} },
-        },
-      },
-    });
-
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
+    expect(buildServerRequest("myServer")).toEqual({
+      projectId: "ws_regular",
+      serverId: "srv_myServer",
       serverName: "myServer",
       clientCapabilities: defaultClientCapabilities,
     });
@@ -215,33 +159,56 @@ describe("hosted web context", () => {
       experimental: { inspectorProfile: true },
     } as Record<string, unknown>;
 
-    setHostedApiContext({
-      workspaceId: "ws_override",
+    setApiContext({
+      projectId: "ws_override",
       serverIdsByName: { bench: "srv_bench" },
       clientCapabilities,
       getAccessToken: async () => null,
     });
 
-    expect(buildHostedServerRequest("bench")).toEqual({
-      workspaceId: "ws_override",
+    expect(buildServerRequest("bench")).toEqual({
+      projectId: "ws_override",
       serverId: "srv_bench",
       serverName: "bench",
       clientCapabilities,
     });
   });
 
-  it("blocks hosted workspace requests while client config sync is pending", () => {
-    setHostedApiContext({
-      workspaceId: "ws_pending",
+  it("forwards MCP profile pins on single-server hosted requests", () => {
+    setApiContext({
+      projectId: "ws_stateless",
+      serverIdsByName: { stateless: "srv_stateless" },
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateless: "DRAFT-2026-v1",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(buildServerRequest("stateless")).toEqual({
+      projectId: "ws_stateless",
+      serverId: "srv_stateless",
+      serverName: "stateless",
+      clientCapabilities: defaultClientCapabilities,
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      mcpProtocolVersion: "DRAFT-2026-v1",
+    });
+  });
+
+  it("blocks hosted project requests while client config sync is pending", () => {
+    setApiContext({
+      projectId: "ws_pending",
       serverIdsByName: { bench: "srv_bench" },
       clientConfigSyncPending: true,
       getAccessToken: async () => null,
     });
 
-    expect(() => buildHostedServerRequest("bench")).toThrow(
+    expect(() => buildServerRequest("bench")).toThrow(
       CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
     );
-    expect(() => buildHostedServerBatchRequest(["bench"])).toThrow(
+    expect(() => buildServerBatchRequest(["bench"])).toThrow(
       CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
     );
     expect(() => buildHostedEvalServerBatchRequest(["bench"])).toThrow(
@@ -249,42 +216,9 @@ describe("hosted web context", () => {
     );
   });
 
-  it("keeps direct guest requests working while sync-pending gating is enabled elsewhere", () => {
-    setHostedApiContext({
-      workspaceId: null,
-      isAuthenticated: false,
-      clientConfigSyncPending: true,
-      serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-        },
-      },
-    });
-
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      clientCapabilities: defaultClientCapabilities,
-    });
-  });
-
-  it("throws when guest server config is not found", () => {
-    setHostedApiContext({
-      workspaceId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      serverConfigs: {},
-    });
-
-    expect(() => buildHostedServerRequest("unknown")).toThrow(
-      'No guest server config found for "unknown"',
-    );
-  });
-
   it("keeps hosted eval server names aligned with deduped server ids", () => {
-    setHostedApiContext({
-      workspaceId: "ws_eval",
+    setApiContext({
+      projectId: "ws_eval",
       isAuthenticated: true,
       serverIdsByName: {
         asana: "srv_asana",
@@ -296,7 +230,7 @@ describe("hosted web context", () => {
     expect(
       buildHostedEvalServerBatchRequest(["asana", "srv_asana", "github"]),
     ).toEqual({
-      workspaceId: "ws_eval",
+      projectId: "ws_eval",
       serverIds: ["srv_asana", "srv_github"],
       serverNames: ["asana", "github"],
       clientCapabilities: defaultClientCapabilities,

@@ -44,6 +44,7 @@ import {
   parseScopeString,
   resolveRequestedScopeValue,
 } from "./shared/challenges.js";
+import { resolvePreregisteredClientAuthMethod } from "./shared/client-auth.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 // Re-export types for backward compatibility
@@ -407,6 +408,7 @@ export const createDebugOAuthStateMachine = (
     customScopes,
     customHeaders,
     authMode,
+    hasClientSecret = false,
     strictConformance = false,
     registrationStrategy = "dcr", // Default to DCR for 2025-06-18
   } = config;
@@ -435,6 +437,18 @@ export const createDebugOAuthStateMachine = (
       body: options.body as any,
     });
 
+  const resolvePreregisteredClientAuth = (clientSecret?: string) => {
+    const result = resolvePreregisteredClientAuthMethod({
+      authorizationServerMetadata: getCurrentState()
+        .authorizationServerMetadata as Record<string, unknown> | undefined,
+      hasClientSecret: Boolean(clientSecret || hasClientSecret),
+    });
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+    return result.method;
+  };
+
   const loadFallbackPreregisteredClient = async (note: string) => {
     const { clientId, clientSecret } =
       (await loadPreregisteredCredentials?.({
@@ -446,19 +460,21 @@ export const createDebugOAuthStateMachine = (
       return undefined;
     }
 
+    const tokenEndpointAuthMethod =
+      resolvePreregisteredClientAuth(clientSecret);
     const preregInfo: Record<string, any> = {
       "Client ID": clientId,
-      "Client Secret": clientSecret
+      "Client Secret": clientSecret || hasClientSecret
         ? "Configured"
         : "Not provided (public client)",
-      "Token Auth Method": clientSecret ? "client_secret_post" : "none",
+      "Token Auth Method": tokenEndpointAuthMethod,
       Note: note,
     };
 
     return {
       clientId,
       clientSecret: clientSecret || undefined,
-      tokenEndpointAuthMethod: clientSecret ? "client_secret_post" : "none",
+      tokenEndpointAuthMethod,
       infoLogs: addInfoLog(
         getCurrentState(),
         "received_client_credentials",
@@ -1107,15 +1123,16 @@ export const createDebugOAuthStateMachine = (
                 return;
               }
 
+              const tokenEndpointAuthMethod =
+                resolvePreregisteredClientAuth(clientSecret);
+
               // Add info log for pre-registered client
               const preregInfo: Record<string, any> = {
                 "Client ID": clientId,
-                "Client Secret": clientSecret
+                "Client Secret": clientSecret || hasClientSecret
                   ? "Configured"
                   : "Not provided (public client)",
-                "Token Auth Method": clientSecret
-                  ? "client_secret_post"
-                  : "none",
+                "Token Auth Method": tokenEndpointAuthMethod,
                 Note: "Using pre-registered client credentials from server config (skipped DCR)",
               };
 
@@ -1131,9 +1148,7 @@ export const createDebugOAuthStateMachine = (
                 currentStep: "received_client_credentials",
                 clientId,
                 clientSecret: clientSecret || undefined,
-                tokenEndpointAuthMethod: clientSecret
-                  ? "client_secret_post"
-                  : "none",
+                tokenEndpointAuthMethod,
                 infoLogs,
                 isInitiatingAuth: false,
               });

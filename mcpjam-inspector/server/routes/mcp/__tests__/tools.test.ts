@@ -126,7 +126,7 @@ describe("POST /api/mcp/tools/execute", () => {
     });
 
     it("returns 400 when server is not connected", async () => {
-      manager.getClient.mockReturnValue(null);
+      manager.getManagedClient.mockReturnValue(undefined);
 
       const res = await postJson(app, "/api/mcp/tools/execute", {
         serverId: "disconnected-server",

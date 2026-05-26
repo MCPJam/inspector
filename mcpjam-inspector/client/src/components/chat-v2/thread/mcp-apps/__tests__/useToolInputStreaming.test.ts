@@ -130,7 +130,10 @@ interface HookProps {
   toolOutput: unknown;
   toolErrorText: string | undefined;
   toolCallId: string;
+  sendToolInput: boolean;
+  onToolInputSent?: () => void;
   reinitCount: number;
+  mcpAppsCapabilitiesRef: React.RefObject<any>;
 }
 
 function createDefaultProps(
@@ -138,6 +141,10 @@ function createDefaultProps(
 ): HookProps {
   const bridgeRef = { current: bridge };
   const isReadyRef = { current: true };
+  // Default to null → "default on" per the hook's gate contract.
+  // Tests that want to exercise the gate flip mcpAppsCapabilitiesRef.current
+  // to a resolved matrix value with the relevant dimension off.
+  const mcpAppsCapabilitiesRef = { current: null };
   return {
     bridgeRef,
     isReady: true,
@@ -147,7 +154,9 @@ function createDefaultProps(
     toolOutput: undefined,
     toolErrorText: undefined,
     toolCallId: "call-1",
+    sendToolInput: true,
     reinitCount: 0,
+    mcpAppsCapabilitiesRef,
   };
 }
 
@@ -323,16 +332,14 @@ describe("useToolInputStreaming", () => {
   it("signalStreamingRender sets the render signal", () => {
     const props = createDefaultProps(bridge);
     props.toolState = "input-streaming";
-    // Start without toolInput — the reset-on-toolCallId effect also fires on
-    // the first render and would undo the partial delivery state.
     props.toolInput = undefined;
 
     const { result, rerender } = renderHook(() => useToolInputStreaming(props));
 
     expect(result.current.canRenderStreamingInput).toBe(false);
 
-    // Now set toolInput — only the partial delivery effect re-fires,
-    // the reset effect does NOT (toolCallId hasn't changed).
+    // Now set toolInput — only the partial delivery effect re-fires
+    // because toolCallId hasn't changed.
     props.toolInput = { code: "hello" };
     rerender();
 
@@ -357,7 +364,7 @@ describe("useToolInputStreaming", () => {
     expect(result.current.canRenderStreamingInput).toBe(true);
   });
 
-  it("fallback reveal timer fires after STREAMING_REVEAL_FALLBACK_MS", () => {
+  it("fallback reveal timer renders when parseable partial args never arrive", () => {
     const props = createDefaultProps(bridge);
     props.toolState = "input-streaming";
     // No toolInput — so no partial will be sent, relying on fallback timer
@@ -367,15 +374,32 @@ describe("useToolInputStreaming", () => {
     // Before fallback timer: not signaled, no delivery
     expect(result.current.canRenderStreamingInput).toBe(false);
 
-    // Advance past fallback timer
+    // Advance past fallback timer. The host should reveal instead of leaving
+    // streaming apps hidden indefinitely when no parseable partial input arrives.
     act(() => {
       vi.advanceTimersByTime(STREAMING_REVEAL_FALLBACK_MS + 10);
     });
 
-    // Fallback timer sets streamingRenderSignaled, but hasDeliveredStreamingInput
-    // is still false — so canRenderStreamingInput remains false
-    // (both conditions must be true)
+    expect(result.current.canRenderStreamingInput).toBe(true);
+  });
+
+  it("keeps fallback reveal alive after a render signal without partial args", () => {
+    const props = createDefaultProps(bridge);
+    props.toolState = "input-streaming";
+
+    const { result } = renderHook(() => useToolInputStreaming(props));
+
+    act(() => {
+      result.current.signalStreamingRender();
+    });
+
     expect(result.current.canRenderStreamingInput).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(STREAMING_REVEAL_FALLBACK_MS + 10);
+    });
+
+    expect(result.current.canRenderStreamingInput).toBe(true);
   });
 
   it("does not send partial when bridge is null", () => {
@@ -399,6 +423,21 @@ describe("useToolInputStreaming", () => {
     renderHook(() => useToolInputStreaming(props));
 
     expect(bridge.sendToolInputPartial).not.toHaveBeenCalled();
+  });
+
+  it("suppresses tool input while still rendering and delivering results", () => {
+    const props = createDefaultProps(bridge);
+    props.sendToolInput = false;
+    props.toolState = "output-available";
+    props.toolInput = { code: "final" };
+    props.toolOutput = { content: [{ type: "text", text: "result" }] };
+
+    const { result } = renderHook(() => useToolInputStreaming(props));
+
+    expect(result.current.canRenderStreamingInput).toBe(true);
+    expect(bridge.sendToolInput).not.toHaveBeenCalled();
+    expect(bridge.sendToolInputPartial).not.toHaveBeenCalled();
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(1);
   });
 
   it("does not send complete input for duplicate payload", () => {
@@ -430,6 +469,21 @@ describe("useToolInputStreaming", () => {
     rerender();
 
     expect(bridge.sendToolResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends identical tool results for different tool calls", () => {
+    const props = createDefaultProps(bridge);
+    props.toolState = "output-available";
+    props.toolOutput = { content: [{ type: "text", text: "same" }] };
+
+    const { rerender } = renderHook(() => useToolInputStreaming(props));
+
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(1);
+
+    props.toolCallId = "call-2";
+    rerender();
+
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(2);
   });
 
   it("does not send tool error for duplicate error message", () => {
@@ -480,5 +534,123 @@ describe("useToolInputStreaming", () => {
     rerender();
 
     expect(bridge.sendToolCancelled).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("useToolInputStreaming — MCP Apps matrix notification gates", () => {
+  let bridge: ReturnType<typeof createMockBridge>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    bridge = createMockBridge();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Helper: build a resolved matrix with all dimensions on except the
+  // ones the test wants to flip off. Mirrors the inspector's
+  // MCP_APPS_FULL_SURFACE so tests stay self-contained.
+  function fullSurfaceMatrix(overrides: Record<string, unknown> = {}) {
+    return {
+      availableDisplayModes: ["inline", "fullscreen", "pip"],
+      toolInputPartial: true,
+      toolCancelled: true,
+      hostContextChanged: true,
+      resourceTeardown: true,
+      toolInfo: true,
+      openLinks: true,
+      serverTools: true,
+      serverResources: true,
+      logging: true,
+      updateModelContext: true,
+      message: true,
+      sandboxPermissions: true,
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
+      resourcePrefersBorder: true,
+      downloadFile: true,
+      requestTeardown: true,
+      ...overrides,
+    };
+  }
+
+  it("suppresses bridge.sendToolInputPartial when matrix has toolInputPartial: false (simulates Copilot)", () => {
+    const props = createDefaultProps(bridge);
+    props.mcpAppsCapabilitiesRef = {
+      current: fullSurfaceMatrix({ toolInputPartial: false }),
+    };
+    props.toolState = "input-streaming";
+    props.toolInput = { code: "hello" };
+    renderHook(() => useToolInputStreaming(props));
+    // The streaming UX still progressed internally, but the wire
+    // notification was suppressed. Widget on this simulated host
+    // sees no `tool-input-partial` — same as real Copilot.
+    expect(bridge.sendToolInputPartial).not.toHaveBeenCalled();
+  });
+
+  it("emits bridge.sendToolInputPartial when matrix is null (default-on fallback)", () => {
+    // Null matrix ref → fail-open. During initial mount before the
+    // renderer's matrix resolver runs, notifications must still
+    // emit (matches pre-matrix behavior for any host).
+    const props = createDefaultProps(bridge);
+    props.mcpAppsCapabilitiesRef = { current: null };
+    props.toolState = "input-streaming";
+    props.toolInput = { code: "hello" };
+    renderHook(() => useToolInputStreaming(props));
+    expect(bridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits bridge.sendToolInputPartial when matrix.toolInputPartial: true (default ChatGPT/Claude surface)", () => {
+    const props = createDefaultProps(bridge);
+    props.mcpAppsCapabilitiesRef = { current: fullSurfaceMatrix() };
+    props.toolState = "input-streaming";
+    props.toolInput = { code: "hello" };
+    renderHook(() => useToolInputStreaming(props));
+    expect(bridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses bridge.sendToolCancelled on tool error when matrix has toolCancelled: false (simulates Copilot)", () => {
+    const props = createDefaultProps(bridge);
+    props.mcpAppsCapabilitiesRef = {
+      current: fullSurfaceMatrix({ toolCancelled: false }),
+    };
+    props.toolState = "output-error";
+    props.toolErrorText = "boom";
+    renderHook(() => useToolInputStreaming(props));
+    expect(bridge.sendToolCancelled).not.toHaveBeenCalled();
+  });
+
+  it("emits bridge.sendToolCancelled on tool error when matrix.toolCancelled: true", () => {
+    const props = createDefaultProps(bridge);
+    props.mcpAppsCapabilitiesRef = { current: fullSurfaceMatrix() };
+    props.toolState = "output-error";
+    props.toolErrorText = "boom";
+    renderHook(() => useToolInputStreaming(props));
+    expect(bridge.sendToolCancelled).toHaveBeenCalledWith({ reason: "boom" });
+  });
+
+  it("toolInputPartial gate and toolCancelled gate are independent (flipping one doesn't suppress the other)", () => {
+    // Two-matrix isolation defense at the runtime-gate level —
+    // each row gates exactly its own emission, no spurious
+    // coupling.
+    const props = createDefaultProps(bridge);
+    props.mcpAppsCapabilitiesRef = {
+      current: fullSurfaceMatrix({
+        toolInputPartial: false,
+        toolCancelled: true,
+      }),
+    };
+    props.toolState = "input-streaming";
+    props.toolInput = { code: "hello" };
+    const { rerender } = renderHook(() => useToolInputStreaming(props));
+    expect(bridge.sendToolInputPartial).not.toHaveBeenCalled();
+    // Now flip to error state with the same matrix → tool-cancelled
+    // must still fire because that row is on.
+    props.toolState = "output-error";
+    props.toolErrorText = "boom";
+    rerender();
+    expect(bridge.sendToolCancelled).toHaveBeenCalledWith({ reason: "boom" });
   });
 });

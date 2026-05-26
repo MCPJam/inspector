@@ -27,7 +27,7 @@ export function McpResourcesArticle() {
         </ul>
       </Section>
 
-      <Section step={2} title="How Hosts Discover Them">
+      <Section step={2} title="How Clients Discover Them">
         <p className="text-sm text-muted-foreground leading-relaxed">
           Servers can expose direct resources and resource templates. Direct
           resources point to one concrete item. Templates describe a pattern the

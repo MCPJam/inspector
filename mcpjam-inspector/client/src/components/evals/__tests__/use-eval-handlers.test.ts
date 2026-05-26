@@ -13,10 +13,21 @@ import { toast } from "sonner";
 import { formatEnsureServersReadyError, useEvalHandlers } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
-import { setHostedApiContext } from "@/lib/apis/web/context";
+import { setApiContext } from "@/lib/apis/web/context";
 
+const { hostedModeRef } = vi.hoisted(() => ({
+  hostedModeRef: { value: false },
+}));
 vi.mock("@/lib/config", () => ({
-  HOSTED_MODE: true,
+  get HOSTED_MODE() {
+    return hostedModeRef.value;
+  },
+}));
+vi.mock("@/lib/apis/mode-client", () => ({
+  isHostedMode: () => hostedModeRef.value,
+  ensureLocalMode: vi.fn(),
+  runByMode: (handlers: { local: () => unknown; hosted: () => unknown }) =>
+    hostedModeRef.value ? handlers.hosted() : handlers.local(),
 }));
 
 // Mock authFetch
@@ -76,24 +87,22 @@ vi.mock("sonner", () => ({
   },
 }));
 
-// Mock evals-router
-vi.mock("@/lib/evals-router", () => ({
-  navigateToEvalsRoute: vi.fn(),
-}));
+const mockNavigateApp = vi.fn();
+vi.mock("@/lib/app-navigation", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/app-navigation")>(
+    "@/lib/app-navigation",
+  );
+  return {
+    ...actual,
+    navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
+  };
+});
 
-const mockNavigateToCiEvalsRoute = vi.fn();
-vi.mock("@/lib/ci-evals-router", () => ({
-  navigateToCiEvalsRoute: (...args: unknown[]) =>
-    mockNavigateToCiEvalsRoute(...args),
-}));
-
-const mockIsHostedMode = vi.fn(() => false);
-vi.mock("@/lib/apis/mode-client", () => ({
-  isHostedMode: () => mockIsHostedMode(),
-  ensureLocalMode: vi.fn(),
-  runByMode: (handlers: { local: () => unknown; hosted: () => unknown }) =>
-    mockIsHostedMode() ? handlers.hosted() : handlers.local(),
-}));
+const mockIsHostedMode = {
+  mockReturnValue(next: boolean) {
+    hostedModeRef.value = next;
+  },
+};
 
 // Mock isMCPJamProvidedModel
 vi.mock("@/shared/types", () => ({
@@ -116,7 +125,7 @@ describe("useEvalHandlers", () => {
     selectedSuiteEntry: null,
     selectedSuiteId: null,
     selectedTestId: null,
-    workspaceId: "workspace-1",
+    projectId: "project-1",
     connectedServerNames: new Set(["server-1"]),
   };
 
@@ -147,7 +156,7 @@ describe("useEvalHandlers", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    setHostedApiContext(null);
+    setApiContext(null);
   });
 
   describe("handleRerun", () => {
@@ -200,6 +209,97 @@ describe("useEvalHandlers", () => {
         suiteDescription: "Suite description",
         serverIds: ["server-1"],
       });
+    });
+
+    it("sends iterationOverride as a top-level field while tests[].runs preserves the persisted default", async () => {
+      mockConvexQuery.mockResolvedValueOnce([
+        {
+          _id: "tc-1",
+          title: "case A",
+          query: "q a",
+          runs: 1,
+          models: [{ model: "gpt-4", provider: "openai" }],
+          expectedToolCalls: [],
+        },
+        {
+          _id: "tc-2",
+          title: "case B",
+          query: "q b",
+          runs: 7, // persisted default — must NOT be replaced by the override
+          models: [{ model: "gpt-4", provider: "openai" }],
+          expectedToolCalls: [],
+        },
+      ]);
+
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-iter",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          { iterationOverride: 4 },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.tests.length).toBe(2);
+      expect(requestBody.tests[0].runs).toBe(1);
+      expect(requestBody.tests[1].runs).toBe(7);
+      expect(requestBody.iterationOverride).toBe(4);
+    });
+
+    it("forwards matchOptionsOverride and iterationOverride together to runEvals", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-overrides",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            iterationOverride: 4,
+            matchOptionsOverride: { argumentMatching: "exact" },
+          },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.iterationOverride).toBe(4);
+      expect(requestBody.matchOptionsOverride).toEqual({
+        argumentMatching: "exact",
+      });
+    });
+
+    it("forwards matchOptionsOverride without iterationOverride", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-match-only",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            matchOptionsOverride: {
+              argumentMatching: "exact",
+              allowExtraToolCalls: false,
+            },
+          },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.matchOptionsOverride).toEqual({
+        argumentMatching: "exact",
+        allowExtraToolCalls: false,
+      });
+      expect(requestBody.iterationOverride).toBeUndefined();
     });
 
     it("includes promptTurns and expectedOutput when rerunning saved cases", async () => {
@@ -327,8 +427,8 @@ describe("useEvalHandlers", () => {
 
     it("normalizes hosted suite server ids before auto-connect and rerun", async () => {
       mockIsHostedMode.mockReturnValue(true);
-      setHostedApiContext({
-        workspaceId: "workspace-1",
+      setApiContext({
+        projectId: "project-1",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
@@ -352,7 +452,7 @@ describe("useEvalHandlers", () => {
         await result.current.handleRerun({
           _id: "suite-123",
           name: "Hosted id-backed suite",
-          description: "Stored with workspace server ids",
+          description: "Stored with project server ids",
           environment: { servers: ["srv-1"] },
         } as any);
       });
@@ -361,7 +461,7 @@ describe("useEvalHandlers", () => {
 
       const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(requestBody).toMatchObject({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
         storageServerIds: ["server-1"],
@@ -432,12 +532,9 @@ describe("useEvalHandlers", () => {
       });
       expect(requestBody.convexAuthToken).toBeUndefined();
 
-      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
-        type: "run-detail",
-        suiteId: "suite-123",
-        runId: "run-replay",
-        insightsFocus: true,
-      });
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/ci-evals/suite/suite-123/runs/run-replay?insights=1",
+      );
     });
 
     it("replays the latest run when suite server metadata is empty but replay is available", async () => {
@@ -495,18 +592,15 @@ describe("useEvalHandlers", () => {
         passCriteria: { minimumPassRate: 92 },
       });
 
-      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
-        type: "run-detail",
-        suiteId: "suite-123",
-        runId: "run-replay",
-        insightsFocus: true,
-      });
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/ci-evals/suite/suite-123/runs/run-replay?insights=1",
+      );
     });
 
     it("uses the normal rerun path when live servers are connected", async () => {
       mockIsHostedMode.mockReturnValue(true);
-      setHostedApiContext({
-        workspaceId: "ws-123",
+      setApiContext({
+        projectId: "ws-123",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
@@ -649,8 +743,8 @@ describe("useEvalHandlers", () => {
 
     it("normalizes hosted suite server ids before running a test case", async () => {
       mockIsHostedMode.mockReturnValue(true);
-      setHostedApiContext({
-        workspaceId: "workspace-1",
+      setApiContext({
+        projectId: "project-1",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
@@ -692,7 +786,7 @@ describe("useEvalHandlers", () => {
 
       const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(requestBody).toMatchObject({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
       });
@@ -825,6 +919,81 @@ describe("useEvalHandlers", () => {
         "Test completed successfully!",
       );
     });
+
+    it("threads iterationOverride into testCaseOverrides.runs", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+          { iterationOverride: 5 },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.testCaseOverrides).toEqual({ runs: 5 });
+    });
+
+    it("omits testCaseOverrides when no iterationOverride is supplied", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.testCaseOverrides).toBeUndefined();
+    });
   });
 
   describe("handleReplayRun", () => {
@@ -941,44 +1110,6 @@ describe("useEvalHandlers", () => {
       );
     });
 
-    it("requires browser API keys for replay (shows toast error when missing)", async () => {
-      mockProviderHasToken.mockReturnValue(false);
-
-      const { result } = renderHook(() =>
-        useEvalHandlers({
-          ...defaultProps,
-          selectedSuiteEntry: {
-            latestRun: {
-              _id: "run-source",
-              hasServerReplayConfig: true,
-            },
-            recentRuns: [],
-          } as any,
-        }),
-      );
-
-      await act(async () => {
-        await result.current.handleReplayRun(
-          {
-            _id: "suite-no-keys",
-            name: "Suite",
-            description: "Needs external provider",
-            source: "sdk",
-            environment: { servers: ["server-1"] },
-          } as any,
-          {
-            _id: "run-source",
-            hasServerReplayConfig: true,
-          } as any,
-        );
-      });
-
-      expect(mockAuthFetch).not.toHaveBeenCalled();
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/API key.*Settings/i),
-      );
-    });
-
     it("posts to the hosted replay endpoint for a specific run", async () => {
       mockIsHostedMode.mockReturnValue(true);
 
@@ -1047,12 +1178,9 @@ describe("useEvalHandlers", () => {
       });
       expect(requestBody.convexAuthToken).toBeUndefined();
 
-      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
-        type: "run-detail",
-        suiteId: "suite-456",
-        runId: "run-new",
-        insightsFocus: true,
-      });
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/ci-evals/suite/suite-456/runs/run-new?insights=1",
+      );
     });
   });
 
@@ -1458,7 +1586,7 @@ describe("formatEnsureServersReadyError", () => {
       [],
     );
     expect(msg).toBe(
-      "Unable to run this test case. This test depends on 2 MCP servers that are no longer in this workspace.",
+      "Unable to run this test case. This test depends on 2 MCP servers that are no longer in this project.",
     );
     expect(msg).not.toMatch(/k123/);
   });
@@ -1471,7 +1599,7 @@ describe("formatEnsureServersReadyError", () => {
         [],
       ),
     ).toBe(
-      "Unable to run this test case. This test depends on an MCP server that is no longer in this workspace.",
+      "Unable to run this test case. This test depends on an MCP server that is no longer in this project.",
     );
   });
 
@@ -1483,7 +1611,7 @@ describe("formatEnsureServersReadyError", () => {
         [],
       ),
     ).toBe(
-      "Unable to run this suite. This suite depends on an MCP server that is no longer in this workspace.",
+      "Unable to run this suite. This suite depends on an MCP server that is no longer in this project.",
     );
   });
 

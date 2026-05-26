@@ -6,6 +6,7 @@ export {
   WIDGET_BASE_CSS,
   buildRuntimeConfigScript,
   injectScripts,
+  normalizeWidgetCspMeta,
   buildCspHeader,
   buildCspMetaContent,
   buildChatGptRuntimeHead,

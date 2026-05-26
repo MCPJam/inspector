@@ -31,10 +31,19 @@ export interface ActiveServerSelectorProps {
   isMultiSelectEnabled: boolean;
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
+  /**
+   * Bulk-replace the multi-server selection. Wired in for the Playground
+   * tab's host snapshot — picking a named host should toggle on the host's
+   * required + optional servers in one shot, not per-server. Optional on
+   * the shared interface so the AppBuilder (single-select) doesn't need
+   * it.
+   */
+  onSelectMultipleServers?: (serverNames: string[]) => void;
   onConnect: (formData: ServerFormData) => void;
   onReconnect?: (serverName: string) => Promise<void>;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
+  autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
   className?: string;
@@ -87,6 +96,7 @@ export function ActiveServerSelector({
   onReconnect,
   showOnlyOAuthServers = false,
   showOnlyServersWithViews = false,
+  autoSelectFilteredServer = true,
   serversWithViews,
   className,
 }: ActiveServerSelectorProps) {
@@ -102,9 +112,11 @@ export function ActiveServerSelector({
   const isOAuthServer = (server: ServerWithName): boolean => {
     const isHttpServer = "url" in server.config;
     if (!isHttpServer) return false;
+    if (server.useOAuth === false) return false;
 
-    // Check if server has OAuth tokens, OAuth config in localStorage, or is in oauth-flow state
+    // Check if server is configured for OAuth, has OAuth state, or is mid-flow.
     return !!(
+      server.useOAuth === true ||
       server.oauthTokens ||
       hasOAuthConfig(server.name) ||
       server.connectionStatus === "oauth-flow"
@@ -119,7 +131,13 @@ export function ActiveServerSelector({
 
   // Auto-select first available server if current selection is not in the list
   useEffect(() => {
-    if (isMultiSelectEnabled || hasNoServersWithViews) return;
+    if (
+      !autoSelectFilteredServer ||
+      isMultiSelectEnabled ||
+      hasNoServersWithViews
+    ) {
+      return;
+    }
 
     const serverNames = servers.map(([name]) => name);
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
@@ -142,6 +160,7 @@ export function ActiveServerSelector({
     isMultiSelectEnabled,
     onServerChange,
     hasNoServersWithViews,
+    autoSelectFilteredServer,
   ]);
 
   const handleServerClick = (name: string) => {

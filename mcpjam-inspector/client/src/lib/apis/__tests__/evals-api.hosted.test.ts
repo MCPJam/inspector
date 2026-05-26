@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFetchResponse } from "@/test";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const authFetchMock = vi.fn();
 const listHostedToolsMock = vi.fn();
-const buildHostedServerBatchRequestMock = vi.fn();
-const buildHostedServerRequestMock = vi.fn();
-const isGuestModeMock = vi.fn(() => false);
+const buildServerBatchRequestMock = vi.fn();
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -20,11 +19,8 @@ vi.mock("@/lib/apis/web/tools-api", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
-  buildHostedServerBatchRequest: (...args: unknown[]) =>
-    buildHostedServerBatchRequestMock(...args),
-  buildHostedServerRequest: (...args: unknown[]) =>
-    buildHostedServerRequestMock(...args),
-  isGuestMode: () => isGuestModeMock(),
+  buildServerBatchRequest: (...args: unknown[]) =>
+    buildServerBatchRequestMock(...args),
 }));
 
 import {
@@ -39,8 +35,7 @@ import {
 describe("evals-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    isGuestModeMock.mockReturnValue(false);
-    buildHostedServerBatchRequestMock.mockImplementation(
+    buildServerBatchRequestMock.mockImplementation(
       (serverNames: string[]) => {
         const serverIds = serverNames.map((serverName) =>
           serverName === "Server A"
@@ -51,7 +46,7 @@ describe("evals-api hosted mode", () => {
         );
 
         return {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverIds,
           oauthTokens: serverIds.includes("srv_a")
             ? { srv_a: "oauth-token-a" }
@@ -60,26 +55,26 @@ describe("evals-api hosted mode", () => {
         };
       },
     );
-    buildHostedServerRequestMock.mockReturnValue({
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Guest Server",
-      serverHeaders: { "X-Guest": "yes" },
-      oauthAccessToken: "guest-oauth-token",
-      clientCapabilities: { sampling: true },
-    });
     authFetchMock.mockResolvedValue(createFetchResponse({ success: true }));
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "guest",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
   });
 
   it("uses /api/web/evals/run and preserves original suite server names", async () => {
     await runEvals({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       suiteName: "Hosted Suite",
       tests: [{ title: "Test", query: "Hello", runs: 1 }],
       serverIds: ["Server A", "Server B"],
       convexAuthToken: "convex-token",
     });
 
-    expect(buildHostedServerBatchRequestMock).toHaveBeenCalledWith([
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
       "Server A",
       "Server B",
     ]);
@@ -92,33 +87,46 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a", "srv_b"],
       storageServerIds: ["Server A", "Server B"],
     });
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
-  it("rejects direct guest full-suite runs before workspace lookup", async () => {
-    isGuestModeMock.mockReturnValue(true);
+  it("posts guest full-suite runs through the unified hosted payload", async () => {
+    await runEvals({
+      projectId: "guest-project",
+      suiteName: "Guest Suite",
+      tests: [],
+      serverIds: ["Guest Server"],
+      convexAuthToken: "guest-convex-token",
+    });
 
-    await expect(
-      runEvals({
-        workspaceId: null,
-        suiteName: "Guest Suite",
-        tests: [],
-        serverIds: ["Guest Server"],
-        convexAuthToken: "guest-convex-token",
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
+      "Guest Server",
+    ]);
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/evals/run",
+      expect.objectContaining({
+        method: "POST",
       }),
-    ).rejects.toThrow("Not available for guests yet. Sign in to use this.");
+    );
 
-    expect(buildHostedServerBatchRequestMock).not.toHaveBeenCalled();
-    expect(authFetchMock).not.toHaveBeenCalled();
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      projectId: "project-1",
+      serverIds: ["Guest Server"],
+      storageServerIds: ["Guest Server"],
+      suiteName: "Guest Suite",
+    });
+    expect(body).not.toHaveProperty("serverUrl");
+    expect(body).not.toHaveProperty("convexAuthToken");
   });
 
   it("uses /api/web/evals/generate-tests for hosted test generation", async () => {
     await generateEvalTests({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["Server A"],
       convexAuthToken: "convex-token",
     });
@@ -132,7 +140,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
     });
     expect(body).not.toHaveProperty("convexAuthToken");
@@ -140,7 +148,7 @@ describe("evals-api hosted mode", () => {
 
   it("uses /api/web/evals/generate-negative-tests for hosted negative generation", async () => {
     await generateNegativeEvalTests({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["Server A"],
       convexAuthToken: "convex-token",
     });
@@ -154,7 +162,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
     });
     expect(body).not.toHaveProperty("convexAuthToken");
@@ -162,7 +170,7 @@ describe("evals-api hosted mode", () => {
 
   it("uses /api/web/evals/run-test-case for hosted quick runs", async () => {
     await runEvalTestCase({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
@@ -179,7 +187,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
@@ -188,11 +196,68 @@ describe("evals-api hosted mode", () => {
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
-  it("posts direct guest quick runs with the guest server payload", async () => {
-    isGuestModeMock.mockReturnValue(true);
+  it("opens the mcpjam-limit dialog for hosted non-stream API limit failures", async () => {
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "mcpjam_rate_limit",
+          error: "Daily usage limit reached.",
+        },
+        429,
+      ),
+    );
 
+    await expect(
+      runEvalTestCase({
+        projectId: "workspace-1",
+        testCaseId: "test-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      }),
+    ).rejects.toThrow("Daily usage limit reached.");
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("opens the topup-intent dialog for signed-in user_rate_limit failures", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "user_rate_limit",
+          error: "Daily credit limit reached.",
+          limitKind: "total",
+        },
+        429,
+      ),
+    );
+
+    await expect(
+      runEvalTestCase({
+        projectId: "workspace-1",
+        testCaseId: "test-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      }),
+    ).rejects.toThrow("Daily credit limit reached.");
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
+  });
+
+  it("posts hosted guest quick runs with the project/server payload", async () => {
     await runEvalTestCase({
-      workspaceId: null,
+      projectId: "guest-project",
       testCaseId: "guest-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
@@ -200,30 +265,26 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "guest-convex-token",
     });
 
-    expect(buildHostedServerRequestMock).toHaveBeenCalledWith("Guest Server");
-    expect(buildHostedServerBatchRequestMock).not.toHaveBeenCalled();
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
+      "Guest Server",
+    ]);
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Guest Server",
-      serverHeaders: { "X-Guest": "yes" },
-      oauthAccessToken: "guest-oauth-token",
+      projectId: "project-1",
+      serverIds: ["Guest Server"],
       clientCapabilities: { sampling: true },
       testCaseId: "guest-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
     });
-    expect(body).not.toHaveProperty("workspaceId");
-    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("serverUrl");
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
-  it("posts direct guest generation with the guest server payload", async () => {
-    isGuestModeMock.mockReturnValue(true);
-
+  it("posts hosted guest generation with the project/server payload", async () => {
     await generateEvalTests({
-      workspaceId: null,
+      projectId: "guest-project",
       serverIds: ["Guest Server"],
       convexAuthToken: "guest-convex-token",
     });
@@ -237,22 +298,17 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Guest Server",
-      serverHeaders: { "X-Guest": "yes" },
-      oauthAccessToken: "guest-oauth-token",
+      projectId: "project-1",
+      serverIds: ["Guest Server"],
       clientCapabilities: { sampling: true },
     });
-    expect(body).not.toHaveProperty("workspaceId");
-    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("serverUrl");
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
-  it("posts direct guest negative generation with the guest server payload", async () => {
-    isGuestModeMock.mockReturnValue(true);
-
+  it("posts hosted guest negative generation with the project/server payload", async () => {
     await generateNegativeEvalTests({
-      workspaceId: null,
+      projectId: "guest-project",
       serverIds: ["Guest Server"],
       convexAuthToken: "guest-convex-token",
     });
@@ -266,11 +322,10 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Guest Server",
+      projectId: "project-1",
+      serverIds: ["Guest Server"],
     });
-    expect(body).not.toHaveProperty("workspaceId");
-    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("serverUrl");
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
@@ -303,7 +358,7 @@ describe("evals-api hosted mode", () => {
     const events: unknown[] = [];
     await streamEvalTestCase(
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
@@ -324,7 +379,7 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["srv_a"],
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
@@ -347,8 +402,7 @@ describe("evals-api hosted mode", () => {
     ]);
   });
 
-  it("posts direct guest compare streams with the guest server payload", async () => {
-    isGuestModeMock.mockReturnValue(true);
+  it("posts hosted guest compare streams with the project/server payload", async () => {
     const encoder = new TextEncoder();
     authFetchMock.mockResolvedValueOnce(
       new Response(
@@ -369,7 +423,7 @@ describe("evals-api hosted mode", () => {
 
     await streamEvalTestCase(
       {
-        workspaceId: null,
+        projectId: "guest-project",
         testCaseId: "guest-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
@@ -389,16 +443,92 @@ describe("evals-api hosted mode", () => {
 
     const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Guest Server",
+      projectId: "project-1",
+      serverIds: ["Guest Server"],
       testCaseId: "guest-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
       compareRunId: "cmp_guest",
     });
-    expect(body).not.toHaveProperty("workspaceId");
-    expect(body).not.toHaveProperty("serverIds");
+    expect(body).not.toHaveProperty("serverUrl");
     expect(body).not.toHaveProperty("convexAuthToken");
+  });
+
+  it("opens the mcpjam-limit dialog for hosted stream HTTP limit failures", async () => {
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: "mcpjam_rate_limit",
+          error: "Daily usage limit reached.",
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      streamEvalTestCase(
+        {
+          projectId: "workspace-1",
+          testCaseId: "test-case-1",
+          model: "openai/gpt-5-mini",
+          provider: "openai",
+          serverIds: ["Server A"],
+          convexAuthToken: "convex-token",
+        },
+        () => {},
+      ),
+    ).rejects.toThrow("Daily usage limit reached.");
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("opens the mcpjam-limit dialog for hosted stream error events", async () => {
+    const encoder = new TextEncoder();
+    authFetchMock.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                [
+                  'data: {"type":"error","message":"Backend stream error: 429","details":"{\\"code\\":\\"mcpjam_rate_limit\\",\\"error\\":\\"Daily usage limit reached.\\"}"}',
+                  "",
+                ].join("\n"),
+              ),
+            );
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        },
+      ),
+    );
+
+    const events: unknown[] = [];
+    await streamEvalTestCase(
+      {
+        projectId: "workspace-1",
+        testCaseId: "test-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      },
+      (event) => events.push(event),
+    );
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "error",
+        message: "Backend stream error: 429",
+      }),
+    ]);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
 
   it("uses hosted tool listing instead of /api/mcp/list-tools", async () => {
@@ -411,7 +541,7 @@ describe("evals-api hosted mode", () => {
       });
 
     const result = await listEvalTools({
-      workspaceId: "workspace-1",
+      projectId: "project-1",
       serverIds: ["Server A", "Server B"],
     });
 

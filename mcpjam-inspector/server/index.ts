@@ -23,6 +23,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
+import { inspectorCommandBus } from "./services/inspector-command-bus";
 import { isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
@@ -33,28 +34,36 @@ import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 
+import { getSystemLogger } from "./utils/request-logger";
+import { requestLogContextMiddleware } from "./middleware/request-log-context";
+import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
+
+const sysLogger = getSystemLogger("process");
+
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
 // requests are pending - the SDK rejects pending promises on connection close
 process.on("unhandledRejection", (reason, _promise) => {
-  // Check if this is an expected MCP connection close error
   const isMcpConnectionClosed =
     reason instanceof Error &&
     (reason.message.includes("Connection closed") ||
       reason.name === "McpError");
 
   if (isMcpConnectionClosed) {
-    // Log at debug level - this is expected during disconnect operations
-    appLogger.debug("MCP connection closed with pending requests", {
-      message: reason.message,
+    sysLogger.event("mcp.connection.closed_with_pending_requests", {
+      errorCode: "connection_closed",
     });
-  } else {
-    // Log unexpected rejections as warnings
-    appLogger.warn("Unhandled promise rejection", {
-      reason: reason instanceof Error ? reason.message : String(reason),
-      stack: reason instanceof Error ? reason.stack : undefined,
-    });
+    return;
   }
+
+  sysLogger.event(
+    "process.unhandled_rejection",
+    { errorCode: reason instanceof Error ? reason.name : "unknown" },
+    {
+      error: reason instanceof Error ? reason : undefined,
+      sentry: true,
+    },
+  );
 });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -95,7 +104,6 @@ import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import {
   SERVER_PORT,
-  SERVER_HOSTNAME,
   CORS_ORIGINS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
@@ -178,6 +186,14 @@ function getMCPConfigFromEnv() {
     ],
     initialTab,
     cspMode,
+  };
+}
+
+function getInspectorFrontendUrlOptions() {
+  return {
+    isElectron: process.env.ELECTRON_APP === "true",
+    isPackaged: process.env.IS_PACKAGED === "true",
+    isProduction: process.env.NODE_ENV === "production",
   };
 }
 
@@ -307,6 +323,9 @@ app.use(
   }),
 );
 
+// Typed event logging context (matches app.ts)
+app.use("/api/*", requestLogContextMiddleware);
+
 // API Routes
 if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
@@ -346,7 +365,12 @@ app.options("/sse/message", (c) => {
 
 // Health check
 app.get("/health", (c) => {
-  return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  return c.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    hasActiveClient: inspectorCommandBus.hasActiveClient(),
+    frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
+  });
 });
 
 // Session token endpoint (for dev mode where HTML isn't served by this server)
@@ -369,6 +393,14 @@ app.get("/api/session-token", (c) => {
   }
 
   return c.json({ token: getSessionToken() });
+});
+
+// Protected by sessionAuthMiddleware mounted above; the CLI supplies the session token.
+app.post("/api/shutdown", (c) => {
+  setTimeout(() => {
+    void shutdown();
+  }, 25);
+  return c.json({ ok: true });
 });
 
 // API endpoint to get MCP CLI config (for development mode)
@@ -432,7 +464,9 @@ if (process.env.NODE_ENV === "production") {
       // Inject MCP server config if provided via CLI
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
-        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`;
+        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
+          mcpConfig,
+        )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
 
@@ -449,7 +483,7 @@ if (process.env.NODE_ENV === "production") {
     return c.json({
       message: "MCPJam API Server",
       environment: "development",
-      frontend: `http://localhost:${SERVER_PORT}`,
+      frontend: getInspectorFrontendUrl(getInspectorFrontendUrlOptions()),
     });
   });
 }
@@ -478,13 +512,75 @@ const server = serve({
   hostname,
 });
 
+const expectedParentPid = Number.parseInt(
+  process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
+  10,
+);
+let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
+let shuttingDown = false;
+const shutdownForceExitMs = 5000;
+const logFlushExitMs = 1000;
+
+function exitAfterLogFlush(code: number) {
+  const exitFallbackTimer = setTimeout(
+    () => process.exit(code),
+    logFlushExitMs,
+  );
+  exitFallbackTimer.unref();
+
+  void appLogger.flush().finally(() => {
+    clearTimeout(exitFallbackTimer);
+    process.exit(code);
+  });
+}
+
 // Handle graceful shutdown
 async function shutdown() {
-  console.log("\n🛑 Shutting down gracefully...");
-  await tunnelManager.closeAll();
-  server.close();
-  await appLogger.flush();
-  process.exit(0);
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  if (orphanCheckInterval) {
+    clearInterval(orphanCheckInterval);
+    orphanCheckInterval = undefined;
+  }
+
+  const forceExitTimer = setTimeout(() => {
+    appLogger.error(
+      "Shutdown timed out; forcing process exit.",
+      new Error("Shutdown timed out; forcing process exit."),
+    );
+    exitAfterLogFlush(1);
+  }, shutdownForceExitMs);
+  forceExitTimer.unref();
+
+  appLogger.info("Shutting down gracefully...");
+  try {
+    await tunnelManager.closeAll();
+    server.close();
+    await appLogger.flush();
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  } catch (error) {
+    clearTimeout(forceExitTimer);
+    appLogger.error("Error during shutdown", error);
+    exitAfterLogFlush(1);
+  }
+}
+
+if (
+  Number.isFinite(expectedParentPid) &&
+  expectedParentPid > 1 &&
+  process.env.MCPJAM_INSPECTOR_DISABLE_ORPHAN_CHECK !== "1" &&
+  !process.versions.electron
+) {
+  orphanCheckInterval = setInterval(() => {
+    if (process.ppid !== expectedParentPid) {
+      void shutdown();
+    }
+  }, 1000);
+  orphanCheckInterval.unref();
 }
 
 process.on("SIGINT", shutdown);

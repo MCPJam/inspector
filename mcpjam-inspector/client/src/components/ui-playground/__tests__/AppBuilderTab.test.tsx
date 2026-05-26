@@ -11,6 +11,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("sonner", () => ({
@@ -89,7 +90,6 @@ const mockUIPlaygroundStore = {
   setDisplayMode: vi.fn(),
   updateGlobal: vi.fn(),
   toggleSidebar: vi.fn(),
-  setSelectedProtocol: vi.fn(),
   reset: vi.fn(),
   setSidebarVisible: vi.fn(),
 };
@@ -247,6 +247,7 @@ const mockOnboarding = {
   isResolvingRemoteCompletion: false,
   isBootstrappingFirstRunConnection: false,
   connectExcalidraw: vi.fn(),
+  markOnboardingShown: vi.fn(),
   completeOnboarding: vi.fn(),
   connectError: null as string | null,
   retryConnect: vi.fn(),
@@ -304,6 +305,7 @@ describe("AppBuilderTab", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mockListTools.mockResolvedValue({ tools: [], toolsMetadata: {} });
 
     // Reset store state
@@ -323,6 +325,7 @@ describe("AppBuilderTab", () => {
       isResolvingRemoteCompletion: false,
       isBootstrappingFirstRunConnection: false,
       connectError: null,
+      markOnboardingShown: vi.fn(),
     });
   });
 
@@ -536,43 +539,12 @@ describe("AppBuilderTab", () => {
       });
     });
 
-    it("passes the Claude mark variant to PlaygroundMain when Claude host style is selected", async () => {
-      const serverConfig = createServerConfig();
-      mockPreferencesState.hostStyle = "claude";
-
-      render(
-        <AppBuilderTab
-          serverConfig={serverConfig}
-          serverName="my-server"
-          servers={connectedServer("my-server")}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByTestId("loading-variant")).toHaveTextContent(
-          "claude-mark",
-        );
-      });
-    });
-
-    it("passes the pulsing dot variant to PlaygroundMain when ChatGPT host style is selected", async () => {
-      const serverConfig = createServerConfig();
-      mockPreferencesState.hostStyle = "chatgpt";
-
-      render(
-        <AppBuilderTab
-          serverConfig={serverConfig}
-          serverName="my-server"
-          servers={connectedServer("my-server")}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByTestId("loading-variant")).toHaveTextContent(
-          "chatgpt-dot",
-        );
-      });
-    });
+    // Removed: "passes the X mark variant to PlaygroundMain when X host
+    // style is selected". The indicator no longer flows through a
+    // `loadingIndicatorVariant` prop — AppBuilderTab now wraps PlaygroundMain
+    // in `ChatboxHostStyleProvider value={state.hostStyle}` and the inner
+    // thread reads the host id from context. Brand-indicator behavior is
+    // covered in `LoadingIndicatorContent.test.tsx`.
   });
 
   describe("tool selection", () => {
@@ -761,9 +733,10 @@ describe("AppBuilderTab", () => {
       expect(
         screen.queryByTestId("app-builder-skeleton"),
       ).not.toBeInTheDocument();
+      expect(mockOnboarding.markOnboardingShown).not.toHaveBeenCalled();
     });
 
-    it("does not render the post-connect guide shell (NUX uses prefilled prompt only)", async () => {
+    it("keeps the PR 1716 composer NUX instead of the post-connect guide", async () => {
       const serverConfig = createServerConfig();
       mockOnboarding.phase = "connected_guided";
       mockOnboarding.isGuidedPostConnect = true;
@@ -777,13 +750,17 @@ describe("AppBuilderTab", () => {
       );
 
       await waitFor(() => {
-        expect(
-          screen.queryByTestId("post-connect-guide"),
-        ).not.toBeInTheDocument();
+        expect(screen.getByTestId("guided-initial-input")).toHaveTextContent(
+          "Draw me an MCP architecture diagram",
+        );
       });
+      expect(screen.queryByTestId("post-connect-guide")).not.toBeInTheDocument();
+      expect(screen.getByTestId("initial-input-typewriter")).toHaveTextContent(
+        "true",
+      );
     });
 
-    it("passes the seeded guided prompt to PlaygroundMain while post-connect onboarding is active", async () => {
+    it("passes the seeded guided prompt to PlaygroundMain while connected onboarding is active", async () => {
       const serverConfig = createServerConfig();
       mockOnboarding.phase = "connected_guided";
       mockOnboarding.isGuidedPostConnect = true;
@@ -804,6 +781,52 @@ describe("AppBuilderTab", () => {
 
       expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
         false,
+      );
+      expect(screen.getByTestId("initial-input-typewriter")).toHaveTextContent(
+        "true",
+      );
+    });
+
+    it("tells onboarding it was shown only once the guided NUX UI renders", async () => {
+      const serverConfig = createServerConfig();
+      localStorage.setItem(
+        "mcp-onboarding-state",
+        JSON.stringify({ status: "started" }),
+      );
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isGuidedPostConnect = true;
+
+      render(
+        <AppBuilderTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          servers={connectedServer("test-server")}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("guided-initial-input")).toBeInTheDocument();
+      });
+
+      expect(JSON.parse(localStorage.getItem("mcp-onboarding-state")!)).toEqual(
+        { status: "started" },
+      );
+      expect(mockOnboarding.markOnboardingShown).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not mark onboarding as seen while the first-run connection skeleton is showing", () => {
+      localStorage.setItem(
+        "mcp-onboarding-state",
+        JSON.stringify({ status: "started" }),
+      );
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isBootstrappingFirstRunConnection = true;
+
+      render(<AppBuilderTab onConnect={vi.fn()} />);
+
+      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+      expect(JSON.parse(localStorage.getItem("mcp-onboarding-state")!)).toEqual(
+        { status: "started" },
       );
     });
 
@@ -833,6 +856,7 @@ describe("AppBuilderTab", () => {
       expect(
         screen.getByTestId("block-submit-until-connected"),
       ).toHaveTextContent("true");
+      expect(mockOnboarding.markOnboardingShown).not.toHaveBeenCalled();
     });
 
     it("collapses tools sidebar during connect before isGuidedPostConnect is true", async () => {

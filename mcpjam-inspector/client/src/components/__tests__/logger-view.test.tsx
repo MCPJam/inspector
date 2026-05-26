@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/state/app-state-context", () => ({
@@ -22,7 +22,10 @@ vi.mock("@/stores/traffic-log-store", async () => {
 });
 
 import { LoggerView } from "../logger-view";
-import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import {
+  ingestOAuthTraceLogs,
+  useTrafficLogStore,
+} from "@/stores/traffic-log-store";
 import { subscribeToOAuthDebuggerRequests } from "@/lib/oauth/oauth-debugger-navigation";
 
 describe("LoggerView hosted rpc logs", () => {
@@ -123,6 +126,41 @@ describe("LoggerView hosted rpc logs", () => {
     expect(screen.getByText("Notion")).toBeInTheDocument();
   });
 
+  it("renders automatic OAuth decisions as their own log entry", () => {
+    ingestOAuthTraceLogs({
+      serverId: "srv-1",
+      serverName: "Notion",
+      trace: {
+        version: 1,
+        source: "interactive_connect",
+        currentStep: "authorization_request",
+        steps: [
+          {
+            step: "received_authorization_server_metadata",
+            title: "Authorization Server Metadata Received",
+            status: "success",
+            message:
+              "Automatic resolved to DCR for this run. The authorization server advertised registration_endpoint, and CIMD support was not advertised.",
+            details: {
+              "Automatic Decision": "DCR",
+            },
+            startedAt: Date.parse("2026-04-10T12:00:02.000Z"),
+            completedAt: Date.parse("2026-04-10T12:00:02.000Z"),
+          },
+        ],
+        httpHistory: [],
+      },
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+
+    expect(
+      screen.getByText(
+        /Automatic Resolution - Automatic resolved to DCR for this run\./
+      )
+    ).toBeInTheDocument();
+  });
+
   it("shows oauth failure detail inline for collapsed rows", () => {
     useTrafficLogStore.getState().addMcpServerLog({
       id: "oauth:srv-1:interactive_connect:request_client_registration:2",
@@ -197,6 +235,56 @@ describe("LoggerView hosted rpc logs", () => {
       serverName: "Learn",
     });
     unsubscribe();
+  });
+
+  it("exports logs as a JSON file when the download button is clicked", async () => {
+    const user = userEvent.setup();
+
+    // Stub URL.createObjectURL / revokeObjectURL
+    const createObjectURL = vi.fn(() => "blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
+
+    // Capture the anchor click
+    const anchorClick = vi.fn();
+    const origCreate = document.createElement.bind(document);
+    vi
+      .spyOn(document, "createElement")
+      .mockImplementation((tag: string, ...rest) => {
+        const el = origCreate(tag, ...rest);
+        if (tag === "a") {
+          vi.spyOn(el as HTMLAnchorElement, "click").mockImplementation(
+            anchorClick,
+          );
+        }
+        return el;
+      });
+
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "tools/list",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: { ok: true },
+    });
+
+    render(<LoggerView />);
+
+    await user.click(screen.getByTitle("Export logs as JSON file"));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url"),
+    );
+
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("filters logs to the current session when sinceTimestamp is provided", () => {

@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useConvexAuth } from "convex/react";
+import { useHostList } from "@/hooks/useClients";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { SuiteHeader } from "./suite-header";
@@ -10,14 +11,16 @@ import {
   computeRunDashboardKpis,
   RunDetailKpiStrip,
 } from "./run-detail-kpis";
-import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
+import { ValidatorsSection } from "./validators-section";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
+import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
-import { SuiteEnvironmentEditor } from "./suite-environment-editor";
+import { SuiteExecutionConfigEditor } from "./suite-execution-config-editor";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -38,6 +41,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { RemoteServer } from "@/hooks/useProjects";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -86,7 +90,7 @@ export function SuiteIterationsView({
   availableModels,
   route,
   userMap,
-  workspaceId = null,
+  projectId = null,
   navigation,
   onSetupCi,
   onCreateTestCase,
@@ -110,7 +114,7 @@ export function SuiteIterationsView({
   onRunTestCase,
   runningTestCaseId = null,
   onContinueInChat,
-  workspaceServers,
+  projectServers,
   generateTestCasesDisabledReason,
   isDirectGuest = false,
   ensureServersReady,
@@ -137,7 +141,7 @@ export function SuiteIterationsView({
   availableModels: any[];
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  workspaceId?: string | null;
+  projectId?: string | null;
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
@@ -154,7 +158,7 @@ export function SuiteIterationsView({
   omitRunIterationList?: boolean;
   /** When true, show suite delete affordances. */
   canDeleteSuite: boolean;
-  /** Workspace admins only: run list batch delete and selection. */
+  /** Project admins only: run list batch delete and selection. */
   canDeleteRuns?: boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
@@ -171,14 +175,13 @@ export function SuiteIterationsView({
   /** Playground: batch delete test cases from the cases table (no runs UI). */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /** Per-case run from the cases overview table (Explore / CI). */
-  onRunTestCase?: (testCase: EvalCase) => void;
+  onRunTestCase?: (
+    testCase: EvalCase,
+    opts?: { iterationOverride?: number },
+  ) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
-  workspaceServers?: Array<{
-    _id: string;
-    name: string;
-    transportType?: "stdio" | "http";
-  }>;
+  projectServers?: RemoteServer[];
   /** When true, this is rendering the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
   /** Playground: connect suite MCP servers before compare run (same as per-case run). */
@@ -213,6 +216,47 @@ export function SuiteIterationsView({
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("model");
+  /**
+   * Transient per-run iteration count (1-10) applied to Run-all-cases and
+   * per-case quick runs triggered from this suite view. Defaults to
+   * `undefined` (Auto) so the per-case persisted `EvalCase.runs` is honored
+   * until the user picks an explicit value. Never written back to
+   * persistence. Server enforces an absolute cap above 10.
+   */
+  const [iterationOverride, setIterationOverride] = useState<
+    number | undefined
+  >(undefined);
+
+  const onRerunWithOverride = useCallback(
+    (
+      s: EvalSuite,
+      opts?: {
+        matchOptionsOverride?: EvalMatchOptions;
+        iterationOverride?: number;
+      },
+    ) =>
+      (
+        onRerun as (
+          suite: EvalSuite,
+          opts?: {
+            matchOptionsOverride?: EvalMatchOptions;
+            iterationOverride?: number;
+          },
+        ) => void
+      )(s, opts),
+    [onRerun],
+  );
+
+  const onRunTestCaseWithOverride = useMemo<
+    ((testCase: EvalCase) => void) | undefined
+  >(
+    () =>
+      onRunTestCase
+        ? (testCase: EvalCase) =>
+            onRunTestCase(testCase, { iterationOverride })
+        : undefined,
+    [onRunTestCase, iterationOverride],
+  );
   const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
@@ -227,7 +271,14 @@ export function SuiteIterationsView({
   } | null>(null);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
-  const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
+  const { isAuthenticated } = useConvexAuth();
+  // Hosts available to attach in the header's "+ Attach host" picker. The
+  // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
+  // pure-props and renderable in test environments without a Convex provider.
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated,
+    projectId: projectId ?? null,
+  });
 
   // Use custom hooks for data calculations
   const { runTrendData, modelStats } = useSuiteData(
@@ -251,6 +302,16 @@ export function SuiteIterationsView({
     const run = runs.find((r) => r._id === selectedRunId);
     return run ?? null;
   }, [selectedRunId, runs]);
+
+  // Resolve namedHostId → display name for any run-detail / list views
+  // that want to surface which host a run was triggered against.
+  const hostNamesById = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const attachment of suite.hostAttachments ?? []) {
+      map.set(attachment.namedHostId, attachment.hostName);
+    }
+    return map;
+  }, [suite.hostAttachments]);
 
   // Derive selectedIterationId from route
   const selectedIterationId =
@@ -351,19 +412,25 @@ export function SuiteIterationsView({
     [suite.description]
   );
 
-  const handleUpdateTests = async (models: any[]) => {
+  const handleUpdateHostAttachments = async (
+    attachments: Array<{
+      namedHostId: string;
+      enabledOptionalServerIds: string[];
+    }>,
+  ) => {
     try {
-      await updateSuiteModels({
+      await updateSuite({
         suiteId: suite._id,
-        models: models.map((m) => ({
-          model: m.model,
-          provider: m.provider,
-        })),
+        hostAttachments: attachments,
       });
-      toast.success("Models updated successfully");
+      toast.success(
+        attachments.length === 0
+          ? "Clients cleared"
+          : "Clients updated",
+      );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update models"));
-      console.error("Failed to update models:", error);
+      toast.error(getBillingErrorMessage(error, "Failed to update clients"));
+      console.error("Failed to update host attachments:", error);
       throw error;
     }
   };
@@ -457,7 +524,9 @@ export function SuiteIterationsView({
             viewMode={viewMode}
             selectedRunDetails={selectedRunDetails}
             isEditMode={isEditMode}
-            onRerun={onRerun}
+            onRerun={onRerunWithOverride}
+            iterationOverride={iterationOverride}
+            onIterationOverrideChange={setIterationOverride}
             onReplayRun={onReplayRun}
             onCancelRun={onCancelRun}
             onViewModeChange={handleBackToOverview}
@@ -482,13 +551,13 @@ export function SuiteIterationsView({
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
-            onRunTestCase={onRunTestCase}
+            onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
-            availableModels={availableModels}
-            onSuiteModelsUpdate={
-              readOnlyConfig ? undefined : handleUpdateTests
+            onSuiteHostAttachmentsUpdate={
+              readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
+            projectHosts={projectHosts}
             runDetailKpiStrip={
               showSuiteHeader &&
               viewMode === "run-detail" &&
@@ -526,11 +595,11 @@ export function SuiteIterationsView({
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
                   connectedServerNames={connectedServerNames}
-                  workspaceId={workspaceId}
+                  projectId={projectId}
                   availableModels={availableModels}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
-                  workspaceServers={workspaceServers}
+                  projectServers={projectServers}
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
@@ -630,7 +699,7 @@ export function SuiteIterationsView({
                       })
                     }
                     onRunClick={handleRunClick}
-                    onRunTestCase={onRunTestCase}
+                    onRunTestCase={onRunTestCaseWithOverride}
                     runningTestCaseId={runningTestCaseId}
                     blockTestCaseRuns={Boolean(
                       rerunningSuiteId || replayingRunId,
@@ -761,7 +830,7 @@ export function SuiteIterationsView({
                         })
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
-                      onRunTestCase={onRunTestCase}
+                      onRunTestCase={onRunTestCaseWithOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId || replayingRunId
@@ -792,6 +861,7 @@ export function SuiteIterationsView({
                   serverNames={suite.environment?.servers || []}
                   selectedIterationId={selectedIterationId}
                   onSelectIteration={handleSelectIteration}
+                  hostNamesById={hostNamesById}
                   kpiPlacement={
                     showSuiteHeader && viewMode === "run-detail"
                       ? "header"
@@ -827,31 +897,11 @@ export function SuiteIterationsView({
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="p-6 max-w-5xl mx-auto space-y-8">
-            {workspaceServers ? (
-              <SuiteEnvironmentEditor
-                suite={suite}
-                workspaceServers={workspaceServers}
-                connectedServerNames={connectedServerNames}
-                onSave={async (environment) => {
-                  try {
-                    await updateSuite({
-                      suiteId: suite._id,
-                      environment,
-                    });
-                    toast.success("Suite servers updated");
-                  } catch (error) {
-                    toast.error(
-                      getBillingErrorMessage(
-                        error,
-                        "Failed to update suite servers",
-                      ),
-                    );
-                    console.error("Failed to update suite servers:", error);
-                    throw error;
-                  }
-                }}
-              />
-            ) : null}
+            <SuiteExecutionConfigEditor
+              suite={suite}
+              availableModels={availableModels}
+              projectId={projectId}
+            />
 
             {/* Suite Description Section */}
             <div className="space-y-3">
@@ -933,13 +983,29 @@ export function SuiteIterationsView({
               />
             </div>
 
-            {/* Models Section */}
-            <SuiteTestsConfig
-              suite={suite}
-              testCases={cases}
-              onUpdate={handleUpdateTests}
-              availableModels={availableModels}
-            />
+            {/* Default Validators Section */}
+            <div className="space-y-3">
+              <ValidatorsSection
+                title="Default validators"
+                description="Applied to every run unless a test case or 'this run' popover changes them."
+                value={suite.defaultMatchOptions}
+                inheritedFrom={MATCH_OPTIONS_DEFAULTS}
+                onChange={async (next: EvalMatchOptions | undefined) => {
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      defaultMatchOptions: next ?? null,
+                    });
+                    toast.success("Default validators updated");
+                  } catch (error) {
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite")
+                    );
+                    console.error("Failed to update default validators:", error);
+                  }
+                }}
+              />
+            </div>
 
             {canDeleteSuite ? (
               <div className="border-t border-border pt-8 space-y-3">
@@ -947,7 +1013,7 @@ export function SuiteIterationsView({
                   Danger zone
                 </h2>
                 <p className="text-xs text-muted-foreground">
-                  Deleting removes this suite from the workspace. Run history
+                  Deleting removes this suite from the project. Run history
                   and cases cannot be recovered.
                 </p>
                 <Button

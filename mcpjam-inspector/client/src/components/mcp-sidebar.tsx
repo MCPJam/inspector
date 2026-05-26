@@ -20,9 +20,10 @@ import {
   Puzzle,
   UserPlus,
   ShieldCheck,
+  Loader2,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { isPostHogBooleanFlagOn, standardEventProps } from "@/lib/PosthogUtils";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -47,8 +48,10 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
-import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
-import { ShareWorkspaceDialog } from "@/components/workspace/ShareWorkspaceDialog";
+import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
+import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
+import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
+import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -61,15 +64,21 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import {
+  buildCiEvalsPath,
+  buildEvalsPath,
+  navigateApp,
+  useAppNavigate,
+} from "@/lib/app-navigation";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
-import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
-import type { Workspace } from "@/state/app-types";
-import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import {
+  useOrganizationBillingStatus,
+  type BillingFeatureName,
+} from "@/hooks/useOrganizationBilling";
+import type { Project } from "@/state/app-types";
+import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface NavItem {
   title: string;
@@ -81,10 +90,19 @@ interface NavItem {
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
   hiddenByFlag?: string;
+  /** Extra tab ids that should also highlight this item as active */
+  matchTabs?: string[];
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
   /** Nested Playground / Runs entries; omit from the flat main menu */
   evalsSubnav?: boolean;
+  /** One-time announcement shown next to this item (e.g., NEW badge + popover) */
+  announcement?: {
+    id: string;
+    badge: string;
+    title: string;
+    body: string;
+  };
 }
 
 interface NavSection {
@@ -99,7 +117,7 @@ interface NavSection {
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
-  flags: Record<string, boolean>,
+  flags: Record<string, boolean>
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -127,7 +145,7 @@ export function applyBillingGateNavState(
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
-  },
+  }
 ): NavSection[] {
   const { billingUiEnabled, gateDenied, enforcementActive } = options;
   if (!billingUiEnabled || !enforcementActive) {
@@ -159,26 +177,47 @@ const navigationSections: NavSection[] = [
     id: "connection",
     items: [
       {
-        title: "Servers",
-        url: "#servers",
+        title: "Connect",
+        url: "/servers",
         icon: MCPIcon,
+        featureFlag: "hosts-enabled",
+        matchTabs: ["clients"],
+      },
+      {
+        title: "Servers",
+        url: "/servers",
+        icon: MCPIcon,
+        hiddenByFlag: "hosts-enabled",
       },
       {
         title: "Registry",
-        url: "#registry",
+        url: "/registry",
         icon: LayoutGrid,
         featureFlag: "registry-enabled",
       },
       {
         title: "Chat",
-        url: "#chat-v2",
+        url: "/chat-v2",
         icon: MessageCircle,
+        hiddenByFlag: "playground-tab-enabled",
       },
       {
         title: "Chatboxes",
-        url: "#chatboxes",
+        url: "/chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
+      },
+      {
+        title: "Playground",
+        url: "/playground",
+        icon: MessageCircle,
+        featureFlag: "playground-tab-enabled",
+        announcement: {
+          id: "playground-tab-rename-2026-05",
+          badge: "NEW",
+          title: "Playground just got more powerful",
+          body: "Playground now includes everything from App Builder — generate, preview, and test MCP-powered apps without switching tabs.",
+        },
       },
     ],
   },
@@ -187,21 +226,21 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "App Builder",
-        url: "#app-builder",
+        url: "/app-builder",
         icon: Anvil,
+        hiddenByFlag: "playground-tab-enabled",
       },
       {
         title: "Views",
-        url: "#views",
+        url: "/views",
         icon: Layers,
       },
       {
         title: "Evaluate",
-        url: "#evals",
+        url: "/evals",
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
-        featureFlag: "evals-enabled",
       },
     ],
   },
@@ -210,18 +249,18 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Skills",
-        url: "#skills",
+        url: "/skills",
         icon: SquareSlash,
       },
       {
         title: "Learning",
-        url: "#learning",
+        url: "/learning",
         icon: GraduationCap,
         featureFlag: "mcpjam-learning",
       },
       {
         title: "Conformance",
-        url: "#conformance",
+        url: "/conformance",
         icon: FlaskConical,
         // MCPJam-internal flag: rollout is restricted to the MCPJam team in
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
@@ -230,18 +269,18 @@ const navigationSections: NavSection[] = [
       },
       {
         title: "OAuth Debugger",
-        url: "#oauth-flow",
+        url: "/oauth-flow",
         icon: Workflow,
       },
       {
         title: "XAA Debugger",
-        url: "#xaa-flow",
+        url: "/xaa-flow",
         icon: ShieldCheck,
         featureFlag: "xaa",
       },
       // {
       //   title: "Tracing",
-      //   url: "#tracing",
+      //   url: "/tracing",
       //   icon: Activity,
       // },
     ],
@@ -251,22 +290,22 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Tools",
-        url: "#tools",
+        url: "/tools",
         icon: Hammer,
       },
       {
         title: "Resources",
-        url: "#resources",
+        url: "/resources",
         icon: BookOpen,
       },
       {
         title: "Prompts",
-        url: "#prompts",
+        url: "/prompts",
         icon: MessageSquareCode,
       },
       {
         title: "Tasks",
-        url: "#tasks",
+        url: "/tasks",
         icon: ListTodo,
       },
     ],
@@ -276,12 +315,12 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Support",
-        url: "#support",
+        url: "/support",
         icon: MessageCircleQuestionIcon,
       },
       {
         title: "Settings",
-        url: "#settings",
+        url: "/settings",
         icon: Settings,
       },
     ],
@@ -289,14 +328,14 @@ const navigationSections: NavSection[] = [
 ];
 
 export function getHostedNavigationSections(
-  sections: NavSection[],
+  sections: NavSection[]
 ): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
       items: section.items.flatMap((item) => {
         const normalizedTab = normalizeHostedHashTab(
-          item.url.startsWith("#") ? item.url.slice(1) : item.url,
+          item.url.replace(/^[#/]+/, "")
         );
 
         if (isHostedSidebarTabAllowed(normalizedTab)) {
@@ -326,36 +365,35 @@ const hostedNavigationSections =
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
-  /** Workspace state for the sidebar workspace picker */
-  workspaces: Record<string, Workspace>;
-  activeWorkspaceId: string;
-  onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
-  onDeleteWorkspace: (workspaceId: string) => void;
-  isLoadingWorkspaces?: boolean;
+  /** Project state for the sidebar project picker */
+  projects: Record<string, Project>;
+  activeProjectId: string;
+  onSwitchProject: (projectId: string) => void;
+  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  onDeleteProject: (projectId: string) => void;
+  isLoadingProjects?: boolean;
   activeOrganizationId?: string;
   activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
-    section?: OrganizationRouteSection,
+    section?: OrganizationRouteSection
   ) => void;
-  onWorkspaceShared?: (
-    sharedWorkspaceId: string,
-    sourceWorkspaceId?: string,
-  ) => void;
+  onSwitchActiveOrganization?: (organizationId: string) => void;
+  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
-  isCreateWorkspaceDisabled?: boolean;
-  createWorkspaceDisabledReason?: string;
+  isCreateProjectDisabled?: boolean;
+  createProjectDisabledReason?: string;
+  onBeforeSignOut?: () => void | Promise<void>;
 }
 
 function navigateToEvalsExploreList() {
-  window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+  navigateApp(buildEvalsPath({ type: "list" }));
 }
 
 function navigateToEvalsRunsList() {
-  navigateToCiEvalsRoute({ type: "list" });
+  navigateApp(buildCiEvalsPath({ type: "list" }));
 }
 
 type EvalsSubnavItem = {
@@ -372,7 +410,7 @@ export function getEvalsSubnavItems(options: {
   const items: EvalsSubnavItem[] = [
     {
       title: "Playground",
-      href: withTestingSurface(buildEvalsHash({ type: "list" })),
+      href: buildEvalsPath({ type: "list" }),
       icon: Puzzle,
       isActive: (activeTab) => activeTab === "evals",
       onClick: navigateToEvalsExploreList,
@@ -382,7 +420,7 @@ export function getEvalsSubnavItems(options: {
   if (options.evaluateRunsEnabled) {
     items.push({
       title: "Runs",
-      href: "#/ci-evals",
+      href: "/ci-evals",
       icon: GitBranch,
       isActive: (activeTab) => activeTab === "ci-evals",
       onClick: navigateToEvalsRunsList,
@@ -399,6 +437,7 @@ export function SidebarEvalsNavGroup({
   disabledTooltip,
   activeTab,
   showRuns = true,
+  playgroundEnabled = false,
 }: {
   title: string;
   Icon: React.ComponentType<{ className?: string }>;
@@ -406,8 +445,10 @@ export function SidebarEvalsNavGroup({
   disabledTooltip?: string;
   activeTab?: string;
   showRuns?: boolean;
+  playgroundEnabled?: boolean;
 }) {
   const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
+  const isPlaygroundLocked = !playgroundEnabled;
   const subnavItems = getEvalsSubnavItems({
     evaluateRunsEnabled: showRuns,
   });
@@ -415,19 +456,19 @@ export function SidebarEvalsNavGroup({
   const parentButton = (
     <SidebarMenuButton
       tooltip={title}
-      isActive={!disabled && isEvalsFamily}
+      isActive={!disabled && !isPlaygroundLocked && isEvalsFamily}
       onClick={() => {
-        if (disabled) return;
+        if (disabled || isPlaygroundLocked) return;
         navigateToEvalsExploreList();
       }}
-      aria-disabled={disabled || undefined}
+      aria-disabled={disabled || isPlaygroundLocked || undefined}
       tabIndex={disabled ? -1 : undefined}
       className={
-        disabled
+        disabled || isPlaygroundLocked
           ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
           : isEvalsFamily
-            ? "[&[data-active=true]]:bg-accent cursor-pointer"
-            : "cursor-pointer"
+          ? "[&[data-active=true]]:bg-accent cursor-pointer"
+          : "cursor-pointer"
       }
     >
       <Icon className="h-4 w-4" />
@@ -462,25 +503,45 @@ export function SidebarEvalsNavGroup({
             <SidebarMenuSub>
               {subnavItems.map((item) => {
                 const ItemIcon = item.icon;
+                const isItemPlaygroundLocked =
+                  item.title === "Playground" && isPlaygroundLocked;
+                const isItemDisabled = disabled || isItemPlaygroundLocked;
+
+                const subnavButton = (
+                  <SidebarMenuSubButton
+                    isActive={!isItemDisabled && item.isActive(activeTab)}
+                    href={item.href}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (isItemDisabled) return;
+                      item.onClick();
+                    }}
+                    aria-disabled={isItemDisabled || undefined}
+                    className={cn(
+                      isItemDisabled &&
+                        "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
+                      isItemPlaygroundLocked &&
+                        "aria-disabled:pointer-events-auto",
+                      disabled && "pointer-events-none"
+                    )}
+                  >
+                    <ItemIcon className="h-4 w-4" />
+                    <span className="min-w-0 truncate">{item.title}</span>
+                  </SidebarMenuSubButton>
+                );
 
                 return (
                   <SidebarMenuSubItem key={item.title}>
-                    <SidebarMenuSubButton
-                      isActive={item.isActive(activeTab)}
-                      href={item.href}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (disabled) return;
-                        item.onClick();
-                      }}
-                      aria-disabled={disabled || undefined}
-                      className={
-                        disabled ? "pointer-events-none opacity-50" : undefined
-                      }
-                    >
-                      <ItemIcon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </SidebarMenuSubButton>
+                    {isItemPlaygroundLocked ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>{subnavButton}</TooltipTrigger>
+                        <TooltipContent side="right" sideOffset={6}>
+                          Coming soon. Playground is in beta.
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      subnavButton
+                    )}
                   </SidebarMenuSubItem>
                 );
               })}
@@ -495,58 +556,83 @@ export function SidebarEvalsNavGroup({
 export function MCPSidebar({
   onNavigate,
   activeTab,
-  workspaces,
-  activeWorkspaceId,
-  onSwitchWorkspace,
-  onCreateWorkspace,
-  onDeleteWorkspace,
-  isLoadingWorkspaces,
+  projects,
+  activeProjectId,
+  onSwitchProject,
+  onCreateProject,
+  onDeleteProject,
+  isLoadingProjects,
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onWorkspaceShared,
+  onSwitchActiveOrganization,
+  onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
-  isCreateWorkspaceDisabled = false,
-  createWorkspaceDisabledReason,
+  isCreateProjectDisabled = false,
+  createProjectDisabledReason,
+  onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
+  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { updateReady, restartAndInstall } = useUpdateNotification();
+  const { status: updateStatus, restartAndInstall } = useUpdateNotification();
+  const showUpdateButton =
+    updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
+  const updateInstalling =
+    updateStatus.kind === "pending" && updateStatus.installRequested;
+  const handleUpdateClick = () => {
+    if (!updateInstalling) {
+      restartAndInstall();
+    }
+  };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
+  const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
-  const activeWorkspace = workspaces[activeWorkspaceId];
-  const inviteableWorkspaces = useMemo(() => {
-    if (!activeWorkspace?.organizationId) {
-      return workspaces;
+  const activeProject = projects[activeProjectId];
+  const inviteableProjects = useMemo(() => {
+    if (!activeProject?.organizationId) {
+      return projects;
     }
 
     return Object.fromEntries(
-      Object.entries(workspaces).filter(
-        ([, workspace]) =>
-          workspace.organizationId === activeWorkspace.organizationId,
-      ),
+      Object.entries(projects).filter(
+        ([, project]) => project.organizationId === activeProject.organizationId
+      )
     );
-  }, [activeWorkspace?.organizationId, workspaces]);
-  const shouldShowInviteCta = isAuthenticated && !!user && !!activeWorkspace;
+  }, [activeProject?.organizationId, projects]);
+  const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
+  const trialBilling = useOrganizationBillingStatus(
+    activeProject?.organizationId ?? null,
+    { enabled: billingUiEnabled && !!activeProject?.organizationId }
+  );
+  const trialActive =
+    billingUiEnabled &&
+    trialBilling?.trialStatus === "active" &&
+    !!trialBilling.trialEndsAt;
+  const handleTrialUpgradeClick = () => {
+    if (!activeProject?.organizationId) return;
+    appNavigate(`/organizations/${activeProject.organizationId}/billing`);
+  };
 
   const handleNavClick = (url: string) => {
-    if (onNavigate && url.startsWith("#")) {
-      const section = url.slice(1);
+    if (onNavigate && /^[#/]/.test(url)) {
+      const section = url.replace(/^[#/]+/, "");
       posthog.capture("sidebar_nav_clicked", {
         ...standardEventProps("mcp_sidebar"),
         section,
@@ -561,40 +647,43 @@ export function MCPSidebar({
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
-      "evals-enabled": !!evalsEnabled,
       "mcpjam-conformance": conformanceEnabled === true,
+      "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
+      "playground-tab-enabled": playgroundTabEnabled === true,
       xaa: xaaEnabled === true,
     }),
     [
       learningEnabled,
       sandboxesEnabled,
       registryEnabled,
-      evalsEnabled,
       conformanceEnabled,
+      hostsEnabled,
+      playgroundTabEnabled,
       xaaEnabled,
       isAuthenticated,
-    ],
+    ]
   );
+  const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
-    featureFlags,
+    featureFlags
   );
 
   return (
     <>
       <Sidebar collapsible="icon" {...props}>
-        <SidebarHeader>
+        <SidebarHeader className="gap-1 px-2 pt-1.5 pb-2">
           <div
             className={cn(
               "no-drag",
-              state === "collapsed" && !isMobile && "flex justify-center px-0",
+              state === "collapsed" && !isMobile && "flex justify-center px-0"
             )}
           >
             {isMobile ? (
               <button
                 type="button"
-                onClick={() => handleNavClick("#servers")}
-                className="flex w-full cursor-pointer items-center justify-center px-4 py-4 transition-opacity hover:opacity-80"
+                onClick={() => handleNavClick(hubNavHash)}
+                className="flex w-full cursor-pointer items-center justify-center px-4 py-3 transition-opacity hover:opacity-80"
               >
                 <img
                   src={
@@ -610,12 +699,12 @@ export function MCPSidebar({
               <div className="relative isolate w-full">
                 <button
                   type="button"
-                  onClick={() => handleNavClick("#servers")}
+                  onClick={() => handleNavClick(hubNavHash)}
                   className={cn(
-                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-3 transition-opacity duration-200",
+                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
                     /* Reserve space for the collapse control so the logo stays visually centered and
                        clicks on the logo never compete with the invisible hit target. */
-                    "px-2 pr-10 hover:opacity-80",
+                    "px-2 pr-10 hover:opacity-80"
                   )}
                 >
                   <img
@@ -637,7 +726,7 @@ export function MCPSidebar({
                     "pointer-events-auto opacity-0 transition-opacity duration-200",
                     /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
                     "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
-                    "[@media(hover:none)]:opacity-100",
+                    "[@media(hover:none)]:opacity-100"
                   )}
                   aria-label="Collapse sidebar"
                 />
@@ -649,31 +738,41 @@ export function MCPSidebar({
               />
             )}
           </div>
-          {updateReady && (
-            <div className="px-2 pb-2">
-              <Button
-                size="sm"
-                onClick={restartAndInstall}
-                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
-              >
-                Update & Restart
-              </Button>
-            </div>
-          )}
-          <SidebarWorkspaceSelector
-            activeWorkspaceId={activeWorkspaceId}
-            workspaces={workspaces}
-            onSwitchWorkspace={onSwitchWorkspace}
-            onCreateWorkspace={onCreateWorkspace}
-            onDeleteWorkspace={onDeleteWorkspace}
-            isLoading={isLoadingWorkspaces}
-            onNavigateToSettings={() => handleNavClick("#workspace-settings")}
-            isCreateDisabled={isCreateWorkspaceDisabled}
-            createDisabledReason={createWorkspaceDisabledReason}
+          <SidebarContextSwitcher
+            activeProjectId={activeProjectId}
+            projects={projects}
+            onSwitchProject={onSwitchProject}
+            onCreateProject={onCreateProject}
+            onDeleteProject={onDeleteProject}
+            isLoading={isLoadingProjects}
+            onNavigateToSettings={() => handleNavClick("#project-settings")}
+            isCreateDisabled={isCreateProjectDisabled}
+            createDisabledReason={createProjectDisabledReason}
             onLearnMoreExpand={
               learnMoreEnabled ? learnMore.openExpandedModal : undefined
             }
+            activeOrganizationId={activeOrganizationId}
+            onSwitchOrganization={onSwitchOrganization}
+            onSwitchActiveOrganization={onSwitchActiveOrganization}
           />
+          {showUpdateButton && (
+            <div className="px-3 pt-2">
+              <Button
+                size="sm"
+                onClick={handleUpdateClick}
+                aria-disabled={updateInstalling}
+                className={cn(
+                  "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
+                  updateInstalling && "pointer-events-none hover:bg-primary"
+                )}
+              >
+                {updateInstalling && (
+                  <Loader2 className="size-2.5 animate-spin" aria-hidden />
+                )}
+                {updateInstalling ? "Updating…" : "Update"}
+              </Button>
+            </div>
+          )}
         </SidebarHeader>
         <SidebarContent>
           {visibleNavigationSections.map((section, sectionIndex) => {
@@ -685,7 +784,13 @@ export function MCPSidebar({
                 <NavMain
                   items={flatItems.map((item) => ({
                     ...item,
-                    isActive: item.url === `#${activeTab}`,
+                    isActive:
+                      normalizeHostedHashTab(
+                        item.url.replace(/^[#/]+/, "").split("/")[0] ||
+                          "servers"
+                      ) === activeTab ||
+                      (activeTab !== undefined &&
+                        (item.matchTabs?.includes(activeTab) ?? false)),
                   }))}
                   onItemClick={handleNavClick}
                   learnMore={
@@ -704,6 +809,7 @@ export function MCPSidebar({
                     disabledTooltip={evalsEntry.disabledTooltip}
                     activeTab={activeTab}
                     showRuns={evaluateRunsEnabled === true}
+                    playgroundEnabled={playgroundEnabled === true}
                   />
                 ) : null}
                 {/* Add subtle divider between sections (except after the last section) */}
@@ -730,26 +836,35 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
+          {shouldShowInviteCta && trialActive && trialBilling?.trialEndsAt ? (
+            <SidebarTrialCountdown
+              trialEndsAt={trialBilling.trialEndsAt}
+              trialStartedAt={trialBilling.trialStartedAt}
+              onUpgradeClick={handleTrialUpgradeClick}
+              className="mt-1"
+            />
+          ) : null}
+          {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
           <SidebarUser
             activeOrganizationId={activeOrganizationId}
-            onSwitchOrganization={onSwitchOrganization}
+            onBeforeSignOut={onBeforeSignOut}
           />
         </SidebarFooter>
       </Sidebar>
-      {shouldShowInviteCta && user && activeWorkspace ? (
-        <ShareWorkspaceDialog
+      {shouldShowInviteCta && user && activeProject ? (
+        <ShareProjectDialog
           isOpen={showInviteDialog}
           onClose={() => setShowInviteDialog(false)}
-          workspaceName={activeWorkspace.name}
-          workspaceServers={activeWorkspace.servers}
-          sharedWorkspaceId={activeWorkspace.sharedWorkspaceId}
-          organizationId={activeWorkspace.organizationId}
-          visibility={activeWorkspace.visibility}
+          projectName={activeProject.name}
+          projectServers={activeProject.servers}
+          sharedProjectId={activeProject.sharedProjectId}
+          organizationId={activeProject.organizationId}
+          visibility={activeProject.visibility}
           organizationName={activeOrganizationName}
           currentUser={user}
-          onWorkspaceShared={onWorkspaceShared}
-          availableWorkspaces={inviteableWorkspaces}
-          activeWorkspaceId={activeWorkspaceId}
+          onProjectShared={onProjectShared}
+          availableProjects={inviteableProjects}
+          activeProjectId={activeProjectId}
         />
       ) : null}
       {learnMoreEnabled && (

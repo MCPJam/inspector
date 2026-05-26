@@ -5,6 +5,7 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
@@ -20,6 +21,11 @@ import {
 import { useChatSession } from "@/hooks/use-chat-session";
 import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -33,6 +39,7 @@ export interface BroadcastChatTurnRequest {
     url: string;
   }>;
   prependMessages: UIMessage[];
+  widgetModelContext?: WidgetModelContextEntry[];
 }
 
 interface MultiModelChatCardProps {
@@ -44,15 +51,8 @@ interface MultiModelChatCardProps {
   stopRequestId: number;
   placeholder: string;
   reasoningDisplayMode: ReasoningDisplayMode;
-  initialSystemPrompt: string;
-  initialTemperature: number;
-  initialRequireToolApproval: boolean;
-  hostedWorkspaceId?: string | null;
-  hostedSelectedServerIds?: string[];
-  hostedOAuthTokens?: Record<string, string>;
-  hostedShareToken?: string;
-  hostedChatboxToken?: string;
-  hostedChatboxSurface?: "preview" | "share_link";
+  executionConfig: ExecutionConfig;
+  hostedContext?: HostedRuntimeContext;
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
@@ -64,6 +64,9 @@ interface MultiModelChatCardProps {
   /** Seed a newly added compare column from the lead transcript. */
   addColumnSeed?: { version: number; messages: UIMessage[] } | null;
   onTranscriptSync?: (modelId: string, messages: UIMessage[]) => void;
+  showSenderAvatars?: boolean;
+  resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
+  outgoingSenderMetadata?: Record<string, unknown>;
 }
 
 export function MultiModelChatCard({
@@ -75,15 +78,8 @@ export function MultiModelChatCard({
   stopRequestId,
   placeholder,
   reasoningDisplayMode,
-  initialSystemPrompt,
-  initialTemperature,
-  initialRequireToolApproval,
-  hostedWorkspaceId,
-  hostedSelectedServerIds,
-  hostedOAuthTokens,
-  hostedShareToken,
-  hostedChatboxToken,
-  hostedChatboxSurface,
+  executionConfig,
+  hostedContext,
   onSummaryChange,
   onHasMessagesChange,
   onOAuthRequired,
@@ -92,18 +88,15 @@ export function MultiModelChatCard({
   compareEnterMessages = [],
   addColumnSeed = null,
   onTranscriptSync,
+  showSenderAvatars = false,
+  resolveSenderAvatar,
+  outgoingSenderMetadata,
 }: MultiModelChatCardProps) {
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
   const [modelContextQueue, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+    WidgetModelContextEntry[]
   >([]);
   const [, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
@@ -133,16 +126,11 @@ export function MultiModelChatCard({
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
-    hostedWorkspaceId,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
-    hostedShareToken,
-    hostedChatboxToken,
-    hostedChatboxSurface,
-    initialModelId: String(model.id),
-    initialSystemPrompt,
-    initialTemperature,
-    initialRequireToolApproval,
+    hostedContext,
+    executionConfig: {
+      ...executionConfig,
+      modelId: String(model.id),
+    },
     onReset: () => {
       setWidgetStateQueue([]);
       setModelContextQueue([]);
@@ -164,7 +152,8 @@ export function MultiModelChatCard({
     setRevealedInChat(true);
   }, []);
 
-  const handleTraceViewModeChange = useCallback((mode: ChatTraceViewMode) => {
+  const handleTraceViewModeChange = useCallback((mode: TraceViewMode) => {
+    if (mode === "tools") return;
     setTraceViewMode(mode);
     setRevealedInChat(false);
   }, []);
@@ -368,51 +357,6 @@ export function MultiModelChatCard({
     setWidgetStateQueue([]);
   }, [applyWidgetStateUpdates, setMessages, status, widgetStateQueue]);
 
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) => {
-        const filtered = previous.filter(
-          (item) => item.toolCallId !== toolCallId,
-        );
-        return [...filtered, { toolCallId, context }];
-      });
-    },
-    [],
-  );
-
-  const queueContextMessages = useCallback(() => {
-    const contextMessages = modelContextQueue.map(
-      ({ toolCallId, context }) => ({
-        id: `model-context-${toolCallId}-${Date.now()}`,
-        role: "user" as const,
-        parts: [
-          {
-            type: "text" as const,
-            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-          },
-        ],
-        metadata: {
-          source: "widget-model-context",
-          toolCallId,
-        },
-      }),
-    );
-
-    if (contextMessages.length > 0) {
-      setMessages((previous) => [
-        ...previous,
-        ...(contextMessages as UIMessage[]),
-      ]);
-      setModelContextQueue([]);
-    }
-  }, [modelContextQueue, setMessages]);
-
   useEffect(() => {
     if (!broadcastRequest) {
       return;
@@ -431,12 +375,23 @@ export function MultiModelChatCard({
       ]);
     }
 
-    queueContextMessages();
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
+      metadata: outgoingSenderMetadata,
+      widgetModelContext: [
+        ...(broadcastRequest.widgetModelContext ?? []),
+        ...modelContextQueue,
+      ],
     });
-  }, [broadcastRequest, queueContextMessages, sendMessage, setMessages]);
+    setModelContextQueue([]);
+  }, [
+    broadcastRequest,
+    modelContextQueue,
+    sendMessage,
+    setMessages,
+    outgoingSenderMetadata,
+  ]);
 
   useEffect(() => {
     if (stopRequestId <= 0) {
@@ -448,10 +403,29 @@ export function MultiModelChatCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      queueContextMessages();
-      sendMessage({ text });
+      sendMessage({
+        text,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
     },
-    [queueContextMessages, sendMessage],
+    [modelContextQueue, sendMessage, outgoingSenderMetadata],
+  );
+
+  const handleModelContextUpdate = useCallback(
+    (
+      toolCallId: string,
+      context: {
+        content?: ContentBlock[];
+        structuredContent?: Record<string, unknown>;
+      },
+    ) => {
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
+      );
+    },
+    [],
   );
 
   useEffect(() => {
@@ -533,6 +507,7 @@ export function MultiModelChatCard({
               <div className="relative flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <TraceViewer
+                    chatSessionId={chatSessionId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -560,6 +535,7 @@ export function MultiModelChatCard({
             <div className="flex flex-1 min-h-0 flex-col">
               <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <TraceViewer
+                  chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -576,6 +552,7 @@ export function MultiModelChatCard({
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                   onFullscreenChatStop={stop}
                   onFullscreenChange={setIsWidgetFullscreen}
+                  onModelContextUpdate={handleModelContextUpdate}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -594,6 +571,7 @@ export function MultiModelChatCard({
                   />
                 ) : (
                   <TraceViewer
+                    chatSessionId={chatSessionId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -629,6 +607,7 @@ export function MultiModelChatCard({
             <div className="relative flex-1 min-h-0">
               <StickToBottom.Content className="flex flex-col min-h-0">
                 <Thread
+                  chatSessionId={chatSessionId}
                   messages={messages}
                   sendFollowUpMessage={handleSendFollowUp}
                   model={model}
@@ -644,6 +623,8 @@ export function MultiModelChatCard({
                   onFullscreenChatStop={stop}
                   onToolApprovalResponse={addToolApprovalResponse}
                   reasoningDisplayMode={reasoningDisplayMode}
+                  showSenderAvatars={showSenderAvatars}
+                  resolveSenderAvatar={resolveSenderAvatar}
                 />
               </StickToBottom.Content>
               <ScrollToBottomButton />

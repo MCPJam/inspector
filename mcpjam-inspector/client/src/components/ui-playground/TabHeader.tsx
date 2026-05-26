@@ -15,6 +15,8 @@ import {
   MoreHorizontal,
   Check,
 } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
@@ -72,9 +74,34 @@ export function TabHeader({
   const wideActionsClass =
     "hidden items-center gap-0.5 @min-[320px]/tab-header:flex";
 
+  const posthog = usePostHog();
+
   const handleRefreshTools = () => {
+    posthog?.capture("playground_tools_refresh_clicked", {
+      ...standardEventProps("playground_tab_header"),
+      tool_count: toolCount,
+    });
     onTabChange("tools");
     onRefresh();
+  };
+
+  const handleRunClick = () => {
+    posthog?.capture("playground_tool_run_clicked", {
+      ...standardEventProps("playground_tab_header"),
+      tool_count: toolCount,
+    });
+    onExecute();
+  };
+
+  const handleTabClick = (tab: "tools" | "saved") => {
+    if (tab !== activeTab) {
+      posthog?.capture("playground_tools_pane_tab_changed", {
+        ...standardEventProps("playground_tab_header"),
+        from: activeTab,
+        to: tab,
+      });
+    }
+    onTabChange(tab);
   };
 
   return (
@@ -98,7 +125,7 @@ export function TabHeader({
             <button
               type="button"
               role="tab"
-              onClick={() => onTabChange("tools")}
+              onClick={() => handleTabClick("tools")}
               className={tabButtonClass(activeTab === "tools")}
             >
               Tools
@@ -109,7 +136,7 @@ export function TabHeader({
             <button
               type="button"
               role="tab"
-              onClick={() => onTabChange("saved")}
+              onClick={() => handleTabClick("saved")}
               className={tabButtonClass(activeTab === "saved")}
             >
               Saved
@@ -127,7 +154,7 @@ export function TabHeader({
               type="button"
               role="tab"
               aria-selected={activeTab === "tools"}
-              onClick={() => onTabChange("tools")}
+              onClick={() => handleTabClick("tools")}
               className={tabButtonClass(activeTab === "tools")}
             >
               Tools
@@ -154,7 +181,7 @@ export function TabHeader({
               <DropdownMenuContent align="start" className="w-56">
                 <DropdownMenuItem
                   className="text-xs"
-                  onSelect={() => onTabChange("saved")}
+                  onSelect={() => handleTabClick("saved")}
                 >
                   <span className="flex w-4 shrink-0 justify-center">
                     {activeTab === "saved" ? (
@@ -216,7 +243,7 @@ export function TabHeader({
             </Button>
           </div>
           <Button
-            onClick={onExecute}
+            onClick={handleRunClick}
             disabled={isExecuting || !canExecute}
             size="sm"
             className="h-8 shrink-0 px-2 text-xs sm:px-3"

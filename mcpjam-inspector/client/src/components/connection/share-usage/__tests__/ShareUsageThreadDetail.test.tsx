@@ -29,6 +29,10 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatTurnTraces: () => ({
     traces: [],
   }),
+  // SessionClientConfigChip destructures `.config` from this hook; return
+  // `{ config: null }` so it short-circuits to the "no audit-pin
+  // available" branch and renders nothing (chip is noisy when empty).
+  useSessionHistoricalHostConfig: () => ({ config: null }),
 }));
 
 vi.mock("@/components/evals/trace-viewer-adapter", () => ({
@@ -114,29 +118,4 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("renders server share threads with sibling-text tool display and a mode toggle", async () => {
-    mockThreadState.sourceType = "serverShare";
-
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: "Chat" }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Trace" }),
-      ).toBeInTheDocument();
-      expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
-        expect.objectContaining({
-          toolResultDisplay: "sibling-text",
-        }),
-      );
-      expect(mockMessageView).toHaveBeenCalledWith(
-        expect.objectContaining({
-          minimalMode: true,
-          reasoningDisplayMode: "collapsed",
-        }),
-      );
-    });
-  });
 });

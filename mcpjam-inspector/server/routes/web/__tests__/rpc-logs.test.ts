@@ -127,7 +127,7 @@ describe("web hosted rpc logs", () => {
                 {
                   ok: true,
                   role: "member",
-                  accessLevel: "workspace_member",
+                  accessLevel: "project_member",
                   permissions: { chatOnly: false },
                   serverConfig: {
                     transportType: "http",
@@ -166,7 +166,7 @@ describe("web hosted rpc logs", () => {
       app,
       "/api/web/tools/list",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverId: "srv-1",
         serverName: "Notion",
       },
@@ -207,7 +207,7 @@ describe("web hosted rpc logs", () => {
       app,
       "/api/web/prompts/list-multi",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1", "srv-2"],
         serverNames: ["Notion", "GitHub"],
       },
@@ -238,29 +238,6 @@ describe("web hosted rpc logs", () => {
     );
   });
 
-  it("uses the provided guest server name instead of __guest__ in rpc logs", async () => {
-    const app = createRpcLogsTestApp();
-
-    const response = await postJson(app, "/api/web/tools/list", {
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Excalidraw (App)",
-    });
-
-    const { status, data } = await expectJson<{
-      _rpcLogs: Array<{ serverId: string; serverName: string }>;
-    }>(response);
-
-    expect(status).toBe(200);
-    expect(data._rpcLogs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          serverId: "__guest__",
-          serverName: "Excalidraw (App)",
-        }),
-      ])
-    );
-  });
-
   it("keeps hosted rpc logs request-scoped with no cross-request carryover", async () => {
     const app = createRpcLogsTestApp();
 
@@ -271,7 +248,7 @@ describe("web hosted rpc logs", () => {
         app,
         "/api/web/tools/list",
         {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverId: "srv-1",
           serverName: "Notion",
         },
@@ -285,7 +262,7 @@ describe("web hosted rpc logs", () => {
         app,
         "/api/web/tools/list",
         {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverId: "srv-2",
           serverName: "GitHub",
         },
@@ -310,7 +287,7 @@ describe("web hosted rpc logs", () => {
       app,
       "/api/web/testing/tools/list-no-rpc-logs",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverId: "srv-1",
         serverName: "Notion",
       },

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   ChevronRight,
   AlertCircle,
@@ -6,6 +8,7 @@ import {
   Trash2,
   PanelRightClose,
   Copy,
+  Download,
 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Input } from "@mcpjam/design-system/input";
@@ -48,15 +51,7 @@ import {
 } from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
 
-type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps" | "oauth";
-
-interface RpcEventMessage {
-  serverId: string;
-  direction: RpcDirection;
-  message: unknown; // raw JSON-RPC payload (request/response/error)
-  timestamp?: string;
-}
 
 interface RenderableRpcItem {
   id: string;
@@ -366,13 +361,40 @@ export function LoggerView({
     });
   };
 
+  const posthog = usePostHog();
+  const captureLogger = useCallback(
+    (event: string, props?: Record<string, unknown>) => {
+      posthog?.capture(event, {
+        ...standardEventProps("logger_view"),
+        ...props,
+      });
+    },
+    [posthog],
+  );
+
+  // Fire `logger_search_used` once per non-empty search session — i.e. the
+  // first character typed after an empty query — so we measure usage of the
+  // feature without flooding PostHog with one event per keystroke.
+  const searchUsedFiredRef = useRef(false);
+  useEffect(() => {
+    if (searchQuery.trim() === "") {
+      searchUsedFiredRef.current = false;
+      return;
+    }
+    if (!searchUsedFiredRef.current) {
+      searchUsedFiredRef.current = true;
+      captureLogger("logger_search_used");
+    }
+  }, [searchQuery, captureLogger]);
+
   const clearMessages = () => {
+    captureLogger("logger_cleared", { item_count: totalItemCount });
     clearLogs();
     setExpanded(new Set());
   };
 
-  const copyLogs = async () => {
-    const logs = filteredItems.map((item) => ({
+  const serializeLogs = () =>
+    filteredItems.map((item) => ({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
@@ -381,12 +403,31 @@ export function LoggerView({
       method: item.method,
       payload: item.payload,
     }));
+
+  const copyLogs = async () => {
+    captureLogger("logger_copy_clicked", { item_count: filteredItemCount });
     try {
-      await navigator.clipboard.writeText(JSON.stringify(logs, null, 2));
+      await navigator.clipboard.writeText(
+        JSON.stringify(serializeLogs(), null, 2),
+      );
       toast.success("Logs copied to clipboard");
     } catch {
       toast.error("Failed to copy logs");
     }
+  };
+
+  const downloadLogs = () => {
+    captureLogger("logger_download_clicked", {
+      item_count: filteredItemCount,
+    });
+    const json = JSON.stringify(serializeLogs(), null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `json-rpc-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   // Subscribe to the singleton SSE connection for RPC traffic
@@ -492,9 +533,16 @@ export function LoggerView({
                 <DropdownMenuContent align="end">
                   <DropdownMenuRadioGroup
                     value={sourceFilter}
-                    onValueChange={(value) =>
-                      setSourceFilter(value as "all" | TrafficSource)
-                    }
+                    onValueChange={(value) => {
+                      const next = value as "all" | TrafficSource;
+                      if (next !== sourceFilter) {
+                        captureLogger("logger_source_filter_changed", {
+                          from: sourceFilter,
+                          to: next,
+                        });
+                      }
+                      setSourceFilter(next);
+                    }}
                   >
                     <DropdownMenuRadioItem value="all" className="text-xs">
                       All
@@ -553,6 +601,9 @@ export function LoggerView({
                                 value={serverLogLevels[server.id] || "debug"}
                                 onValueChange={(val) => {
                                   const level = val as LoggingLevel;
+                                  captureLogger("logger_log_level_changed", {
+                                    to: level,
+                                  });
                                   setServerLogLevels((prev) => ({
                                     ...prev,
                                     [server.id]: level,
@@ -616,6 +667,16 @@ export function LoggerView({
         <Button
           variant="ghost"
           size="icon"
+          onClick={downloadLogs}
+          disabled={filteredItemCount === 0}
+          className="hidden h-7 w-7 shrink-0 @min-[300px]/logger-toolbar:inline-flex"
+          title="Export logs as JSON file"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
           onClick={clearMessages}
           disabled={totalItemCount === 0}
           className="h-7 w-7 flex-shrink-0"
@@ -627,7 +688,10 @@ export function LoggerView({
           <Button
             variant="ghost"
             size="icon"
-            onClick={onClose}
+            onClick={() => {
+              captureLogger("logger_collapsed");
+              onClose();
+            }}
             className="h-7 w-7 flex-shrink-0"
             title="Hide JSON-RPC panel"
           >

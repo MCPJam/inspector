@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   clearBillingSignInReturnPath,
   clearPersistedCheckoutIntent,
-  hashMatchesOrganizationBilling,
   hasInvalidCheckoutIntervalParam,
   hasInvalidCheckoutQueryParams,
   isBillingEntryPathname,
@@ -15,10 +14,10 @@ import {
 } from "../billing-deep-link";
 
 describe("readCheckoutIntentFromSearch", () => {
-  it("parses starter + annual", () => {
+  it("parses team + annual", () => {
     expect(
-      readCheckoutIntentFromSearch("?plan=starter&interval=annual"),
-    ).toEqual({ plan: "starter", interval: "annual" });
+      readCheckoutIntentFromSearch("?plan=team&interval=annual"),
+    ).toEqual({ plan: "team", interval: "annual" });
   });
 
   it("defaults interval to monthly when omitted", () => {
@@ -29,12 +28,13 @@ describe("readCheckoutIntentFromSearch", () => {
   });
 
   it("returns null for invalid plan", () => {
+    expect(readCheckoutIntentFromSearch("?plan=solo")).toBeNull();
     expect(readCheckoutIntentFromSearch("?plan=enterprise")).toBeNull();
   });
 
   it("returns null when interval is present but invalid", () => {
     expect(
-      readCheckoutIntentFromSearch("?plan=starter&interval=weekly"),
+      readCheckoutIntentFromSearch("?plan=team&interval=weekly"),
     ).toBeNull();
   });
 });
@@ -51,7 +51,7 @@ describe("hasInvalidCheckoutQueryParams", () => {
 
 describe("hasInvalidCheckoutIntervalParam", () => {
   it("is false when interval absent", () => {
-    expect(hasInvalidCheckoutIntervalParam("?plan=starter")).toBe(false);
+    expect(hasInvalidCheckoutIntervalParam("?plan=team")).toBe(false);
   });
 
   it("is true when interval invalid", () => {
@@ -66,9 +66,9 @@ describe("sessionStorage persistence", () => {
   });
 
   it("round-trips plan and interval", () => {
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "team", interval: "annual" });
     expect(readPersistedCheckoutIntent()).toEqual({
-      plan: "starter",
+      plan: "team",
       interval: "annual",
     });
   });
@@ -98,26 +98,6 @@ describe("isBillingEntryPathname", () => {
   });
 });
 
-describe("hashMatchesOrganizationBilling", () => {
-  it("matches canonical hash", () => {
-    expect(
-      hashMatchesOrganizationBilling(
-        "#organizations/org_abc/billing",
-        "org_abc",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects wrong org", () => {
-    expect(
-      hashMatchesOrganizationBilling(
-        "#organizations/org_other/billing",
-        "org_abc",
-      ),
-    ).toBe(false);
-  });
-});
-
 describe("resolveCheckoutOrganizationId", () => {
   const orgs = [{ _id: "a" }, { _id: "b" }];
 
@@ -135,7 +115,7 @@ describe("resolveCheckoutOrganizationId", () => {
     expect(resolveCheckoutOrganizationId(orgs, "b", "a")).toBe("b");
   });
 
-  it("falls back to workspace org", () => {
+  it("falls back to project org", () => {
     expect(resolveCheckoutOrganizationId(orgs, undefined, "a")).toBe("a");
   });
 

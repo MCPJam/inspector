@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
-import { useClientConfigStore } from "@/stores/client-config-store";
-import { storePresets } from "@/test/mocks";
+import { useHostContextStore } from "@/stores/client-context-store";
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => {
@@ -66,8 +65,8 @@ vi.mock("@mcpjam/design-system/badge", () => ({
   Badge: ({ children, ...props }: any) => <span {...props}>{children}</span>,
 }));
 
-vi.mock("../../csp-debug-panel", () => ({
-  CspDebugPanel: () => null,
+vi.mock("../../csp-workbench", () => ({
+  CspWorkbench: () => null,
 }));
 
 // Mock JsonEditor to avoid pulling in additional lucide icons
@@ -92,7 +91,19 @@ describe("ToolPart display mode controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     onDisplayModeChange = vi.fn();
-    useClientConfigStore.setState(storePresets.clientConfig());
+    useHostContextStore.setState({
+      activeProjectId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingProjectId: null,
+      pendingSavedHostContext: undefined,
+      isAwaitingRemoteEcho: false,
+    });
   });
 
   const renderWithDisplayModes = (
@@ -162,9 +173,18 @@ describe("ToolPart display mode controls", () => {
   });
 
   it("disables modes that the host does not advertise even when the app supports them", () => {
-    useClientConfigStore.setState(
-      storePresets.clientConfigWithHostDisplayModes(["inline"]),
-    );
+    useHostContextStore.setState({
+      draftHostContext: {
+        availableDisplayModes: ["inline"],
+      },
+      hostContextText: JSON.stringify(
+        {
+          availableDisplayModes: ["inline"],
+        },
+        null,
+        2,
+      ),
+    });
 
     renderWithDisplayModes(["inline", "pip", "fullscreen"]);
 

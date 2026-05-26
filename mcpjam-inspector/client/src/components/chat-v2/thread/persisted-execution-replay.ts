@@ -2,6 +2,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
 import type { ToolRenderOverride } from "./tool-render-overrides";
 
 export interface PersistedExecutionReplayInput {
@@ -16,12 +17,24 @@ export interface PersistedExecutionReplayInput {
   serverId: string;
   isOffline: boolean;
   cachedWidgetHtmlUrl?: string;
+  /** See ToolRenderOverride.liveFetchPreferred. */
+  liveFetchPreferred?: boolean;
   resourceUri?: string;
   initialWidgetState?: unknown;
   widgetCsp?: McpUiResourceCsp | null;
   widgetPermissions?: McpUiResourcePermissions | null;
   widgetPermissive?: boolean;
   prefersBorder?: boolean;
+  /** Persisted compat-runtime flag from the cached HTML blob. */
+  injectedOpenAiCompat?: boolean;
+  /**
+   * Persisted per-method `window.openai.*` capability surface that
+   * was injected into the cached HTML blob. Sibling of
+   * `injectedOpenAiCompat`. Threads through the replay path so the
+   * renderer can advertise the same matrix the cached bytes were
+   * built against. Absent for pre-feature snapshots.
+   */
+  injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities;
 }
 
 export interface PersistedExecutionReplay {
@@ -50,6 +63,7 @@ export function buildPersistedExecutionReplay(
       serverId: input.serverId,
       isOffline: input.isOffline,
       cachedWidgetHtmlUrl: input.cachedWidgetHtmlUrl,
+      liveFetchPreferred: input.liveFetchPreferred,
       toolOutput: input.toolOutput,
       initialWidgetState:
         input.protocol === "openai-apps" ? input.initialWidgetState : undefined,
@@ -63,6 +77,9 @@ export function buildPersistedExecutionReplay(
         input.protocol === "mcp-apps" ? input.widgetPermissive : undefined,
       prefersBorder:
         input.protocol === "mcp-apps" ? input.prefersBorder : undefined,
+      injectedOpenAiCompat: input.injectedOpenAiCompat,
+      injectedOpenAiCompatCapabilities:
+        input.injectedOpenAiCompatCapabilities,
     },
   };
 }

@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { formatRunId } from "./helpers";
+import { formatRunId, getEffectiveSuiteServers } from "./helpers";
 import {
   EvalSuite,
   EvalSuiteRun,
@@ -38,6 +38,8 @@ import { toast } from "sonner";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { RunValidatorsPopover } from "./run-validators-popover";
+import { resolveMatchOptions, type EvalMatchOptions } from "@/shared/eval-matching";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
@@ -46,20 +48,24 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
-import type { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import {
-  SuiteOverviewModelBar,
-  type SuiteOverviewModelRow,
-} from "./suite-overview-model-bar";
+import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
+import type { HostAttachmentDraft } from "./client-attachments-editor";
+import type { HostListItem } from "@/hooks/useClients";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
   viewMode: "overview" | "run-detail" | "test-detail" | "test-edit";
   selectedRunDetails: EvalSuiteRun | null;
   isEditMode: boolean;
-  onRerun: (suite: EvalSuite) => void;
+  onRerun: (
+    suite: EvalSuite,
+    opts?: {
+      matchOptionsOverride?: EvalMatchOptions;
+      iterationOverride?: number;
+    },
+  ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
   onViewModeChange: (mode: "overview") => void;
@@ -98,12 +104,21 @@ interface SuiteHeaderProps {
    * Playground: block suite-level Run all while a single case quick-run is in flight.
    */
   runningTestCaseId?: string | null;
-  /** Models catalog for the suite overview model bar (same source as suite settings). */
-  availableModels?: ModelDefinition[];
-  /** Persists suite models for all cases (same flow as suite settings → Models). */
-  onSuiteModelsUpdate?: (models: SuiteOverviewModelRow[]) => Promise<void>;
+  /** Persists the suite's host attachments (multi-host fan-out target list). */
+  onSuiteHostAttachmentsUpdate?: (
+    attachments: HostAttachmentDraft[],
+  ) => Promise<void>;
+  /** Hosts available to attach (from `useHostList`). Optional for legacy callers. */
+  projectHosts?: HostListItem[];
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
+  /**
+   * Transient per-run iteration count (1-10). Applied to both Run-all-cases
+   * and per-case runs triggered from this suite view; does NOT mutate the
+   * persisted `EvalCase.runs` defaults.
+   */
+  iterationOverride?: number;
+  onIterationOverrideChange?: (value: number | undefined) => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -116,6 +131,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onReplayRun,
     onCancelRun,
     onViewModeChange,
+    iterationOverride,
+    onIterationOverrideChange,
     connectedServerNames,
     rerunningSuiteId,
     replayingRunId = null,
@@ -134,11 +151,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     generateTestCasesDisabledReason,
     isGeneratingTestCases = false,
     onCreateTestCase,
-    blockTestCaseRuns = false,
+    blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
-    availableModels = [],
-    onSuiteModelsUpdate,
+    onSuiteHostAttachmentsUpdate,
+    projectHosts = [],
     runDetailKpiStrip,
   } = props;
 
@@ -148,6 +165,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
+  const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
+    EvalMatchOptions | undefined
+  >(undefined);
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
 
   const latestRunForMetadata = useMemo(() => {
@@ -201,8 +221,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     [handleNameBlur, suite.name],
   );
 
-  // Calculate suite server status
-  const suiteServers = suite.environment?.servers || [];
+  // Calculate suite server status from the EFFECTIVE server list —
+  // legacy `environment.servers` merged with any host attachments'
+  // resolvedServerNames. Without the merge, attachment-only suites
+  // (the current model) read as empty and Run all stayed disabled
+  // with "Configure suite servers" forever.
+  const suiteServers = getEffectiveSuiteServers(suite);
   const replayEligibility = getSuiteReplayEligibility({
     suiteServers,
     connectedServerNames,
@@ -351,19 +375,21 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     return null;
   }
 
-  // Overview: model bar sits with primary actions on md+; on narrow viewports it spans below the title row.
-  const hasSuiteModelBar = testCases.length > 0;
-
-  const suiteOverviewModelBar = hasSuiteModelBar ? (
-    <SuiteOverviewModelBar
+  // Hosts bar is rendered whenever the suite overview is visible, regardless
+  // of whether any cases exist yet — the empty "Attach host" affordance is
+  // the whole point of surfacing the axis up front. The model-axis bar was
+  // removed: a host's `modelId` is the source of truth for what each run
+  // runs against, so a separate suite-wide model selector is just noise.
+  const suiteOverviewHostBar = (
+    <SuiteOverviewClientBar
       containerVariant="inline"
       className="py-1.5 md:py-2"
-      testCases={testCases}
-      availableModels={availableModels}
+      suite={suite}
+      projectHosts={projectHosts}
       readOnly={readOnlyConfig}
-      onUpdate={onSuiteModelsUpdate}
+      onUpdate={onSuiteHostAttachmentsUpdate}
     />
-  ) : null;
+  );
 
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
@@ -387,35 +413,77 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   : null;
           const runAllConnectionHint =
             missingServers.length > 0 ? "Connect and run." : null;
+          const iterationPicker = onIterationOverrideChange ? (
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>Iterations</span>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-foreground"
+                value={iterationOverride ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  onIterationOverrideChange(raw === "" ? undefined : Number(raw));
+                }}
+                aria-label="Iterations per test case for the next run"
+                disabled={isRunAllDisabled}
+              >
+                <option value="">Auto</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null;
           const runAllButton = (
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
-              className="h-8 gap-1.5"
-              disabled={isRunAllDisabled}
-              aria-label="Run all cases in this suite"
-              aria-busy={isRerunning}
-              onClick={() => {
-                posthog.capture("run_all_cases_button_clicked", {
-                  location: "suite_header",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                  suite_id: suite._id,
-                });
-                onRerun(suite);
-              }}
-            >
-              {isRerunning ? (
-                <Loader2
-                  className="h-3.5 w-3.5 shrink-0 animate-spin"
-                  aria-hidden
-                />
-              ) : (
-                <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              )}
-              Run all
-            </Button>
+            <div className="flex items-center gap-2">
+              {iterationPicker}
+              <RunValidatorsPopover
+                persistedEffective={resolveMatchOptions(
+                  suite.defaultMatchOptions,
+                )}
+                runOverride={runMatchOptionsOverride}
+                onChange={setRunMatchOptionsOverride}
+                variant="icon"
+                disabled={isRerunning}
+              />
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="h-8 gap-1.5"
+                disabled={isRunAllDisabled}
+                aria-label="Run all cases in this suite"
+                aria-busy={isRerunning}
+                onClick={() => {
+                  posthog.capture("run_all_cases_button_clicked", {
+                    location: "suite_header",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                    suite_id: suite._id,
+                    iteration_override: iterationOverride ?? null,
+                  });
+                  onRerun(suite, {
+                    ...(runMatchOptionsOverride
+                      ? { matchOptionsOverride: runMatchOptionsOverride }
+                      : {}),
+                    ...(iterationOverride !== undefined
+                      ? { iterationOverride }
+                      : {}),
+                  });
+                }}
+              >
+                {isRerunning ? (
+                  <Loader2
+                    className="h-3.5 w-3.5 shrink-0 animate-spin"
+                    aria-hidden
+                  />
+                ) : (
+                  <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                )}
+                Run all
+              </Button>
+            </div>
           );
           if (isRunAllDisabled && runAllDisabledReasonTooltip) {
             return (
@@ -514,12 +582,16 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ) : null}
         </div>
       </div>
-      {hasSuiteModelBar && isMobile ? (
-        <div className="row-start-2 col-span-2 min-w-0">{suiteOverviewModelBar}</div>
+      {isMobile ? (
+        <div className="row-start-2 col-span-2 min-w-0">
+          {suiteOverviewHostBar}
+        </div>
       ) : null}
       <div className="row-start-1 col-start-2 flex min-w-0 max-w-full shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-2">
-        {hasSuiteModelBar && !isMobile ? (
-          <div className="min-w-0 max-w-full shrink">{suiteOverviewModelBar}</div>
+        {!isMobile ? (
+          <div className="min-w-0 max-w-full shrink">
+            {suiteOverviewHostBar}
+          </div>
         ) : null}
         {overviewHasSuiteNav ? (
           <div className="flex items-center gap-2">
@@ -636,7 +708,17 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                       onClick={() =>
                         replayableLatestRun
                           ? onReplayRun?.(suite, replayableLatestRun)
-                          : onRerun(suite)
+                          : onRerun(suite, {
+                              ...(runMatchOptionsOverride
+                                ? {
+                                    matchOptionsOverride:
+                                      runMatchOptionsOverride,
+                                  }
+                                : {}),
+                              ...(iterationOverride !== undefined
+                                ? { iterationOverride }
+                                : {}),
+                            })
                       }
                       disabled={
                         replayableLatestRun

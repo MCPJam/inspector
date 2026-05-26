@@ -1,12 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { useWidgetSurfaceStore } from "../thread/mcp-apps/widget-surface-store";
 
 const mockMessageView = vi.fn();
 const mockThinkingIndicator = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
+
+const renderWithHost = (
+  ui: ReactElement,
+  hostStyle: "claude" | "chatgpt" | null = null,
+) =>
+  render(
+    hostStyle ? (
+      <ChatboxHostStyleProvider value={hostStyle}>{ui}</ChatboxHostStyleProvider>
+    ) : (
+      ui
+    ),
+  );
 
 // Mock child components
 vi.mock("../thread/message-view", () => ({
@@ -27,14 +42,8 @@ vi.mock("../thread/message-view", () => ({
 }));
 
 vi.mock("../shared/thinking-indicator", () => ({
-  ThinkingIndicator: ({
-    model,
-    resolvedVariant,
-  }: {
-    model: ModelDefinition;
-    resolvedVariant: string;
-  }) => {
-    mockThinkingIndicator({ model, resolvedVariant });
+  ThinkingIndicator: ({ model }: { model: ModelDefinition }) => {
+    mockThinkingIndicator({ model });
     return (
       <div data-testid="thinking-indicator">Thinking... ({model.name})</div>
     );
@@ -78,6 +87,10 @@ describe("Thread", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useWidgetSurfaceStore.setState({
+      surfaces: new Map(),
+      nextOrder: 0,
+    });
   });
 
   describe("message rendering", () => {
@@ -255,19 +268,22 @@ describe("Thread", () => {
       );
     });
 
-    it("defaults to the GPT pulse for OpenAI models when no explicit variant is provided", () => {
+    it("defaults to the GPT pulse for OpenAI models when no host context is set", () => {
       const messages = [createMessage({ id: "msg-1", role: "user" })];
 
       render(<Thread {...defaultProps} messages={messages} isLoading={true} />);
 
+      // openai → chatgpt host → standalone thinking row visible (no
+      // assistant content yet); claudeFooterMode stays "none" because the
+      // host isn't Claude.
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          resolvedVariant: "chatgpt-dot",
+          model: expect.objectContaining({ provider: "openai" }),
         }),
       );
     });
 
-    it("defaults to the Claude mascot for Anthropic models when no explicit variant is provided", () => {
+    it("defaults to the Claude mascot for Anthropic models when no host context is set", () => {
       const messages = [createMessage({ id: "msg-1", role: "user" })];
       const claudeModel: ModelDefinition = {
         ...defaultModel,
@@ -287,23 +303,7 @@ describe("Thread", () => {
 
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
-          resolvedVariant: "claude-mark",
-        }),
-      );
-    });
-
-    it("passes the selected loading indicator variant to the inline indicator", () => {
-      render(
-        <Thread
-          {...defaultProps}
-          isLoading={true}
-          loadingIndicatorVariant="claude-mark"
-        />,
-      );
-
-      expect(mockThinkingIndicator).toHaveBeenCalledWith(
-        expect.objectContaining({
-          resolvedVariant: "claude-mark",
+          model: expect.objectContaining({ provider: "anthropic" }),
         }),
       );
     });
@@ -311,21 +311,12 @@ describe("Thread", () => {
     it("keeps the GPT pulse visible before the first assistant message streams", () => {
       const messages = [createMessage({ id: "msg-1", role: "user" })];
 
-      render(
-        <Thread
-          {...defaultProps}
-          messages={messages}
-          isLoading={true}
-          loadingIndicatorVariant="chatgpt-dot"
-        />,
+      renderWithHost(
+        <Thread {...defaultProps} messages={messages} isLoading={true} />,
+        "chatgpt",
       );
 
       expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
-      expect(mockThinkingIndicator).toHaveBeenCalledWith(
-        expect.objectContaining({
-          resolvedVariant: "chatgpt-dot",
-        }),
-      );
     });
 
     it("hides the GPT pulse once assistant content is visible while loading", () => {
@@ -338,13 +329,9 @@ describe("Thread", () => {
         }),
       ];
 
-      render(
-        <Thread
-          {...defaultProps}
-          messages={messages}
-          isLoading={true}
-          loadingIndicatorVariant="chatgpt-dot"
-        />,
+      renderWithHost(
+        <Thread {...defaultProps} messages={messages} isLoading={true} />,
+        "chatgpt",
       );
 
       expect(
@@ -356,21 +343,12 @@ describe("Thread", () => {
     it("keeps the Claude placeholder row visible before the first assistant message streams", () => {
       const messages = [createMessage({ id: "msg-1", role: "user" })];
 
-      render(
-        <Thread
-          {...defaultProps}
-          messages={messages}
-          isLoading={true}
-          loadingIndicatorVariant="claude-mark"
-        />,
+      renderWithHost(
+        <Thread {...defaultProps} messages={messages} isLoading={true} />,
+        "claude",
       );
 
       expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
-      expect(mockThinkingIndicator).toHaveBeenCalledWith(
-        expect.objectContaining({
-          resolvedVariant: "claude-mark",
-        }),
-      );
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({ id: "msg-1" }),
@@ -389,13 +367,9 @@ describe("Thread", () => {
         }),
       ];
 
-      render(
-        <Thread
-          {...defaultProps}
-          messages={messages}
-          isLoading={true}
-          loadingIndicatorVariant="claude-mark"
-        />,
+      renderWithHost(
+        <Thread {...defaultProps} messages={messages} isLoading={true} />,
+        "claude",
       );
 
       expect(
@@ -420,13 +394,9 @@ describe("Thread", () => {
         }),
       ];
 
-      render(
-        <Thread
-          {...defaultProps}
-          messages={messages}
-          isLoading={true}
-          loadingIndicatorVariant="claude-mark"
-        />,
+      renderWithHost(
+        <Thread {...defaultProps} messages={messages} isLoading={true} />,
+        "claude",
       );
 
       expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
@@ -453,13 +423,9 @@ describe("Thread", () => {
         }),
       ];
 
-      render(
-        <Thread
-          {...defaultProps}
-          messages={messages}
-          isLoading={false}
-          loadingIndicatorVariant="claude-mark"
-        />,
+      renderWithHost(
+        <Thread {...defaultProps} messages={messages} isLoading={false} />,
+        "claude",
       );
 
       expect(mockMessageView).toHaveBeenCalledWith(
@@ -486,13 +452,9 @@ describe("Thread", () => {
         }),
       ];
 
-      render(
-        <Thread
-          {...defaultProps}
-          messages={messages}
-          isLoading={false}
-          loadingIndicatorVariant="chatgpt-dot"
-        />,
+      renderWithHost(
+        <Thread {...defaultProps} messages={messages} isLoading={false} />,
+        "chatgpt",
       );
 
       expect(
@@ -524,16 +486,16 @@ describe("Thread", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("passes the selected loading indicator variant to the fullscreen overlay", () => {
+    it("renders the fullscreen overlay (which derives its own indicator from host context)", () => {
       const messages = [createMessage({ id: "msg-1", role: "assistant" })];
 
-      render(
+      renderWithHost(
         <Thread
           {...defaultProps}
           messages={messages}
           enableFullscreenChatOverlay={true}
-          loadingIndicatorVariant="claude-mark"
         />,
+        "claude",
       );
 
       act(() => {
@@ -542,10 +504,10 @@ describe("Thread", () => {
       });
 
       expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
+      // The overlay no longer takes a loadingIndicatorVariant prop — it
+      // resolves the brand indicator from ChatboxHostStyleProvider context.
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          loadingIndicatorVariant: "claude-mark",
-        }),
+        expect.not.objectContaining({ loadingIndicatorVariant: expect.anything() }),
       );
     });
 
@@ -576,6 +538,122 @@ describe("Thread", () => {
           onStop: onFullscreenChatStop,
         }),
       );
+    });
+
+    it("exits fullscreen when a persistent surface id owns the raw tool call", () => {
+      useWidgetSurfaceStore.setState({
+        surfaces: new Map([
+          [
+            "surface-1",
+            {
+              surfaceId: "surface-1",
+              chatSessionId: "other-chat",
+              initialToolCallId: "call-1",
+              latestToolCallId: "call-2",
+              registrations: new Map([
+                [
+                  "call-1",
+                  {
+                    toolCallId: "call-1",
+                    order: 0,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+                [
+                  "call-2",
+                  {
+                    toolCallId: "call-2",
+                    order: 1,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+              ]),
+            },
+          ],
+        ]),
+      });
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          chatSessionId="chat-1"
+          messages={messages}
+          enableFullscreenChatOverlay={true}
+        />,
+      );
+
+      act(() => {
+        mockMessageView.mock.calls.at(-1)?.[0]?.onRequestFullscreen("call-1");
+      });
+
+      expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
+
+      act(() => {
+        mockMessageView.mock.calls.at(-1)?.[0]?.onExitFullscreen("surface-1");
+      });
+
+      expect(
+        screen.queryByTestId("fullscreen-chat-overlay"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("tears down every registered tool call for a persistent surface", () => {
+      useWidgetSurfaceStore.setState({
+        surfaces: new Map([
+          [
+            "surface-1",
+            {
+              surfaceId: "surface-1",
+              chatSessionId: "other-chat",
+              initialToolCallId: "call-1",
+              latestToolCallId: "call-2",
+              registrations: new Map([
+                [
+                  "call-1",
+                  {
+                    toolCallId: "call-1",
+                    order: 0,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+                [
+                  "call-2",
+                  {
+                    toolCallId: "call-2",
+                    order: 1,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+              ]),
+            },
+          ],
+        ]),
+      });
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          chatSessionId="chat-1"
+          messages={messages}
+        />,
+      );
+
+      act(() => {
+        mockMessageView.mock.calls
+          .at(-1)?.[0]
+          ?.onRequestTeardown("call-2", "surface-1");
+      });
+
+      const tornDownWidgetIds = mockMessageView.mock.calls.at(-1)?.[0]
+        ?.tornDownWidgetIds as ReadonlySet<string>;
+      expect(tornDownWidgetIds.has("call-1")).toBe(true);
+      expect(tornDownWidgetIds.has("call-2")).toBe(true);
     });
   });
 

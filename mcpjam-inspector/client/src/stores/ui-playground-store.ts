@@ -9,7 +9,6 @@
 import { create } from "zustand";
 import type { Tool } from "@modelcontextprotocol/client";
 import type { FormField } from "@/lib/tool-form";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 export type DeviceType = "mobile" | "tablet" | "desktop" | "custom";
 
@@ -123,9 +122,6 @@ interface UIPlaygroundState {
   // CSP enforcement mode for MCP Apps (SEP-1865)
   mcpAppsCspMode: CspMode;
 
-  // Currently selected app protocol (detected from tool metadata)
-  selectedProtocol: UIType | null;
-
   // Device capabilities (hover/touch support)
   capabilities: DeviceCapabilities;
 
@@ -163,7 +159,6 @@ interface UIPlaygroundState {
   setPlaygroundActive: (active: boolean) => void;
   setCspMode: (mode: CspMode) => void;
   setMcpAppsCspMode: (mode: CspMode) => void;
-  setSelectedProtocol: (protocol: UIType | null) => void;
   setCapabilities: (capabilities: Partial<DeviceCapabilities>) => void;
   setSafeAreaPreset: (preset: SafeAreaPreset) => void;
   setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
@@ -183,7 +178,6 @@ const getInitialGlobals = (): PlaygroundGlobals => ({
 const STORAGE_KEY_SIDEBAR = "mcpjam-ui-playground-sidebar-visible";
 const STORAGE_KEY_CUSTOM_VIEWPORT = "mcpjam-ui-playground-custom-viewport";
 const STORAGE_KEY_DEVICE_TYPE = "mcpjam-ui-playground-device-type";
-const STORAGE_KEY_SELECTED_PROTOCOL = "mcpjam-ui-playground-selected-protocol";
 const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
   if (typeof window === "undefined") return defaultValue;
   const stored = localStorage.getItem(key);
@@ -206,18 +200,6 @@ const getStoredDeviceType = (): DeviceType => {
     return stored as DeviceType;
   }
   return "desktop";
-};
-
-const getStoredSelectedProtocol = (): UIType | null => {
-  if (typeof window === "undefined") return null;
-  const stored = localStorage.getItem(STORAGE_KEY_SELECTED_PROTOCOL);
-  if (
-    stored &&
-    [UIType.MCP_APPS, UIType.OPENAI_SDK].includes(stored as UIType)
-  ) {
-    return stored as UIType;
-  }
-  return null;
 };
 
 /** Get default capabilities based on device type */
@@ -256,7 +238,6 @@ const initialState = {
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
   mcpAppsCspMode: "permissive" as CspMode,
-  selectedProtocol: getStoredSelectedProtocol(),
   capabilities: getDefaultCapabilities("desktop"),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
@@ -368,13 +349,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
 
   setMcpAppsCspMode: (mode) => set({ mcpAppsCspMode: mode }),
 
-  setSelectedProtocol: (protocol) => {
-    if (protocol) {
-      localStorage.setItem(STORAGE_KEY_SELECTED_PROTOCOL, protocol);
-    }
-    return set({ selectedProtocol: protocol });
-  },
-
   setCapabilities: (newCapabilities) =>
     set((state) => ({
       capabilities: { ...state.capabilities, ...newCapabilities },
@@ -423,8 +397,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         deviceType: storedDeviceType,
         customViewport: getStoredCustomViewport(),
         capabilities: getDefaultCapabilities(storedDeviceType),
-        // Preserve selected protocol from localStorage
-        selectedProtocol: getStoredSelectedProtocol(),
         // Preserve CSP modes (may be set via CLI config before reset fires)
         cspMode: state.cspMode,
         mcpAppsCspMode: state.mcpAppsCspMode,

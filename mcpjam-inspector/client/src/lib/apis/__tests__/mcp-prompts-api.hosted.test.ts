@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const listHostedPromptsMock = vi.fn();
 const listHostedPromptsMultiMock = vi.fn();
 const resolveHostedServerIdMock = vi.fn();
-const isGuestModeMock = vi.fn(() => false);
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -17,7 +16,6 @@ vi.mock("@/lib/apis/web/prompts-api", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
-  isGuestMode: () => isGuestModeMock(),
   resolveHostedServerId: (...args: unknown[]) =>
     resolveHostedServerIdMock(...args),
 }));
@@ -27,27 +25,28 @@ import { listPromptsForServers } from "../mcp-prompts-api";
 describe("mcp-prompts-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    isGuestModeMock.mockReturnValue(false);
   });
 
-  it("lists prompts per server directly for hosted guests", async () => {
-    isGuestModeMock.mockReturnValue(true);
-    listHostedPromptsMock
-      .mockResolvedValueOnce({ prompts: [{ name: "draw" }] })
-      .mockResolvedValueOnce({ prompts: [{ name: "animate" }] });
+  it("keeps the batch hosted path for hosted guests", async () => {
+    listHostedPromptsMultiMock.mockResolvedValueOnce({
+      prompts: {
+        "srv-excalidraw": [{ name: "draw" }],
+        "srv-other": [{ name: "animate" }],
+      },
+    });
+    resolveHostedServerIdMock
+      .mockReturnValueOnce("srv-excalidraw")
+      .mockReturnValueOnce("srv-other");
 
     const result = await listPromptsForServers([
       "Excalidraw (App)",
       "Other Server",
     ]);
 
-    expect(listHostedPromptsMock).toHaveBeenNthCalledWith(1, {
-      serverNameOrId: "Excalidraw (App)",
+    expect(listHostedPromptsMultiMock).toHaveBeenCalledWith({
+      serverNamesOrIds: ["Excalidraw (App)", "Other Server"],
     });
-    expect(listHostedPromptsMock).toHaveBeenNthCalledWith(2, {
-      serverNameOrId: "Other Server",
-    });
-    expect(listHostedPromptsMultiMock).not.toHaveBeenCalled();
+    expect(listHostedPromptsMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       prompts: {
         "Excalidraw (App)": [{ name: "draw" }],
@@ -57,7 +56,7 @@ describe("mcp-prompts-api hosted mode", () => {
     });
   });
 
-  it("keeps the batch hosted path for authenticated hosted workspaces", async () => {
+  it("keeps the batch hosted path for authenticated hosted projects", async () => {
     listHostedPromptsMultiMock.mockResolvedValueOnce({
       prompts: { "srv-excalidraw": [{ name: "draw" }] },
     });

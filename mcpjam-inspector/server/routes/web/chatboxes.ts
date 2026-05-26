@@ -5,21 +5,46 @@ import {
   WebRouteError,
   assertBearerToken,
   handleRoute,
-  parseErrorMessage,
   parseWithSchema,
   readJsonBody,
 } from "./auth.js";
+import { redeemChatboxToken } from "../../utils/chatbox-redeem.js";
 
 const chatboxes = new Hono();
 
-const chatboxBootstrapSchema = z.object({
-  token: z.string().min(1),
+// Token redemption. The landing page calls this on mount to exchange its
+// URL token for `{ chatboxId, role, mode, projectId, accessVersion,
+// bootstrap }`. Once the inspector stores `chatboxId` + `accessVersion`,
+// subsequent calls do NOT need the token — every read-path route accepts
+// `chatboxId` directly.
+//
+// `bootstrap` is the same payload shape callers previously fetched from
+// `/chatbox/bootstrap` (projectId, hostStyle, modelId, systemPrompt,
+// servers, …). Inspector clients validate the whole shape before storing
+// the session — see `ChatboxBootstrapPayload` in `chatbox-session.ts`.
+//
+// Thin forward to the Convex /web/chatbox/redeem endpoint; the backend
+// handles rate limits, audit, and access-grant writes. The fetch/parse
+// logic lives in utils/chatbox-redeem.ts so non-route callers can reuse
+// it.
+const chatboxRedeemSchema = z.object({
+  chatboxToken: z.string().min(1),
 });
 
-chatboxes.post("/bootstrap", async (c) =>
+function mapRedeemStatusToErrorCode(status: number): ErrorCode {
+  if (status === 401) return ErrorCode.UNAUTHORIZED;
+  if (status === 403) return ErrorCode.FORBIDDEN;
+  if (status === 404) return ErrorCode.NOT_FOUND;
+  if (status === 429) return ErrorCode.RATE_LIMITED;
+  if (status === 502 || status === 503 || status === 504) {
+    return ErrorCode.SERVER_UNREACHABLE;
+  }
+  return ErrorCode.INTERNAL_ERROR;
+}
+
+chatboxes.post("/redeem", async (c) =>
   handleRoute(c, async () => {
-    const convexUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexUrl) {
+    if (!process.env.CONVEX_HTTP_URL) {
       throw new WebRouteError(
         500,
         ErrorCode.INTERNAL_ERROR,
@@ -29,81 +54,39 @@ chatboxes.post("/bootstrap", async (c) =>
 
     const bearerToken = assertBearerToken(c);
     const body = parseWithSchema(
-      chatboxBootstrapSchema,
+      chatboxRedeemSchema,
       await readJsonBody<unknown>(c),
     );
 
-    let response: Response;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
+    let result;
     try {
-      response = await fetch(`${convexUrl}/chatbox/bootstrap`, {
-        method: "POST",
+      result = await redeemChatboxToken({
+        chatboxToken: body.chatboxToken,
+        bearer: bearerToken,
         signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${bearerToken}`,
-        },
-        body: JSON.stringify({ token: body.token }),
       });
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new WebRouteError(
-          504,
-          ErrorCode.SERVER_UNREACHABLE,
-          "Chatbox bootstrap service timed out",
-        );
-      }
-      throw new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        `Failed to reach chatbox bootstrap service: ${parseErrorMessage(error)}`,
-      );
     } finally {
       clearTimeout(timeout);
     }
 
-    const responseText = await response.text();
-    const trimmedResponseText = responseText.trim();
-    let payload: any = null;
-    try {
-      payload = trimmedResponseText ? JSON.parse(trimmedResponseText) : null;
-    } catch {
-      // ignored
-    }
-
-    if (!response.ok) {
-      let message =
-        typeof payload?.error === "string"
-          ? payload.error
-          : typeof payload?.message === "string"
-            ? payload.message
-            : trimmedResponseText ||
-              `Chatbox bootstrap failed (${response.status})`;
-      if (response.status === 404 && message === "No matching routes found") {
-        message =
-          "Configured Convex deployment does not expose /chatbox/bootstrap. Check CONVEX_HTTP_URL and VITE_CONVEX_URL.";
-      }
-      const code =
-        response.status === 401
-          ? ErrorCode.UNAUTHORIZED
-          : response.status === 403
-            ? ErrorCode.FORBIDDEN
-            : response.status === 404
-              ? ErrorCode.NOT_FOUND
-              : ErrorCode.INTERNAL_ERROR;
-      throw new WebRouteError(response.status, code, message);
-    }
-
-    if (!payload?.ok || !payload?.payload) {
+    if (!result.ok) {
       throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        "Chatbox bootstrap response was missing payload",
+        result.status || 500,
+        mapRedeemStatusToErrorCode(result.status),
+        result.error,
       );
     }
 
-    return payload.payload;
+    return {
+      chatboxId: result.chatboxId,
+      role: result.role,
+      mode: result.mode,
+      projectId: result.projectId,
+      accessVersion: result.accessVersion,
+      bootstrap: result.bootstrap,
+    };
   }),
 );
 

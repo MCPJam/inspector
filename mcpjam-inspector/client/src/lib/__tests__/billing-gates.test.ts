@@ -28,17 +28,17 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 import {
   BILLING_GATES,
   resolveBillingGateState,
-  useWorkspaceBillingGate,
+  useProjectBillingGate,
 } from "../billing-gates";
 
 function createUseOrganizationBillingResult() {
   return {
     billingStatus: undefined,
     organizationPremiumness: undefined,
-    workspacePremiumness: undefined,
+    projectPremiumness: undefined,
     isLoadingBilling: false,
     isLoadingOrganizationPremiumness: false,
-    isLoadingWorkspacePremiumness: false,
+    isLoadingProjectPremiumness: false,
   };
 }
 
@@ -93,7 +93,7 @@ describe("resolveBillingGateState", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "team",
             reason: "feature_not_included",
           },
         ],
@@ -103,7 +103,7 @@ describe("resolveBillingGateState", () => {
 
     expect(gate.isDenied).toBe(true);
     expect(gate.currentPlan).toBe("free");
-    expect(gate.upgradePlan).toBe("starter");
+    expect(gate.upgradePlan).toBe("team");
     expect(gate.denialMessage).toBeNull();
   });
 
@@ -142,24 +142,24 @@ describe("resolveBillingGateState", () => {
         decisionRequired: false,
         gates: [
           {
-            gateKey: "maxWorkspaces",
+            gateKey: "maxProjects",
             kind: "limit",
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "team",
             reason: "limit_reached",
             currentValue: 1,
             allowedValue: 1,
           },
         ],
       },
-      gate: BILLING_GATES.workspaceCreation,
+      gate: BILLING_GATES.projectCreation,
     });
 
     expect(gate.isDenied).toBe(true);
     expect(gate.denialMessage).toBe(
-      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      "This organization has reached its project limit (1). Upgrade to create more projects.",
     );
   });
 
@@ -181,7 +181,7 @@ describe("resolveBillingGateState", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "team",
             reason: "feature_not_included",
           },
         ],
@@ -190,36 +190,36 @@ describe("resolveBillingGateState", () => {
     });
 
     expect(gate.isDenied).toBe(false);
-    expect(gate.upgradePlan).toBe("starter");
+    expect(gate.upgradePlan).toBe("team");
   });
 
-  it("skips workspace billing queries when organization context is missing", () => {
+  it("skips project billing queries when organization context is missing", () => {
     const { result } = renderHook(() =>
-      useWorkspaceBillingGate({
-        workspaceId: "shared-ws-1",
+      useProjectBillingGate({
+        projectId: "shared-ws-1",
         organizationId: null,
         gate: BILLING_GATES.serverCreation,
       }),
     );
 
     expect(mockUseOrganizationBilling).toHaveBeenCalledWith(null, {
-      workspaceId: null,
+      projectId: null,
     });
     expect(result.current.organizationId).toBeNull();
     expect(result.current.isLoading).toBe(false);
   });
 
-  it("only resolves workspace billing when both workspace and organization are present", () => {
+  it("only resolves project billing when both project and organization are present", () => {
     renderHook(() =>
-      useWorkspaceBillingGate({
-        workspaceId: "shared-ws-1",
+      useProjectBillingGate({
+        projectId: "shared-ws-1",
         organizationId: "org-1",
         gate: BILLING_GATES.serverCreation,
       }),
     );
 
     expect(mockUseOrganizationBilling).toHaveBeenCalledWith("org-1", {
-      workspaceId: "shared-ws-1",
+      projectId: "shared-ws-1",
     });
   });
 });

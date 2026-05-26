@@ -81,12 +81,17 @@ export function useTemplateGroups(
         if (!groups.has(snapshotKey)) {
           const virtualTestCase: EvalCase = {
             _id: snapshotKey,
-            evalTestSuiteId: suiteDetails.testCases[0]?.evalTestSuiteId || "",
+            testSuiteId: suiteDetails.testCases[0]?.testSuiteId || "",
             createdBy: iteration.createdBy || "",
             title: iteration.testCaseSnapshot.title,
             query: iteration.testCaseSnapshot.query,
-            provider: iteration.testCaseSnapshot.provider,
-            model: iteration.testCaseSnapshot.model,
+            models: [
+              {
+                model: iteration.testCaseSnapshot.model,
+                provider: iteration.testCaseSnapshot.provider,
+              },
+            ],
+            runs: 1,
             expectedToolCalls: iteration.testCaseSnapshot.expectedToolCalls,
           };
           groups.set(snapshotKey, {

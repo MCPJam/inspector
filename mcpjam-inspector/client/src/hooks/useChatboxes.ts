@@ -1,12 +1,26 @@
 import { useMutation, useQuery } from "convex/react";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type {
+  ChatUiSettings,
+  ChatboxFeedbackDialogSettings,
+  ChatboxWelcomeDialogSettings,
+} from "@/types/chatUi";
 
-export type ChatboxMode = "any_signed_in_with_link" | "invited_only";
+export type {
+  ChatUiSettings,
+  ChatboxFeedbackDialogSettings,
+  ChatboxWelcomeDialogSettings,
+};
+
+export type ChatboxMode =
+  | "anyone_with_link"
+  | "invited_only"
+  | "project_members";
 
 export interface ChatboxMember {
   _id: string;
   chatboxId: string;
-  workspaceId: string;
+  projectId: string;
   email: string;
   userId?: string;
   role: "chat";
@@ -33,23 +47,12 @@ export interface ChatboxServerSettings {
   optional?: boolean;
 }
 
-export interface ChatboxWelcomeDialogSettings {
-  enabled: boolean;
-  body?: string;
-}
-
-export interface ChatboxFeedbackDialogSettings {
-  enabled: boolean;
-  /** Completed tool calls between feedback prompts in hosted sessions (not user message count). */
-  everyNToolCalls?: number;
-  promptHint?: string;
-}
-
 export interface ChatboxSettings {
   chatboxId: string;
-  workspaceId: string;
+  projectId: string;
   name: string;
   description?: string;
+  /** Projected from the resolved host's hostConfig DTO. */
   hostStyle: ChatboxHostStyle;
   systemPrompt: string;
   modelId: string;
@@ -57,11 +60,12 @@ export interface ChatboxSettings {
   requireToolApproval: boolean;
   allowGuestAccess: boolean;
   mode: ChatboxMode;
-  /** When present, drives welcome dialog in hosted chatbox (Convex may add fields incrementally). */
-  welcomeDialog?: ChatboxWelcomeDialogSettings | null;
-  /** When present, drives tester feedback cadence and copy. */
-  feedbackDialog?: ChatboxFeedbackDialogSettings | null;
+  /** Chat UI config envelope: welcome / feedback dialog surfaces (and future surfaces / branding). */
+  chatUi?: ChatUiSettings | null;
   servers: ChatboxServerSettings[];
+  /** The named host this chatbox resolves through. */
+  namedHostId: string;
+  namedHostName: string;
   link: {
     token: string;
     path: string;
@@ -74,7 +78,7 @@ export interface ChatboxSettings {
 
 export interface ChatboxListItem {
   chatboxId: string;
-  workspaceId: string;
+  projectId: string;
   name: string;
   description?: string;
   hostStyle: ChatboxHostStyle;
@@ -82,25 +86,28 @@ export interface ChatboxListItem {
   allowGuestAccess: boolean;
   serverCount: number;
   serverNames: string[];
+  /** The named host this chatbox resolves through. */
+  namedHostId: string;
+  namedHostName: string;
   createdAt: number;
   updatedAt: number;
 }
 
 export function useChatboxList({
   isAuthenticated,
-  workspaceId,
+  projectId,
 }: {
   isAuthenticated: boolean;
-  workspaceId: string | null;
+  projectId: string | null;
 }) {
   const chatboxes = useQuery(
     "chatboxes:listChatboxes" as any,
-    isAuthenticated && workspaceId ? ({ workspaceId } as any) : "skip",
+    isAuthenticated && projectId ? ({ projectId } as any) : "skip",
   ) as ChatboxListItem[] | undefined;
 
   return {
     chatboxes,
-    isLoading: isAuthenticated && !!workspaceId && chatboxes === undefined,
+    isLoading: isAuthenticated && !!projectId && chatboxes === undefined,
   };
 }
 
@@ -122,9 +129,37 @@ export function useChatbox({
   };
 }
 
+/**
+ * Resolve the chatbox bound to a host. Under the 1:1 invariant
+ * (`hosts.createHost` auto-mints a chatbox; `hosts.deleteHost` cascades),
+ * every host has exactly one chatbox reachable via this query. The new
+ * host-detail surfaces use this to drill `chatboxId` into the publish /
+ * sessions / clusters tabs without the URL needing to carry chatboxId.
+ */
+export function useChatboxByHostId({
+  isAuthenticated,
+  hostId,
+}: {
+  isAuthenticated: boolean;
+  hostId: string | null;
+}) {
+  const chatbox = useQuery(
+    "chatboxes:getChatboxByHostId" as any,
+    isAuthenticated && hostId ? ({ hostId } as any) : "skip",
+  ) as ChatboxSettings | null | undefined;
+
+  return {
+    chatbox,
+    isLoading: isAuthenticated && !!hostId && chatbox === undefined,
+  };
+}
+
 export function useChatboxMutations() {
-  const createChatbox = useMutation("chatboxes:createChatbox" as any);
-  const duplicateChatbox = useMutation("chatboxes:duplicateChatbox" as any);
+  // `createChatbox` / `duplicateChatbox` were removed with the 1:1
+  // host↔chatbox refactor. To create, call `hosts.createHost` (which
+  // auto-creates the publish-surface chatbox); to duplicate, call
+  // `hosts.duplicateHost`. The remaining mutations are the publish-side
+  // editors (mode, link rotation, members, name/description/chatUi).
   const updateChatbox = useMutation("chatboxes:updateChatbox" as any);
   const deleteChatbox = useMutation("chatboxes:deleteChatbox" as any);
   const setChatboxMode = useMutation("chatboxes:setChatboxMode" as any);
@@ -137,8 +172,6 @@ export function useChatboxMutations() {
   );
 
   return {
-    createChatbox,
-    duplicateChatbox,
     updateChatbox,
     deleteChatbox,
     setChatboxMode,

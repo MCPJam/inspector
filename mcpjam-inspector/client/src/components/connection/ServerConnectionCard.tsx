@@ -16,9 +16,15 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import {
   MoreVertical,
   Link2Off,
   RefreshCw,
+  Power,
   Loader2,
   Copy,
   Download,
@@ -28,7 +34,6 @@ import {
   Cable,
   Trash2,
   AlertCircle,
-  Share2,
   FileText,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -56,7 +61,6 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
-import { ShareServerDialog } from "./ShareServerDialog";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 
@@ -72,8 +76,6 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   }
 }
 
-// Temporary hide while chatbox sharing replaces server sharing in the main UI.
-const SERVER_SHARE_UI_ENABLED = false;
 const SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR =
   "[data-server-card-context-menu-exempt]";
 
@@ -102,8 +104,8 @@ interface ServerConnectionCardProps {
     server: ServerWithName,
     defaultTab: ServerDetailTab,
   ) => void;
-  /** When set (e.g. active workspace on Servers tab), prefetches Explore AI test cases on MCP connect. */
-  workspaceId?: string | null;
+  /** When set (e.g. active project on Servers tab), prefetches Explore AI test cases on MCP connect. */
+  projectId?: string | null;
 }
 
 export function ServerConnectionCard({
@@ -115,9 +117,9 @@ export function ServerConnectionCard({
   serverTunnelUrl,
   hostedServerId,
   onOpenDetailModal,
-  workspaceId,
+  projectId,
 }: ServerConnectionCardProps) {
-  useExploreCasesPrefetchOnConnect(workspaceId ?? null, server, hostedServerId);
+  useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
@@ -133,7 +135,6 @@ export function ServerConnectionCard({
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
-  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
   const {
@@ -163,25 +164,6 @@ export function ServerConnectionCard({
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
   const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
-  const isStdioServer = "command" in server.config;
-  const isInsecureHttpServer =
-    "url" in server.config &&
-    !!server.config.url &&
-    (() => {
-      try {
-        return new URL(server.config.url.toString()).protocol === "http:";
-      } catch {
-        return false;
-      }
-    })();
-  const canShareServer =
-    SERVER_SHARE_UI_ENABLED &&
-    HOSTED_MODE &&
-    !!hostedServerId &&
-    isAuthenticated &&
-    !isStdioServer &&
-    !isInsecureHttpServer;
-
   useEffect(() => {
     if (serverTunnelUrl !== undefined) {
       setTunnelUrl(serverTunnelUrl);
@@ -238,6 +220,14 @@ export function ServerConnectionCard({
     } finally {
       setIsReconnecting(false);
     }
+  };
+
+  const getSwitchReconnectOptions = () => {
+    if (server.useOAuth === true && !server.oauthTokens) {
+      return { allowInteractiveOAuthFlow: true };
+    }
+
+    return { allowInteractiveOAuthFlow: false };
   };
 
   const handleExport = async () => {
@@ -321,7 +311,11 @@ export function ServerConnectionCard({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
-      toast.error(`Tunnel creation failed: ${errorMessage}`);
+      if (errorMessage.includes("No access token available")) {
+        toast.error("Sign in to create ngrok tunnels");
+      } else {
+        toast.error(`Tunnel creation failed: ${errorMessage}`);
+      }
     } finally {
       setIsCreatingTunnel(false);
     }
@@ -437,11 +431,6 @@ export function ServerConnectionCard({
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {server.name}
                 </h3>
-                {needsReconnect ? (
-                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                    Needs reconnect
-                  </span>
-                ) : null}
                 {version && (
                   <span className="text-xs text-muted-foreground">
                     v{version}
@@ -485,6 +474,26 @@ export function ServerConnectionCard({
                       ? `${connectionStatusLabel} (${server.retryCount})`
                       : connectionStatusLabel}
                   </span>
+                  {needsReconnect ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        aria-label="Connection settings changed"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-600 outline-none transition-colors hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-amber-300 dark:hover:text-amber-200"
+                      >
+                        <Power className="h-3 w-3" />
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        sideOffset={4}
+                        variant="muted"
+                        className="max-w-48 px-2.5 text-left [text-wrap:normal]"
+                      >
+                        Turn the connection off and on to apply the new
+                        connection settings.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
                 </span>
 
                 <Switch
@@ -505,9 +514,7 @@ export function ServerConnectionCard({
                     if (!checked) {
                       onDisconnect(server.name);
                     } else {
-                      void handleReconnect({
-                        allowInteractiveOAuthFlow: false,
-                      });
+                      void handleReconnect(getSwitchReconnectOptions());
                     }
                   }}
                   className="cursor-pointer scale-75"
@@ -670,23 +677,6 @@ export function ServerConnectionCard({
               className="flex flex-wrap items-center justify-end gap-2"
               onClick={(e) => e.stopPropagation()}
             >
-              {canShareServer && (
-                <button
-                  data-server-card-context-menu-exempt
-                  onClick={() => {
-                    posthog.capture("share_server_clicked", {
-                      location: "server_connection_card",
-                      platform: detectPlatform(),
-                      environment: detectEnvironment(),
-                    });
-                    setIsShareDialogOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
-                >
-                  <Share2 className="h-3 w-3" />
-                  <span>Share</span>
-                </button>
-              )}
               {showTunnelActions && (
                 <>
                   {hasTunnel ? (
@@ -809,14 +799,6 @@ export function ServerConnectionCard({
         onConfirm={handleConfirmCreateTunnel}
         isCreating={isCreatingTunnel}
       />
-      {canShareServer && hostedServerId && (
-        <ShareServerDialog
-          isOpen={isShareDialogOpen}
-          onClose={() => setIsShareDialogOpen(false)}
-          serverId={hostedServerId}
-          serverName={server.name}
-        />
-      )}
     </>
   );
 }

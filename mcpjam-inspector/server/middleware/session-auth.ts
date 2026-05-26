@@ -40,7 +40,15 @@ const UNPROTECTED_ROUTES = [
 const UNPROTECTED_PREFIXES = [
   "/assets/", // Static assets (JS, CSS, images) - no sensitive data
   "/api/apps/mcp-apps/", // MCP Apps widgets - loaded in sandboxed iframes, can't send headers
-  "/api/apps/chatgpt-apps/", // ChatGPT widgets - loaded in sandboxed iframes, can't send headers
+  // Widget file DOWNLOAD only. The download URL is fetched directly from
+  // inside the sandboxed iframe (img/script/fetch) and can't carry auth
+  // headers, so it must be public. Upload is intentionally NOT in this
+  // prefix: `POST /api/apps/files/upload-file` is always invoked from the
+  // host page (via `authFetch` in widget-file-messages.ts), so it CAN
+  // and DOES carry the session token. Keeping upload behind auth blocks
+  // unauthenticated callers from filling the in-memory fileStore with up
+  // to 20 MB blobs per request.
+  "/api/apps/files/file/",
   "/api/mcp/adapter-http/", // HTTP adapter for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/manager-http/", // HTTP manager for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/xaa/.well-known/", // Public XAA issuer discovery + JWKS for external authorization servers

@@ -13,7 +13,8 @@
  * and potentially future OpenAI SDK consolidation.
  */
 
-import { HOSTED_MODE } from "@/lib/config";
+import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
+import { stableStringifyJson } from "@/lib/client-config";
 import {
   useRef,
   useState,
@@ -27,6 +28,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { SEP_1865_PERMISSION_FEATURES } from "@/lib/client-config-v2";
 
 export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
@@ -42,6 +44,28 @@ interface SandboxedIframeProps {
   csp?: McpUiResourceCsp;
   /** Permissions metadata from resource _meta.ui.permissions (SEP-1865) */
   permissions?: McpUiResourcePermissions;
+  /**
+   * Inspector-only: extra `sandbox=` tokens unioned with the spec-mandated
+   * `allow-scripts allow-same-origin` on both outer and inner iframes.
+   * Models tokens real hosts emit (e.g. `allow-forms`) that aren't part of
+   * SEP-1865 metadata.
+   */
+  sandboxAttrs?: string[];
+  /**
+   * Inspector-only: extra Permissions Policy entries appended to outer/inner
+   * iframe `allow=`. Keys are kebab Permissions Policy tokens
+   * (`fullscreen`, `web-share`); the 4 spec features
+   * (camera/microphone/geolocation/clipboard-write) live in `permissions`
+   * and are NOT permitted here.
+   */
+  allowFeatures?: Record<string, string>;
+  /**
+   * Inspector-only: per-directive CSP source-expression overrides merged
+   * into the inner doc's `<meta http-equiv="Content-Security-Policy">`.
+   * Keys are CSP directive names (`script-src`, …); values are token arrays
+   * (`["'unsafe-eval'", "'wasm-unsafe-eval'"]`).
+   */
+  cspDirectives?: Record<string, string[]>;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
   /** Callback when sandbox proxy is ready */
@@ -52,6 +76,8 @@ interface SandboxedIframeProps {
   className?: string;
   /** Inline styles for the outer iframe */
   style?: React.CSSProperties;
+  /** Host color scheme used to keep transparent iframe canvas rendering aligned */
+  colorScheme?: "light" | "dark";
   /** Title for accessibility */
   title?: string;
 }
@@ -73,20 +99,44 @@ export const SandboxedIframe = forwardRef<
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox",
     csp,
     permissions,
+    sandboxAttrs,
+    allowFeatures,
+    cspDirectives,
     permissive,
     onProxyReady,
     onMessage,
     className,
     style,
+    colorScheme,
     title = "Sandboxed Content",
   },
   ref,
 ) {
   const outerRef = useRef<HTMLIFrameElement>(null);
   const [proxyReady, setProxyReady] = useState(false);
+  const lastResourceReadyKeyRef = useRef<string | null>(null);
 
-  // SEP-1865: Host and Sandbox MUST have different origins
+  // SEP-1865: Host and Sandbox MUST have different origins.
+  //
+  // Hosted: prefer the operator-configured SANDBOX_ORIGIN
+  // (`VITE_MCPJAM_SANDBOX_ORIGIN`). It MUST be a distinct origin from the
+  // host app so the sandboxed iframe cannot reach host cookies or storage
+  // even when its sandbox carries `allow-same-origin`.
+  //
+  // Local: keep the localhost ↔ 127.0.0.1 swap so dev gets the same
+  // origin-separation property without operator config.
+  //
+  // Same-origin fallback exists only as a soft-fail for misconfigured
+  // hosted deploys; it emits a loud security warning.
   const [sandboxProxyUrl] = useState(() => {
+    const proxyPath = HOSTED_MODE
+      ? "/api/web/apps/mcp-apps/sandbox-proxy"
+      : "/api/apps/mcp-apps/sandbox-proxy";
+
+    if (HOSTED_MODE && SANDBOX_ORIGIN) {
+      return `${SANDBOX_ORIGIN}${proxyPath}?v=${Date.now()}`;
+    }
+
     const currentHost = window.location.hostname;
     const currentPort = window.location.port;
     const protocol = window.location.protocol;
@@ -97,20 +147,25 @@ export const SandboxedIframe = forwardRef<
     } else if (currentHost === "127.0.0.1") {
       sandboxHost = "localhost";
     } else {
-      // In production/hosted environments, fall back to same-origin
-      // Note: SEP-1865 recommends different origins, but same-origin works with sandbox attribute
-      console.warn(
-        "[SandboxedIframe] Cross-origin isolation not available for hostname:",
-        currentHost,
-        "- falling back to same-origin sandbox",
-      );
+      if (HOSTED_MODE) {
+        console.warn(
+          "[SandboxedIframe] VITE_MCPJAM_SANDBOX_ORIGIN is not configured;" +
+            " sandbox iframe is falling back to same-origin." +
+            " This is a security regression — the sandbox shares cookies and" +
+            " storage with the host app. Configure a distinct origin" +
+            " (e.g. https://sandbox.mcpjam.com) and redeploy.",
+        );
+      } else {
+        console.warn(
+          "[SandboxedIframe] Cross-origin isolation not available for hostname:",
+          currentHost,
+          "- falling back to same-origin sandbox",
+        );
+      }
       sandboxHost = currentHost;
     }
 
     const portSuffix = currentPort ? `:${currentPort}` : "";
-    const proxyPath = HOSTED_MODE
-      ? "/api/web/apps/mcp-apps/sandbox-proxy"
-      : "/api/apps/mcp-apps/sandbox-proxy";
     return `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${Date.now()}`;
   });
 
@@ -149,7 +204,8 @@ export const SandboxedIframe = forwardRef<
       // File upload/download messages (not JSON-RPC) - forward directly
       if (
         event.data?.type === "openai:uploadFile" ||
-        event.data?.type === "openai:getFileDownloadUrl"
+        event.data?.type === "openai:getFileDownloadUrl" ||
+        event.data?.type === "openai:setWidgetState"
       ) {
         onMessage(event);
         return;
@@ -179,47 +235,238 @@ export const SandboxedIframe = forwardRef<
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
 
-  // Build allow attribute for outer iframe based on requested permissions
+  // Build allow attribute for outer iframe based on requested permissions.
+  //
+  // Same authoritative-profile semantic as `sandboxAttrs` above: when
+  // `allowFeatures` is provided (even as `{}`), the profile is the
+  // source of truth for non-spec Permissions Policy features, and the
+  // renderer's legacy defaults (`local-network-access *`, `midi *`) are
+  // dropped. A profile that doesn't list those features models a real
+  // host that doesn't emit them — and the iframe must match, or
+  // experiments using Web MIDI / Local Network Access would pass in
+  // MCPJam while the real host blocks them.
+  //
+  // The 4 SEP-1865 spec permissions (camera/microphone/geolocation/
+  // clipboard-write) ALWAYS flow through from `permissions` regardless
+  // of `allowFeatures` — they're orthogonal user-facing knobs. Only the
+  // inspector-only legacy defaults are conditional.
+  //
+  // Per Permissions Policy spec, `;` separates features.
   const outerAllowAttribute = useMemo(() => {
-    const allowList = ["local-network-access *", "midi *"];
+    const allowFeaturesIsAuthoritative = allowFeatures !== undefined;
+    const allowList = allowFeaturesIsAuthoritative
+      ? []
+      : ["local-network-access *", "midi *"];
     if (permissions?.camera) allowList.push("camera *");
     if (permissions?.microphone) allowList.push("microphone *");
     if (permissions?.geolocation) allowList.push("geolocation *");
     if (permissions?.clipboardWrite) allowList.push("clipboard-write *");
+    if (allowFeatures) {
+      // Defense-in-depth: skip spec features in case the canonicalizer
+      // was bypassed. `permissions.allow.{camera,...}` is the single
+      // source of truth — see SEP_1865_PERMISSION_FEATURES.
+      const specFeatures = new Set<string>(SEP_1865_PERMISSION_FEATURES);
+      for (const k of Object.keys(allowFeatures).sort()) {
+        if (specFeatures.has(k)) continue;
+        const allowlist = allowFeatures[k];
+        if (typeof allowlist !== "string" || allowlist.length === 0) continue;
+        // Reject `;` and `,` in keys and values. The Permissions Policy
+        // iframe `allow=` attribute uses `;` to separate features; allowing
+        // either character through here turns the per-feature filter into
+        // a directive-injection bypass (e.g. `fullscreen: "*; camera *"`
+        // would smuggle a `camera *` grant past the spec-feature check
+        // above). `,` is the corresponding separator in HTTP-header
+        // Permissions-Policy syntax and is rejected for symmetry.
+        if (/[;,]/.test(k) || /[;,]/.test(allowlist)) continue;
+        // Reject whitespace in the KEY too. A key like `"camera *"`
+        // doesn't equal the spec key `"camera"`, so the spec-feature
+        // filter above lets it through; the join produces
+        // `camera * *`, which the browser parses as a `camera` grant
+        // — bypassing `permissions.allow` as the single source of
+        // truth for the 4 spec permissions. (Values legitimately
+        // contain whitespace for multi-token allowlists like
+        // `"'self' https://example.com"`, so the whitespace rule
+        // applies only to keys.)
+        if (/\s/.test(k)) continue;
+        allowList.push(`${k} ${allowlist}`);
+      }
+    }
     return allowList.join("; ");
-  }, [permissions]);
+  }, [permissions, allowFeatures]);
+
+  // Outer iframe `sandbox=` value.
+  //
+  // When `sandboxAttrs` is provided (even as `[]`), the profile is the
+  // authoritative source: the iframe gets `allow-scripts allow-same-origin`
+  // plus exactly what the profile lists. This is what makes "model the
+  // real host's emitted tokens" actually work — e.g. a Claude-modeled
+  // profile with `sandboxAttrs: ["allow-forms"]` gets exactly those three
+  // tokens, not those PLUS the renderer's legacy permissive default.
+  //
+  // When `sandboxAttrs` is undefined (no profile opinion), fall back to
+  // the caller's `sandbox` prop so existing call sites — which pass a
+  // wider permissive baseline — behave unchanged.
+  //
+  // `undefined` vs `[]` matters here: `[]` is the explicit "spec-minimum
+  // only" intent, mirroring the canonicalizer's preservation contract.
+  const outerSandboxAttribute = useMemo(() => {
+    const tokens = new Set<string>();
+    if (sandboxAttrs !== undefined) {
+      tokens.add("allow-scripts");
+      tokens.add("allow-same-origin");
+      for (const t of sandboxAttrs) {
+        const trimmed = t.trim();
+        if (trimmed.length === 0) continue;
+        // Reject tokens with internal whitespace. A profile (or custom-
+        // token input) that smuggles `"allow-forms allow-popups-to-
+        // escape-sandbox"` would otherwise land in the Set as one entry
+        // but the join(" ") below would emit it as two real sandbox
+        // flags — silently widening the iframe grant beyond what the
+        // editor/matrix display. Reject is safer than split: the entry
+        // visibly does nothing (user notices) instead of taking effect
+        // invisibly.
+        if (/\s/.test(trimmed)) continue;
+        tokens.add(trimmed);
+      }
+    } else {
+      for (const t of sandbox.split(/\s+/)) {
+        if (t.length > 0) tokens.add(t);
+      }
+      // Defense in depth: spec-mandated tokens are always present even
+      // if a caller passes a malformed `sandbox` prop.
+      tokens.add("allow-scripts");
+      tokens.add("allow-same-origin");
+    }
+    return Array.from(tokens).sort().join(" ");
+  }, [sandbox, sandboxAttrs]);
+
+  const resourceReadyKey = useMemo(
+    () =>
+      stableStringifyJson({
+        csp: csp ?? null,
+        cspDirectives: cspDirectives ?? null,
+        html: html ?? null,
+        permissive: permissive ?? null,
+        permissions: permissions ?? null,
+        sandbox,
+        sandboxAttrs: sandboxAttrs ?? null,
+      }),
+    [
+      csp,
+      cspDirectives,
+      html,
+      permissive,
+      permissions,
+      sandbox,
+      sandboxAttrs,
+    ],
+  );
+
+  useEffect(() => {
+    if (!proxyReady) lastResourceReadyKeyRef.current = null;
+  }, [proxyReady]);
 
   // Send HTML, CSP, and permissions to sandbox when ready (SEP-1865)
   useEffect(() => {
     if (!proxyReady || !html) return;
+    const resourceTargetKey = `${sandboxProxyOrigin}\0${resourceReadyKey}`;
+    if (lastResourceReadyKeyRef.current === resourceTargetKey) return;
+    lastResourceReadyKeyRef.current = resourceTargetKey;
 
     outerRef.current?.contentWindow?.postMessage(
       {
         jsonrpc: "2.0",
         method: "ui/notifications/sandbox-resource-ready",
-        params: { html, sandbox, csp, permissions, permissive },
+        params: {
+          html,
+          sandbox,
+          csp,
+          permissions,
+          sandboxAttrs,
+          // `allowFeatures` is intentionally NOT forwarded to the proxy:
+          // it applies to the OUTER iframe only. The inner iframe gets the
+          // 4 spec permissions (via `permissions`) and nothing else, matching
+          // real claude.ai's outer-grants-fullscreen / inner-trims-to-spec
+          // pattern. Centralizing the outer/inner split here means the proxy
+          // can't accidentally widen the inner grant by reading a stale
+          // field.
+          cspDirectives,
+          permissive,
+          colorScheme,
+        },
       },
       sandboxProxyOrigin,
     );
+    // This effect intentionally depends on the semantic payload key instead
+    // of raw object props. Re-sending `sandbox-resource-ready` makes the
+    // proxy assign inner `srcdoc` again, which restarts the app even when the
+    // HTML/CSP/permission payload is unchanged.
+    // `colorScheme` and `allowFeatures` are intentionally OMITTED from
+    // this dep list. The proxy handles `sandbox-resource-ready` by
+    // rebuilding the CSP and assigning `inner.srcdoc`, which reloads the
+    // widget and drops any in-iframe state — so we MUST NOT re-fire this
+    // effect for props that don't actually affect the inner iframe.
+    //
+    //   - `colorScheme`: flows through the dedicated
+    //     `sandbox-color-scheme-changed` effect below, which updates the
+    //     inner document's color-scheme without a reload.
+    //   - `allowFeatures`: applies only to the OUTER iframe's `allow=`
+    //     attribute (computed in `outerAllowAttribute` above and applied
+    //     declaratively via JSX, so React reconciliation handles the
+    //     update without a reload). It's not forwarded in the params
+    //     payload at all (see the comment above the field). Re-including
+    //     it here would silently full-reload the widget every time a
+    //     user toggles an entry in the AppExtensionTab editor.
   }, [
     proxyReady,
     html,
-    sandbox,
-    csp,
-    permissions,
-    permissive,
+    resourceReadyKey,
     sandboxProxyOrigin,
   ]);
 
+  // Keep iframe color-scheme in sync without reloading the widget document.
+  useEffect(() => {
+    if (!proxyReady || !colorScheme) return;
+
+    outerRef.current?.contentWindow?.postMessage(
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-color-scheme-changed",
+        params: { colorScheme },
+      },
+      sandboxProxyOrigin,
+    );
+  }, [proxyReady, colorScheme, sandboxProxyOrigin]);
+
+  const iframeStyle = colorScheme ? { ...style, colorScheme } : style;
+
+  // Browsers apply iframe `sandbox=` only on navigation, not when the
+  // attribute mutates on an already-loaded frame. If the user edits a
+  // profile from permissive tokens to `[]` while the widget is mounted,
+  // React updates the attribute but the live iframe keeps the OLD
+  // grants until something forces a navigation — so the matrix/editor
+  // can show stricter modeling while the running widget still has
+  // popups/forms/etc. enabled. Key the outer iframe on
+  // outerSandboxAttribute so React unmounts + remounts (= fresh
+  // navigation) whenever the effective sandbox flags change. Resetting
+  // proxyReady below ensures the resource-ready effect re-fires after
+  // the new proxy load completes (otherwise proxyReady would stay
+  // `true` from the prior iframe and the widget wouldn't get re-sent
+  // to the new proxy).
+  useEffect(() => {
+    setProxyReady(false);
+  }, [outerSandboxAttribute]);
+
   return (
     <iframe
+      key={outerSandboxAttribute}
       ref={outerRef}
       src={sandboxProxyUrl}
-      sandbox={sandbox}
+      sandbox={outerSandboxAttribute}
       allow={outerAllowAttribute}
       title={title}
       className={className}
-      style={style}
+      style={iframeStyle}
     />
   );
 });

@@ -45,7 +45,7 @@ vi.mock("@/hooks/use-json-rpc-panel", () => ({
 }));
 
 vi.mock("@/hooks/useViews", () => ({
-  useWorkspaceServers: () => ({
+  useProjectServers: () => ({
     serversByName: new Map(),
   }),
 }));
@@ -70,8 +70,8 @@ vi.mock("@/state/app-state-context", () => ({
         connectionStatus: "connected",
       },
     },
-    workspaces: {},
-    activeWorkspaceId: "workspace-1",
+    projects: {},
+    activeProjectId: "project-1",
   }),
 }));
 

@@ -484,7 +484,17 @@ export async function createInteractiveAuthorizationSession(options?: {
       }
       pendingReject?.(new Error("Interactive authorization session closed"));
       clearPending();
-      await closeServer(server);
+      // Stop accepting new connections, then forcibly destroy any lingering
+      // sockets so close() resolves immediately. closeIdleConnections() is
+      // not enough here: the browser typically opens a second keep-alive
+      // socket for favicon.ico while loading the callback success page, and
+      // that socket sits in a state Node does not classify as idle, blocking
+      // server.close() for ~95s until the browser tears it down. stop() runs
+      // in runOAuthLogin's finally block, after the token exchange has
+      // returned, so there is no in-flight callback to preserve.
+      const closed = closeServer(server);
+      server.closeAllConnections?.();
+      await closed;
     },
   };
 }

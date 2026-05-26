@@ -11,6 +11,12 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
+vi.mock("posthog-js", () => ({
+  default: {
+    capture: vi.fn(),
+  },
+}));
+
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
@@ -18,40 +24,42 @@ vi.mock("@/lib/guest-session", () => ({
 
 vi.mock("@/lib/apis/web/context", async () => {
   const actual = await vi.importActual<typeof import("@/lib/apis/web/context")>(
-    "@/lib/apis/web/context",
+    "@/lib/apis/web/context"
   );
   return {
     ...actual,
-    getHostedAuthorizationHeader: vi.fn(),
+    getApiAuthorizationHeader: vi.fn(),
     resetTokenCache: vi.fn(),
-    shouldRetryHostedAuth401: vi.fn(),
+    shouldRetryApiAuth401: vi.fn(),
   };
 });
 
 import { authFetch } from "../session-token";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
 import {
-  getHostedAuthorizationHeader,
+  getApiAuthorizationHeader,
   resetTokenCache,
-  shouldRetryHostedAuth401,
+  shouldRetryApiAuth401,
 } from "@/lib/apis/web/context";
+import posthog from "posthog-js";
 
 describe("authFetch hosted 401 retry", () => {
   beforeEach(() => {
-    vi.mocked(getHostedAuthorizationHeader).mockReset();
+    vi.mocked(getApiAuthorizationHeader).mockReset();
     vi.mocked(resetTokenCache).mockReset();
     vi.mocked(forceRefreshGuestSession).mockReset();
-    vi.mocked(shouldRetryHostedAuth401).mockReturnValue(true);
+    vi.mocked(shouldRetryApiAuth401).mockReturnValue(true);
     vi.mocked(global.fetch).mockReset();
+    vi.mocked(posthog.capture).mockReset();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("retries with fresh token on 401 when hosted auth is guest-backed", async () => {
-    vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
-      "Bearer stale-token",
+  it("retries chatbox bootstrap once with a refreshed guest token after a 401", async () => {
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer stale-token"
     );
     vi.mocked(forceRefreshGuestSession).mockResolvedValue("fresh-token");
 
@@ -63,10 +71,10 @@ describe("authFetch hosted 401 retry", () => {
         json: () => Promise.resolve({ success: true }),
       } as Response);
 
-    const response = await authFetch("/api/web/tools/list", {
+    const response = await authFetch("/api/web/chatboxes/bootstrap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ token: "chatbox-token" }),
     });
 
     expect(response.status).toBe(200);
@@ -75,18 +83,23 @@ describe("authFetch hosted 401 retry", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      "/api/web/tools/list",
+      "/api/web/chatboxes/bootstrap",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer fresh-token",
         }),
-      }),
+      })
     );
+    expect(posthog.capture).toHaveBeenCalledWith("guest_refresh_success", {
+      surface: "chatbox",
+      auth_mode: "guest",
+      status: "success",
+    });
   });
 
   it("returns 401 if retry also fails (no infinite loop)", async () => {
-    vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
-      "Bearer stale-token",
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer stale-token"
     );
     vi.mocked(forceRefreshGuestSession).mockResolvedValue("still-bad-token");
 
@@ -98,11 +111,34 @@ describe("authFetch hosted 401 retry", () => {
 
     expect(response.status).toBe(401);
     expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(posthog.capture).not.toHaveBeenCalled();
+  });
+
+  it("does not retry when 401 is flagged X-MCP-Auth-Required: oauth", async () => {
+    // Resolver throws 401 when an OAuth-required server has no stored token.
+    // That's the upstream MCP server demanding the user complete its OAuth
+    // flow — refreshing the guest session would just hit the same 401.
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer fine-token"
+    );
+
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      status: 401,
+      ok: false,
+      headers: new Headers({ "X-MCP-Auth-Required": "oauth" }),
+    } as unknown as Response);
+
+    const response = await authFetch("/api/mcp/connect", { method: "POST" });
+
+    expect(response.status).toBe(401);
+    expect(resetTokenCache).not.toHaveBeenCalled();
+    expect(forceRefreshGuestSession).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry on non-401 errors", async () => {
-    vi.mocked(getHostedAuthorizationHeader).mockResolvedValue(
-      "Bearer some-token",
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValue(
+      "Bearer some-token"
     );
 
     vi.mocked(global.fetch).mockResolvedValueOnce({
@@ -119,8 +155,8 @@ describe("authFetch hosted 401 retry", () => {
   });
 
   it("does not retry when caller provided Authorization header", async () => {
-    vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
-      "Bearer stale-token",
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer stale-token"
     );
 
     vi.mocked(global.fetch).mockResolvedValueOnce({
@@ -139,9 +175,9 @@ describe("authFetch hosted 401 retry", () => {
   });
 
   it("does not retry when hosted auth is fully authenticated", async () => {
-    vi.mocked(shouldRetryHostedAuth401).mockReturnValue(false);
-    vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
-      "Bearer workos-token",
+    vi.mocked(shouldRetryApiAuth401).mockReturnValue(false);
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer workos-token"
     );
 
     vi.mocked(global.fetch).mockResolvedValueOnce({
@@ -158,8 +194,8 @@ describe("authFetch hosted 401 retry", () => {
   });
 
   it("returns original 401 when forceRefresh returns null", async () => {
-    vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
-      "Bearer stale-token",
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer stale-token"
     );
     vi.mocked(forceRefreshGuestSession).mockResolvedValue(null);
 
@@ -168,17 +204,23 @@ describe("authFetch hosted 401 retry", () => {
       ok: false,
     } as Response);
 
-    const response = await authFetch("/api/web/test");
+    const response = await authFetch("/api/web/chatboxes/bootstrap");
 
     expect(response.status).toBe(401);
     expect(resetTokenCache).toHaveBeenCalledTimes(1);
     expect(forceRefreshGuestSession).toHaveBeenCalledTimes(1);
     expect(global.fetch).toHaveBeenCalledTimes(1); // no retry
+    expect(posthog.capture).toHaveBeenCalledWith("guest_refresh_failure", {
+      surface: "chatbox",
+      auth_mode: "guest",
+      status: "failure",
+      error_kind: "guest_refresh_unavailable",
+    });
   });
 
   it("passes through successful responses without retry", async () => {
-    vi.mocked(getHostedAuthorizationHeader).mockResolvedValue(
-      "Bearer good-token",
+    vi.mocked(getApiAuthorizationHeader).mockResolvedValue(
+      "Bearer good-token"
     );
 
     vi.mocked(global.fetch).mockResolvedValueOnce({

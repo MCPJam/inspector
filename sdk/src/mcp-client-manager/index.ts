@@ -15,6 +15,8 @@ export type {
   StdioServerConfig,
   HttpServerConfig,
   BaseServerConfig,
+  UnauthorizedRefreshHandler,
+  UnauthorizedRefreshResult,
 } from "./types.js";
 
 // Types - State and status
@@ -103,6 +105,7 @@ export {
   MCPError,
   MCPAuthError,
   isAuthError,
+  isUnauthorized401,
   isMCPAuthError,
 } from "./errors.js";
 
@@ -127,3 +130,41 @@ export {
   ResourceUpdatedNotificationMethod,
   PromptListChangedNotificationMethod,
 } from "./notification-handlers.js";
+
+// ManagedMcpClient: interface + adapters + factory for DRAFT-2026-v1
+// stateless preview. The manager types its client state as
+// `ManagedMcpClient` (PR3); SDK consumers that need the underlying
+// upstream `Client` keep using `getClient()`, while new consumers can
+// use `getManagedClient()` for either adapter.
+export type {
+  ManagedMcpClient,
+  ManagedMcpClientConnectOptions,
+  ManagedMcpClientNotificationHandler,
+  ManagedMcpClientNotificationMethod,
+  ManagedMcpClientRequestHandler,
+  ManagedMcpClientRequestMethod,
+} from "./managed-mcp-client.js";
+export {
+  NotYetSupportedInStateless,
+  StatelessRequiresHttpTransport,
+  PaginatedToolHeaderDiscoveryUnsupported,
+} from "./managed-mcp-client.js";
+export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
+export {
+  StatelessMcpHttpPreviewClient,
+  STATELESS_DRAFT_2026_V1,
+  type StatelessMcpHttpPreviewClientOptions,
+  type DiscoverResult,
+} from "./stateless-mcp-http-preview-client.js";
+export {
+  createManagedMcpClient,
+  wrapLegacyClient,
+  type CreateManagedMcpClientArgs,
+  type McpProtocolVersion,
+  type TransportKind,
+} from "./managed-mcp-client-factory.js";
+export {
+  MCP_PROTOCOL_VERSIONS,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "./mcp-protocol-version.js";

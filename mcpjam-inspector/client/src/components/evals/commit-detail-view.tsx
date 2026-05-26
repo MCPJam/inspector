@@ -11,12 +11,11 @@ import type {
 import {
   formatDuration,
   formatRunId,
-  orderCommitGroupRunsByOutcome,
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import type { CiEvalsRoute } from "@/lib/ci-evals-router";
+import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
+import type { EvalRoute } from "@/lib/eval-route-types";
 import { useRunDetailData } from "./use-suite-data";
 import { RunDetailView } from "./run-detail-view";
 
@@ -24,7 +23,7 @@ interface CommitDetailViewProps {
   commitGroup: CommitGroup;
   allCommitGroups?: CommitGroup[];
   onRerunRun?: (suiteId: string, runId: string) => void;
-  route: CiEvalsRoute;
+  route: EvalRoute;
 }
 
 function getRunDuration(run: EvalSuiteRun): number | null {
@@ -53,24 +52,6 @@ function getModelsUsed(runs: EvalSuiteRun[]): string[] {
   return Array.from(models);
 }
 
-function getTotalCases(runs: EvalSuiteRun[]): {
-  total: number;
-  passed: number;
-  failed: number;
-} {
-  let total = 0,
-    passed = 0,
-    failed = 0;
-  for (const run of runs) {
-    if (run.summary) {
-      total += run.summary.total;
-      passed += run.summary.passed;
-      failed += run.summary.failed;
-    }
-  }
-  return { total, passed, failed };
-}
-
 export function CommitDetailView({
   commitGroup,
   route,
@@ -86,13 +67,7 @@ export function CommitDetailView({
 
   const totalDuration = getTotalDuration(commitGroup.runs);
   const models = getModelsUsed(commitGroup.runs);
-  const totalCases = getTotalCases(commitGroup.runs);
   const isManual = commitGroup.commitSha.startsWith("manual-");
-
-  const orderedRuns = useMemo(
-    () => orderCommitGroupRunsByOutcome(commitGroup.runs),
-    [commitGroup.runs],
-  );
 
   // Find the selected run
   const selectedRun = useMemo(() => {
@@ -102,12 +77,14 @@ export function CommitDetailView({
 
   const handleSelectIteration = (iterationId: string) => {
     if (selectedSuiteId) {
-      navigateToCiEvalsRoute({
-        type: "commit-detail",
-        commitSha: commitGroup.commitSha,
-        suite: selectedSuiteId,
-        iteration: iterationId,
-      });
+      navigateApp(
+        buildCiEvalsPath({
+          type: "commit-detail",
+          commitSha: commitGroup.commitSha,
+          suite: selectedSuiteId,
+          iteration: iterationId,
+        }),
+      );
     }
   };
 

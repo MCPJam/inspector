@@ -11,7 +11,6 @@ import {
   OnInit,
   Position,
   ReactFlow,
-  getBezierPath,
   EdgeLabelRenderer,
   BaseEdge,
 } from "@xyflow/react";
@@ -141,7 +140,7 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
 
       {/* Segmented vertical line with alternating boxes and lines */}
       <div className="relative" style={{ width: 2 }}>
-        {data.segments.map((segment, index) => {
+        {data.segments.map((segment, _index) => {
           const segmentY = currentY;
           currentY += segment.height;
 
@@ -315,12 +314,6 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
       </div>
     );
   }
-
-  const statusColor = {
-    complete: "border-success/50 bg-success/5 text-success",
-    current: "border-info/70 bg-info/5 text-info",
-    pending: "border-border bg-muted/30 text-muted-foreground",
-  }[action.status];
 
   return (
     <div className="w-96 border-l border-border bg-card overflow-y-auto">
@@ -1077,7 +1070,7 @@ export const OAuthFlowProgress = ({
   }, [selectedActionId, sequenceActions, statusForStep]);
 
   // Handle edge clicks
-  const handleEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+  const handleEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
     // Extract action ID from edge ID (format: "edge-{actionId}")
     const actionId = edge.id.replace("edge-", "");
     setSelectedActionId(actionId);

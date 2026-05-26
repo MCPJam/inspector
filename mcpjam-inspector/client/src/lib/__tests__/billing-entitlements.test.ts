@@ -15,8 +15,8 @@ const minimalCatalogEntry = (
   prices: PlanCatalogEntry["prices"],
 ): PlanCatalogEntry =>
   ({
-    plan: "starter",
-    displayName: "Starter",
+    plan: "team",
+    displayName: "Team",
     isSelfServe: true,
     prices,
     features: {} as PlanCatalogEntry["features"],
@@ -76,12 +76,12 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
-  it("formats backend limit payloads for workspace chatboxes", () => {
+  it("formats backend limit payloads for project chatboxes", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxChatboxesPerWorkspace",
+          limit: "maxChatboxesPerProject",
           allowedValue: 5,
         }),
       ),
@@ -89,7 +89,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This workspace has reached its chatbox limit (5). Upgrade to continue.",
+      "This project has reached its chatbox limit (5). Upgrade to continue.",
     );
   });
 
@@ -128,12 +128,12 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
-  it("formats backend limit payloads for workspaces", () => {
+  it("formats backend limit payloads for projects", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
@@ -141,16 +141,16 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      "This organization has reached its project limit (1). Upgrade to create more projects.",
     );
   });
 
-  it("formats workspace-limit payloads for non-billing-admin users", () => {
+  it("formats project-limit payloads for non-billing-admin users", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxWorkspaces",
+          limit: "maxProjects",
           allowedValue: 1,
         }),
       ),
@@ -159,7 +159,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "This organization has reached its workspace limit (1). Ask an organization owner to upgrade.",
+      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
     );
   });
 
@@ -170,14 +170,14 @@ describe("getBillingErrorMessage", () => {
           code: "billing_feature_not_included",
           feature: "chatboxes",
           plan: "free",
-          upgradePlan: "starter",
+          upgradePlan: "team",
         }),
       ),
       "fallback",
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Upgrade to Starter to continue.",
+      "Chatboxes is not included in the Free plan. Upgrade to Team to continue.",
     );
   });
 
@@ -188,7 +188,7 @@ describe("getBillingErrorMessage", () => {
           code: "billing_feature_not_included",
           feature: "chatboxes",
           plan: "free",
-          upgradePlan: "starter",
+          upgradePlan: "team",
         }),
       ),
       "fallback",
@@ -196,7 +196,7 @@ describe("getBillingErrorMessage", () => {
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Starter.",
+      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Team.",
     );
   });
 
@@ -223,10 +223,10 @@ describe("isGateAccessDenied", () => {
             {
               gateKey: "evals",
               kind: "feature",
-              scope: "workspace",
+              scope: "project",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "team",
               reason: "feature_not_included",
             },
           ],
@@ -244,10 +244,10 @@ describe("isGateAccessDenied", () => {
             {
               gateKey: "evals",
               kind: "feature",
-              scope: "workspace",
+              scope: "project",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "team",
               reason: "feature_not_included",
             },
           ],
@@ -257,37 +257,37 @@ describe("isGateAccessDenied", () => {
     ).toBe(true);
   });
 
-  it("denies maxWorkspaces when a free organization is already at cap", () => {
+  it("denies maxProjects when a free organization is already at cap", () => {
     expect(
       isGateAccessDenied(
         premiumness({
           gates: [
             {
-              gateKey: "maxWorkspaces",
+              gateKey: "maxProjects",
               kind: "limit",
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "team",
               reason: "limit_reached",
               currentValue: 1,
               allowedValue: 1,
             },
           ],
         }),
-        "maxWorkspaces",
+        "maxProjects",
       ),
     ).toBe(true);
   });
 });
 
 describe("getDisplayPriceCentsForPlan", () => {
-  it("returns catalog cents for Starter and Team", () => {
+  it("returns catalog cents for Team and Team", () => {
     const drifted = minimalCatalogEntry({
       monthly: 6100,
       annual: 29000,
     });
-    expect(getDisplayPriceCentsForPlan("starter", "annual", drifted)).toBe(
+    expect(getDisplayPriceCentsForPlan("team", "annual", drifted)).toBe(
       29000,
     );
     expect(getDisplayPriceCentsForPlan("team", "monthly", drifted)).toBe(6100);
@@ -300,20 +300,20 @@ describe("getDisplayPriceCentsForPlan", () => {
 });
 
 describe("isPremiumnessGateDeniedForShell", () => {
-  it("prefers workspace premiumness when a workspace exists", () => {
+  it("prefers project premiumness when a project exists", () => {
     const denied = isPremiumnessGateDeniedForShell({
       billingUiEnabled: true,
-      hasWorkspace: true,
+      hasProject: true,
       gateKey: "evals",
-      workspacePremiumness: premiumness({
+      projectPremiumness: premiumness({
         gates: [
           {
             gateKey: "evals",
             kind: "feature",
-            scope: "workspace",
+            scope: "project",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "starter",
+            upgradePlan: "team",
             reason: "feature_not_included",
           },
         ],
@@ -323,7 +323,7 @@ describe("isPremiumnessGateDeniedForShell", () => {
           {
             gateKey: "evals",
             kind: "feature",
-            scope: "workspace",
+            scope: "project",
             canAccess: true,
             shouldShowUpsell: false,
             upgradePlan: null,

@@ -19,9 +19,21 @@ import {
   isMcpAppTool,
   type MCPClientManager,
 } from "@mcpjam/sdk";
-import { createLlmModel } from "../utils/chat-helpers";
+import {
+  createLlmModel,
+  type BaseUrls,
+  type CustomProviderConfig,
+} from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
 import { injectOpenAICompat } from "../utils/widget-helpers.js";
+import {
+  buildLlmRuntimeConfigFromOrgConfig,
+  deriveOrgProviderKey,
+  isLocalRuntimeEligible,
+  resolveOrgProviderRuntimeForTarget,
+  type ResolveOrgModelConfigTarget,
+  type ResolvedOrgModelConfig,
+} from "../utils/org-model-config";
 import {
   getCanonicalModelId,
   getModelById,
@@ -64,6 +76,7 @@ import {
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
 } from "@/shared/prompt-turns";
+import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import type {
@@ -89,6 +102,23 @@ export type EvalTestCase = {
     temperature?: number;
     toolChoice?: EvalToolChoice | string;
   } & Record<string, unknown>;
+  /**
+   * Effective per-iteration match options. Suite-level runs receive this
+   * pre-resolved from Convex `precreateIterationsForRun`; single-case
+   * runs resolve it in the route handler.
+   */
+  matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+  /**
+   * Per-Run override layered on top of the suite's hostConfig. Carries
+   * the editor's in-place tweaks (locale, timezone, hostContext,
+   * hostCapabilitiesOverride, hostStyle, etc.) for this iteration only.
+   * NOT a property of the test case — present on this type only because
+   * it rides alongside the case through the runner, the same way
+   * `matchOptions` does. Stamped onto `testCaseSnapshot.hostConfigOverride`
+   * for the iteration row. Single-case runs populate it from the
+   * request; suite runs leave it undefined.
+   */
+  hostConfigOverride?: Record<string, unknown>;
   testCaseId?: string;
 };
 
@@ -101,11 +131,13 @@ export type RunEvalSuiteOptions = {
       servers: string[];
       serverBindings?: Array<{
         serverName: string;
-        workspaceServerId?: string;
+        projectServerId?: string;
       }>;
     };
   };
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -113,6 +145,15 @@ export type RunEvalSuiteOptions = {
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
+  /**
+   * Resolved compat-runtime flag for the suite's host config. When
+   * true, widget snapshots captured during this run will have the
+   * OpenAI Apps SDK `window.openai` shim injected before they're
+   * persisted. Default `false` — caller (route handler) resolves
+   * from the suite's `mcpProfile.apps.compatRuntime` + `hostStyle`
+   * preset. Absent/undefined preserves SEP-1865 honest behavior.
+   */
+  suiteInjectOpenAiCompat?: boolean;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -381,6 +422,13 @@ async function captureEvalTraceWidgetSnapshots(params: {
   messages: ModelMessage[];
   mcpClientManager: MCPClientManager;
   convexClient: ConvexHttpClient;
+  /**
+   * Whether to inject the OpenAI Apps SDK `window.openai` shim into the
+   * captured widget HTML. Resolved upstream from the suite's host
+   * config (preset + override). Default `false` — SEP-1865 honest
+   * behavior, matching the rest of the widget injection paths.
+   */
+  injectOpenAiCompat?: boolean;
 }): Promise<EvalTraceWidgetSnapshot[] | undefined> {
   const sources = collectToolSnapshotSources(params.messages);
   if (sources.length === 0) {
@@ -449,12 +497,15 @@ async function captureEvalTraceWidgetSnapshots(params: {
             return snapshot;
           }
 
-          const widgetHtml = injectOpenAICompat(html, {
-            toolId: source.toolCallId,
-            toolName: source.toolName,
-            toolInput: source.toolInput,
-            toolOutput: source.toolOutput,
-          });
+          const shouldInjectOpenAiCompat = params.injectOpenAiCompat === true;
+          const widgetHtml = shouldInjectOpenAiCompat
+            ? injectOpenAICompat(html, {
+                toolId: source.toolCallId,
+                toolName: source.toolName,
+                toolInput: source.toolInput,
+                toolOutput: source.toolOutput,
+              })
+            : html;
           const widgetHtmlBlobId = await uploadEvalWidgetHtmlBlob(
             params.convexClient,
             widgetHtml,
@@ -462,6 +513,10 @@ async function captureEvalTraceWidgetSnapshots(params: {
           if (widgetHtmlBlobId) {
             snapshot.widgetHtmlBlobId = widgetHtmlBlobId;
           }
+          // Stamp the flag onto the snapshot so the replay viewer can
+          // distinguish "captured with shim" from "captured without"
+          // without re-reading the bytes.
+          snapshot.injectedOpenAiCompat = shouldInjectOpenAiCompat;
         } catch (error) {
           logger.warn("[evals] Failed to capture MCP App widget snapshot", {
             toolCallId: source.toolCallId,
@@ -511,23 +566,23 @@ function resolveConfiguredServerIds(args: {
   const availableServerIdByLowercase = new Map(
     availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
   );
-  const workspaceServerIdByName = new Map<string, string>();
-  const serverNameByWorkspaceServerId = new Map<string, string>();
+  const projectServerIdByName = new Map<string, string>();
+  const serverNameByProjectServerId = new Map<string, string>();
 
   for (const binding of args.environment?.serverBindings ?? []) {
     if (typeof binding.serverName !== "string") {
       continue;
     }
     const serverName = binding.serverName.trim();
-    const workspaceServerId =
-      typeof binding.workspaceServerId === "string"
-        ? binding.workspaceServerId.trim()
+    const projectServerId =
+      typeof binding.projectServerId === "string"
+        ? binding.projectServerId.trim()
         : "";
-    if (!serverName || !workspaceServerId) {
+    if (!serverName || !projectServerId) {
       continue;
     }
-    workspaceServerIdByName.set(serverName.toLowerCase(), workspaceServerId);
-    serverNameByWorkspaceServerId.set(workspaceServerId.toLowerCase(), serverName);
+    projectServerIdByName.set(serverName.toLowerCase(), projectServerId);
+    serverNameByProjectServerId.set(projectServerId.toLowerCase(), serverName);
   }
 
   const resolvedServerIds: string[] = [];
@@ -547,19 +602,19 @@ function resolveConfiguredServerIds(args: {
         ? trimmedServerRef
         : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
           (() => {
-            const workspaceServerId = workspaceServerIdByName.get(
+            const projectServerId = projectServerIdByName.get(
               trimmedServerRef.toLowerCase(),
             );
-            if (workspaceServerId) {
+            if (projectServerId) {
               return (
-                (availableServerIdsSet.has(workspaceServerId)
-                  ? workspaceServerId
+                (availableServerIdsSet.has(projectServerId)
+                  ? projectServerId
                   : undefined) ??
-                availableServerIdByLowercase.get(workspaceServerId.toLowerCase())
+                availableServerIdByLowercase.get(projectServerId.toLowerCase())
               );
             }
 
-            const serverName = serverNameByWorkspaceServerId.get(
+            const serverName = serverNameByProjectServerId.get(
               trimmedServerRef.toLowerCase(),
             );
             if (serverName) {
@@ -874,6 +929,7 @@ async function createIterationDirectly(
       expectedOutput?: string;
       promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
+      matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     };
     iterationNumber: number;
     startedAt: number;
@@ -994,10 +1050,27 @@ type RunIterationBaseParams = {
   testCaseId?: string;
   suiteId?: string;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
   compareRunId?: string;
+  /**
+   * If supplied, the runner skips the upfront `recordIterationStartWithoutRun`
+   * call and reuses this id. Used by `streamTestCase` when `runs > 1` so all N
+   * pending rows appear in the iteration history immediately, before iteration
+   * #1 finishes.
+   */
+  precreatedIterationId?: string;
+  /**
+   * Suite-level resolved compat-runtime flag — propagated from
+   * `RunEvalSuiteOptions.suiteInjectOpenAiCompat`. When true, widget
+   * snapshots captured during this iteration get the OpenAI Apps SDK
+   * `window.openai` shim injected before persistence. Default behavior
+   * (absent/undefined or false) leaves snapshots un-shimmed.
+   */
+  injectOpenAiCompat?: boolean;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1008,17 +1081,179 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
+  endpointPath?: "/stream" | "/stream/org";
+  extraBodyFields?: Record<string, unknown>;
 };
 
+function parseCustomProviderName(modelId: string): string | undefined {
+  if (!modelId.startsWith("custom:")) return undefined;
+
+  const [, providerName] = modelId.split(":");
+  return providerName || undefined;
+}
+
 const buildModelDefinition = (test: EvalTestCase): ModelDefinition => {
-  return (
-    getModelById(test.model) ?? {
-      id: test.model,
-      name: test.title || String(test.model),
-      provider: test.provider as ModelProvider,
-    }
-  );
+  const supportedModel = getModelById(test.model);
+  if (
+    supportedModel &&
+    supportedModel.provider.toLowerCase() === test.provider.toLowerCase()
+  ) {
+    return supportedModel;
+  }
+
+  const provider = test.provider as ModelProvider;
+  return {
+    id: test.model,
+    name: test.title || String(test.model),
+    provider,
+    ...(provider === "custom"
+      ? { customProviderName: parseCustomProviderName(test.model) }
+      : {}),
+  };
 };
+
+function lookupProviderApiKey(
+  modelApiKeys: Record<string, string> | undefined,
+  provider: string,
+): string | undefined {
+  return modelApiKeys?.[provider] ?? modelApiKeys?.[provider.toLowerCase()];
+}
+
+function hasBaseUrls(baseUrls: BaseUrls): boolean {
+  return Boolean(baseUrls.ollama || baseUrls.azure);
+}
+
+function resolveEvalModelRuntime(args: {
+  test: EvalTestCase;
+  modelDefinition: ModelDefinition;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+}): {
+  apiKey: string;
+  baseUrls?: BaseUrls;
+  customProviders?: CustomProviderConfig[];
+} {
+  const orgRuntime = args.orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(args.orgModelConfig)
+    : undefined;
+  const apiKey =
+    lookupProviderApiKey(args.modelApiKeys, args.test.provider) ??
+    lookupProviderApiKey(orgRuntime?.modelApiKeys, args.test.provider) ??
+    "";
+
+  const provider = args.modelDefinition.provider;
+  if (!apiKey && provider !== "ollama" && provider !== "custom") {
+    throw new Error(
+      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`,
+    );
+  }
+
+  return {
+    apiKey,
+    ...(orgRuntime?.baseUrls && hasBaseUrls(orgRuntime.baseUrls)
+      ? { baseUrls: orgRuntime.baseUrls }
+      : {}),
+    ...(orgRuntime?.customProviders.length
+      ? { customProviders: orgRuntime.customProviders }
+      : {}),
+  };
+}
+
+function hasExplicitModelApiKeys(
+  modelApiKeys: Record<string, string> | undefined,
+): boolean {
+  return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
+}
+
+function readBackendUsage(usage: unknown): {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+} {
+  const record =
+    usage && typeof usage === "object"
+      ? (usage as Record<string, unknown>)
+      : {};
+  const inputTokens =
+    typeof record.inputTokens === "number"
+      ? record.inputTokens
+      : typeof record.promptTokens === "number"
+        ? record.promptTokens
+        : 0;
+  const outputTokens =
+    typeof record.outputTokens === "number"
+      ? record.outputTokens
+      : typeof record.completionTokens === "number"
+        ? record.completionTokens
+        : 0;
+  const totalTokens =
+    typeof record.totalTokens === "number" ? record.totalTokens : 0;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function resolveOrgTargetForEval(
+  test: EvalTestCase,
+  explicitTarget?: ResolveOrgModelConfigTarget,
+): ResolveOrgModelConfigTarget | undefined {
+  if (explicitTarget) return explicitTarget;
+  const maybeProjectId = (test as { projectId?: unknown }).projectId;
+  if (typeof maybeProjectId === "string" && maybeProjectId.trim()) {
+    return { projectId: maybeProjectId.trim() };
+  }
+  return undefined;
+}
+
+async function resolveOrgByokEvalRuntime(args: {
+  test: EvalTestCase;
+  modelDefinition: ModelDefinition;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
+  convexAuthToken: string;
+}): Promise<
+  | {
+      kind: "cloud";
+      providerKey: string;
+      target: ResolveOrgModelConfigTarget;
+    }
+  | {
+      kind: "local";
+      orgModelConfig: ResolvedOrgModelConfig;
+    }
+  | undefined
+> {
+  if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
+
+  const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
+  if (!providerKeyResult.ok) return undefined;
+
+  const target = resolveOrgTargetForEval(args.test, args.orgModelConfigTarget);
+  if (!target) return undefined;
+
+  const providerKey = providerKeyResult.key;
+  if (!isLocalRuntimeEligible(providerKey)) {
+    return { kind: "cloud", providerKey, target };
+  }
+
+  if ("organizationId" in target) {
+    return { kind: "cloud", providerKey, target };
+  }
+
+  const runtime = await resolveOrgProviderRuntimeForTarget(
+    target,
+    providerKey,
+    String(args.modelDefinition.id),
+    { bearerToken: args.convexAuthToken },
+  );
+  if (runtime.runtimeLocation === "cloud") {
+    return { kind: "cloud", providerKey: runtime.providerKey, target };
+  }
+
+  return {
+    kind: "local",
+    orgModelConfig: { providers: [runtime.provider] },
+  };
+}
 
 const runIterationWithAiSdk = async ({
   test,
@@ -1030,10 +1265,13 @@ const runIterationWithAiSdk = async ({
   suiteId,
   modelDefinition,
   modelApiKeys,
+  orgModelConfig,
   convexClient,
   runId,
   abortSignal,
   compareRunId,
+  precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1050,6 +1288,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1067,6 +1306,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1081,27 +1321,26 @@ const runIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
-  const system =
+  const system = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
       : undefined;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  // Get API key for this model's provider
-  // Try exact match first, then lowercase
-  const apiKey =
-    modelApiKeys?.[test.provider] ??
-    modelApiKeys?.[test.provider.toLowerCase()] ??
-    "";
-  if (!apiKey) {
-    throw new Error(
-      `Missing API key for provider ${test.provider} (test: ${test.title})`,
-    );
-  }
+  const modelRuntime = resolveEvalModelRuntime({
+    test,
+    modelDefinition,
+    modelApiKeys,
+    orgModelConfig,
+  });
 
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -1124,14 +1363,18 @@ const runIterationWithAiSdk = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -1153,7 +1396,12 @@ const runIterationWithAiSdk = async ({
     null;
 
   try {
-    const llmModel = createLlmModel(modelDefinition, apiKey);
+    const llmModel = createLlmModel(
+      modelDefinition,
+      modelRuntime.apiKey,
+      modelRuntime.baseUrls,
+      modelRuntime.customProviders,
+    );
 
     if (
       toolChoice &&
@@ -1299,6 +1547,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -1326,7 +1575,7 @@ const runIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -1370,6 +1619,7 @@ const runIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
+          test.matchOptions,
         ),
         iterationId: undefined,
       };
@@ -1419,9 +1669,10 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -1473,10 +1724,14 @@ const runIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  extraBodyFields,
   convexClient,
   runId,
   abortSignal,
   compareRunId,
+  precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1493,6 +1748,7 @@ const runIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1510,6 +1766,7 @@ const runIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1524,10 +1781,14 @@ const runIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
-  const systemPrompt =
+  const systemPrompt = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -1558,14 +1819,18 @@ const runIterationViaBackend = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -1633,7 +1898,7 @@ const runIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -1648,6 +1913,7 @@ const runIterationViaBackend = async ({
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
+            ...(extraBodyFields ?? {}),
           }),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
@@ -1698,16 +1964,13 @@ const runIterationViaBackend = async ({
           break;
         }
 
-        if (json.usage) {
-          accumulatedUsage.inputTokens =
-            (accumulatedUsage.inputTokens || 0) +
-            (json.usage.promptTokens || 0);
-          accumulatedUsage.outputTokens =
-            (accumulatedUsage.outputTokens || 0) +
-            (json.usage.completionTokens || 0);
-          accumulatedUsage.totalTokens =
-            (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
-        }
+        const stepUsage = readBackendUsage(json.usage);
+        accumulatedUsage.inputTokens =
+          (accumulatedUsage.inputTokens || 0) + stepUsage.inputTokens;
+        accumulatedUsage.outputTokens =
+          (accumulatedUsage.outputTokens || 0) + stepUsage.outputTokens;
+        accumulatedUsage.totalTokens =
+          (accumulatedUsage.totalTokens || 0) + stepUsage.totalTokens;
 
         for (const msg of json.messages as any[]) {
           if (msg?.role === "assistant" && Array.isArray(msg.content)) {
@@ -1798,9 +2061,9 @@ const runIterationViaBackend = async ({
               },
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -1826,9 +2089,9 @@ const runIterationViaBackend = async ({
               failAbs,
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -1857,9 +2120,9 @@ const runIterationViaBackend = async ({
             undefined,
             {
               modelId,
-              inputTokens: json.usage?.promptTokens,
-              outputTokens: json.usage?.completionTokens,
-              totalTokens: json.usage?.totalTokens,
+              inputTokens: stepUsage.inputTokens,
+              outputTokens: stepUsage.outputTokens,
+              totalTokens: stepUsage.totalTokens,
               messageStartIndex:
                 stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
               messageEndIndex: stepMessageEndIndex,
@@ -1882,6 +2145,7 @@ const runIterationViaBackend = async ({
               promptTurns,
               toolsCalledByPrompt,
               test.isNegativeTest,
+              test.matchOptions,
             ),
             iterationId: undefined,
           };
@@ -1931,6 +2195,7 @@ const runIterationViaBackend = async ({
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
+    test.matchOptions,
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -1953,7 +2218,7 @@ const runIterationViaBackend = async ({
     iterationError,
     failOnToolError,
   });
-  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -1997,6 +2262,8 @@ const runTestCase = async (params: {
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -2005,6 +2272,8 @@ const runTestCase = async (params: {
   runId: string | null;
   abortSignal?: AbortSignal;
   compareRunId?: string;
+  /** Suite-level compat-runtime flag; forwarded to each iteration. */
+  injectOpenAiCompat?: boolean;
 }) => {
   const {
     test,
@@ -2012,6 +2281,8 @@ const runTestCase = async (params: {
     mcpClientManager,
     recorder,
     modelApiKeys,
+    orgModelConfig,
+    orgModelConfigTarget,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -2020,6 +2291,7 @@ const runTestCase = async (params: {
     runId,
     abortSignal,
     compareRunId,
+    injectOpenAiCompat,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2031,10 +2303,71 @@ const runTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgByokRuntime = isJamModel
+    ? undefined
+    : await resolveOrgByokEvalRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        convexAuthToken,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
+  // Mirrors `streamTestCase`: pre-create all N pending iteration rows for
+  // quick-run paths with runs > 1 so the iteration history shows every row
+  // immediately, not one-at-a-time as the loop progresses.
+  const shouldPrecreateIterations =
+    recorder == null && runId == null && test.runs > 1;
+  const precreatedIterationIds: (string | undefined)[] = [];
+  if (shouldPrecreateIterations) {
+    const resolvedTestForPrecreate = resolveEvalTestCase(test);
+    const precreatedAt = Date.now();
+    for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+      try {
+        const iterationParams = {
+          testCaseId: test.testCaseId ?? testCaseId,
+          testCaseSnapshot: {
+            title: test.title,
+            query: resolvedTestForPrecreate.query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            promptTurns: resolvedTestForPrecreate.promptTurns,
+            advancedConfig: resolvedTestForPrecreate.advancedConfig,
+            matchOptions: test.matchOptions,
+            hostConfigOverride: test.hostConfigOverride,
+          },
+          iterationNumber: runIndex + 1,
+          startedAt: precreatedAt,
+        };
+        const id = await createIterationDirectly(
+          convexClient,
+          iterationParams,
+        );
+        precreatedIterationIds.push(id);
+      } catch (error) {
+        logger.warn(
+          "[evals] Failed to precreate iteration row; falling back to per-loop create",
+          {
+            runIndex,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        precreatedIterationIds.push(undefined);
+      }
+    }
+  }
+
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    const precreatedIterationId = shouldPrecreateIterations
+      ? precreatedIterationIds[runIndex]
+      : undefined;
     if (isJamModel) {
       const iterationOutcome = await runIterationViaBackend({
         test,
@@ -2049,9 +2382,43 @@ const runTestCase = async (params: {
         modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
+        orgModelConfig,
         runId,
         abortSignal,
         compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
+      });
+      outcomes.push(iterationOutcome);
+      continue;
+    }
+
+    if (orgByokRuntime?.kind === "cloud") {
+      const iterationOutcome = await runIterationViaBackend({
+        test,
+        runIndex,
+        tools,
+        mcpClientManager,
+        recorder,
+        testCaseId,
+        suiteId,
+        convexHttpUrl,
+        convexAuthToken,
+        modelId: String(modelDefinition.id),
+        endpointPath: "/stream/org",
+        extraBodyFields: {
+          providerKey: orgByokRuntime.providerKey,
+          ...orgByokRuntime.target,
+        },
+        convexClient,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        runId,
+        abortSignal,
+        compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2067,10 +2434,17 @@ const runTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
+      orgModelConfig:
+        orgByokRuntime?.kind === "local"
+          ? orgByokRuntime.orgModelConfig
+          : orgModelConfig,
+      orgModelConfigTarget,
       convexClient,
       runId,
       abortSignal,
       compareRunId,
+      precreatedIterationId,
+      injectOpenAiCompat,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2083,6 +2457,8 @@ export const runEvalSuiteWithAiSdk = async ({
   runId,
   config,
   modelApiKeys,
+  orgModelConfig,
+  orgModelConfigTarget,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
@@ -2090,7 +2466,9 @@ export const runEvalSuiteWithAiSdk = async ({
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
+  suiteInjectOpenAiCompat,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
   const serverIds = resolveConfiguredServerIds({
     environment: config.environment,
@@ -2155,6 +2533,8 @@ export const runEvalSuiteWithAiSdk = async ({
         mcpClientManager,
         recorder,
         modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
         convexHttpUrl,
         convexAuthToken,
         convexClient,
@@ -2163,6 +2543,7 @@ export const runEvalSuiteWithAiSdk = async ({
         suiteId,
         runId,
         abortSignal: abortController.signal,
+        injectOpenAiCompat,
       }),
     );
 
@@ -2314,11 +2695,14 @@ const streamIterationWithAiSdk = async ({
   suiteId,
   modelDefinition,
   modelApiKeys,
+  orgModelConfig,
   convexClient,
   runId,
   abortSignal,
   emit,
   compareRunId,
+  precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2337,6 +2721,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2353,6 +2738,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2367,25 +2753,26 @@ const streamIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
-  const system =
+  const system = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
       : undefined;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  const apiKey =
-    modelApiKeys?.[test.provider] ??
-    modelApiKeys?.[test.provider.toLowerCase()] ??
-    "";
-  if (!apiKey) {
-    throw new Error(
-      `Missing API key for provider ${test.provider} (test: ${test.title})`,
-    );
-  }
+  const modelRuntime = resolveEvalModelRuntime({
+    test,
+    modelDefinition,
+    modelApiKeys,
+    orgModelConfig,
+  });
 
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -2408,14 +2795,18 @@ const streamIterationWithAiSdk = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -2437,7 +2828,12 @@ const streamIterationWithAiSdk = async ({
     null;
 
   try {
-    const llmModel = createLlmModel(modelDefinition, apiKey);
+    const llmModel = createLlmModel(
+      modelDefinition,
+      modelRuntime.apiKey,
+      modelRuntime.baseUrls,
+      modelRuntime.customProviders,
+    );
 
     if (
       toolChoice &&
@@ -2662,6 +3058,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -2689,7 +3086,7 @@ const streamIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -2731,6 +3128,7 @@ const streamIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
+          test.matchOptions,
         ),
         iterationId: undefined,
       };
@@ -2780,9 +3178,10 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -2860,11 +3259,15 @@ const streamIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  extraBodyFields,
   convexClient,
   runId,
   abortSignal,
   emit,
   compareRunId,
+  precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2883,6 +3286,7 @@ const streamIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2899,6 +3303,7 @@ const streamIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2913,10 +3318,14 @@ const streamIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
-  const systemPrompt =
+  const systemPrompt = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -2947,14 +3356,18 @@ const streamIterationViaBackend = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -3028,7 +3441,7 @@ const streamIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -3043,6 +3456,7 @@ const streamIterationViaBackend = async ({
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
+            ...(extraBodyFields ?? {}),
           }),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
@@ -3468,6 +3882,7 @@ const streamIterationViaBackend = async ({
               promptTurns,
               toolsCalledByPrompt,
               test.isNegativeTest,
+              test.matchOptions,
             ),
             iterationId: undefined,
           };
@@ -3549,6 +3964,7 @@ const streamIterationViaBackend = async ({
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
+    test.matchOptions,
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -3571,7 +3987,7 @@ const streamIterationViaBackend = async ({
     iterationError,
     failOnToolError,
   });
-  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -3615,6 +4031,8 @@ export const streamTestCase = async (params: {
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -3624,6 +4042,13 @@ export const streamTestCase = async (params: {
   abortSignal?: AbortSignal;
   emit: StreamEmit;
   compareRunId?: string;
+  /**
+   * Resolved compat-runtime flag for the suite. Forwarded to widget
+   * snapshot capture in each iteration so persisted blobs match the
+   * host config's `mcpProfile.apps.compatRuntime`. Absent → default
+   * off (SEP-1865 honest behavior).
+   */
+  injectOpenAiCompat?: boolean;
 }) => {
   const {
     test,
@@ -3631,6 +4056,8 @@ export const streamTestCase = async (params: {
     mcpClientManager,
     recorder,
     modelApiKeys,
+    orgModelConfig,
+    orgModelConfigTarget,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -3640,6 +4067,7 @@ export const streamTestCase = async (params: {
     abortSignal,
     emit,
     compareRunId,
+    injectOpenAiCompat,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -3651,10 +4079,74 @@ export const streamTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgByokRuntime = isJamModel
+    ? undefined
+    : await resolveOrgByokEvalRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        convexAuthToken,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
+  // Quick-run streaming with runs > 1: pre-create all N pending iteration
+  // rows so they appear in the iteration history immediately. The suite
+  // path already pre-creates upstream via precreateIterationsForRun, so we
+  // only do this when there's no recorder (no suite run) and no runId.
+  // Failures here are non-fatal — fall back to per-loop creation inside the
+  // iteration runners (the existing behavior).
+  const shouldPrecreateIterations =
+    recorder == null && runId == null && test.runs > 1;
+  const precreatedIterationIds: (string | undefined)[] = [];
+  if (shouldPrecreateIterations) {
+    const resolvedTestForPrecreate = resolveEvalTestCase(test);
+    const precreatedAt = Date.now();
+    for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+      try {
+        const iterationParams = {
+          testCaseId: test.testCaseId ?? testCaseId,
+          testCaseSnapshot: {
+            title: test.title,
+            query: resolvedTestForPrecreate.query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            promptTurns: resolvedTestForPrecreate.promptTurns,
+            advancedConfig: resolvedTestForPrecreate.advancedConfig,
+            matchOptions: test.matchOptions,
+            hostConfigOverride: test.hostConfigOverride,
+          },
+          iterationNumber: runIndex + 1,
+          startedAt: precreatedAt,
+        };
+        const id = await createIterationDirectly(
+          convexClient,
+          iterationParams,
+        );
+        precreatedIterationIds.push(id);
+      } catch (error) {
+        logger.warn(
+          "[evals] Failed to precreate streaming iteration row; will fall back to per-loop create",
+          {
+            runIndex,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        precreatedIterationIds.push(undefined);
+      }
+    }
+  }
+
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    const precreatedIterationId = shouldPrecreateIterations
+      ? precreatedIterationIds[runIndex]
+      : undefined;
     if (isJamModel) {
       const iterationOutcome = await streamIterationViaBackend({
         test,
@@ -3669,10 +4161,45 @@ export const streamTestCase = async (params: {
         modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
+        orgModelConfig,
         runId,
         abortSignal,
         emit,
         compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
+      });
+      outcomes.push(iterationOutcome);
+      continue;
+    }
+
+    if (orgByokRuntime?.kind === "cloud") {
+      const iterationOutcome = await streamIterationViaBackend({
+        test,
+        runIndex,
+        tools,
+        mcpClientManager,
+        recorder,
+        testCaseId,
+        suiteId,
+        convexHttpUrl,
+        convexAuthToken,
+        modelId: String(modelDefinition.id),
+        endpointPath: "/stream/org",
+        extraBodyFields: {
+          providerKey: orgByokRuntime.providerKey,
+          ...orgByokRuntime.target,
+        },
+        convexClient,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        runId,
+        abortSignal,
+        emit,
+        compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -3688,11 +4215,18 @@ export const streamTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
+      orgModelConfig:
+        orgByokRuntime?.kind === "local"
+          ? orgByokRuntime.orgModelConfig
+          : orgModelConfig,
+      orgModelConfigTarget,
       convexClient,
       runId,
       abortSignal,
       emit,
       compareRunId,
+      precreatedIterationId,
+      injectOpenAiCompat,
     });
     outcomes.push(iterationOutcome);
   }

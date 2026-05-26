@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   Plus,
   FileText,
@@ -13,7 +16,6 @@ import {
   ChevronRight,
   MonitorSmartphone,
   MessageSquareText,
-  Settings,
 } from "lucide-react";
 import type {
   PendingDashboardOAuthState,
@@ -22,14 +24,6 @@ import type {
 } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
-import { ClientConfigTab } from "./client-config/ClientConfigTab";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
 import {
   ServerDetailModal,
   type ServerDetailTab,
@@ -37,8 +31,12 @@ import {
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
+import {
+  useAppReady,
+  useAppReadyMessage,
+} from "@/hooks/use-app-ready";
 import { MCPIcon } from "./ui/mcp-icon";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,7 +56,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@mcpjam/design-system/hover-card";
-import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
+import { BILLING_GATES, useProjectBillingGate } from "@/lib/billing-gates";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -68,19 +66,32 @@ import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
-import { useConvexAuth } from "convex/react";
-import { Workspace } from "@/state/app-types";
+import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import type {
+  ProjectServerConfigDto,
+  ProjectServerConfigInput,
+} from "@/lib/project-server-config";
+import {
+  resetAutoConnectAttempts,
+  useAutoConnectProjectServers,
+} from "@/hooks/useAutoConnectProjectServers";
+import { useHost } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
+import { Project } from "@/state/app-types";
 import {
   clearPendingQuickConnect,
   readPendingQuickConnect,
   writePendingQuickConnect,
   type PendingQuickConnectState,
 } from "@/lib/quick-connect-pending";
-import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
 import {
-  getEffectiveServerClientCapabilities,
-  workspaceClientCapabilitiesNeedReconnect,
-} from "@/lib/client-config";
+  useProjectServers as useRemoteProjectServers,
+  useProjectMembers,
+  shouldQueryProjectId,
+} from "@/hooks/useProjects";
+import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
   closestCenter,
@@ -105,6 +116,13 @@ import {
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
+import { ClientsConnectAddServerSlotContext } from "./clients/ClientsConnectAddServerSlotContext";
+import { useHostsConnectViewPhase } from "./clients/ClientsConnectViewPhaseContext";
+import {
+  SERVER_CARD_LAYOUT_ID,
+  SNAPPY_CAMERA,
+  SNAPPY_RAIL,
+} from "./clients/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
 
@@ -113,19 +131,19 @@ const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
 const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
 
 interface PersistedLoggerFocus {
-  workspaceId: string;
+  projectId: string;
   serverName: string;
   sinceTimestamp: number;
 }
 
-function variantIsAlreadyInWorkspaceForQuickConnect(
+function variantIsAlreadyInProjectForQuickConnect(
   v: EnrichedRegistryServer,
-  workspaceServers: Record<string, ServerWithName>,
+  projectServers: Record<string, ServerWithName>,
   pendingQuickConnect: PendingQuickConnectState | null,
   isPendingQuickConnectVisible: boolean
 ): boolean {
   const name = getRegistryServerName(v);
-  const ws = workspaceServers[name];
+  const ws = projectServers[name];
   if (!ws) return false;
 
   const isThisPendingQuickConnect =
@@ -143,37 +161,37 @@ function variantIsAlreadyInWorkspaceForQuickConnect(
   return true;
 }
 
-/** True if this catalog card should not appear in Quick Connect (already in workspace). */
-function isQuickConnectCardExcludedByWorkspace(
+/** True if this catalog card should not appear in Quick Connect (already in project). */
+function isQuickConnectCardExcludedByProject(
   card: EnrichedRegistryCatalogCard,
-  workspaceServers: Record<string, ServerWithName>,
+  projectServers: Record<string, ServerWithName>,
   pendingQuickConnect: PendingQuickConnectState | null,
   isPendingQuickConnectVisible: boolean
 ): boolean {
   return card.variants.some((v) =>
-    variantIsAlreadyInWorkspaceForQuickConnect(
+    variantIsAlreadyInProjectForQuickConnect(
       v,
-      workspaceServers,
+      projectServers,
       pendingQuickConnect,
       isPendingQuickConnectVisible
     )
   );
 }
 
-function loadServerOrder(workspaceId: string): string[] | undefined {
+function loadServerOrder(projectId: string): string[] | undefined {
   try {
     const raw = localStorage.getItem(ORDER_STORAGE_KEY);
-    return raw ? JSON.parse(raw)[workspaceId] : undefined;
+    return raw ? JSON.parse(raw)[projectId] : undefined;
   } catch {
     return undefined;
   }
 }
 
-function saveServerOrder(workspaceId: string, orderedNames: string[]): void {
+function saveServerOrder(projectId: string, orderedNames: string[]): void {
   try {
     const raw = localStorage.getItem(ORDER_STORAGE_KEY);
     const all = raw ? JSON.parse(raw) : {};
-    all[workspaceId] = orderedNames;
+    all[projectId] = orderedNames;
     localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(all));
   } catch {
     // ignore
@@ -193,7 +211,7 @@ function clearPersistedLoggerFocus(): void {
 }
 
 function readPersistedLoggerFocus(
-  workspaceId: string
+  projectId: string
 ): PersistedLoggerFocus | null {
   if (typeof window === "undefined") {
     return null;
@@ -208,7 +226,7 @@ function readPersistedLoggerFocus(
     const parsed = JSON.parse(raw) as Partial<PersistedLoggerFocus> | null;
     if (
       !parsed ||
-      typeof parsed.workspaceId !== "string" ||
+      typeof parsed.projectId !== "string" ||
       typeof parsed.serverName !== "string" ||
       typeof parsed.sinceTimestamp !== "number"
     ) {
@@ -221,12 +239,12 @@ function readPersistedLoggerFocus(
       return null;
     }
 
-    if (parsed.workspaceId !== workspaceId) {
+    if (parsed.projectId !== projectId) {
       return null;
     }
 
     return {
-      workspaceId: parsed.workspaceId,
+      projectId: parsed.projectId,
       serverName: parsed.serverName,
       sinceTimestamp: parsed.sinceTimestamp,
     };
@@ -249,26 +267,6 @@ function writePersistedLoggerFocus(input: PersistedLoggerFocus): void {
   } catch {
     // ignore
   }
-}
-
-function ServersSurfaceLoadingState({
-  testId,
-  message,
-}: {
-  testId: string;
-  message: string;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-[320px] items-center justify-center p-8"
-      data-testid={testId}
-    >
-      <div className="text-center">
-        <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="mt-4 text-sm text-muted-foreground">{message}</p>
-      </div>
-    </div>
-  );
 }
 
 function ServersQuickConnectMiniCard({
@@ -429,7 +427,7 @@ function SortableServerCard({
   onRemove,
   hostedServerId,
   onOpenDetailModal,
-  workspaceId,
+  projectId,
 }: {
   id: string;
   dndDisabled: boolean;
@@ -449,10 +447,11 @@ function SortableServerCard({
     server: ServerWithName,
     defaultTab: ServerDetailTab
   ) => void;
-  workspaceId: string;
+  projectId: string;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
+  const viewPhase = useHostsConnectViewPhase();
   const dragListeners =
     listeners == null
       ? {}
@@ -465,24 +464,55 @@ function SortableServerCard({
     opacity: isDragging ? 0 : 1,
   };
 
+  // When the server has a Convex id, share layout with the ReactFlow pill of
+  // the same server in the Host canvas so the Servers→Host swap morphs cards
+  // into pills 1:1 instead of crossfading. Without an id (server not yet
+  // persisted) we fall back to a plain div so the rest of the grid still
+  // renders.
+  const cardContent = (
+    <ServerConnectionCard
+      server={server}
+      needsReconnect={needsReconnect}
+      onDisconnect={onDisconnect}
+      onReconnect={onReconnect}
+      onRemove={onRemove}
+      hostedServerId={hostedServerId}
+      onOpenDetailModal={onOpenDetailModal}
+      projectId={projectId}
+    />
+  );
+
   return (
     <div ref={setNodeRef} style={style} {...dragListeners}>
-      <ServerConnectionCard
-        server={server}
-        needsReconnect={needsReconnect}
-        onDisconnect={onDisconnect}
-        onReconnect={onReconnect}
-        onRemove={onRemove}
-        hostedServerId={hostedServerId}
-        onOpenDetailModal={onOpenDetailModal}
-        workspaceId={workspaceId}
-      />
+      {hostedServerId ? (
+        // Outer box owns the size+position morph (layout); inner wrapper
+        // fades the heavy ServerConnectionCard UI out *before* the size
+        // morph reveals it warping. Mirrors the demo's CSS approach where
+        // toggle/menu/copy collapse to opacity 0 during the camera move.
+        <motion.div
+          layoutId={SERVER_CARD_LAYOUT_ID(hostedServerId)}
+          layout
+          transition={SNAPPY_CAMERA}
+          className="h-full overflow-hidden rounded-xl"
+        >
+          <motion.div
+            initial={false}
+            animate={{ opacity: viewPhase === "servers" ? 1 : 0 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            className="h-full"
+          >
+            {cardContent}
+          </motion.div>
+        </motion.div>
+      ) : (
+        cardContent
+      )}
     </div>
   );
 }
 
 interface ServersTabProps {
-  workspaceServers: Record<string, ServerWithName>;
+  projectServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
@@ -499,55 +529,228 @@ interface ServersTabProps {
     skipAutoConnect?: boolean
   ) => Promise<ServerUpdateResult>;
   onRemove: (serverName: string) => void;
-  workspaces: Record<string, Workspace>;
-  activeWorkspaceId: string;
+  projects: Record<string, Project>;
+  activeProjectId: string;
   organizationId: string | null;
   isBillingContextPending?: boolean;
-  isLoadingWorkspaces?: boolean;
-  onWorkspaceShared?: (
-    sharedWorkspaceId: string,
-    sourceWorkspaceId?: string
+  isLoadingProjects?: boolean;
+  isAuthHydrating?: boolean;
+  areServersHydrated?: boolean;
+  onProjectShared?: (
+    sharedProjectId: string,
+    sourceProjectId?: string
   ) => void;
-  onLeaveWorkspace?: () => void;
+  onLeaveProject?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
-  onSaveClientConfig?: (
-    workspaceId: string,
-    clientConfig: WorkspaceClientConfig | undefined
-  ) => Promise<void>;
 }
 
 export function ServersTab({
-  workspaceServers,
+  projectServers,
   pendingDashboardOAuth,
   onConnect,
   onDisconnect,
   onReconnect,
   onUpdate,
   onRemove,
-  workspaces,
-  activeWorkspaceId,
+  projects,
+  activeProjectId,
   organizationId,
   isBillingContextPending = false,
-  isLoadingWorkspaces,
-  onWorkspaceShared,
+  isLoadingProjects,
+  isAuthHydrating = false,
+  areServersHydrated = true,
+  onProjectShared: _onProjectShared,
   isRegistryEnabled = false,
   onNavigateToRegistry,
-  onSaveClientConfig,
 }: ServersTabProps) {
   const posthog = usePostHog();
-  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
+  const hostsConnectAddServerSlot = useContext(ClientsConnectAddServerSlotContext);
+  const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
+
+  // Auto-connect the previewed host's REQUIRED servers once per host scope.
+  // Mirrors the wiring on the host builder + Playground so /servers, /hosts,
+  // and the Playground all behave the same way. The hook dedupes by
+  // (projectId, hostScopeKey, sortedNames) so navigating between these
+  // surfaces does not re-fire, but switching to a different host (or
+  // saving the host's required set) re-attempts for that scope.
+  //
+  // Match the global host picker / ClientsTab / useAppState scope: prefer
+  // the shared project id (what writers use in authed cloud flows), falling
+  // back to the local id for CLI / no-cloud-sync where there is no shared
+  // id. Reading only `activeProjectId` here misses selections made via
+  // the global host bar on a Convex-synced project.
+  const sharedProjectIdForHostScope =
+    projects[activeProjectId]?.sharedProjectId ?? null;
+  const [previewedHostId] = usePreviewedHostId(
+    sharedProjectIdForHostScope ?? activeProjectId ?? null,
+  );
+  const { host: previewedHost } = useHost({
+    isAuthenticated,
+    hostId: previewedHostId,
+  });
+  const { servers: viewProjectServersList } = useViewProjectServers({
+    projectId: sharedProjectIdForHostScope,
+    isAuthenticated,
+  });
+
+  // Project-wide auto-connect toggle. Single switch in the header that
+  // either enrolls every catalog server in project.serverIds (ON) or
+  // clears the set (OFF). Overrides on still-included servers are
+  // preserved on ON so existing per-server header/timeout config isn't
+  // wiped by a toggle round-trip. Per-server granularity is intentionally
+  // deferred — this is the simplest user-facing surface for the project-
+  // scoped server config rollout.
+  //
+  // Stale-server note: when this is ON and a user adds a new server to
+  // the catalog later, the new server isn't auto-included — they'd
+  // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
+  // newly-added servers in automatically when the toggle is on.
+  // Permission gate for the Auto-connect toggle. Backend
+  // `projectServerConfig:setConfig` requires project admin
+  // (`canManageProjectMembers`); mirror that check on the client so
+  // non-admins see a disabled switch instead of an enabled control that
+  // toasts an authorization error when toggled. Matches the
+  // canManageProjectSettings pattern in ProjectSettingsTab.
+  const { canManageMembers: canManageProjectServers } = useProjectMembers({
+    isAuthenticated,
+    projectId: sharedProjectIdForHostScope,
+  });
+  const projectServerConfigDto = useQuery(
+    "projectServerConfig:getConfig" as any,
+    sharedProjectIdForHostScope && isAuthenticated
+      ? ({ projectId: sharedProjectIdForHostScope } as any)
+      : "skip",
+  ) as ProjectServerConfigDto | null | undefined;
+  const setProjectServerConfigMutation = useMutation(
+    "projectServerConfig:setConfig" as any,
+  ) as unknown as (args: {
+    projectId: string;
+    input: ProjectServerConfigInput;
+  }) => Promise<ProjectServerConfigDto>;
+  const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
+  const catalogServerIds = useMemo(
+    () => (viewProjectServersList ?? []).map((s) => s._id),
+    [viewProjectServersList],
+  );
+  const autoConnectAll = useMemo(() => {
+    if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
+    const enrolled = new Set(projectServerConfigDto.serverIds);
+    if (enrolled.size !== catalogServerIds.length) return false;
+    return catalogServerIds.every((id) => enrolled.has(id));
+  }, [projectServerConfigDto, catalogServerIds]);
+  const handleToggleAutoConnect = useCallback(
+    async (next: boolean) => {
+      if (!sharedProjectIdForHostScope) return;
+      setIsTogglingAutoConnect(true);
+      // Treat an explicit project toggle like a fresh host transition so the
+      // current host re-runs reconciliation instead of reusing stale attempts.
+      resetAutoConnectAttempts(activeProjectId);
+      resetAutoConnectAttempts(sharedProjectIdForHostScope);
+      try {
+        if (next) {
+          // Preserve overrides for servers that remain in the catalog —
+          // backend rejects override keys not in serverIds, so we filter
+          // before sending.
+          const catalogIdSet = new Set(catalogServerIds);
+          const preservedOverrides = Object.fromEntries(
+            Object.entries(projectServerConfigDto?.overrides ?? {}).filter(
+              ([id]) => catalogIdSet.has(id),
+            ),
+          );
+          await setProjectServerConfigMutation({
+            projectId: sharedProjectIdForHostScope,
+            input: {
+              serverIds: catalogServerIds,
+              overrides: preservedOverrides,
+            },
+          });
+        } else {
+          await setProjectServerConfigMutation({
+            projectId: sharedProjectIdForHostScope,
+            input: { serverIds: [], overrides: {} },
+          });
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to update project auto-connect";
+        toast.error(message);
+      } finally {
+        setIsTogglingAutoConnect(false);
+      }
+    },
+    [
+      activeProjectId,
+      sharedProjectIdForHostScope,
+      catalogServerIds,
+      projectServerConfigDto,
+      setProjectServerConfigMutation,
+    ],
+  );
+
+  const renderAutoConnectToggle = () => {
+    // Hide entirely when the project hasn't synced or when there's no
+    // catalog to toggle against. Both states make the switch
+    // semantically meaningless.
+    if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
+    if (catalogServerIds.length === 0) return null;
+    if (projectServerConfigDto === undefined) return null;
+    const disabled = isTogglingAutoConnect || !canManageProjectServers;
+    return (
+      <label
+        className={cn(
+          "flex items-center gap-2 text-xs text-muted-foreground select-none",
+          disabled ? "cursor-not-allowed" : "cursor-pointer",
+        )}
+        title={
+          canManageProjectServers
+            ? "Auto-connect every project server when a host opens"
+            : "Only project admins can change auto-connect"
+        }
+      >
+        <Switch
+          checked={autoConnectAll}
+          disabled={disabled}
+          onCheckedChange={handleToggleAutoConnect}
+          aria-label="Auto-connect project servers"
+        />
+        <span>Auto-connect</span>
+      </label>
+    );
+  };
+
+  const previewedHostRequiredNames = useMemo(() => {
+    const requiredIds = previewedHost?.config?.serverIds ?? [];
+    if (requiredIds.length === 0 || !viewProjectServersList) return [];
+    const byId = new Map(
+      viewProjectServersList.map((s) => [s._id, s.name] as const),
+    );
+    return requiredIds
+      .map((id) => byId.get(id))
+      .filter((name): name is string => !!name);
+  }, [previewedHost?.config?.serverIds, viewProjectServersList]);
+  useAutoConnectProjectServers({
+    projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
+    hostScopeKey: previewedHostId,
+    requiredServerNames: previewedHostRequiredNames,
+  });
+
+  const appReady = useAppReady();
+  const appReadyMessage = useAppReadyMessage();
+  const isAppBootstrapping = appReady.status !== "ready";
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
-  const selectedWorkspace = workspaces[activeWorkspaceId];
-  const registryWorkspaceId = selectedWorkspace?.sharedWorkspaceId ?? null;
+  const selectedProject = projects[activeProjectId];
+  const registryProjectId = selectedProject?.sharedProjectId ?? null;
   const resolvedOrganizationId = isBillingContextPending
     ? null
     : organizationId;
-  const resolvedRegistryWorkspaceId = isBillingContextPending
+  const resolvedRegistryProjectId = isBillingContextPending
     ? null
-    : registryWorkspaceId;
+    : registryProjectId;
 
   const {
     catalogCards,
@@ -555,18 +758,18 @@ export function ServersTab({
     connect: connectRegistryServer,
   } = useRegistryServers({
     enabled: isRegistryEnabled,
-    workspaceId: registryWorkspaceId,
+    projectId: registryProjectId,
     isAuthenticated,
-    liveServers: workspaceServers,
+    liveServers: projectServers,
     onConnect,
   });
 
   const [quickConnectMiniCardsExpanded, setQuickConnectMiniCardsExpanded] =
-    useState(() => Object.keys(workspaceServers).length <= 2);
+    useState(() => Object.keys(projectServers).length <= 2);
 
   // Billing gate for server creation
-  const serverCreationGate = useWorkspaceBillingGate({
-    workspaceId: resolvedRegistryWorkspaceId,
+  const serverCreationGate = useProjectBillingGate({
+    projectId: resolvedRegistryProjectId,
     organizationId: resolvedOrganizationId,
     gate: BILLING_GATES.serverCreation,
   });
@@ -576,9 +779,8 @@ export function ServersTab({
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [isClientConfigOpen, setIsClientConfigOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const persistedLoggerFocus = readPersistedLoggerFocus(activeWorkspaceId);
+  const persistedLoggerFocus = readPersistedLoggerFocus(activeProjectId);
   const [focusedLoggerServerIds, setFocusedLoggerServerIds] = useState<
     string[] | undefined
   >(
@@ -602,12 +804,12 @@ export function ServersTab({
 
   // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
   const allNames = useMemo(
-    () => Object.keys(workspaceServers),
-    [workspaceServers]
+    () => Object.keys(projectServers),
+    [projectServers]
   );
 
   const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
-    const saved = loadServerOrder(activeWorkspaceId);
+    const saved = loadServerOrder(activeProjectId);
     if (saved && saved.length > 0) {
       const existing = saved.filter((n: string) => allNames.includes(n));
       const added = allNames.filter((n) => !existing.includes(n));
@@ -616,25 +818,25 @@ export function ServersTab({
     return allNames;
   });
 
-  // Reconcile when servers are added/removed or workspace changes
+  // Reconcile when servers are added/removed or project changes
   useEffect(() => {
     setOrderedServerNames((prev) => {
-      const saved = loadServerOrder(activeWorkspaceId);
+      const saved = loadServerOrder(activeProjectId);
       const base = saved && saved.length > 0 ? saved : prev;
       const existing = base.filter((n) => allNames.includes(n));
       const added = allNames.filter((n) => !existing.includes(n));
       return [...existing, ...added];
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allNames.join(","), activeWorkspaceId]);
+  }, [allNames.join(","), activeProjectId]);
 
   useEffect(() => {
-    const persistedFocus = readPersistedLoggerFocus(activeWorkspaceId);
+    const persistedFocus = readPersistedLoggerFocus(activeProjectId);
     setFocusedLoggerServerIds(
       persistedFocus ? [persistedFocus.serverName] : undefined
     );
     setFocusedLoggerSinceTimestamp(persistedFocus?.sinceTimestamp);
-  }, [activeWorkspaceId]);
+  }, [activeProjectId]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -654,37 +856,46 @@ export function ServersTab({
       if (oldIndex !== -1 && newIndex !== -1) {
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
-        saveServerOrder(activeWorkspaceId, newOrder);
+        saveServerOrder(activeProjectId, newOrder);
       }
     }
     setActiveId(null);
   };
 
-  const activeServer = activeId ? workspaceServers[activeId] : null;
+  const activeServer = activeId ? projectServers[activeId] : null;
   const reconnectWarningByServerName = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(workspaceServers).map(([serverName, server]) => [
-          serverName,
-          server.connectionStatus === "connected" &&
-            workspaceClientCapabilitiesNeedReconnect({
-              desiredCapabilities: getEffectiveServerClientCapabilities({
-                workspaceClientConfig:
-                  workspaces[activeWorkspaceId]?.clientConfig,
-                serverCapabilities: server.config.capabilities as
-                  | Record<string, unknown>
-                  | undefined,
-              }),
+        Object.entries(projectServers).map(([serverName, server]) => {
+          // Only fires when the user edited the per-server clientCapabilities
+          // override after connecting. Host-driven caps changes are handled by
+          // the auto-reconciler, which disconnect/reconnects affected servers
+          // on host switch — comparing against host-blended caps here just
+          // produced false positives (server fresh-reconnects under the new
+          // host, but the SDK strips runtime-gated caps like `elicitation`
+          // when no handler is wired, so the comparator never matched).
+          const override = server.config.clientCapabilities;
+          const hasOverride =
+            override != null &&
+            typeof override === "object" &&
+            !Array.isArray(override);
+          const stale =
+            hasOverride &&
+            server.connectionStatus === "connected" &&
+            server.initializationInfo?.clientCapabilities != null &&
+            projectClientCapabilitiesNeedReconnect({
+              desiredCapabilities: override as Record<string, unknown>,
               initializedCapabilities: server.initializationInfo
-                ?.clientCapabilities as Record<string, unknown> | undefined,
-            }),
-        ])
+                .clientCapabilities as Record<string, unknown>,
+            });
+          return [serverName, stale];
+        })
       ),
-    [activeWorkspaceId, workspaceServers, workspaces]
+    [projectServers]
   );
 
   const detailModalLiveServer = detailModalState.serverName
-    ? workspaceServers[detailModalState.serverName] ?? null
+    ? projectServers[detailModalState.serverName] ?? null
     : null;
   const detailModalServer =
     detailModalLiveServer ?? detailModalState.serverSnapshot;
@@ -712,7 +923,7 @@ export function ServersTab({
       return;
     }
 
-    const resumeServer = workspaceServers[resumeMarker.serverName];
+    const resumeServer = projectServers[resumeMarker.serverName];
     if (!resumeServer) {
       return;
     }
@@ -725,14 +936,14 @@ export function ServersTab({
       serverSnapshot: resumeServer,
     }));
     clearServerDetailModalOAuthResume();
-  }, [detailModalState.isOpen, workspaceServers]);
+  }, [detailModalState.isOpen, projectServers]);
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
       location: "servers_tab",
       platform: detectPlatform(),
       environment: detectEnvironment(),
-      num_servers: Object.keys(workspaceServers).length,
+      num_servers: Object.keys(projectServers).length,
     });
   }, []);
 
@@ -741,7 +952,7 @@ export function ServersTab({
       return;
     }
 
-    const pendingServer = workspaceServers[pendingQuickConnect.serverName];
+    const pendingServer = projectServers[pendingQuickConnect.serverName];
     if (!pendingServer) {
       return;
     }
@@ -754,20 +965,24 @@ export function ServersTab({
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
     }
-  }, [pendingQuickConnect, workspaceServers]);
+  }, [pendingQuickConnect, projectServers]);
 
-  const connectedCount = Object.keys(workspaceServers).length;
+  const connectedCount = Object.keys(projectServers).length;
   const pendingDashboardOAuthServer = pendingDashboardOAuth
-    ? workspaceServers[pendingDashboardOAuth.serverName]
+    ? projectServers[pendingDashboardOAuth.serverName]
     : null;
   const isPendingDashboardOAuthVisible =
     !!pendingDashboardOAuth &&
     pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
     pendingDashboardOAuthServer?.connectionStatus !== "failed";
   const hasAnyServers = connectedCount > 0;
+  const shouldShowServerActionsInChrome =
+    !!selectedProject && !isLoadingProjects && !isBillingContextPending;
+  const showServerActionsInHostsHeader =
+    hostsConnectAddServerSlot != null && shouldShowServerActionsInChrome;
   const pendingQuickConnectServer =
     pendingQuickConnect?.sourceTab === "servers"
-      ? workspaceServers[pendingQuickConnect.serverName]
+      ? projectServers[pendingQuickConnect.serverName]
       : null;
   const isPendingQuickConnectVisible =
     pendingQuickConnect?.sourceTab === "servers" &&
@@ -784,9 +999,9 @@ export function ServersTab({
       .sort(compareQuickConnectCatalogCards)
       .filter(
         (card) =>
-          !isQuickConnectCardExcludedByWorkspace(
+          !isQuickConnectCardExcludedByProject(
             card,
-            workspaceServers,
+            projectServers,
             pendingQuickConnect,
             isPendingQuickConnectVisible
           )
@@ -794,7 +1009,7 @@ export function ServersTab({
       .slice(0, 4);
   }, [
     catalogCards,
-    workspaceServers,
+    projectServers,
     pendingQuickConnect,
     isPendingQuickConnectVisible,
   ]);
@@ -845,13 +1060,17 @@ export function ServersTab({
     !shouldShowQuickConnect &&
     quickConnectCatalogAvailableCount > 0;
 
-  const activeWorkspace = workspaces[activeWorkspaceId];
-  const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
-  const { serversRecord: sharedWorkspaceServersRecord } =
-    useRemoteWorkspaceServers({
-      workspaceId: sharedWorkspaceId ?? null,
+  const activeProject = projects[activeProjectId];
+  const sharedProjectId = activeProject?.sharedProjectId;
+  const hostedProjectId = sharedProjectId ?? activeProjectId;
+  const { serversRecord: sharedProjectServersRecord } =
+    useRemoteProjectServers({
+      projectId: sharedProjectId ?? null,
       isAuthenticated,
     });
+  const detailModalHostedServerId = detailModalServer
+    ? sharedProjectServersRecord[detailModalServer.name]?._id
+    : undefined;
   const handleOpenDetailModal = useCallback(
     (server: ServerWithName, defaultTab: ServerDetailTab) => {
       setDetailModalState((prev) => ({
@@ -875,12 +1094,12 @@ export function ServersTab({
       setFocusedLoggerServerIds([normalizedServerName]);
       setFocusedLoggerSinceTimestamp(sinceTimestamp);
       writePersistedLoggerFocus({
-        workspaceId: activeWorkspaceId,
+        projectId: activeProjectId,
         serverName: normalizedServerName,
         sinceTimestamp,
       });
     },
-    [activeWorkspaceId]
+    [activeProjectId]
   );
 
   const handleCloseDetailModal = useCallback(() => {
@@ -905,7 +1124,7 @@ export function ServersTab({
       const result = await onUpdate(originalServerName, formData);
 
       setDetailModalState((prev) => {
-        const liveServer = workspaceServers[result.serverName];
+        const liveServer = projectServers[result.serverName];
 
         return {
           ...prev,
@@ -920,7 +1139,7 @@ export function ServersTab({
 
       return result;
     },
-    [onUpdate, workspaceServers]
+    [onUpdate, projectServers]
   );
 
   useEffect(() => {
@@ -949,6 +1168,10 @@ export function ServersTab({
   ]);
 
   const handleJsonImport = (servers: ServerFormData[]) => {
+    if (isAppBootstrapping) {
+      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      return;
+    }
     servers.forEach((server) => {
       focusLoggerOnServer(server.name);
       onConnect(server);
@@ -957,10 +1180,14 @@ export function ServersTab({
 
   const handleConnectServer = useCallback(
     (formData: ServerFormData) => {
+      if (isAppBootstrapping) {
+        toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+        return;
+      }
       focusLoggerOnServer(formData.name);
       onConnect(formData);
     },
-    [focusLoggerOnServer, onConnect]
+    [focusLoggerOnServer, onConnect, isAppBootstrapping, appReadyMessage]
   );
 
   const handleReconnectServer = useCallback(
@@ -971,10 +1198,14 @@ export function ServersTab({
         allowInteractiveOAuthFlow?: boolean;
       },
     ) => {
+      if (isAppBootstrapping) {
+        toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+        return;
+      }
       focusLoggerOnServer(serverName);
       await onReconnect(serverName, options);
     },
-    [focusLoggerOnServer, onReconnect]
+    [focusLoggerOnServer, onReconnect, isAppBootstrapping, appReadyMessage]
   );
 
   const clearPendingQuickConnectIfMatches = useCallback(
@@ -989,6 +1220,10 @@ export function ServersTab({
   );
 
   const handleQuickConnect = async (server: EnrichedRegistryServer) => {
+    if (isAppBootstrapping) {
+      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      return;
+    }
     const serverName = getRegistryServerName(server);
     focusLoggerOnServer(serverName);
     const nextPendingQuickConnect: PendingQuickConnectState = {
@@ -1019,7 +1254,7 @@ export function ServersTab({
       pendingServerIds.add(pendingQuickConnect.serverName);
     }
 
-    Object.entries(workspaceServers).forEach(([serverId, server]) => {
+    Object.entries(projectServers).forEach(([serverId, server]) => {
       if (
         server.connectionStatus === "connecting" ||
         server.connectionStatus === "oauth-flow"
@@ -1034,7 +1269,7 @@ export function ServersTab({
     isPendingQuickConnectVisible,
     pendingDashboardOAuth?.serverName,
     pendingQuickConnect?.serverName,
-    workspaceServers,
+    projectServers,
   ]);
 
   const loggerServerIds =
@@ -1116,28 +1351,8 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
-  const handleOpenClientConfig = () => {
-    posthog.capture("client_config_button_clicked", {
-      location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    });
-    setIsClientConfigOpen(true);
-  };
-
   const renderServerActionsMenu = () => (
     <>
-      {clientConfigEnabled === true && onSaveClientConfig ? (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleOpenClientConfig}
-          className="cursor-pointer"
-        >
-          <Settings className="h-4 w-4 mr-2" />
-          Client Config
-        </Button>
-      ) : null}
       <HoverCard
         open={isActionMenuOpen}
         onOpenChange={setIsActionMenuOpen}
@@ -1322,6 +1537,7 @@ export function ServersTab({
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
+              {showServerActionsInHostsHeader ? null : renderAutoConnectToggle()}
               {shouldShowBrowseRegistryOnly && onNavigateToRegistry ? (
                 <Button
                   variant="outline"
@@ -1334,7 +1550,7 @@ export function ServersTab({
                   <ArrowRight className="h-3.5 w-3.5 ml-1" />
                 </Button>
               ) : null}
-              {renderServerActionsMenu()}
+              {!showServerActionsInHostsHeader ? renderServerActionsMenu() : null}
             </div>
           </div>
 
@@ -1354,7 +1570,7 @@ export function ServersTab({
             >
               <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
                 {orderedServerNames.map((name) => {
-                  const server = workspaceServers[name];
+                  const server = projectServers[name];
                   if (!server) return null;
                   const displayServer = getDisplayServer(server);
                   return (
@@ -1373,9 +1589,9 @@ export function ServersTab({
                         clearPendingQuickConnectIfMatches(serverName);
                         onRemove(serverName);
                       }}
-                      hostedServerId={sharedWorkspaceServersRecord[name]?._id}
+                      hostedServerId={sharedProjectServersRecord[name]?._id}
                       onOpenDetailModal={handleOpenDetailModal}
-                      workspaceId={activeWorkspaceId}
+                      projectId={activeProjectId}
                     />
                   );
                 })}
@@ -1399,9 +1615,9 @@ export function ServersTab({
                       onRemove(serverName);
                     }}
                     hostedServerId={
-                      sharedWorkspaceServersRecord[activeId!]?._id
+                      sharedProjectServersRecord[activeId!]?._id
                     }
-                    workspaceId={activeWorkspaceId}
+                    projectId={activeProjectId}
                   />
                 </div>
               ) : null}
@@ -1422,14 +1638,25 @@ export function ServersTab({
             collapsedSize={0}
             onCollapse={toggleJsonRpcPanel}
           >
-            <div className="h-full flex flex-col bg-background border-l border-border">
-              <LoggerView
-                key={connectedCount}
-                serverIds={loggerServerIds}
-                sinceTimestamp={loggerSinceTimestamp}
-                onClose={toggleJsonRpcPanel}
-              />
-            </div>
+            <AnimatePresence initial={false}>
+              {viewPhase === "servers" ? (
+                <motion.div
+                  key="logs-rail"
+                  initial={{ x: "100%", opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: "100%", opacity: 0 }}
+                  transition={SNAPPY_RAIL}
+                  className="h-full flex flex-col bg-background border-l border-border"
+                >
+                  <LoggerView
+                    key={connectedCount}
+                    serverIds={loggerServerIds}
+                    sinceTimestamp={loggerSinceTimestamp}
+                    onClose={toggleJsonRpcPanel}
+                  />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </ResizablePanel>
         </>
       ) : (
@@ -1443,6 +1670,7 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">
+          {showServerActionsInHostsHeader ? null : renderAutoConnectToggle()}
           {shouldShowBrowseRegistryOnly && onNavigateToRegistry ? (
             <Button
               variant="outline"
@@ -1455,7 +1683,7 @@ export function ServersTab({
               <ArrowRight className="h-3.5 w-3.5 ml-1" />
             </Button>
           ) : null}
-          {renderServerActionsMenu()}
+          {!showServerActionsInHostsHeader ? renderServerActionsMenu() : null}
         </div>
       </div>
 
@@ -1482,22 +1710,41 @@ export function ServersTab({
   );
 
   const renderLoadingContent = () => (
-    <div className="flex-1 p-6">
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <Skeleton className="h-48 w-full rounded-lg" />
-        <Skeleton className="h-48 w-full rounded-lg" />
-      </div>
-    </div>
+    <ResizablePanelGroup direction="horizontal" className="flex-1">
+      <ResizablePanel
+        defaultSize={isJsonRpcPanelVisible ? 65 : 100}
+        minSize={70}
+      >
+        <ServersLoadingSkeleton />
+      </ResizablePanel>
+      {isJsonRpcPanelVisible ? (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel
+            defaultSize={35}
+            minSize={4}
+            maxSize={50}
+            collapsible={true}
+            collapsedSize={0}
+            onCollapse={toggleJsonRpcPanel}
+          >
+            <div className="h-full bg-background border-l border-border" />
+          </ResizablePanel>
+        </>
+      ) : (
+        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+      )}
+    </ResizablePanelGroup>
   );
 
-  const renderNoWorkspaceContent = () => (
+  const renderNoProjectContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
-      <Card className="p-12 text-center" data-testid="servers-no-workspace">
+      <Card className="p-12 text-center" data-testid="servers-no-project">
         <div className="mx-auto max-w-sm">
           <MCPIcon className="mx-auto h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-4 text-lg font-semibold">No workspace selected</h3>
+          <h3 className="mt-4 text-lg font-semibold">No project selected</h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            Select or create a workspace before adding servers.
+            Select or create a project before adding servers.
           </p>
         </div>
       </Card>
@@ -1506,15 +1753,17 @@ export function ServersTab({
 
   return (
     <div className="h-full flex flex-col">
-      {isBillingContextPending ? (
-        <ServersSurfaceLoadingState
-          testId="servers-billing-context-pending"
-          message="Checking your organization access..."
-        />
-      ) : isLoadingWorkspaces ? (
+      {isAuthHydrating ||
+      isBillingContextPending ||
+      isLoadingProjects ||
+      !areServersHydrated ? (
         renderLoadingContent()
-      ) : !selectedWorkspace ? (
-        renderNoWorkspaceContent()
+      ) : !selectedProject ? (
+        shouldQueryProjectId(activeProjectId) ? (
+          renderLoadingContent()
+        ) : (
+          renderNoProjectContent()
+        )
       ) : hasAnyServers ? (
         renderConnectedContent()
       ) : (
@@ -1535,6 +1784,7 @@ export function ServersTab({
           });
           handleConnectServer(formData);
         }}
+        projectClientConfig={selectedProject?.clientConfig}
       />
 
       {/* JSON Import Modal */}
@@ -1543,25 +1793,6 @@ export function ServersTab({
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
       />
-
-      {/* Client Config Dialog */}
-      {clientConfigEnabled === true && onSaveClientConfig ? (
-        <Dialog open={isClientConfigOpen} onOpenChange={setIsClientConfigOpen}>
-          <DialogContent className="max-w-6xl w-[95vw] h-[85vh] p-0 overflow-hidden flex flex-col gap-0 sm:max-w-6xl">
-            <DialogTitle className="sr-only">Client Config</DialogTitle>
-            <DialogDescription className="sr-only">
-              Edit workspace client capabilities and host context.
-            </DialogDescription>
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <ClientConfigTab
-                activeWorkspaceId={activeWorkspaceId}
-                workspace={selectedWorkspace}
-                onSaveClientConfig={onSaveClientConfig}
-              />
-            </div>
-          </DialogContent>
-        </Dialog>
-      ) : null}
 
       {detailModalServer && (
         <ServerDetailModal
@@ -1574,9 +1805,29 @@ export function ServersTab({
           onSubmit={handleSubmitDetailModal}
           onDisconnect={onDisconnect}
           onReconnect={handleReconnectServer}
-          existingServerNames={Object.keys(workspaceServers)}
+          existingServerNames={Object.keys(projectServers)}
+          projectClientConfig={selectedProject?.clientConfig}
+          projectId={hostedProjectId}
+          hostedServerId={detailModalHostedServerId}
+          // Servers tab doesn't mount under ActiveMcpProfileProvider,
+          // so surface the host default explicitly from the
+          // previewedHost's `mcpProfile.mcpProtocolVersion` for the chip's
+          // source attribution.
+          hostDefaultMcpProtocolVersion={
+            previewedHost?.config?.mcpProfile?.mcpProtocolVersion
+          }
         />
       )}
+
+      {showServerActionsInHostsHeader && hostsConnectAddServerSlot
+        ? createPortal(
+            <>
+              {renderAutoConnectToggle()}
+              {renderServerActionsMenu()}
+            </>,
+            hostsConnectAddServerSlot,
+          )
+        : null}
     </div>
   );
 }
