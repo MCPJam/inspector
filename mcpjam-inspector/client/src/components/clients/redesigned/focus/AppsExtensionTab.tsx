@@ -850,7 +850,8 @@ const OPENAI_APPS_METHOD_LABELS: Array<{
  *
  * Layout:
  * - Master row at the top mirrors the old behavior: inject the shim
- *   or don't. When off, the per-method disclosure hides.
+ *   or don't. When off, the per-method disclosure stays expandable but
+ *   renders read-only as a preview of the surface injection would add.
  * - A collapsed disclosure summarizes "N of 13 enabled" and expands to
  *   the full per-method list. Defaults inherit from the active host
  *   template (`client-templates.ts`), so picking ChatGPT / Copilot /
@@ -980,11 +981,9 @@ function OpenaiAppsCapabilityMatrix({
             <span className="text-[12px] font-medium">
               Inject <span className="font-mono">window.openai</span>
             </span>
-            {sublineText ? (
-              <span className="text-[11px] text-muted-foreground">
-                {sublineText}
-              </span>
-            ) : null}
+            <span className="text-[11px] text-muted-foreground">
+              {sublineText}
+            </span>
           </div>
           <ChevronDown
             className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
