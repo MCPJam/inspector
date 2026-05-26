@@ -92,6 +92,26 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => {
 
 import { ServerDetailModal } from "../ServerDetailModal";
 
+const installPointerCaptureMocks = () => {
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: vi.fn(() => false),
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
+};
+
+const getProtocolVersionCombobox = () => {
+  const comboboxes = screen.getAllByRole("combobox");
+  return comboboxes[comboboxes.length - 1];
+};
+
 describe("ServerDetailModal", () => {
   const createServer = (
     overrides: Partial<ServerWithName> = {}
@@ -132,6 +152,7 @@ describe("ServerDetailModal", () => {
       overrides: {},
     });
     localStorage.clear();
+    sessionStorage.clear();
     mockListTools.mockResolvedValue({
       tools: [],
       toolsMetadata: {},
@@ -270,18 +291,7 @@ describe("ServerDetailModal", () => {
 
   it("allows setting a protocol override before the server is in auto-connect", async () => {
     const user = userEvent.setup();
-    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
-      configurable: true,
-      value: vi.fn(() => false),
-    });
-    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
-      configurable: true,
-      value: vi.fn(),
-    });
+    installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseQuery.mockReturnValue({
       projectId: "project_123",
@@ -301,14 +311,11 @@ describe("ServerDetailModal", () => {
     await user.click(
       screen.getByRole("button", { name: /connection overrides/i })
     );
-    const protocolSelect = screen
-      .getAllByText("Host default")
-      .find((element) => element.closest("button"))
-      ?.closest("button");
-    expect(protocolSelect).not.toBeNull();
+    const protocolSelect = getProtocolVersionCombobox();
+    expect(protocolSelect).toHaveTextContent("Host default");
     expect(protocolSelect).toBeEnabled();
 
-    await user.click(protocolSelect!);
+    await user.click(protocolSelect);
     await user.click(await screen.findByRole("option", { name: "Latest" }));
 
     await waitFor(() => {
@@ -321,6 +328,136 @@ describe("ServerDetailModal", () => {
               mcpProtocolVersionOverride: "2025-11-25",
             },
           },
+        },
+      });
+    });
+  });
+
+  it("removes implicit auto-connect enrollment when clearing a modal-created protocol override", async () => {
+    const user = userEvent.setup();
+    installPointerCaptureMocks();
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    let projectServerConfig = {
+      projectId: "project_123",
+      serverIds: [] as string[],
+      overrides: {},
+    };
+    mockUseQuery.mockImplementation(() => projectServerConfig);
+
+    const renderModal = () => (
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="project_123"
+        hostedServerId="server_123"
+        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+      />
+    );
+    const { unmount } = render(renderModal());
+
+    await user.click(
+      screen.getByRole("button", { name: /connection overrides/i })
+    );
+    const hostDefaultSelect = getProtocolVersionCombobox();
+    expect(hostDefaultSelect).toHaveTextContent("Host default");
+
+    await user.click(hostDefaultSelect);
+    await user.click(await screen.findByRole("option", { name: "Latest" }));
+
+    await waitFor(() => {
+      expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
+        projectId: "project_123",
+        input: {
+          serverIds: ["server_123"],
+          overrides: {
+            server_123: {
+              mcpProtocolVersionOverride: "2025-11-25",
+            },
+          },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: "Latest" })
+      ).not.toBeInTheDocument();
+    });
+    unmount();
+
+    projectServerConfig = {
+      projectId: "project_123",
+      serverIds: ["server_123"],
+      overrides: {
+        server_123: {
+          mcpProtocolVersionOverride: "2025-11-25",
+        },
+      },
+    };
+    mockSetProjectServerConfig.mockClear();
+    render(renderModal());
+
+    await user.click(
+      screen.getByRole("button", { name: /connection overrides/i })
+    );
+
+    const latestSelect = getProtocolVersionCombobox();
+    expect(latestSelect).toHaveTextContent("Latest");
+
+    await user.click(latestSelect);
+    await user.click(
+      await screen.findByRole("option", { name: "Host default" })
+    );
+
+    await waitFor(() => {
+      expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
+        projectId: "project_123",
+        input: {
+          serverIds: [],
+          overrides: {},
+        },
+      });
+    });
+  });
+
+  it("keeps explicit auto-connect enrollment when clearing a protocol override", async () => {
+    const user = userEvent.setup();
+    installPointerCaptureMocks();
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    mockUseQuery.mockReturnValue({
+      projectId: "project_123",
+      serverIds: ["server_123"],
+      overrides: {
+        server_123: {
+          mcpProtocolVersionOverride: "2025-11-25",
+        },
+      },
+    });
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="project_123"
+        hostedServerId="server_123"
+        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /connection overrides/i })
+    );
+    const protocolSelect = getProtocolVersionCombobox();
+    expect(protocolSelect).toHaveTextContent("Latest");
+
+    await user.click(protocolSelect);
+    await user.click(
+      await screen.findByRole("option", { name: "Host default" })
+    );
+
+    await waitFor(() => {
+      expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
+        projectId: "project_123",
+        input: {
+          serverIds: ["server_123"],
+          overrides: {},
         },
       });
     });

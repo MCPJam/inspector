@@ -84,6 +84,73 @@ interface ServerDetailModalProps {
   hostDefaultMcpProtocolVersion?: McpProtocolVersion;
 }
 
+type ProtocolOverrideAutoEnrollRecord = {
+  previousServerIds: string[];
+};
+
+const PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX =
+  "mcpjam:protocol-override-auto-enroll";
+
+const getProtocolOverrideAutoEnrollKey = (
+  projectId: string,
+  serverId: string
+) => `${PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX}:${projectId}:${serverId}`;
+
+const readProtocolOverrideAutoEnrollRecord = (
+  key: string
+): ProtocolOverrideAutoEnrollRecord | undefined => {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<ProtocolOverrideAutoEnrollRecord>;
+    if (!Array.isArray(parsed.previousServerIds)) return undefined;
+    return {
+      previousServerIds: parsed.previousServerIds.filter(
+        (id): id is string => typeof id === "string"
+      ),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const writeProtocolOverrideAutoEnrollRecord = (
+  key: string,
+  record: ProtocolOverrideAutoEnrollRecord
+) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(record));
+  } catch {
+    // Losing this marker only affects cleanup of an implicit enrollment.
+  }
+};
+
+const removeProtocolOverrideAutoEnrollRecord = (key: string) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Best-effort cleanup only.
+  }
+};
+
+const matchesImplicitAutoEnrollment = (
+  currentServerIds: string[],
+  serverId: string,
+  previousServerIds: string[]
+) => {
+  const previousServerIdSet = new Set(previousServerIds);
+  if (previousServerIdSet.has(serverId)) return false;
+  if (!currentServerIds.includes(serverId)) return false;
+  if (currentServerIds.length !== previousServerIdSet.size + 1) return false;
+  return currentServerIds.every(
+    (currentServerId) =>
+      currentServerId === serverId || previousServerIdSet.has(currentServerId)
+  );
+};
+
 export function ServerDetailModal({
   isOpen,
   onClose,
@@ -158,6 +225,9 @@ export function ServerDetailModal({
   const canEditMcpProtocolVersionOverride = Boolean(
     projectId && serverId && projectServerConfigDto !== undefined
   );
+  const protocolOverrideAutoEnrolledRef = useRef<
+    Map<string, ProtocolOverrideAutoEnrollRecord>
+  >(new Map());
 
   // Pending reconnect bookkeeping for the override-save → reconnect
   // race (see `handleMcpProtocolVersionOverrideChange` below). Holds the
@@ -238,18 +308,54 @@ export function ServerDetailModal({
     if (hasContent) nextOverrides[serverId] = updatedEntry;
     else delete nextOverrides[serverId];
     // Backend validation requires override keys to be members of `serverIds`.
-    // If the user pins a protocol version for a non-auto-connected server,
-    // enroll this server alongside the override so the pin can be saved before
-    // the currently failing connection succeeds.
-    const nextServerIds =
-      hasContent && !currentServerIds.includes(serverId)
-        ? [...currentServerIds, serverId]
+    // If this control enrolls the server only to save the protocol pin, remember
+    // that provenance so clearing the pin can undo the implicit enrollment
+    // without removing servers that were already explicitly auto-connected.
+    const autoEnrollKey = getProtocolOverrideAutoEnrollKey(
+      projectId,
+      serverId
+    );
+    const autoEnrollRecord =
+      protocolOverrideAutoEnrolledRef.current.get(autoEnrollKey) ??
+      readProtocolOverrideAutoEnrollRecord(autoEnrollKey);
+    const shouldAutoEnrollForOverride =
+      hasContent && !currentServerIds.includes(serverId);
+    const shouldUndoAutoEnroll =
+      !hasContent &&
+      autoEnrollRecord !== undefined &&
+      matchesImplicitAutoEnrollment(
+        currentServerIds,
+        serverId,
+        autoEnrollRecord.previousServerIds
+      );
+    const nextServerIds = shouldAutoEnrollForOverride
+      ? [...currentServerIds, serverId]
+      : shouldUndoAutoEnroll
+        ? currentServerIds.filter(
+            (currentServerId) => currentServerId !== serverId
+          )
         : currentServerIds;
     try {
       await setProjectServerConfigMutation({
         projectId,
         input: { serverIds: nextServerIds, overrides: nextOverrides },
       });
+      if (shouldAutoEnrollForOverride) {
+        const nextAutoEnrollRecord = {
+          previousServerIds: [...currentServerIds],
+        };
+        protocolOverrideAutoEnrolledRef.current.set(
+          autoEnrollKey,
+          nextAutoEnrollRecord
+        );
+        writeProtocolOverrideAutoEnrollRecord(
+          autoEnrollKey,
+          nextAutoEnrollRecord
+        );
+      } else if (!hasContent && autoEnrollRecord !== undefined) {
+        protocolOverrideAutoEnrolledRef.current.delete(autoEnrollKey);
+        removeProtocolOverrideAutoEnrollRecord(autoEnrollKey);
+      }
       // Reconnect-after-save race: `onReconnect` ultimately reads from
       // `activeHostConfig.serverConnectionOverrides` to compute the new
       // wire mode. That value is a derivation of the same Convex row we
