@@ -10,7 +10,12 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@mcpjam/design-system/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Loader2 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
@@ -52,7 +57,7 @@ interface ServerDetailModalProps {
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
-    originalServerName: string,
+    originalServerName: string
   ) => Promise<ServerUpdateResult>;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -60,7 +65,7 @@ interface ServerDetailModalProps {
     options?: {
       forceOAuthFlow?: boolean;
       allowInteractiveOAuthFlow?: boolean;
-    },
+    }
   ) => Promise<void>;
   existingServerNames: string[];
   projectClientConfig?: Project["clientConfig"];
@@ -78,6 +83,73 @@ interface ServerDetailModalProps {
    */
   hostDefaultMcpProtocolVersion?: McpProtocolVersion;
 }
+
+type ProtocolOverrideAutoEnrollRecord = {
+  previousServerIds: string[];
+};
+
+const PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX =
+  "mcpjam:protocol-override-auto-enroll";
+
+const getProtocolOverrideAutoEnrollKey = (
+  projectId: string,
+  serverId: string
+) => `${PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX}:${projectId}:${serverId}`;
+
+const readProtocolOverrideAutoEnrollRecord = (
+  key: string
+): ProtocolOverrideAutoEnrollRecord | undefined => {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<ProtocolOverrideAutoEnrollRecord>;
+    if (!Array.isArray(parsed.previousServerIds)) return undefined;
+    return {
+      previousServerIds: parsed.previousServerIds.filter(
+        (id): id is string => typeof id === "string"
+      ),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const writeProtocolOverrideAutoEnrollRecord = (
+  key: string,
+  record: ProtocolOverrideAutoEnrollRecord
+) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(record));
+  } catch {
+    // Losing this marker only affects cleanup of an implicit enrollment.
+  }
+};
+
+const removeProtocolOverrideAutoEnrollRecord = (key: string) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Best-effort cleanup only.
+  }
+};
+
+const matchesImplicitAutoEnrollment = (
+  currentServerIds: string[],
+  serverId: string,
+  previousServerIds: string[]
+) => {
+  const previousServerIdSet = new Set(previousServerIds);
+  if (previousServerIdSet.has(serverId)) return false;
+  if (!currentServerIds.includes(serverId)) return false;
+  if (currentServerIds.length !== previousServerIdSet.size + 1) return false;
+  return currentServerIds.every(
+    (currentServerId) =>
+      currentServerId === serverId || previousServerIdSet.has(currentServerId)
+  );
+};
 
 export function ServerDetailModal({
   isOpen,
@@ -115,10 +187,10 @@ export function ServerDetailModal({
   const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    projectId ? ({ projectId } as never) : "skip",
+    projectId ? ({ projectId } as never) : "skip"
   ) as ProjectServerConfigDto | null | undefined;
   const setProjectServerConfigMutation = useMutation(
-    "projectServerConfig:setConfig" as never,
+    "projectServerConfig:setConfig" as never
   ) as unknown as (args: {
     projectId: string;
     input: ProjectServerConfigInput;
@@ -130,13 +202,15 @@ export function ServerDetailModal({
   // `sharedProjectServersRecord[name]?._id` and passes it down as
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
-  const currentMcpProtocolVersionOverride = useMemo<McpProtocolVersion | undefined>(
+  const currentMcpProtocolVersionOverride = useMemo<
+    McpProtocolVersion | undefined
+  >(
     () =>
       serverId
         ? (projectServerConfigDto?.overrides?.[serverId]
             ?.mcpProtocolVersionOverride as McpProtocolVersion | undefined)
         : undefined,
-    [projectServerConfigDto, serverId],
+    [projectServerConfigDto, serverId]
   );
   // Host default — prefer the explicit prop passed by the Servers tab
   // (which has direct access to `previewedHost.config.mcpProfile`),
@@ -148,18 +222,12 @@ export function ServerDetailModal({
   const activeMcpProfile = useActiveMcpProfile();
   const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
-
-  // Whether the server is in the project's auto-connect `serverIds`
-  // set. The backend `ensureProjectServerConfig` rejects overrides for
-  // servers not in this set ("override key X is not a member of
-  // serverIds") — overrides ONLY make sense for servers the project
-  // auto-connects, otherwise the override row would dangle. Surface
-  // this gate to the toggle so it disables cleanly with a hint
-  // instead of producing a Convex error toast.
-  const isInProjectAutoConnect = useMemo(() => {
-    if (!serverId) return false;
-    return Boolean(projectServerConfigDto?.serverIds.includes(serverId));
-  }, [projectServerConfigDto, serverId]);
+  const canEditMcpProtocolVersionOverride = Boolean(
+    projectId && serverId && projectServerConfigDto !== undefined
+  );
+  const protocolOverrideAutoEnrolledRef = useRef<
+    Map<string, ProtocolOverrideAutoEnrollRecord>
+  >(new Map());
 
   // Pending reconnect bookkeeping for the override-save → reconnect
   // race (see `handleMcpProtocolVersionOverrideChange` below). Holds the
@@ -177,9 +245,11 @@ export function ServerDetailModal({
     if (!pending) return;
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
-    void onReconnect(server.name).catch(() => {
-      // Reconnect failures surface their own toast inside the handler.
-    });
+    void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
+      () => {
+        // Reconnect failures surface their own toast inside the handler.
+      }
+    );
   }, [
     currentMcpProtocolVersionOverride,
     onReconnect,
@@ -188,11 +258,11 @@ export function ServerDetailModal({
   ]);
 
   const handleMcpProtocolVersionOverrideChange = async (
-    next: McpProtocolVersion | undefined,
+    next: McpProtocolVersion | undefined
   ): Promise<void> => {
     if (!projectId) {
       toast.error(
-        "Wire mode override requires a project context; cannot save without projectId.",
+        "Wire mode override requires a project context; cannot save without projectId."
       );
       return;
     }
@@ -207,16 +277,7 @@ export function ServerDetailModal({
     // hint instead.
     if (projectServerConfigDto === undefined) {
       toast.error(
-        "Project configuration is still loading. Try again in a moment.",
-      );
-      return;
-    }
-    if (!isInProjectAutoConnect) {
-      // Backend invariant: overrides only for servers in serverIds.
-      // Surface a clear path forward rather than letting the mutation
-      // reject with the raw Convex error.
-      toast.error(
-        "Add this server to the project's auto-connect set first (Servers tab → Auto-connect), or use the host-level mcpProtocolVersion in the Client → MCP Protocol JSON.",
+        "Project configuration is still loading. Try again in a moment."
       );
       return;
     }
@@ -246,11 +307,55 @@ export function ServerDetailModal({
     };
     if (hasContent) nextOverrides[serverId] = updatedEntry;
     else delete nextOverrides[serverId];
+    // Backend validation requires override keys to be members of `serverIds`.
+    // If this control enrolls the server only to save the protocol pin, remember
+    // that provenance so clearing the pin can undo the implicit enrollment
+    // without removing servers that were already explicitly auto-connected.
+    const autoEnrollKey = getProtocolOverrideAutoEnrollKey(
+      projectId,
+      serverId
+    );
+    const autoEnrollRecord =
+      protocolOverrideAutoEnrolledRef.current.get(autoEnrollKey) ??
+      readProtocolOverrideAutoEnrollRecord(autoEnrollKey);
+    const shouldAutoEnrollForOverride =
+      hasContent && !currentServerIds.includes(serverId);
+    const shouldUndoAutoEnroll =
+      !hasContent &&
+      autoEnrollRecord !== undefined &&
+      matchesImplicitAutoEnrollment(
+        currentServerIds,
+        serverId,
+        autoEnrollRecord.previousServerIds
+      );
+    const nextServerIds = shouldAutoEnrollForOverride
+      ? [...currentServerIds, serverId]
+      : shouldUndoAutoEnroll
+        ? currentServerIds.filter(
+            (currentServerId) => currentServerId !== serverId
+          )
+        : currentServerIds;
     try {
       await setProjectServerConfigMutation({
         projectId,
-        input: { serverIds: currentServerIds, overrides: nextOverrides },
+        input: { serverIds: nextServerIds, overrides: nextOverrides },
       });
+      if (shouldAutoEnrollForOverride) {
+        const nextAutoEnrollRecord = {
+          previousServerIds: [...currentServerIds],
+        };
+        protocolOverrideAutoEnrolledRef.current.set(
+          autoEnrollKey,
+          nextAutoEnrollRecord
+        );
+        writeProtocolOverrideAutoEnrollRecord(
+          autoEnrollKey,
+          nextAutoEnrollRecord
+        );
+      } else if (!hasContent && autoEnrollRecord !== undefined) {
+        protocolOverrideAutoEnrolledRef.current.delete(autoEnrollKey);
+        removeProtocolOverrideAutoEnrollRecord(autoEnrollKey);
+      }
       // Reconnect-after-save race: `onReconnect` ultimately reads from
       // `activeHostConfig.serverConnectionOverrides` to compute the new
       // wire mode. That value is a derivation of the same Convex row we
@@ -272,7 +377,9 @@ export function ServerDetailModal({
       window.setTimeout(() => {
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
-          void onReconnect(server.name).catch(() => {});
+          void onReconnect(server.name, {
+            allowInteractiveOAuthFlow: false,
+          }).catch(() => {});
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the
@@ -282,7 +389,7 @@ export function ServerDetailModal({
       toast.error(
         err instanceof Error
           ? err.message
-          : "Failed to update wire mode override",
+          : "Failed to update wire mode override"
       );
     }
   };
@@ -326,7 +433,7 @@ export function ServerDetailModal({
           setToolsLoadError(
             error instanceof Error
               ? error.message
-              : "Failed to load tools metadata",
+              : "Failed to load tools metadata"
           );
           setToolsData(null);
         }
@@ -347,7 +454,7 @@ export function ServerDetailModal({
   const handleSave = async () => {
     if (isDuplicateServerName) {
       toast.error(
-        `A server named "${trimmedName}" already exists. Choose a different name.`,
+        `A server named "${trimmedName}" already exists. Choose a different name.`
       );
       return;
     }
@@ -372,7 +479,7 @@ export function ServerDetailModal({
 
       if (formState.clientSecret) {
         const clientSecretError = formState.validateClientSecret(
-          formState.clientSecret,
+          formState.clientSecret
         );
         if (clientSecretError) {
           toast.error(clientSecretError);
@@ -516,8 +623,8 @@ export function ServerDetailModal({
                   {isReconnecting
                     ? "Connecting..."
                     : server.connectionStatus === "failed"
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
+                    ? `${connectionStatusLabel} (${server.retryCount})`
+                    : connectionStatusLabel}
                 </span>
               </span>
               <Switch
@@ -571,9 +678,11 @@ export function ServerDetailModal({
                     isDuplicateServerName={isDuplicateServerName}
                     projectId={projectId}
                     hostedServerId={hostedServerId}
-                    mcpProtocolVersionOverride={currentMcpProtocolVersionOverride}
+                    mcpProtocolVersionOverride={
+                      currentMcpProtocolVersionOverride
+                    }
                     onMcpProtocolVersionOverrideChange={
-                      projectId && isInProjectAutoConnect
+                      canEditMcpProtocolVersionOverride
                         ? handleMcpProtocolVersionOverrideChange
                         : undefined
                     }
@@ -590,20 +699,33 @@ export function ServerDetailModal({
                 }}
               >
                 <Button
-                  type="submit"
+                  type={
+                    isConnected && !formState.hasChanges ? "button" : "submit"
+                  }
+                  onClick={
+                    isConnected && !formState.hasChanges
+                      ? () =>
+                          void handleConnect({
+                            allowInteractiveOAuthFlow: false,
+                          })
+                      : undefined
+                  }
                   disabled={
                     isDuplicateServerName ||
                     isSaving ||
-                    !formState.hasChanges ||
+                    isReconnecting ||
+                    (!formState.hasChanges && !isConnected) ||
                     formState.preregisteredOauthBlocksSubmit
                   }
                   size="sm"
                 >
-                  {isSaving ? (
+                  {isSaving || isReconnecting ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
+                      {isSaving ? "Saving..." : "Reconnecting..."}
                     </>
+                  ) : isConnected && !formState.hasChanges ? (
+                    "Reconnect"
                   ) : (
                     "Save Changes"
                   )}

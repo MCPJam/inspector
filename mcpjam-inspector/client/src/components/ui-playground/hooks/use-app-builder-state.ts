@@ -50,6 +50,7 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "@/lib/inspector-command-handlers";
+import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import type {
   ExecuteToolInspectorCommand,
   RenderToolResultInspectorCommand,
@@ -534,15 +535,34 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     tools,
   ]);
 
+  // Subscribe to the app-tools registry so form fields regenerate when an
+  // app re-lists its tools (e.g. inputSchema changes mid-session). Returning
+  // the resolved descriptor keeps the schema reference stable across renders
+  // that didn't actually change the registry entry. Routes through the
+  // registry's `resolve()` so we inherit its `activeBridgeByParent` gate
+  // (a superseded sibling instance won't be treated as live).
+  const selectedAppToolDescriptor = useAppToolsRegistry((s) => {
+    if (!selectedTool) return undefined;
+    const resolved = s.resolve(selectedTool);
+    if (!resolved) return undefined;
+    return resolved.instance.tools.find((t) => t.name === resolved.rawName);
+  });
+
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
       setFormFields(
         generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
       );
-    } else {
-      setFormFields([]);
+      return;
     }
-  }, [selectedTool, tools, setFormFields]);
+    if (selectedAppToolDescriptor) {
+      setFormFields(
+        generateFormFieldsFromSchema(selectedAppToolDescriptor.inputSchema),
+      );
+      return;
+    }
+    setFormFields([]);
+  }, [selectedTool, tools, selectedAppToolDescriptor, setFormFields]);
 
   const selectToolForCommand = useCallback(
     async (
