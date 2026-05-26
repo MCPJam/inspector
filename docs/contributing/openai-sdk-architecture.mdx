@@ -601,6 +601,16 @@ const openaiAPI = {
       params: options.params,
       anchor: options.anchor
     }, '*');
+  },
+
+  // Override the fullscreen "Open in <server>" button target
+  setOpenInAppUrl(options) {
+    const href = options?.href?.trim();
+    if (!href) throw new Error('href is required for setOpenInAppUrl');
+    window.parent.postMessage(
+      { type: 'openai:setOpenInAppUrl', toolId, href },
+      '*'
+    );
   }
 };
 
