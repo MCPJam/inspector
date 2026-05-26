@@ -37,6 +37,41 @@ import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-re
 
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
 
+// Single source of truth for the wire-mode enum at this trust boundary.
+// Mirrors the SDK's `McpProtocolVersion` union — typo values are rejected
+// here (single-server schema OR per-server map entry in batch payloads)
+// and never reach the SDK's open-routing predicate. Update both lists
+// together if the SDK adds a new wire mode.
+const mcpProtocolVersionEnum = z.enum([
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+  "DRAFT-2026-v1",
+]);
+
+// Host-profile-level batch fields. Shared by `promptsListMultiSchema` and
+// `hostedBatchSchema` (declared in evals.ts) — both batch payloads thread
+// these from the resolved active host profile so the SDK uses the same
+// initialize pins on batch as on single-server calls.
+const clientInfoBatchSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    version: z.string().min(1).optional(),
+  })
+  .passthrough()
+  .optional();
+const supportedProtocolVersionsBatchSchema = z
+  .array(z.string().min(1))
+  .optional();
+// Per-server `mcpProtocolVersion` map. Map entries are validated against
+// the wire-mode enum so a typo in one server's pin doesn't tank the whole
+// batch — Zod returns the typed enum union, and the route handler can
+// still defensively re-check via `isKnownProtocolVersion` before passing
+// to the SDK factory.
+export const mcpProtocolVersionsByServerIdSchema = z
+  .record(z.string().min(1), mcpProtocolVersionEnum)
+  .optional();
+
 export const projectServerSchema = z.object({
   projectId: z.string().min(1),
   serverId: z.string().min(1),
@@ -72,14 +107,7 @@ export const projectServerSchema = z.object({
   // backend constant); typo values are rejected at this trust boundary
   // and never reach the SDK's open-routing predicate. Absent means
   // "use SDK default (negotiates at request time)".
-  mcpProtocolVersion: z
-    .enum([
-      "2025-03-26",
-      "2025-06-18",
-      "2025-11-25",
-      "DRAFT-2026-v1",
-    ])
-    .optional(),
+  mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -110,6 +138,16 @@ export const promptsListMultiSchema = z.object({
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
+  // mcpProfile.initialize pins, threaded from the active host profile so
+  // multi-server prompts list connects honor the same protocol pins as
+  // single-server calls. `clientInfo` and `supportedProtocolVersions` are
+  // host-level (uniform per batch). `mcpProtocolVersionsByServerId` is
+  // per-server so different servers in the batch can be on different
+  // wire modes (e.g. one pinned to DRAFT-2026-v1 stateless, others on
+  // legacy 2025-11-25 negotiation).
+  clientInfo: clientInfoBatchSchema,
+  supportedProtocolVersions: supportedProtocolVersionsBatchSchema,
+  mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
@@ -531,6 +569,58 @@ export function toHttpConfig(
   };
 }
 
+/**
+ * Per-server pin resolution for batch endpoints. Exported for unit tests
+ * (lets us assert the resolution without constructing a real
+ * MCPClientManager whose background auto-connects against fake URLs
+ * would leak as unhandled rejections).
+ *
+ * Resolution order, highest priority first:
+ *   1. `perServerMap[serverId]` (if present AND `isKnownProtocolVersion`).
+ *   2. `batchInitializePins.mcpProtocolVersion` (batch-uniform fallback).
+ *   3. `undefined` — SDK chooses the default at request time.
+ *
+ * `clientInfo` and `supportedProtocolVersions` are host-profile-level
+ * (always batch-uniform), so they pass through unchanged from
+ * `batchInitializePins`.
+ */
+export function resolveEffectiveInitializePinsForServer(
+  serverId: string,
+  batchInitializePins:
+    | {
+        clientInfo?: { name?: string; version?: string } & Record<
+          string,
+          unknown
+        >;
+        supportedProtocolVersions?: string[];
+        mcpProtocolVersion?: McpProtocolVersion;
+      }
+    | undefined,
+  perServerMap: Record<string, McpProtocolVersion> | undefined
+):
+  | {
+      clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+      supportedProtocolVersions?: string[];
+      mcpProtocolVersion?: McpProtocolVersion;
+    }
+  | undefined {
+  const perServerRaw = perServerMap?.[serverId];
+  const perServerPin: McpProtocolVersion | undefined =
+    typeof perServerRaw === "string" && isKnownProtocolVersion(perServerRaw)
+      ? perServerRaw
+      : undefined;
+
+  if (!batchInitializePins) {
+    return perServerPin !== undefined
+      ? { mcpProtocolVersion: perServerPin }
+      : undefined;
+  }
+
+  return perServerPin !== undefined
+    ? { ...batchInitializePins, mcpProtocolVersion: perServerPin }
+    : batchInitializePins;
+}
+
 export interface AuthorizedManagerResult {
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
@@ -554,11 +644,14 @@ export async function createAuthorizedManager(
     rpcLogger?: RpcLogger;
     serverNames?: string[];
     /**
-     * mcpProfile.initialize.* pins, applied uniformly to every
-     * authorized server in this batch. The same pins flow into every
-     * HttpServerConfig because hosted batches resolve under one
-     * profile context — we don't currently support per-server
-     * mcpProfile overrides.
+     * mcpProfile.initialize.* pins. `clientInfo` and
+     * `supportedProtocolVersions` are host-profile-level — they apply
+     * uniformly to every authorized server in the batch.
+     * `mcpProtocolVersion` is the batch-uniform fallback wire mode;
+     * `mcpProtocolVersionsByServerId` (sibling option below) overrides
+     * it per server. This lets a batch contain one server pinned to
+     * DRAFT-2026-v1 stateless alongside another on legacy
+     * 2025-11-25 negotiation.
      */
     initializePins?: {
       clientInfo?: { name?: string; version?: string } & Record<
@@ -568,6 +661,18 @@ export async function createAuthorizedManager(
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
     };
+    /**
+     * Per-server `mcpProtocolVersion` overrides keyed by serverId.
+     * Values already passed `isKnownProtocolVersion` at the route
+     * boundary (the schema validates each entry against the wire-mode
+     * enum); we re-check here as a defense-in-depth so a future
+     * caller bypassing the schema can't slip a typo to the SDK.
+     *
+     * Resolution: `mcpProtocolVersionsByServerId[serverId]` (if known)
+     * → `initializePins.mcpProtocolVersion` (batch-uniform) →
+     * undefined (SDK chooses at request time).
+     */
+    mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -653,6 +758,12 @@ export async function createAuthorizedManager(
       }
     }
 
+    const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
+      serverId,
+      options?.initializePins,
+      options?.mcpProtocolVersionsByServerId
+    );
+
     return [
       serverId,
       toHttpConfig(
@@ -661,7 +772,7 @@ export async function createAuthorizedManager(
         oauthToken,
         clientCapabilities,
         onUnauthorized,
-        options?.initializePins
+        effectiveInitializePins
       ),
     ] as const;
   });
@@ -880,6 +991,38 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
               : {}),
           }
         : undefined;
+    // Per-server `mcpProtocolVersion` overrides (batch payloads only).
+    // Single-server payloads use the top-level `mcpProtocolVersion`
+    // field above; batch payloads can carry a per-server map so eval +
+    // multi-prompt-list flows honor per-server wire-mode pins instead
+    // of falling back to the (uniform) batch-level value.
+    //
+    // Defensive shape gating mirrors the single-server pin extraction:
+    // entries with non-string keys, non-string values, or values that
+    // fail `isKnownProtocolVersion` are silently dropped. A wholly
+    // bad map collapses to `undefined` (SDK default at request time).
+    const rawProtocolVersionsByServerId = raw.mcpProtocolVersionsByServerId;
+    const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> | undefined =
+      rawProtocolVersionsByServerId &&
+      typeof rawProtocolVersionsByServerId === "object" &&
+      !Array.isArray(rawProtocolVersionsByServerId)
+        ? (() => {
+            const filtered: Record<string, McpProtocolVersion> = {};
+            for (const [serverId, value] of Object.entries(
+              rawProtocolVersionsByServerId as Record<string, unknown>
+            )) {
+              if (
+                typeof serverId === "string" &&
+                serverId.length > 0 &&
+                typeof value === "string" &&
+                isKnownProtocolVersion(value)
+              ) {
+                filtered[serverId] = value;
+              }
+            }
+            return Object.keys(filtered).length > 0 ? filtered : undefined;
+          })()
+        : undefined;
 
     const result = await withManager(
       createAuthorizedManager(
@@ -898,6 +1041,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           rpcLogger: rpcCollector?.rpcLogger,
           serverNames,
           initializePins,
+          mcpProtocolVersionsByServerId,
         }
       ),
       (manager) => fn(manager, body as z.infer<S>)

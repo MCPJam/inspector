@@ -7,6 +7,7 @@ import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
   handleRoute,
+  mcpProtocolVersionsByServerIdSchema,
   parseWithSchema,
   readJsonBody,
   withEphemeralConnection,
@@ -33,6 +34,20 @@ const hostedBatchSchema = z.object({
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).min(1).optional(),
   clientCapabilities: z.record(z.string(), z.unknown()).optional(),
+  // mcpProfile.initialize pins threaded from the resolved host profile.
+  // See `promptsListMultiSchema` in auth.ts for the matching shape on
+  // the prompts batch route; both forward to `createAuthorizedManager`
+  // so eval runs against DRAFT-pinned servers actually use the DRAFT
+  // wire mode instead of silently negotiating legacy.
+  clientInfo: z
+    .object({
+      name: z.string().min(1).optional(),
+      version: z.string().min(1).optional(),
+    })
+    .passthrough()
+    .optional(),
+  supportedProtocolVersions: z.array(z.string().min(1)).optional(),
+  mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   chatboxId: z.string().min(1).optional(),
@@ -150,6 +165,27 @@ evals.post("/stream-test-case", async (c) => {
       chatboxId: body.chatboxId as string | undefined,
       accessVersion: body.accessVersion as number | undefined,
       serverNames: body.serverNames,
+      // Thread mcpProfile.initialize pins from the streaming-route's
+      // schema-parsed body, mirroring the `withEphemeralConnection`
+      // entry point. Without this, stream-test-case batches against
+      // DRAFT-pinned servers silently fell back to legacy negotiation.
+      // Batch schemas (`hostedBatchSchema`) don't carry a single-server
+      // top-level `mcpProtocolVersion` — per-server pins flow through
+      // `mcpProtocolVersionsByServerId` instead.
+      initializePins:
+        body.clientInfo || body.supportedProtocolVersions?.length
+          ? {
+              ...(body.clientInfo
+                ? { clientInfo: body.clientInfo }
+                : {}),
+              ...(body.supportedProtocolVersions?.length
+                ? {
+                    supportedProtocolVersions: body.supportedProtocolVersions,
+                  }
+                : {}),
+            }
+          : undefined,
+      mcpProtocolVersionsByServerId: body.mcpProtocolVersionsByServerId,
     },
   );
 

@@ -197,6 +197,99 @@ describe("hosted web context", () => {
     });
   });
 
+  it("forwards MCP profile pins on hosted batch requests (per-server map + host pins)", () => {
+    setApiContext({
+      projectId: "ws_stateless",
+      serverIdsByName: {
+        stateless: "srv_stateless",
+        legacy: "srv_legacy",
+      },
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      // Mixed batch: one server pinned to draft, one with no override
+      // (server-level pin absent — falls back to host default if any).
+      mcpProtocolVersionsByServerId: {
+        srv_stateless: "DRAFT-2026-v1",
+      },
+      getAccessToken: async () => null,
+    });
+
+    // prompts multi-list path
+    expect(buildServerBatchRequest(["stateless", "legacy"])).toEqual({
+      projectId: "ws_stateless",
+      serverIds: ["srv_stateless", "srv_legacy"],
+      serverNames: ["stateless", "legacy"],
+      clientCapabilities: defaultClientCapabilities,
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateless: "DRAFT-2026-v1",
+      },
+    });
+
+    // evals batch path — same shape
+    expect(
+      buildHostedEvalServerBatchRequest(["stateless", "legacy"]),
+    ).toEqual({
+      projectId: "ws_stateless",
+      serverIds: ["srv_stateless", "srv_legacy"],
+      serverNames: ["stateless", "legacy"],
+      clientCapabilities: defaultClientCapabilities,
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateless: "DRAFT-2026-v1",
+      },
+    });
+  });
+
+  it("filters the protocol-version map down to the batch's serverIds", () => {
+    setApiContext({
+      projectId: "ws_filter",
+      serverIdsByName: {
+        a: "srv_a",
+        b: "srv_b",
+        c: "srv_c",
+      },
+      // Map carries an entry for `srv_c` that isn't in the batch — must
+      // be dropped, otherwise the backend would receive a stale pin for
+      // a server it never authorized in this request.
+      mcpProtocolVersionsByServerId: {
+        srv_a: "DRAFT-2026-v1",
+        srv_c: "DRAFT-2026-v1",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(buildServerBatchRequest(["a", "b"])).toEqual({
+      projectId: "ws_filter",
+      serverIds: ["srv_a", "srv_b"],
+      serverNames: ["a", "b"],
+      clientCapabilities: defaultClientCapabilities,
+      mcpProtocolVersionsByServerId: { srv_a: "DRAFT-2026-v1" },
+    });
+  });
+
+  it("omits the protocol-version map when no batch server has a pin", () => {
+    setApiContext({
+      projectId: "ws_empty",
+      serverIdsByName: { bench: "srv_bench" },
+      // Map exists but contains nothing for the batch's servers.
+      mcpProtocolVersionsByServerId: {
+        srv_other: "DRAFT-2026-v1",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(buildServerBatchRequest(["bench"])).toEqual({
+      projectId: "ws_empty",
+      serverIds: ["srv_bench"],
+      serverNames: ["bench"],
+      clientCapabilities: defaultClientCapabilities,
+      // No `mcpProtocolVersionsByServerId` field — omitted entirely.
+    });
+  });
+
   it("blocks hosted project requests while client config sync is pending", () => {
     setApiContext({
       projectId: "ws_pending",

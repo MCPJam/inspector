@@ -378,11 +378,39 @@ export function buildServerRequest(
   };
 }
 
+/**
+ * Filter the apiContext per-server protocol-version map down to the
+ * batch's actual `serverIds`. Returns `undefined` when no relevant
+ * entries exist so the request body omits the field entirely (Zod
+ * `.optional()` on the backend treats omitted vs explicit empty
+ * differently — omitted is the cleaner shape).
+ *
+ * The client-side stateless-rollout-flag gate runs upstream in
+ * `App.tsx` when populating `apiContext.mcpProtocolVersionsByServerId`,
+ * so anything reaching this point already passed the gate. We don't
+ * re-check the flag here.
+ */
+function buildBatchProtocolVersionMap(
+  serverIds: string[],
+): Record<string, McpProtocolVersion> | undefined {
+  const source = apiContext.mcpProtocolVersionsByServerId;
+  if (!source) return undefined;
+  const filtered: Record<string, McpProtocolVersion> = {};
+  for (const id of serverIds) {
+    const pin = source[id];
+    if (pin) filtered[id] = pin;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
 export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   projectId: string;
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -394,6 +422,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
+  const protocolVersions = buildBatchProtocolVersionMap(serverIds);
   const chatboxId = getHostedChatboxId();
   const accessVersion = getHostedChatboxAccessVersion();
   const accessScope = getHostedAccessScope();
@@ -403,6 +432,13 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     serverNames,
     ...(apiContext.clientCapabilities
       ? { clientCapabilities: apiContext.clientCapabilities }
+      : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(protocolVersions
+      ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
@@ -418,6 +454,9 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -429,6 +468,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
+  const protocolVersions = buildBatchProtocolVersionMap(serverIds);
   const chatboxId = getHostedChatboxId();
   const accessVersion = getHostedChatboxAccessVersion();
   const accessScope = getHostedAccessScope();
@@ -439,6 +479,13 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     serverNames,
     ...(apiContext.clientCapabilities
       ? { clientCapabilities: apiContext.clientCapabilities }
+      : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(protocolVersions
+      ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),

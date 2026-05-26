@@ -14,7 +14,10 @@ vi.mock("@axiomhq/js", () => ({
   })),
 }));
 
-import { authorizeBatch } from "../auth.js";
+import {
+  authorizeBatch,
+  resolveEffectiveInitializePinsForServer,
+} from "../auth.js";
 
 const baseContext: RequestLogContext = {
   event: "http.request.completed",
@@ -281,5 +284,96 @@ describe("authorizeBatch — request log context attribution", () => {
     for (const entry of Object.values(result.results)) {
       expect((entry as Record<string, unknown>).internalLogContext).toBeUndefined();
     }
+  });
+});
+
+describe("resolveEffectiveInitializePinsForServer", () => {
+  // Regression coverage for the codex bot finding on the stateless
+  // preview PR: hosted batch endpoints (prompts multi-list, evals) used
+  // to drop per-server `mcpProtocolVersion` pins entirely, so DRAFT-
+  // pinned servers in a batch silently fell back to legacy negotiation.
+  // The resolver applied inside `createAuthorizedManager`'s per-server
+  // iteration is exported separately for testability — building a real
+  // MCPClientManager here would trigger background auto-connects
+  // against the fake test URLs and leak as unhandled rejections.
+
+  it("returns the per-server pin when present, regardless of batch fallback", () => {
+    const resolved = resolveEffectiveInitializePinsForServer(
+      "srv-draft",
+      {
+        clientInfo: { name: "test", version: "1.0.0" },
+        supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+        mcpProtocolVersion: "2025-11-25",
+      },
+      { "srv-draft": "DRAFT-2026-v1" },
+    );
+    expect(resolved).toEqual({
+      clientInfo: { name: "test", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      mcpProtocolVersion: "DRAFT-2026-v1",
+    });
+  });
+
+  it("falls back to the batch-uniform pin when the server isn't in the map", () => {
+    const resolved = resolveEffectiveInitializePinsForServer(
+      "srv-legacy",
+      {
+        mcpProtocolVersion: "2025-11-25",
+      },
+      { "srv-other": "DRAFT-2026-v1" },
+    );
+    expect(resolved).toEqual({ mcpProtocolVersion: "2025-11-25" });
+  });
+
+  it("returns undefined when no batch fallback and no per-server pin", () => {
+    expect(
+      resolveEffectiveInitializePinsForServer("srv-alpha", undefined, undefined),
+    ).toBeUndefined();
+    expect(
+      resolveEffectiveInitializePinsForServer(
+        "srv-alpha",
+        undefined,
+        { "srv-other": "DRAFT-2026-v1" },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("only the per-server pin is set when batch fallback is absent", () => {
+    expect(
+      resolveEffectiveInitializePinsForServer(
+        "srv-draft",
+        undefined,
+        { "srv-draft": "DRAFT-2026-v1" },
+      ),
+    ).toEqual({ mcpProtocolVersion: "DRAFT-2026-v1" });
+  });
+
+  it("rejects typo'd map entries (defense-in-depth after schema validation)", () => {
+    // The Zod schema rejects bad values at the route boundary, but this
+    // helper is exported and may be called from other code paths in
+    // future. Re-checking via `isKnownProtocolVersion` ensures a typo
+    // can never slip to the SDK factory.
+    const resolved = resolveEffectiveInitializePinsForServer(
+      "srv-typo",
+      { mcpProtocolVersion: "2025-11-25" },
+      { "srv-typo": "BOGUS-VERSION" as never },
+    );
+    expect(resolved).toEqual({ mcpProtocolVersion: "2025-11-25" });
+  });
+
+  it("preserves clientInfo + supportedProtocolVersions from the batch pins", () => {
+    const resolved = resolveEffectiveInitializePinsForServer(
+      "srv-draft",
+      {
+        clientInfo: { name: "test", version: "1.0.0" },
+        supportedProtocolVersions: ["2025-11-25"],
+      },
+      { "srv-draft": "DRAFT-2026-v1" },
+    );
+    expect(resolved).toEqual({
+      clientInfo: { name: "test", version: "1.0.0" },
+      supportedProtocolVersions: ["2025-11-25"],
+      mcpProtocolVersion: "DRAFT-2026-v1",
+    });
   });
 });
