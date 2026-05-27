@@ -4,6 +4,7 @@ export interface SerializedModelRequestTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface ResolvedModelRequestPayload {

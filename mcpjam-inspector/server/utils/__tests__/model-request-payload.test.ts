@@ -77,6 +77,82 @@ describe("buildResolvedModelRequestPayload", () => {
     });
   });
 
+  it("includes MCP output schemas in raw request payloads", () => {
+    const outputSchema = {
+      type: "object",
+      properties: {
+        x: {
+          type: "integer",
+          description: "Density of seagulls in the sky",
+        },
+      },
+      required: ["x"],
+    };
+
+    const result = buildResolvedModelRequestPayload({
+      systemPrompt: "",
+      tools: {
+        get_weather: {
+          description: "Get weather",
+          inputSchema: {
+            jsonSchema: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+            },
+          },
+          _mcpOutputSchema: outputSchema,
+        },
+      } as any,
+      messages: [],
+    });
+
+    expect(result.tools.get_weather).toEqual({
+      name: "get_weather",
+      description: "Get weather",
+      inputSchema: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+      },
+      outputSchema,
+    });
+  });
+
+  it("serializes zod-backed output schemas before falling back to raw objects", () => {
+    const result = buildResolvedModelRequestPayload({
+      systemPrompt: "",
+      tools: {
+        classify: {
+          description: "Classify text",
+          parameters: z.object({
+            text: z.string(),
+          }),
+          outputSchema: z.object({
+            label: z.enum(["positive", "negative"]),
+            confidence: z.number(),
+          }),
+        },
+      } as any,
+      messages: [],
+    });
+
+    expect(result.tools.classify.outputSchema).toEqual(
+      expect.objectContaining({
+        type: "object",
+        properties: {
+          label: expect.objectContaining({
+            enum: ["positive", "negative"],
+          }),
+          confidence: expect.objectContaining({
+            type: "number",
+          }),
+        },
+        required: ["label", "confidence"],
+      })
+    );
+  });
+
   it("falls back to the empty object schema for raw MCP inputSchema", () => {
     const result = buildResolvedModelRequestPayload({
       systemPrompt: "",
