@@ -269,6 +269,9 @@ describe("prepareChatV2", () => {
       "both_tool",
       "model_tool",
     ]);
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["srv"], {
+      includeAppOnly: true,
+    });
   });
 
   it("filters selectedServers down to ids the manager has registered", async () => {

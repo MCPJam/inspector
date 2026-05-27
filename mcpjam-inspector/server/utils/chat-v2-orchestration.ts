@@ -541,17 +541,27 @@ export async function prepareChatV2(
     mcpClientManager.hasServer(id)
   );
 
+  const toolOptions =
+    requireToolApproval || respectToolVisibility === false
+      ? {
+          ...(requireToolApproval
+            ? { needsApproval: requireToolApproval }
+            : {}),
+          ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
+        }
+      : undefined;
+
   // 1. Get MCP + skill tools
   const mcpTools = await mcpClientManager.getToolsForAiSdk(
     knownSelectedServers,
-    requireToolApproval ? { needsApproval: requireToolApproval } : undefined
+    toolOptions
   );
 
   // SEP-1865: tools whose `_meta.ui.visibility` is exactly `["app"]` are
   // hidden from the model — they remain callable from the iframe via the
-  // bridge but must not appear in the AI SDK tool set. The conversion
-  // helper doesn't lift `_meta` onto the AiSdkTool, so we look the
-  // metadata back up per (serverId, toolName) from the manager's cache.
+  // bridge but must not appear in the AI SDK tool set. When the host
+  // explicitly opts out, include them in the SDK conversion above so this
+  // gate remains the single policy switch.
   //
   // Gated by the host policy `respectToolVisibility`. `undefined` and
   // `true` both filter (spec default); only an explicit `false` opts
