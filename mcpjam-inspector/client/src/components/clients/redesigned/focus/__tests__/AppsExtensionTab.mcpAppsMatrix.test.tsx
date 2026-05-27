@@ -59,6 +59,18 @@ async function expandMcpAppsDimensions(
   );
 }
 
+async function expandMcpAppsHostPolicies(
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  // The host-policies card is a sibling of MCP App support, only
+  // rendered when the MCP UI extension is advertised. The matrix master
+  // toggle (advertised) is on by default for the presets used in these
+  // tests, so the section header is present without further setup.
+  await user.click(
+    screen.getByRole("button", { name: /MCP App host policies/i }),
+  );
+}
+
 describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
   it("renders the MCP App support section header", () => {
     renderMatrix();
@@ -210,11 +222,20 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
   });
 });
 
-describe("AppsExtensionTab — McpAppsCapabilityMatrix appTools row", () => {
-  it("renders the appTools row in the matrix", async () => {
+describe("AppsExtensionTab — Host policies appTools row", () => {
+  it("renders the appTools row in the host policies section, not in the wire-methods matrix", async () => {
     const user = userEvent.setup();
     renderMatrix();
+    // appTools must NOT appear inside the wire-methods matrix — it has
+    // no hostCapabilities counterpart, so listing it next to spec rows
+    // like `serverTools` / `updateModelContext` would mislead server
+    // authors into expecting a wire field. Open the dimensions and
+    // confirm absence before opening the host-policies card.
     await expandMcpAppsDimensions(user);
+    expect(
+      screen.queryByTestId("mcp-apps-dimension-appTools"),
+    ).not.toBeInTheDocument();
+    await expandMcpAppsHostPolicies(user);
     expect(
       screen.getByTestId("mcp-apps-dimension-appTools"),
     ).toBeInTheDocument();
@@ -225,7 +246,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix appTools row", () => {
     // Claude preset has appTools: false (inherits MCP_APPS_FULL_SURFACE default).
     // Toggling on should write appTools: true to the override.
     const { draftRef } = renderMatrix({ hostStyle: "claude" });
-    await expandMcpAppsDimensions(user);
+    await expandMcpAppsHostPolicies(user);
     const row = screen.getByTestId("mcp-apps-dimension-appTools");
     const toggle = within(row).getByRole("switch");
     // Claude preset: appTools is false, so toggle flips to true.
@@ -243,7 +264,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix appTools row", () => {
   it("MCPJam preset has appTools: true by default", async () => {
     const user = userEvent.setup();
     renderMatrix({ hostStyle: "mcpjam" });
-    await expandMcpAppsDimensions(user);
+    await expandMcpAppsHostPolicies(user);
     const row = screen.getByTestId("mcp-apps-dimension-appTools");
     const toggle = within(row).getByRole("switch");
     expect(toggle).toBeChecked();
@@ -252,7 +273,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix appTools row", () => {
   it("Claude preset has appTools: false by default", async () => {
     const user = userEvent.setup();
     renderMatrix({ hostStyle: "claude" });
-    await expandMcpAppsDimensions(user);
+    await expandMcpAppsHostPolicies(user);
     const row = screen.getByTestId("mcp-apps-dimension-appTools");
     const toggle = within(row).getByRole("switch");
     expect(toggle).not.toBeChecked();
@@ -261,7 +282,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix appTools row", () => {
   it("ChatGPT preset has appTools: false by default", async () => {
     const user = userEvent.setup();
     renderMatrix({ hostStyle: "chatgpt" });
-    await expandMcpAppsDimensions(user);
+    await expandMcpAppsHostPolicies(user);
     const row = screen.getByTestId("mcp-apps-dimension-appTools");
     const toggle = within(row).getByRole("switch");
     expect(toggle).not.toBeChecked();
@@ -270,7 +291,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix appTools row", () => {
   it("Copilot preset has appTools: false by default", async () => {
     const user = userEvent.setup();
     renderMatrix({ hostStyle: "copilot" });
-    await expandMcpAppsDimensions(user);
+    await expandMcpAppsHostPolicies(user);
     const row = screen.getByTestId("mcp-apps-dimension-appTools");
     const toggle = within(row).getByRole("switch");
     expect(toggle).not.toBeChecked();
