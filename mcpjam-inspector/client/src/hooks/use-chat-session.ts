@@ -19,6 +19,7 @@ import {
   useCallback,
   useRef,
   useLayoutEffect,
+  useSyncExternalStore,
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
@@ -108,6 +109,11 @@ import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import {
+  buildResolvedServerBatchRequest,
+  getApiContextRevision,
+  subscribeApiContext,
+} from "@/lib/apis/web/context";
 
 const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
 
@@ -237,6 +243,14 @@ export interface UseChatSessionOptions {
    * mid-session toggle flip is reflected on the next send.
    */
   progressiveToolDiscovery?: boolean;
+  /**
+   * Host-level SEP-1865 visibility policy. When false, tools marked
+   * `visibility: ["app"]` are still advertised to the model, matching
+   * clients that do not implement visibility filtering. Sourced from the
+   * caller's resolved host config; held in a ref so client/profile flips
+   * affect the next send without remounting.
+   */
+  respectToolVisibility?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -337,6 +351,7 @@ export interface UseChatSessionReturn {
         systemPrompt?: string;
         temperature?: number;
         requireToolApproval?: boolean;
+        respectToolVisibility?: boolean;
         selectedServers?: string[];
       };
       version: number;
@@ -1096,6 +1111,8 @@ export function useChatSession(
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
+  const initialRespectToolVisibility =
+    executionConfig?.respectToolVisibility ?? true;
   const {
     getAccessToken,
     user: workOsUser,
@@ -1185,6 +1202,14 @@ export function useChatSession(
   progressiveToolDiscoveryRef.current =
     options.progressiveToolDiscovery ??
     options.executionConfig?.progressiveToolDiscovery;
+  const [respectToolVisibility, setRespectToolVisibility] = useState(
+    initialRespectToolVisibility
+  );
+  const respectToolVisibilityRef = useRef<boolean>(respectToolVisibility);
+  respectToolVisibilityRef.current =
+    options.respectToolVisibility ??
+    options.executionConfig?.respectToolVisibility ??
+    respectToolVisibility;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedChatboxId;
@@ -1207,6 +1232,11 @@ export function useChatSession(
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
     [selectedServers]
+  );
+  const apiContextRevision = useSyncExternalStore(
+    subscribeApiContext,
+    getApiContextRevision,
+    getApiContextRevision
   );
   const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
@@ -1453,24 +1483,34 @@ export function useChatSession(
         throw new Error("Hosted chat context is not ready: missing projectId.");
       }
       const isHostedDirectChat = !hostedChatboxId;
-      return {
+      const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
-        chatSessionId,
-        selectedServerIds: hostedSelectedServerIds,
-        selectedServerNames: selectedServers,
-        accessScope: "chat_v2" as const,
-        ...(isHostedDirectChat ? { directVisibility } : {}),
-        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-        ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
-          ? { accessVersion: hostedAccessVersion }
-          : {}),
-        ...(hostedChatboxId && hostedChatboxSurface
-          ? { surface: hostedChatboxSurface }
-          : {}),
+        serverIds: hostedSelectedServerIds,
+        serverNames: selectedServers,
+        accessScope: "chat_v2",
         ...(isHostedDirectChat &&
         hostedOAuthTokens &&
         Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
+          : {}),
+        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+        ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+          ? { accessVersion: hostedAccessVersion }
+          : {}),
+      });
+      const {
+        serverIds: resolvedServerIds,
+        serverNames: resolvedServerNames,
+        ...hostedServerBatchPins
+      } = hostedServerBatch;
+      return {
+        ...hostedServerBatchPins,
+        selectedServerIds: resolvedServerIds,
+        selectedServerNames: resolvedServerNames,
+        chatSessionId,
+        ...(isHostedDirectChat ? { directVisibility } : {}),
+        ...(hostedChatboxId && hostedChatboxSurface
+          ? { surface: hostedChatboxSurface }
           : {}),
       };
     };
@@ -1534,6 +1574,7 @@ export function useChatSession(
                   : {}),
               }),
           requireToolApproval: requireToolApprovalRef.current,
+          respectToolVisibility: respectToolVisibilityRef.current,
           // Only send when the user explicitly set the host-level toggle.
           // Omitting the field tells the backend orchestrator to use its
           // auto policy (currently: off for hosted unless the env override
@@ -1687,9 +1728,7 @@ export function useChatSession(
             const viewportHeight =
               window.innerHeight || document.documentElement.clientHeight;
             const fullyInView =
-              rect.top >= 0 &&
-              rect.bottom <= viewportHeight &&
-              rect.height > 0;
+              rect.top >= 0 && rect.bottom <= viewportHeight && rect.height > 0;
             if (!fullyInView) {
               requestAnimationFrame(() => {
                 iframe.scrollIntoView({
@@ -2142,6 +2181,7 @@ export function useChatSession(
           systemPrompt?: string;
           temperature?: number;
           requireToolApproval?: boolean;
+          respectToolVisibility?: boolean;
           selectedServers?: string[];
         };
         version: number;
@@ -2211,6 +2251,9 @@ export function useChatSession(
         if (session.resumeConfig?.requireToolApproval !== undefined) {
           setRequireToolApproval(session.resumeConfig.requireToolApproval);
         }
+        if (session.resumeConfig?.respectToolVisibility !== undefined) {
+          setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
+        }
       }
 
       if (options?.shouldApply && !options.shouldApply()) {
@@ -2241,6 +2284,7 @@ export function useChatSession(
   const executionSystemPrompt = executionConfig?.systemPrompt;
   const executionTemperature = executionConfig?.temperature;
   const executionRequireToolApproval = executionConfig?.requireToolApproval;
+  const executionRespectToolVisibility = executionConfig?.respectToolVisibility;
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
     setSystemPrompt(executionSystemPrompt ?? DEFAULT_SYSTEM_PROMPT);
@@ -2255,6 +2299,13 @@ export function useChatSession(
     if (!isExecutionConfigControlled) return;
     setRequireToolApproval(executionRequireToolApproval ?? false);
   }, [isExecutionConfigControlled, executionRequireToolApproval]);
+
+  useEffect(() => {
+    if (!isExecutionConfigControlled) return;
+    // Default to the spec-default `true` when the host config doesn't set
+    // the field (legacy rows). Matches `emptyHostConfigInputV2`.
+    setRespectToolVisibility(executionRespectToolVisibility ?? true);
+  }, [isExecutionConfigControlled, executionRespectToolVisibility]);
 
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
@@ -2470,7 +2521,12 @@ export function useChatSession(
     };
 
     fetchToolsMetadata();
-  }, [selectedServersSignature, selectedModel, hostedChatboxId]);
+  }, [
+    selectedServersSignature,
+    selectedModel,
+    hostedChatboxId,
+    apiContextRevision,
+  ]);
 
   // System prompt token count
   useEffect(() => {

@@ -162,6 +162,35 @@ vi.mock("@/lib/guest-session", () => ({
 
 vi.mock("@/lib/apis/web/context", () => ({
   buildServerRequest: mockState.buildServerRequest,
+  buildResolvedServerBatchRequest: vi.fn(
+    ({
+      projectId,
+      serverIds,
+      serverNames,
+      oauthTokens,
+      accessScope,
+      chatboxId,
+      accessVersion,
+    }: {
+      projectId: string;
+      serverIds: string[];
+      serverNames: string[];
+      oauthTokens?: Record<string, string>;
+      accessScope?: string;
+      chatboxId?: string;
+      accessVersion?: number;
+    }) => ({
+      projectId,
+      serverIds,
+      serverNames,
+      ...(oauthTokens ? { oauthTokens } : {}),
+      ...(accessScope ? { accessScope } : {}),
+      ...(chatboxId ? { chatboxId } : {}),
+      ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+    })
+  ),
+  getApiContextRevision: vi.fn(() => 0),
+  subscribeApiContext: vi.fn(() => () => {}),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -290,7 +319,8 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
         },
       })
     );
@@ -302,7 +332,8 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test", accessVersion: 1,
+      chatboxId: "cbx_test",
+      accessVersion: 1,
       accessScope: "chat_v2",
     });
     unmount();
@@ -315,7 +346,8 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
           oauthTokens: {
             "server-id-1": "browser-token",
           },
@@ -330,7 +362,8 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test", accessVersion: 1,
+      chatboxId: "cbx_test",
+      accessVersion: 1,
       accessScope: "chat_v2",
     });
     expect(body).not.toHaveProperty("oauthTokens");
@@ -344,7 +377,8 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
           chatboxSurface: "preview",
         },
       })
@@ -352,7 +386,8 @@ describe("useChatSession hosted mode", () => {
 
     const body = lastTransportOptions.body();
     expect(body).toMatchObject({
-      chatboxId: "cbx_test", accessVersion: 1,
+      chatboxId: "cbx_test",
+      accessVersion: 1,
       surface: "preview",
     });
     unmount();
@@ -377,12 +412,12 @@ describe("useChatSession hosted mode", () => {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
         },
-      }),
+      })
     );
 
     await waitFor(() => {
       expect(result.current.availableModels.map((model) => model.id)).toContain(
-        "gpt-4o-mini",
+        "gpt-4o-mini"
       );
     });
     expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
@@ -418,7 +453,8 @@ describe("useChatSession hosted mode", () => {
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_1", accessVersion: 1,
+            chatboxId: "cbx_1",
+            accessVersion: 1,
           },
         },
       }
@@ -437,7 +473,8 @@ describe("useChatSession hosted mode", () => {
       hostedContext: {
         projectId: "project-2",
         selectedServerIds: ["server-id-2"],
-        chatboxId: "cbx_2", accessVersion: 1,
+        chatboxId: "cbx_2",
+        accessVersion: 1,
       },
     });
 
@@ -670,7 +707,8 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
         },
       })
     );
@@ -740,7 +778,8 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
         },
       })
     );
@@ -762,7 +801,8 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
         },
       })
     );
@@ -937,8 +977,7 @@ describe("useChatSession hosted mode", () => {
     });
 
     await waitFor(() => {
-      const mcp =
-        result.current.restoredToolRenderOverrides["tool-call-mcp"];
+      const mcp = result.current.restoredToolRenderOverrides["tool-call-mcp"];
       const openai =
         result.current.restoredToolRenderOverrides["tool-call-openai"];
       expect(mcp).toBeDefined();
@@ -969,7 +1008,8 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
         },
       })
     );

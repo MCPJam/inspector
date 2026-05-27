@@ -237,6 +237,40 @@ describe("prepareChatV2", () => {
     ]);
   });
 
+  it("shows app-only tools when respectToolVisibility is false", async () => {
+    // Host opted out of SEP-1865 visibility filtering (e.g. the Cursor
+    // template mirroring real Cursor's behavior). Every tool flows to
+    // the model regardless of `_meta.ui.visibility`.
+    const manager = mockManager({
+      model_tool: { description: "model only", _serverId: "srv" },
+      app_tool: { description: "app only", _serverId: "srv" },
+      both_tool: { description: "default both", _serverId: "srv" },
+    });
+    manager.getAllToolsMetadata = vi.fn((id: string) =>
+      id === "srv"
+        ? {
+            model_tool: { ui: { visibility: ["model"] } },
+            app_tool: { ui: { visibility: ["app"] } },
+            both_tool: { ui: { visibility: ["model", "app"] } },
+          }
+        : {},
+    );
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      respectToolVisibility: false,
+    });
+
+    expect(Object.keys(result.allTools).sort()).toEqual([
+      "app_tool",
+      "both_tool",
+      "model_tool",
+    ]);
+  });
+
   it("filters selectedServers down to ids the manager has registered", async () => {
     const manager = mockManager({});
     manager.hasServer = vi.fn((id: string) => id === "live-server");

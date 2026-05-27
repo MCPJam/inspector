@@ -36,6 +36,10 @@ import {
   WidgetSurfaceHostProvider,
 } from "./thread/mcp-apps/widget-surface-host";
 import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
+import type {
+  AppToolInvocation,
+  AppToolInvocationUpdate,
+} from "./thread/app-tool-invocations";
 
 interface ThreadProps {
   chatSessionId?: string;
@@ -103,6 +107,19 @@ function getWidgetOwnershipIds(toolCallId: string, displayWidgetId?: string) {
   return ids;
 }
 
+function getMessageToolCallIds(messages: UIMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.parts ?? []) {
+      const toolCallId = (part as { toolCallId?: unknown }).toolCallId;
+      if (typeof toolCallId === "string" && toolCallId.length > 0) {
+        ids.add(toolCallId);
+      }
+    }
+  }
+  return ids;
+}
+
 export function Thread({
   chatSessionId,
   messages,
@@ -146,6 +163,38 @@ export function Thread({
   >(() => new Set());
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [fullscreenChatInput, setFullscreenChatInput] = useState("");
+  const [appToolInvocations, setAppToolInvocations] = useState<
+    AppToolInvocation[]
+  >([]);
+
+  const handleAppToolInvocationChange = useCallback(
+    (invocation: AppToolInvocationUpdate) => {
+      setAppToolInvocations((current) => {
+        const index = current.findIndex((item) => item.id === invocation.id);
+        if (index === -1) {
+          return [...current, invocation];
+        }
+        const next = [...current];
+        next[index] = invocation;
+        return next;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    setAppToolInvocations([]);
+  }, [chatSessionId]);
+
+  useEffect(() => {
+    const liveToolCallIds = getMessageToolCallIds(messages);
+    setAppToolInvocations((current) => {
+      const next = current.filter((invocation) =>
+        liveToolCallIds.has(invocation.parentToolCallId)
+      );
+      return next.length === current.length ? current : next;
+    });
+  }, [messages]);
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
@@ -280,6 +329,8 @@ export function Thread({
           toolServerMap={toolServerMap}
           onWidgetStateChange={onWidgetStateChange}
           onModelContextUpdate={onModelContextUpdate}
+          appToolInvocations={appToolInvocations}
+          onAppToolInvocationChange={handleAppToolInvocationChange}
           pipWidgetId={pipWidgetId}
           fullscreenWidgetId={fullscreenWidgetId}
           onRequestPip={handleRequestPip}

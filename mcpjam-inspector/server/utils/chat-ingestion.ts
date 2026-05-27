@@ -38,6 +38,7 @@ interface ResumeConfig {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  respectToolVisibility?: boolean;
   selectedServers?: string[];
 }
 
@@ -61,6 +62,12 @@ export interface DirectHostConfig {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  /**
+   * Optional SEP-1865 visibility filter switch. Undefined means "use the
+   * spec default" — the backend's hostConfigV2 canonicalizer drops
+   * `undefined` so pre-feature rows stay byte-identical.
+   */
+  respectToolVisibility?: boolean;
   selectedServerIds: string[];
 }
 
@@ -84,6 +91,7 @@ export function buildDirectHostConfig(input: {
   requestedTemperature?: number;
   resolvedTemperature?: number;
   requireToolApproval?: boolean;
+  respectToolVisibility?: boolean;
   selectedServerIds?: string[];
 }): DirectHostConfig {
   const {
@@ -93,6 +101,7 @@ export function buildDirectHostConfig(input: {
     requestedTemperature,
     resolvedTemperature,
     requireToolApproval,
+    respectToolVisibility,
     selectedServerIds,
   } = input;
   return {
@@ -106,6 +115,9 @@ export function buildDirectHostConfig(input: {
         ? requestedTemperature
         : 0.7,
     requireToolApproval: requireToolApproval === true,
+    // Pass through verbatim so undefined-vs-set semantics survive into
+    // the backend canonicalizer (drops undefined; keeps explicit false).
+    respectToolVisibility,
     selectedServerIds: selectedServerIds ?? [],
   };
 }

@@ -2,11 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
-import {
-  isKnownProtocolVersion,
-  isStatelessProtocolVersion,
-} from "@mcpjam/sdk/browser";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -439,7 +435,7 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
 }
 
 export function shouldRetryOAuthConnectionFailure(
-  errorMessage?: string,
+  errorMessage?: string
 ): boolean {
   if (!errorMessage) {
     return false;
@@ -576,10 +572,6 @@ export function useServerState({
 }: UseServerStateParams) {
   const isUserReady = useDbUserReady();
   const convex = useConvex();
-  // Rollout kill-switch for stateless wire mode. Mirrors the App.tsx gate
-  // on the hosted path so local-mode connects can't bypass it either via
-  // a persisted `mcpProtocolVersion: "DRAFT-2026-v1"` override.
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
@@ -811,7 +803,7 @@ export function useServerState({
           const resolved = resolveServerConnectionSettings(
             serverBase,
             activeHostConfig.connectionDefaults,
-            perServerOverride,
+            perServerOverride
           );
           mergedHeaders = resolved.headers;
           effectiveTimeout = resolved.timeout;
@@ -972,7 +964,7 @@ export function useServerState({
         // "server speaks a later listed version → connect fails," which
         // defeats the point of letting users pin a multi-version list.
         defaults.supportedProtocolVersions = versions.filter(
-          (v): v is string => typeof v === "string" && v.trim() !== "",
+          (v): v is string => typeof v === "string" && v.trim() !== ""
         );
       }
       // Effective pinned MCP protocol version: per-server override
@@ -999,21 +991,14 @@ export function useServerState({
           : undefined;
       const effective = resolveEffectiveMcpProtocolVersion(
         serverOverride,
-        hostPin,
+        hostPin
       );
-      // Stateless versions are gated behind the rollout flag. A persisted
-      // override from a prior flag-on session must NOT bypass the gate
-      // (the UI controls only gate authoring). Stateful pins like
-      // "2025-11-25" still flow through.
-      if (
-        effective !== undefined &&
-        (statelessMcpEnabled || !isStatelessProtocolVersion(effective))
-      ) {
+      if (effective !== undefined) {
         defaults.mcpProtocolVersion = effective;
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
-    [activeHostConfig, statelessMcpEnabled]
+    [activeHostConfig]
   );
 
   const guardedTestConnection = useCallback(
@@ -1036,7 +1021,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             serverConfig,
             activeMcpProfile,
-            resolved.serverId,
+            resolved.serverId
           ),
         });
       }
@@ -1056,7 +1041,7 @@ export function useServerState({
       if (resolved) {
         const configWithDefaults = withProjectConnectionDefaults(
           serverConfig,
-          resolved.serverId,
+          resolved.serverId
         );
         return reconnectServer(resolved.serverId, configWithDefaults, {
           projectId: resolved.projectId,
@@ -1064,7 +1049,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             configWithDefaults,
             activeMcpProfile,
-            resolved.serverId,
+            resolved.serverId
           ),
         });
       }
@@ -1687,19 +1672,8 @@ export function useServerState({
         serverOverride,
         hostPin
       );
-      // Track the EFFECTIVELY-STAMPED pin (after the rollout-flag gate),
-      // not the raw resolved pin. `buildResolverConnectionDefaults`
-      // drops stateless pins when `stateless-mcp-enabled` is off, so a
-      // raw resolved `DRAFT-2026-v1` against a flag-off state actually
-      // stamps `undefined` on the wire. Tracking the raw pin would
-      // miss flag-flip transitions — toggling the flag changes the wire
-      // mode without changing the stored pin, and `previous === resolved`
-      // would skip the re-test even though the transport just changed.
-      const effective: McpProtocolVersion | undefined =
-        resolvedPin !== undefined &&
-        (statelessMcpEnabled || !isStatelessProtocolVersion(resolvedPin))
-          ? resolvedPin
-          : undefined;
+      // Gate removed — stateless-mcp-enabled goes permanent 2026-05-27.
+      const effective: McpProtocolVersion | undefined = resolvedPin;
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);
@@ -1771,7 +1745,6 @@ export function useServerState({
     appState.servers,
     activeMcpProfile?.mcpProtocolVersion,
     activeHostConfig,
-    statelessMcpEnabled,
     dispatch,
     guardedReconnectServer,
     storeInitInfo,
@@ -1796,7 +1769,7 @@ export function useServerState({
           {
             serverName,
             error: firstResult.error,
-          },
+          }
         );
       } catch (error) {
         const errorMessage =
@@ -2839,8 +2812,7 @@ export function useServerState({
           if (cliConfig) {
             if (
               cliConfig.initialTab &&
-              (!window.location.pathname ||
-                window.location.pathname === "/")
+              (!window.location.pathname || window.location.pathname === "/")
             ) {
               const tab = cliConfig.initialTab.replace(/^[#/]+/, "");
               if (tab) {
@@ -2986,7 +2958,7 @@ export function useServerState({
     (serverName: string) => {
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -3116,10 +3088,7 @@ export function useServerState({
       // can retry against a ready app.
       if (HOSTED_MODE) {
         const projectIdForReconnect = effectiveActiveProjectIdRef.current;
-        if (
-          !projectIdForReconnect ||
-          projectIdForReconnect === "none"
-        ) {
+        if (!projectIdForReconnect || projectIdForReconnect === "none") {
           logger.info("Deferring reconnect: app still bootstrapping", {
             serverName,
           });

@@ -5,6 +5,9 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 
 const mockCapture = vi.fn();
+const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
+const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
+const mockSetProjectServerConfig = vi.hoisted(() => vi.fn());
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -15,7 +18,8 @@ vi.mock("posthog-js/react", () => ({
   // so the existing test setup exercises the pre-flag UI shape; tests that
   // need the dropdown enabled should override per-test via
   // `vi.mocked(useFeatureFlagEnabled).mockReturnValue(true)`.
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 // ServerDetailModal reads + writes the project-server config via Convex
@@ -24,8 +28,8 @@ vi.mock("posthog-js/react", () => ({
 // component mounts. `useQuery` returns `undefined` (matches the
 // pre-loaded Convex state); `useMutation` returns a no-op function.
 vi.mock("convex/react", () => ({
-  useQuery: () => undefined,
-  useMutation: () => vi.fn(),
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
+  useMutation: () => mockSetProjectServerConfig,
 }));
 
 vi.mock("sonner", () => ({
@@ -47,35 +51,35 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => {
   const hasUiResourceUri = (meta: Record<string, unknown>) =>
     Boolean(
       ((meta["ui"] as { resourceUri?: unknown } | undefined)?.resourceUri ??
-        meta["ui.resourceUri"]) as unknown,
+        meta["ui.resourceUri"]) as unknown
     );
 
   return {
     isMCPApp: (toolsData: { toolsMetadata?: Record<string, unknown> } | null) =>
       Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
-        hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
+        hasUiResourceUri((meta ?? {}) as Record<string, unknown>)
       ),
     isOpenAIApp: (
       toolsData: {
         toolsMetadata?: Record<string, unknown>;
-      } | null,
+      } | null
     ) =>
       Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
         Boolean(
           (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
-          !hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
-        ),
+            !hasUiResourceUri((meta ?? {}) as Record<string, unknown>)
+        )
       ),
     isOpenAIAppAndMCPApp: (
       toolsData: {
         toolsMetadata?: Record<string, unknown>;
-      } | null,
+      } | null
     ) =>
       Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
         Boolean(
           (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
-          hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
-        ),
+            hasUiResourceUri((meta ?? {}) as Record<string, unknown>)
+        )
       ),
     UIType: {
       MCP_APPS: "mcp-apps",
@@ -88,9 +92,29 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => {
 
 import { ServerDetailModal } from "../ServerDetailModal";
 
+const installPointerCaptureMocks = () => {
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: vi.fn(() => false),
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
+};
+
+const getProtocolVersionCombobox = () => {
+  const comboboxes = screen.getAllByRole("combobox");
+  return comboboxes[comboboxes.length - 1];
+};
+
 describe("ServerDetailModal", () => {
   const createServer = (
-    overrides: Partial<ServerWithName> = {},
+    overrides: Partial<ServerWithName> = {}
   ): ServerWithName => ({
     name: "test-server",
     lastConnectionTime: new Date(),
@@ -120,7 +144,15 @@ describe("ServerDetailModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
+    mockUseQuery.mockReturnValue(undefined);
+    mockSetProjectServerConfig.mockResolvedValue({
+      projectId: "project_123",
+      serverIds: [],
+      overrides: {},
+    });
     localStorage.clear();
+    sessionStorage.clear();
     mockListTools.mockResolvedValue({
       tools: [],
       toolsMetadata: {},
@@ -154,11 +186,11 @@ describe("ServerDetailModal", () => {
 
     // Overview tab uses overflow-y-auto for scrolling
     const { unmount } = render(
-      <ServerDetailModal {...defaultProps} defaultTab="overview" />,
+      <ServerDetailModal {...defaultProps} defaultTab="overview" />
     );
 
     const overviewPanel = document.querySelector(
-      '[role="tabpanel"][data-state="active"]',
+      '[role="tabpanel"][data-state="active"]'
     );
     expect(overviewPanel).toBeInTheDocument();
     expect(overviewPanel?.className).toContain("overflow-y-auto");
@@ -170,7 +202,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       const toolsPanel = document.querySelector(
-        '[role="tabpanel"][data-state="active"]',
+        '[role="tabpanel"][data-state="active"]'
       );
       expect(toolsPanel).toBeInTheDocument();
       expect(toolsPanel?.className).toContain("overflow-y-auto");
@@ -201,7 +233,7 @@ describe("ServerDetailModal", () => {
       expect(screen.getByText("search")).toBeInTheDocument();
     });
     expect(
-      screen.queryByText("Connect to view tools metadata"),
+      screen.queryByText("Connect to view tools metadata")
     ).not.toBeInTheDocument();
     expect(screen.getByText("Search tool")).toBeInTheDocument();
   });
@@ -212,11 +244,11 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         server={createServer({ connectionStatus: "disconnected" })}
         defaultTab="overview"
-      />,
+      />
     );
 
     expect(
-      screen.getByText("Connect to view server overview"),
+      screen.getByText("Connect to view server overview")
     ).toBeInTheDocument();
   });
 
@@ -227,7 +259,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         server={createServer({ connectionStatus: "disconnected" })}
         onReconnect={onReconnect}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("switch"));
@@ -247,7 +279,7 @@ describe("ServerDetailModal", () => {
           useOAuth: true,
         })}
         onReconnect={onReconnect}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("switch"));
@@ -257,11 +289,185 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it("allows setting a protocol override before the server is in auto-connect", async () => {
+    const user = userEvent.setup();
+    installPointerCaptureMocks();
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    mockUseQuery.mockReturnValue({
+      projectId: "project_123",
+      serverIds: [],
+      overrides: {},
+    });
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="project_123"
+        hostedServerId="server_123"
+        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /connection overrides/i })
+    );
+    const protocolSelect = getProtocolVersionCombobox();
+    expect(protocolSelect).toHaveTextContent("Host default");
+    expect(protocolSelect).toBeEnabled();
+
+    await user.click(protocolSelect);
+    await user.click(await screen.findByRole("option", { name: "Latest" }));
+
+    await waitFor(() => {
+      expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
+        projectId: "project_123",
+        input: {
+          serverIds: ["server_123"],
+          overrides: {
+            server_123: {
+              mcpProtocolVersionOverride: "2025-11-25",
+            },
+          },
+        },
+      });
+    });
+  });
+
+  it("removes implicit auto-connect enrollment when clearing a modal-created protocol override", async () => {
+    const user = userEvent.setup();
+    installPointerCaptureMocks();
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    let projectServerConfig = {
+      projectId: "project_123",
+      serverIds: [] as string[],
+      overrides: {},
+    };
+    mockUseQuery.mockImplementation(() => projectServerConfig);
+
+    const renderModal = () => (
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="project_123"
+        hostedServerId="server_123"
+        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+      />
+    );
+    const { unmount } = render(renderModal());
+
+    await user.click(
+      screen.getByRole("button", { name: /connection overrides/i })
+    );
+    const hostDefaultSelect = getProtocolVersionCombobox();
+    expect(hostDefaultSelect).toHaveTextContent("Host default");
+
+    await user.click(hostDefaultSelect);
+    await user.click(await screen.findByRole("option", { name: "Latest" }));
+
+    await waitFor(() => {
+      expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
+        projectId: "project_123",
+        input: {
+          serverIds: ["server_123"],
+          overrides: {
+            server_123: {
+              mcpProtocolVersionOverride: "2025-11-25",
+            },
+          },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("option", { name: "Latest" })
+      ).not.toBeInTheDocument();
+    });
+    unmount();
+
+    projectServerConfig = {
+      projectId: "project_123",
+      serverIds: ["server_123"],
+      overrides: {
+        server_123: {
+          mcpProtocolVersionOverride: "2025-11-25",
+        },
+      },
+    };
+    mockSetProjectServerConfig.mockClear();
+    render(renderModal());
+
+    await user.click(
+      screen.getByRole("button", { name: /connection overrides/i })
+    );
+
+    const latestSelect = getProtocolVersionCombobox();
+    expect(latestSelect).toHaveTextContent("Latest");
+
+    await user.click(latestSelect);
+    await user.click(
+      await screen.findByRole("option", { name: "Host default" })
+    );
+
+    await waitFor(() => {
+      expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
+        projectId: "project_123",
+        input: {
+          serverIds: [],
+          overrides: {},
+        },
+      });
+    });
+  });
+
+  it("keeps explicit auto-connect enrollment when clearing a protocol override", async () => {
+    const user = userEvent.setup();
+    installPointerCaptureMocks();
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    mockUseQuery.mockReturnValue({
+      projectId: "project_123",
+      serverIds: ["server_123"],
+      overrides: {
+        server_123: {
+          mcpProtocolVersionOverride: "2025-11-25",
+        },
+      },
+    });
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="project_123"
+        hostedServerId="server_123"
+        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /connection overrides/i })
+    );
+    const protocolSelect = getProtocolVersionCombobox();
+    expect(protocolSelect).toHaveTextContent("Latest");
+
+    await user.click(protocolSelect);
+    await user.click(
+      await screen.findByRole("option", { name: "Host default" })
+    );
+
+    await waitFor(() => {
+      expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
+        projectId: "project_123",
+        input: {
+          serverIds: ["server_123"],
+          overrides: {},
+        },
+      });
+    });
+  });
+
   it("does not show a conformance launch button in overview", () => {
     render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
 
     expect(
-      screen.queryByRole("button", { name: "Run conformance" }),
+      screen.queryByRole("button", { name: "Run conformance" })
     ).not.toBeInTheDocument();
   });
 
@@ -274,7 +480,7 @@ describe("ServerDetailModal", () => {
         token_type: "Bearer",
         expires_in: 3600,
         scope: "read",
-      }),
+      })
     );
 
     render(
@@ -282,7 +488,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         server={createServer({ useOAuth: true })}
         defaultTab="overview"
-      />,
+      />
     );
 
     expect(screen.getByText("local-access-token")).toBeInTheDocument();
@@ -291,6 +497,7 @@ describe("ServerDetailModal", () => {
   });
 
   it("submits the configuration form without closing the modal", async () => {
+    const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,
       serverName: "test-server",
@@ -302,8 +509,14 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         onSubmit={onSubmit}
         onClose={onClose}
-      />,
+      />
     );
+
+    // Edit a field so the form has changes and "Save Changes" is active
+    // (connected servers with no changes show "Reconnect" instead).
+    const nameInput = screen.getByDisplayValue("test-server");
+    await user.clear(nameInput);
+    await user.type(nameInput, "test-server-renamed");
 
     const form = screen
       .getByRole("button", { name: "Save Changes" })
@@ -314,8 +527,8 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "test-server" }),
-        "test-server",
+        expect.objectContaining({ name: "test-server-renamed" }),
+        "test-server"
       );
     });
     expect(onClose).not.toHaveBeenCalled();
@@ -334,7 +547,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         onSubmit={onSubmit}
         onClose={onClose}
-      />,
+      />
     );
 
     const input = screen.getByDisplayValue("test-server");
@@ -359,7 +572,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         defaultTab="overview"
         onSubmit={onSubmit}
-      />,
+      />
     );
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
@@ -392,7 +605,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         defaultTab="tools-metadata"
         onSubmit={onSubmit}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -411,8 +624,8 @@ describe("ServerDetailModal", () => {
 
     expect(
       screen.getByText(
-        "Saved auth data is invalid. Reconnect this server to refresh tokens.",
-      ),
+        "Saved auth data is invalid. Reconnect this server to refresh tokens."
+      )
     ).toBeInTheDocument();
   });
 
@@ -425,7 +638,7 @@ describe("ServerDetailModal", () => {
       () =>
         new Promise<{ ok: boolean; serverName: string }>((resolve) => {
           resolveSubmit = resolve;
-        }),
+        })
     );
 
     render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
@@ -444,7 +657,7 @@ describe("ServerDetailModal", () => {
     resolveSubmit?.({ ok: true, serverName: "test-server" });
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Save Changes" }),
+        screen.getByRole("button", { name: "Save Changes" })
       ).toBeEnabled();
     });
   });
@@ -455,7 +668,7 @@ describe("ServerDetailModal", () => {
     render(
       <div onKeyDown={onKeyDown}>
         <ServerDetailModal {...defaultProps} />
-      </div>,
+      </div>
     );
 
     fireEvent.keyDown(screen.getByDisplayValue("test-server"), {

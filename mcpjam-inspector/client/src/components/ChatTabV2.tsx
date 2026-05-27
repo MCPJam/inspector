@@ -2318,6 +2318,8 @@ export function ChatTabV2({
                             // what BehaviorTab saved.
                             progressiveToolDiscovery:
                               executionConfig?.progressiveToolDiscovery,
+                            respectToolVisibility:
+                              executionConfig?.respectToolVisibility,
                           }}
                           hostedContext={{
                             ...hostedContext,

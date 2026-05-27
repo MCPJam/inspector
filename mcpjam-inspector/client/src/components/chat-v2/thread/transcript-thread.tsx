@@ -13,6 +13,11 @@ import type { UIMessage } from "@ai-sdk/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { MessageView } from "./message-view";
 import { isHiddenInternalMessage } from "./thread-helpers";
+import type {
+  AppToolInvocation,
+  AppToolInvocationUpdate,
+} from "./app-tool-invocations";
+import { AppToolInvocationPart } from "./parts/app-tool-invocation-part";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ModelDefinition } from "@/shared/types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
@@ -56,6 +61,7 @@ type MessageViewPassthroughProps = Omit<
   | "onExitFullscreen"
   | "onRequestTeardown"
   | "tornDownWidgetIds"
+  | "onAppToolInvocationChange"
   | "senderAvatar"
   | "showSenderAvatar"
 >;
@@ -88,6 +94,8 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   sendFollowUpMessage?: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  appToolInvocations?: AppToolInvocation[];
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId?: string | null;
   fullscreenWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
@@ -202,6 +210,17 @@ function scrollMessageToViewportPosition(params: {
   });
 }
 
+function getMessageToolCallIds(message: UIMessage): Set<string> {
+  const ids = new Set<string>();
+  for (const part of message.parts ?? []) {
+    const toolCallId = (part as { toolCallId?: unknown }).toolCallId;
+    if (typeof toolCallId === "string" && toolCallId.length > 0) {
+      ids.add(toolCallId);
+    }
+  }
+  return ids;
+}
+
 export function TranscriptThread({
   chatSessionId,
   messages,
@@ -211,6 +230,8 @@ export function TranscriptThread({
   toolServerMap,
   onWidgetStateChange,
   onModelContextUpdate,
+  appToolInvocations = [],
+  onAppToolInvocationChange,
   pipWidgetId = null,
   fullscreenWidgetId = null,
   onRequestPip = NOOP,
@@ -255,6 +276,18 @@ export function TranscriptThread({
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds]
   );
+  const appToolInvocationsByParentId = useMemo(() => {
+    const grouped = new Map<string, AppToolInvocation[]>();
+    for (const invocation of appToolInvocations) {
+      const existing = grouped.get(invocation.parentToolCallId);
+      if (existing) {
+        existing.push(invocation);
+      } else {
+        grouped.set(invocation.parentToolCallId, [invocation]);
+      }
+    }
+    return grouped;
+  }, [appToolInvocations]);
   const shouldUseContentVisibility =
     focusMessageId === null &&
     highlightedMessageIds.length === 0 &&
@@ -443,6 +476,13 @@ export function TranscriptThread({
               ? "animated"
               : "static"
             : "none";
+        const messageToolCallIds = getMessageToolCallIds(message);
+        const messageAppToolInvocations =
+          messageToolCallIds.size > 0
+            ? Array.from(messageToolCallIds).flatMap(
+                (id) => appToolInvocationsByParentId.get(id) ?? []
+              )
+            : [];
 
         return (
           <div
@@ -502,6 +542,7 @@ export function TranscriptThread({
               toolServerMap={toolServerMap}
               onWidgetStateChange={onWidgetStateChange}
               onModelContextUpdate={onModelContextUpdate}
+              onAppToolInvocationChange={onAppToolInvocationChange}
               pipWidgetId={pipWidgetId}
               fullscreenWidgetId={fullscreenWidgetId}
               onRequestPip={onRequestPip}
@@ -523,6 +564,16 @@ export function TranscriptThread({
               senderAvatar={senderAvatar}
               showSenderAvatar={showSenderAvatarForMessage}
             />
+            {messageAppToolInvocations.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {messageAppToolInvocations.map((invocation) => (
+                  <AppToolInvocationPart
+                    key={invocation.id}
+                    invocation={invocation}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

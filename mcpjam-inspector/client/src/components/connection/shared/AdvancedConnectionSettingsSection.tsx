@@ -12,19 +12,14 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 
 /**
- * Per-server protocol-version pin. The picker is a binary "Latest" vs
- * "Draft" toggle — the only two code paths the SDK factory actually
- * routes to today:
- *   - "latest" → `undefined`, legacy `OfficialSdkClientAdapter` +
- *     upstream `Client` (negotiates whatever `LATEST_PROTOCOL_VERSION`
- *     the SDK is shipping at runtime).
- *   - "draft"  → `"DRAFT-2026-v1"`, the stateless preview client.
- *
- * "latest" serializes to `undefined` (not the literal `"2025-11-25"`) so
- * canonical hashes stay stable when the SDK bumps its default; see
- * `feedback_preserve_undefined_default`.
+ * Per-server protocol-version pin. Three-state picker:
+ *   - "inherit" → `undefined`, defers to the host default (or SDK default if
+ *     no host default is set).
+ *   - "latest"  → `"2025-11-25"`, explicit stable pin — overrides a
+ *     host-level Draft default.
+ *   - "draft"   → `"DRAFT-2026-v1"`, the stateless preview client.
  */
-type DropdownValue = "latest" | "draft";
+type DropdownValue = "inherit" | "latest" | "draft";
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
@@ -32,6 +27,7 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   /** When true, the option appears only with `stateless-mcp-enabled` flag. */
   flagGated?: boolean;
 }> = [
+  { value: "inherit", label: "Host default" },
   { value: "latest", label: "Latest" },
   { value: "draft", label: "Draft", flagGated: true },
 ];
@@ -54,7 +50,7 @@ interface AdvancedConnectionSettingsSectionProps {
   onUpdateHeader?: (
     index: number,
     field: "key" | "value",
-    value: string,
+    value: string
   ) => void;
   clientCapabilitiesOverrideEnabled?: boolean;
   onClientCapabilitiesOverrideEnabledChange?: (enabled: boolean) => void;
@@ -81,7 +77,7 @@ interface AdvancedConnectionSettingsSectionProps {
    */
   mcpProtocolVersionOverride?: McpProtocolVersion;
   onMcpProtocolVersionOverrideChange?: (
-    version: McpProtocolVersion | undefined,
+    version: McpProtocolVersion | undefined
   ) => void;
   /**
    * Transport kind of this server. Stateless options are HTTP-POST only,
@@ -121,8 +117,8 @@ export function AdvancedConnectionSettingsSection({
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
-  const showProtocolVersionControl =
-    showMcpProtocolVersionOverride &&
+  const showProtocolVersionControl = showMcpProtocolVersionOverride;
+  const canEditProtocolVersion =
     onMcpProtocolVersionOverrideChange !== undefined;
   // "Draft" is Streamable HTTP POST only — picking it on stdio / sse
   // would fail at construction with `StatelessRequiresHttpTransport`.
@@ -132,11 +128,12 @@ export function AdvancedConnectionSettingsSection({
     if (opt.value === "draft" && !isHttp) return false;
     return true;
   });
-  // Any stored stateful literal (legacy carry-over from a previous
-  // schema) reads as "Latest" — same code path, and saving normalizes
-  // it back to `undefined`.
   const selectedDropdownValue: DropdownValue =
-    mcpProtocolVersionOverride === "DRAFT-2026-v1" ? "draft" : "latest";
+    mcpProtocolVersionOverride === "DRAFT-2026-v1"
+      ? "draft"
+      : mcpProtocolVersionOverride === "2025-11-25"
+      ? "latest"
+      : "inherit";
 
   return (
     <div className="space-y-0">
@@ -200,7 +197,9 @@ export function AdvancedConnectionSettingsSection({
                     >
                       <Input
                         value={header.key}
-                        onChange={(e) => onUpdateHeader(index, "key", e.target.value)}
+                        onChange={(e) =>
+                          onUpdateHeader(index, "key", e.target.value)
+                        }
                         placeholder="Key"
                         className="h-7 flex-1 text-xs"
                       />
@@ -288,10 +287,15 @@ export function AdvancedConnectionSettingsSection({
               </label>
               <Select
                 value={selectedDropdownValue}
+                disabled={!canEditProtocolVersion}
                 onValueChange={(next) => {
                   if (!onMcpProtocolVersionOverrideChange) return;
                   onMcpProtocolVersionOverrideChange(
-                    next === "draft" ? "DRAFT-2026-v1" : undefined,
+                    next === "draft"
+                      ? "DRAFT-2026-v1"
+                      : next === "latest"
+                      ? "2025-11-25"
+                      : undefined
                   );
                 }}
               >
@@ -308,8 +312,14 @@ export function AdvancedConnectionSettingsSection({
               </Select>
               {!isHttp && (
                 <p className="text-xs text-muted-foreground">
-                  Draft requires Streamable HTTP — only Latest is
-                  selectable for this transport.
+                  Draft requires Streamable HTTP — only Latest is selectable for
+                  this transport.
+                </p>
+              )}
+              {!canEditProtocolVersion && (
+                <p className="text-xs text-muted-foreground">
+                  Project configuration must finish loading before setting a
+                  per-server protocol override.
                 </p>
               )}
             </div>

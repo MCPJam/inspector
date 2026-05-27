@@ -202,6 +202,36 @@ describe("compat runtime — F1: Apps SDK only", () => {
     expect(last.globals.widgetState).toEqual({ counter: 5 });
   });
 
+  it("window.openai.setOpenInAppUrl emits openai:setOpenInAppUrl postMessage", () => {
+    h.completeInitHandshake();
+    h.window.openai.setOpenInAppUrl({
+      href: " https://app.example.com/trails/42 ",
+    });
+    const set = h.parentMessages.find(
+      (m) => (m.data as any)?.type === "openai:setOpenInAppUrl",
+    );
+    expect(set).toBeDefined();
+    expect((set!.data as any)).toEqual({
+      type: "openai:setOpenInAppUrl",
+      toolId: F1_CONFIG.toolId,
+      href: "https://app.example.com/trails/42",
+    });
+  });
+
+  it("window.openai.setOpenInAppUrl rejects missing href and respects feature detection", () => {
+    h.completeInitHandshake();
+    expect(() => h.window.openai.setOpenInAppUrl({})).toThrow(
+      /href is required for setOpenInAppUrl/,
+    );
+
+    const disabled = buildHandle({
+      ...F1_CONFIG,
+      capabilities: { setOpenInAppUrl: false },
+    });
+    disabled.completeInitHandshake();
+    expect(disabled.window.openai.setOpenInAppUrl).toBeUndefined();
+  });
+
   it("window.openai.uploadFile emits openai:uploadFile postMessage with base64 data", async () => {
     h.completeInitHandshake();
     // Construct a 12-byte File that passes the magic-byte check for PNG

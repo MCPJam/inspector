@@ -295,6 +295,15 @@ export type HostConfigInputV2 = {
   temperature: number;
   requireToolApproval: boolean;
   /**
+   * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering. When
+   * `true`, tools whose visibility doesn't include "model" are hidden
+   * from the agent's tool list (spec-default). When `false`, every tool
+   * flows to the model — faithful to hosts that don't yet honor
+   * visibility (e.g. real Cursor today). Defaults to `true` for new
+   * configs; Cursor's template explicitly sets it to `false`.
+   */
+  respectToolVisibility: boolean;
+  /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
    * every tool definition every turn). Optional and undefined-by-default:
@@ -366,6 +375,12 @@ export type HostConfigDtoV2 = {
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
+  /**
+   * See HostConfigInputV2.respectToolVisibility. Optional on the DTO
+   * because pre-feature rows persisted without it; `hostConfigDtoToInput`
+   * coerces `undefined` to the spec default (`true`).
+   */
+  respectToolVisibility?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
   progressiveToolDiscovery?: boolean;
   serverIds: string[];
@@ -406,6 +421,10 @@ export function emptyHostConfigInputV2(
     systemPrompt: partial.systemPrompt ?? "",
     temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
     requireToolApproval: partial.requireToolApproval ?? false,
+    // Default ON: every new config respects SEP-1865 visibility filtering
+    // unless the template (e.g. Cursor) explicitly opts out. Matches the
+    // spec-default behavior.
+    respectToolVisibility: partial.respectToolVisibility ?? true,
     // Brand-new inputs default to explicit Off. The orchestrator still
     // reads `undefined` as "auto policy" (existing rows surfaced by
     // `hostConfigDtoToInput` round-trip verbatim), but creating a fresh
@@ -494,6 +513,9 @@ export function hostConfigDtoToInput(
     systemPrompt: dto.systemPrompt,
     temperature: dto.temperature,
     requireToolApproval: dto.requireToolApproval,
+    // DTO carries `undefined` when the persisted row predates this
+    // feature; treat that as the spec default (filter app-only tools).
+    respectToolVisibility: dto.respectToolVisibility ?? true,
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
@@ -926,6 +948,7 @@ export function hostConfigInputsEqual(
   if (a.systemPrompt !== b.systemPrompt) return false;
   if (a.temperature !== b.temperature) return false;
   if (a.requireToolApproval !== b.requireToolApproval) return false;
+  if (a.respectToolVisibility !== b.respectToolVisibility) return false;
   // Optional boolean: undefined / true / false are three distinct states
   // (backend hashes them distinctly). A strict !== covers all three since
   // we never coerce undefined to false elsewhere in the input pipeline.

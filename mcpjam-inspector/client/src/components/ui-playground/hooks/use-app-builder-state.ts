@@ -22,6 +22,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import type { Tool } from "@modelcontextprotocol/client";
@@ -50,6 +51,11 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "@/lib/inspector-command-handlers";
+import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import {
+  getApiContextRevision,
+  subscribeApiContext,
+} from "@/lib/apis/web/context";
 import type {
   ExecuteToolInspectorCommand,
   RenderToolResultInspectorCommand,
@@ -87,10 +93,10 @@ export interface UseAppBuilderStateOptions {
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
     projectId: string,
-    hostContext: ProjectHostContextDraft,
+    hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   ensureServersReady?: (
-    serverNames: string[],
+    serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   /**
@@ -170,7 +176,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         serverName,
         servers,
       }),
-    [selectedServerNames, serverName, servers],
+    [selectedServerNames, serverName, servers]
   );
 
   const posthog = usePostHog();
@@ -284,6 +290,11 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
+  const apiContextRevision = useSyncExternalStore(
+    subscribeApiContext,
+    getApiContextRevision,
+    getApiContextRevision
+  );
 
   const waitForExecutionInjection = useCallback(
     (expectedToolCallId: string | undefined, timeoutMs?: number) => {
@@ -297,7 +308,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         if (!waiter) return;
         executionInjectionWaitersRef.current =
           executionInjectionWaitersRef.current.filter(
-            (entry) => entry !== waiter,
+            (entry) => entry !== waiter
           );
       };
 
@@ -307,8 +318,8 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           reject(
             createInspectorCommandClientError(
               "timeout",
-              `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`,
-            ),
+              `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`
+            )
           );
         }, effectiveTimeoutMs);
 
@@ -334,7 +345,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         promise,
       };
     },
-    [],
+    []
   );
 
   const handleExecutionInjected = useCallback(
@@ -357,7 +368,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         waiter.resolve(toolCallId);
       }
     },
-    [clearPendingExecution],
+    [clearPendingExecution]
   );
 
   useEffect(() => {
@@ -368,8 +379,8 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         waiter.reject(
           createInspectorCommandClientError(
             "unsupported_in_mode",
-            "App Builder unmounted before the tool result rendered.",
-          ),
+            "App Builder unmounted before the tool result rendered."
+          )
         );
       }
     };
@@ -394,26 +405,26 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       const data = await listTools({ serverId: serverName });
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
-        toolArray.map((tool: Tool) => [tool.name, tool]),
+        toolArray.map((tool: Tool) => [tool.name, tool])
       );
       setTools(dictionary);
       setToolsMetadata(data.toolsMetadata ?? {});
     } catch (err) {
       console.error("Failed to fetch tools:", err);
       setExecutionError(
-        err instanceof Error ? err.message : "Failed to fetch tools",
+        err instanceof Error ? err.message : "Failed to fetch tools"
       );
     } finally {
       setFetchingTools(false);
     }
-  }, [serverName, reset, setTools, setExecutionError]);
+  }, [serverName, reset, setTools, setExecutionError, apiContextRevision]);
 
   const loadToolsUntilMatch = useCallback(
     async (toolName?: string) => {
       if (!serverName) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "No server is selected in the App Builder.",
+          "No server is selected in the App Builder."
         );
       }
 
@@ -437,7 +448,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           const data = await listTools({ serverId: serverName, cursor });
           const toolArray = data.tools ?? [];
           const dictionary = Object.fromEntries(
-            toolArray.map((tool: Tool) => [tool.name, tool]),
+            toolArray.map((tool: Tool) => [tool.name, tool])
           );
 
           Object.assign(aggregatedTools, dictionary);
@@ -455,7 +466,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
             setExecutionError(message);
             throw createInspectorCommandClientError(
               "execution_failed",
-              message,
+              message
             );
           }
 
@@ -477,7 +488,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         setFetchingTools(false);
       }
     },
-    [serverName, setExecutionError, setTools, tools, toolsMetadata],
+    [serverName, setExecutionError, setTools, tools, toolsMetadata]
   );
 
   const buildAppBuilderSnapshot = useCallback(() => {
@@ -529,27 +540,47 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     serverConfig,
     serverName,
     serverConnectionStatus,
+    apiContextRevision,
     fetchTools,
     reset,
     tools,
   ]);
 
+  // Subscribe to the app-tools registry so form fields regenerate when an
+  // app re-lists its tools (e.g. inputSchema changes mid-session). Returning
+  // the resolved descriptor keeps the schema reference stable across renders
+  // that didn't actually change the registry entry. Routes through the
+  // registry's `resolve()` so we inherit its `activeBridgeByParent` gate
+  // (a superseded sibling instance won't be treated as live).
+  const selectedAppToolDescriptor = useAppToolsRegistry((s) => {
+    if (!selectedTool) return undefined;
+    const resolved = s.resolve(selectedTool);
+    if (!resolved) return undefined;
+    return resolved.instance.tools.find((t) => t.name === resolved.rawName);
+  });
+
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
       setFormFields(
-        generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+        generateFormFieldsFromSchema(tools[selectedTool].inputSchema)
       );
-    } else {
-      setFormFields([]);
+      return;
     }
-  }, [selectedTool, tools, setFormFields]);
+    if (selectedAppToolDescriptor) {
+      setFormFields(
+        generateFormFieldsFromSchema(selectedAppToolDescriptor.inputSchema)
+      );
+      return;
+    }
+    setFormFields([]);
+  }, [selectedTool, tools, selectedAppToolDescriptor, setFormFields]);
 
   const selectToolForCommand = useCallback(
     async (
       command:
         | SelectToolInspectorCommand
         | ExecuteToolInspectorCommand
-        | RenderToolResultInspectorCommand,
+        | RenderToolResultInspectorCommand
     ) => {
       // Accept both `app-builder` (legacy) and `playground` (transition). The
       // `playground-tab-enabled` flag controls which surface actually mounts,
@@ -560,7 +591,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "unsupported_in_mode",
-          `AppBuilderTab cannot handle ${command.type} for ${command.payload.surface}.`,
+          `AppBuilderTab cannot handle ${command.type} for ${command.payload.surface}.`
         );
       }
 
@@ -571,7 +602,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "The App Builder requires a connected server before tools can be selected.",
+          "The App Builder requires a connected server before tools can be selected."
         );
       }
 
@@ -581,18 +612,18 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "unknown_server",
-          `App Builder is focused on "${serverName}", not "${command.payload.serverName}".`,
+          `App Builder is focused on "${serverName}", not "${command.payload.serverName}".`
         );
       }
 
       const { tools: availableTools } = await loadToolsUntilMatch(
-        command.payload.toolName,
+        command.payload.toolName
       );
       const tool = availableTools[command.payload.toolName];
       if (!tool) {
         throw createInspectorCommandClientError(
           "unknown_tool",
-          `Unknown tool "${command.payload.toolName}" on server "${serverName}".`,
+          `Unknown tool "${command.payload.toolName}" on server "${serverName}".`
         );
       }
 
@@ -617,7 +648,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       if (command.payload.parameters) {
         const latestFields = useUIPlaygroundStore.getState().formFields;
         setFormFields(
-          applyParamsToFields(latestFields, command.payload.parameters),
+          applyParamsToFields(latestFields, command.payload.parameters)
         );
         await waitForUiCommit();
       }
@@ -631,7 +662,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       serverName,
       setFormFields,
       setSelectedTool,
-    ],
+    ]
   );
 
   // useLayoutEffect so handlers update synchronously during commit — before
@@ -649,7 +680,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           toolName: command.payload.toolName,
           parameterKeys: Object.keys(selection.parameters),
         };
-      },
+      }
     );
 
     const unregisterExecuteTool = registerInspectorCommandHandler(
@@ -667,7 +698,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           throw createInspectorCommandClientError(
             "execution_failed",
             outcome.error,
-            outcome.response,
+            outcome.response
           );
         }
 
@@ -678,7 +709,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           parameters: outcome.parameters,
           result: outcome.result,
         };
-      },
+      }
     );
 
     const unregisterRenderToolResult = registerInspectorCommandHandler(
@@ -688,7 +719,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         const selection = await selectToolForCommand(command);
         const injection = waitForExecutionInjection(
           command.id,
-          command.timeoutMs,
+          command.timeoutMs
         );
         let outcome: Awaited<ReturnType<typeof injectToolResult>>;
         try {
@@ -711,7 +742,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           parameters: outcome.parameters,
           result: outcome.result,
         };
-      },
+      }
     );
 
     const unregisterSetAppContext = registerInspectorCommandHandler(
@@ -737,7 +768,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
 
         await waitForUiCommit();
         return buildAppBuilderSnapshot();
-      },
+      }
     );
 
     const unregisterSnapshotApp = registerInspectorCommandHandler(
@@ -751,12 +782,12 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         ) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            `AppBuilderTab cannot snapshot ${command.payload.surface}.`,
+            `AppBuilderTab cannot snapshot ${command.payload.surface}.`
           );
         }
 
         return buildAppBuilderSnapshot();
-      },
+      }
     );
 
     return () => {
@@ -820,10 +851,10 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     isWaitingForServerSync
       ? { kind: "skeleton" }
       : !serverConfig && isServerSyncing && syncTimedOut
-        ? { kind: "sync-timed-out" }
-        : !serverConfig
-          ? { kind: "no-server" }
-          : { kind: "ready" };
+      ? { kind: "sync-timed-out" }
+      : !serverConfig
+      ? { kind: "no-server" }
+      : { kind: "ready" };
 
   return {
     loadingState,
@@ -877,8 +908,9 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
  * state, refs, and inspector command registrations — calling it twice would
  * double-register handlers).
  */
-const AppBuilderStateContext =
-  createContext<UseAppBuilderStateReturn | null>(null);
+const AppBuilderStateContext = createContext<UseAppBuilderStateReturn | null>(
+  null
+);
 
 export function AppBuilderStateProvider({
   value,
@@ -894,7 +926,7 @@ export function useAppBuilderStateContext(): UseAppBuilderStateReturn {
   const ctx = useContext(AppBuilderStateContext);
   if (!ctx) {
     throw new Error(
-      "useAppBuilderStateContext must be used inside an AppBuilderStateProvider",
+      "useAppBuilderStateContext must be used inside an AppBuilderStateProvider"
     );
   }
   return ctx;

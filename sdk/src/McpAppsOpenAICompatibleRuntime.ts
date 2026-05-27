@@ -29,9 +29,9 @@ export {};
  * see `undefined` and take their fallback path. Defining a no-op stub
  * would defeat feature detection — see plan §3.
  *
- * `selectFiles` and `setOpenInAppUrl` are present here for type
- * completeness (Copilot's published table lists them) but the runtime
- * NEVER installs them — implementation TBD.
+ * `selectFiles` is present here for type completeness (Copilot's
+ * published table lists it) but the runtime NEVER installs it —
+ * implementation TBD.
  */
 type RuntimeCapabilities = {
   callTool: boolean;
@@ -439,6 +439,27 @@ type PendingCall = {
     };
   }
 
+  if (capabilities.setOpenInAppUrl) {
+    /**
+     * Override the fullscreen "Open in <App>" target.
+     */
+    openaiAPI.setOpenInAppUrl = function (options: {
+      href?: string;
+    }): void {
+      const href = options?.href;
+      const trimmedHref = typeof href === "string" ? href.trim() : "";
+      if (!trimmedHref) {
+        throw new Error(
+          'href is required for setOpenInAppUrl. Usage: setOpenInAppUrl({ href: "https://..." })',
+        );
+      }
+      window.parent.postMessage(
+        { type: "openai:setOpenInAppUrl", toolId, href: trimmedHref },
+        "*",
+      );
+    };
+  }
+
   if (capabilities.requestModal) {
     /**
      * Request a modal to be opened (ChatGPT-specific, notification).
@@ -609,14 +630,14 @@ type PendingCall = {
     };
   }
 
-  // selectFiles and setOpenInAppUrl are intentionally NOT installed
-  // regardless of `capabilities.selectFiles` / `capabilities.setOpenInAppUrl`
-  // — the inspector hasn't implemented them yet. Per plan §3, installing
-  // a no-op stub would lie to feature detection (widgets calling
-  // `if (window.openai.selectFiles) … else fallback` would take the
-  // supported path and break). The capability flags exist in the type so
-  // presets/UI can express what real hosts advertise; the runtime stays
-  // honest by leaving the method `undefined`.
+  // selectFiles is intentionally NOT installed regardless of
+  // `capabilities.selectFiles` — the inspector hasn't implemented it
+  // yet. Per plan §3, installing a no-op stub would lie to feature
+  // detection (widgets calling `if (window.openai.selectFiles) … else
+  // fallback` would take the supported path and break). The capability
+  // flag exists in the type so presets/UI can express what real hosts
+  // advertise; the runtime stays honest by leaving the method
+  // `undefined`.
 
   // ── Listen for incoming JSON-RPC responses & notifications ─────────
 

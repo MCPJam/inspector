@@ -15,6 +15,7 @@ import {
   AccordionContent,
 } from "@mcpjam/design-system/accordion";
 import type { Tool } from "@modelcontextprotocol/client";
+import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
@@ -318,6 +319,23 @@ function ToolParametersView({
   onFieldChange,
   onToggleField,
 }: ToolParametersViewProps) {
+  // Fall back to the app-tools registry when the selection is an
+  // `app_<hash>` alias — the server-tool dict won't have it. Same shape:
+  // we only read `description`, `inputSchema`, and `outputSchema` below,
+  // and `AppToolDescriptor` carries all three. Routing through the
+  // registry's `resolve()` inherits its `activeBridgeByParent` gate so a
+  // superseded sibling instance won't render here.
+  const appToolDescriptor = useAppToolsRegistry((s) => {
+    if (selectedTool) return undefined;
+    const resolved = s.resolve(selectedToolName);
+    if (!resolved) return undefined;
+    return resolved.instance.tools.find((t) => t.name === resolved.rawName);
+  });
+  const effectiveTool = selectedTool ?? appToolDescriptor;
+  // For app-tool aliases (`app_<hash>`), show the raw advertised tool name in
+  // the header instead of the opaque alias. Server tools fall back to the
+  // selection key, which is already the raw name.
+  const headerToolName = appToolDescriptor?.name ?? selectedToolName;
   const hasParameters = formFields && formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(["description"]);
 
@@ -328,7 +346,7 @@ function ToolParametersView({
   return (
     <div className="h-full flex flex-col">
       <SelectedToolHeader
-        toolName={selectedToolName}
+        toolName={headerToolName}
         onExpand={onExpand}
         toolSwitchList={{
           names: toolNames,
@@ -342,35 +360,35 @@ function ToolParametersView({
           onValueChange={setOpenSections}
           className="px-3"
         >
-          {selectedTool?.description && (
+          {effectiveTool?.description && (
             <AccordionItem value="description">
               <AccordionTrigger className="text-xs">
                 Description
               </AccordionTrigger>
               <AccordionContent>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  {selectedTool.description}
+                  {effectiveTool.description}
                 </p>
               </AccordionContent>
             </AccordionItem>
           )}
-          {selectedTool?.inputSchema && (
+          {effectiveTool?.inputSchema && (
             <AccordionItem value="input-schema">
               <AccordionTrigger className="text-xs">
                 Input Schema
               </AccordionTrigger>
               <AccordionContent>
-                <SchemaViewer schema={selectedTool.inputSchema} />
+                <SchemaViewer schema={effectiveTool.inputSchema} />
               </AccordionContent>
             </AccordionItem>
           )}
-          {selectedTool?.outputSchema && (
+          {effectiveTool?.outputSchema && (
             <AccordionItem value="output-schema">
               <AccordionTrigger className="text-xs">
                 Output Schema
               </AccordionTrigger>
               <AccordionContent>
-                <SchemaViewer schema={selectedTool.outputSchema} />
+                <SchemaViewer schema={effectiveTool.outputSchema} />
               </AccordionContent>
             </AccordionItem>
           )}

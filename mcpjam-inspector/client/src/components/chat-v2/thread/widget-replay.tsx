@@ -15,6 +15,7 @@ import {
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
 import type { DisplayMode } from "@/stores/ui-playground-store";
+import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 export interface WidgetReplayProps {
   chatSessionId?: string;
@@ -34,6 +35,7 @@ export interface WidgetReplayProps {
     toolName: string,
     params: Record<string, unknown>
   ) => Promise<unknown>;
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   onModelContextUpdate?: (
     toolCallId: string,
@@ -70,6 +72,7 @@ export function WidgetReplay({
   renderOverride,
   onSendFollowUp,
   onCallTool,
+  onAppToolInvocationChange,
   onWidgetStateChange,
   onModelContextUpdate,
   pipWidgetId,
@@ -151,6 +154,7 @@ export function WidgetReplay({
     <MCPAppsRenderer
       chatSessionId={chatSessionId}
       serverId={serverId ?? "offline-view"}
+      serverName={serverId ?? "offline-view"}
       toolCallId={toolCallId}
       toolName={toolName}
       toolState={toolState}
@@ -163,6 +167,7 @@ export function WidgetReplay({
       toolsMetadata={toolsMetadata}
       onSendFollowUp={onSendFollowUp}
       onCallTool={onCallTool}
+      onAppToolInvocationChange={onAppToolInvocationChange}
       onWidgetStateChange={onWidgetStateChange}
       onModelContextUpdate={onModelContextUpdate}
       pipWidgetId={pipWidgetId}

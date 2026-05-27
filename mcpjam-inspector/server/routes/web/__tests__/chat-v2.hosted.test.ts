@@ -102,6 +102,7 @@ vi.mock("@/shared/types", async () => {
 });
 
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
+import { MCPClientManager } from "@mcpjam/sdk";
 
 describe("web routes — chat-v2 hosted mode", () => {
   const originalFetch = global.fetch;
@@ -300,6 +301,91 @@ describe("web routes — chat-v2 hosted mode", () => {
           serverIds: ["server-1", "server-2"],
         }),
       })
+    );
+  });
+
+  it("forwards MCP profile protocol pins into the hosted chat manager", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Stateless"],
+        clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+        supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+        mcpProtocolVersionsByServerId: {
+          "server-1": "DRAFT-2026-v1",
+        },
+        chatSessionId: "chat-session-stateless",
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(MCPClientManager).toHaveBeenCalledWith(
+      {
+        "server-1": expect.objectContaining({
+          url: "https://server-1.example.com/mcp",
+          clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+          supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+          mcpProtocolVersion: "DRAFT-2026-v1",
+        }),
+      },
+      expect.any(Object)
+    );
+  });
+
+  it("normalizes mixed stateless host defaults with stateful per-server overrides", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-stateful", "server-stateless"],
+        selectedServerNames: ["Excalidraw", "stateless"],
+        clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+        supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+        mcpProtocolVersionsByServerId: {
+          "server-stateful": "2025-11-25",
+          "server-stateless": "DRAFT-2026-v1",
+        },
+        chatSessionId: "chat-session-mixed",
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(MCPClientManager).toHaveBeenCalledWith(
+      {
+        "server-stateful": expect.objectContaining({
+          url: "https://server-stateful.example.com/mcp",
+          supportedProtocolVersions: ["2025-11-25"],
+          mcpProtocolVersion: "2025-11-25",
+        }),
+        "server-stateless": expect.objectContaining({
+          url: "https://server-stateless.example.com/mcp",
+          supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+          mcpProtocolVersion: "DRAFT-2026-v1",
+        }),
+      },
+      expect.any(Object)
     );
   });
 

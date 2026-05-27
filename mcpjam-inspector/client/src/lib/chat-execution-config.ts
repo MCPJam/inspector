@@ -13,4 +13,6 @@ export type ExecutionConfig = {
    * auto policy.
    */
   progressiveToolDiscovery?: boolean;
+  /** See HostConfigInputV2.respectToolVisibility. */
+  respectToolVisibility?: boolean;
 };

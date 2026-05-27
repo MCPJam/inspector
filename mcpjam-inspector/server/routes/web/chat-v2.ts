@@ -45,6 +45,7 @@ import {
   WebRouteError,
   webError,
   mapRuntimeError,
+  extractMcpInitializeOptions,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -75,6 +76,8 @@ chatV2.post("/", async (c) => {
 
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
+    const { initializePins, mcpProtocolVersionsByServerId } =
+      extractMcpInitializeOptions(rawBody);
     const body = rawBody as unknown as ChatV2Request & {
       projectId: string;
       selectedServerIds: string[];
@@ -95,6 +98,7 @@ chatV2.post("/", async (c) => {
       systemPrompt: bodySystemPrompt,
       temperature: bodyTemperature,
       requireToolApproval: bodyRequireToolApproval,
+      respectToolVisibility: bodyRespectToolVisibility,
       selectedServerIds,
       selectedServerNames,
       chatboxId,
@@ -130,6 +134,7 @@ chatV2.post("/", async (c) => {
     let resolvedSystemPrompt = bodySystemPrompt;
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
+    let resolvedRespectToolVisibility = bodyRespectToolVisibility;
     // Host-level toggle. For non-chatbox direct chat the body is the
     // source (the inspector reads the project's default HostConfigV2 and
     // threads the value through); for chatbox sessions we re-resolve from
@@ -211,6 +216,22 @@ chatV2.post("/", async (c) => {
           }
           resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
         }
+        if (cfg.respectToolVisibility !== undefined) {
+          if (
+            bodyRespectToolVisibility !== undefined &&
+            cfg.respectToolVisibility !== bodyRespectToolVisibility
+          ) {
+            logger.warn(
+              "[chat-v2] client respectToolVisibility differs from host; using host value",
+              {
+                chatboxId,
+                body: bodyRespectToolVisibility,
+                host: cfg.respectToolVisibility,
+              }
+            );
+          }
+          resolvedRespectToolVisibility = cfg.respectToolVisibility;
+        }
       } else {
         // Don't fail the chat send on a transient Convex blip — fall
         // through to client-supplied values and warn. The chat will run
@@ -230,6 +251,7 @@ chatV2.post("/", async (c) => {
     const systemPrompt = resolvedSystemPrompt;
     const temperature = resolvedTemperatureOverride;
     const requireToolApproval = resolvedRequireToolApproval;
+    const respectToolVisibility = resolvedRespectToolVisibility;
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
@@ -253,6 +275,8 @@ chatV2.post("/", async (c) => {
         accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
+        initializePins,
+        mcpProtocolVersionsByServerId,
       }
     );
     oauthServerUrls = urls;
@@ -265,11 +289,7 @@ chatV2.post("/", async (c) => {
       validatedAppTools = validateAppToolEntries(body.appTools);
     } catch (error) {
       if (error instanceof AppToolValidationError) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          error.message,
-        );
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
       }
       throw error;
     }
@@ -302,6 +322,7 @@ chatV2.post("/", async (c) => {
           systemPrompt,
           temperature,
           requireToolApproval,
+          respectToolVisibility,
           customProviders: body.customProviders,
           priorMessages: modelMessages,
           // Host-level toggle. Sourced from the project's default
@@ -417,6 +438,7 @@ chatV2.post("/", async (c) => {
                         systemPrompt,
                         temperature,
                         requireToolApproval,
+                        respectToolVisibility,
                         selectedServers:
                           Array.isArray(selectedServerNames) &&
                           selectedServerNames.length ===
@@ -435,6 +457,7 @@ chatV2.post("/", async (c) => {
                         requestedTemperature: temperature,
                         resolvedTemperature,
                         requireToolApproval,
+                        respectToolVisibility,
                         selectedServerIds,
                       }),
                     }
@@ -564,6 +587,7 @@ chatV2.post("/", async (c) => {
                         systemPrompt,
                         temperature,
                         requireToolApproval,
+                        respectToolVisibility,
                         selectedServers:
                           Array.isArray(selectedServerNames) &&
                           selectedServerNames.length ===
@@ -584,6 +608,7 @@ chatV2.post("/", async (c) => {
                         requestedTemperature: temperature,
                         resolvedTemperature,
                         requireToolApproval,
+                        respectToolVisibility,
                         selectedServerIds,
                       }),
                     }
