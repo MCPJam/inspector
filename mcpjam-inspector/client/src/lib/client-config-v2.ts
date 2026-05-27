@@ -773,6 +773,7 @@ export function mergeMcpAppsCapabilities(
     logging: override.logging ?? base.logging,
     updateModelContext:
       override.updateModelContext ?? base.updateModelContext,
+    appTools: override.appTools ?? base.appTools,
     message: override.message ?? base.message,
     sandboxPermissions:
       override.sandboxPermissions ?? base.sandboxPermissions,
