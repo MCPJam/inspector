@@ -37,31 +37,30 @@ function formatCompact(n: number): string {
 function Stat({ icon: Icon, value, label, onClick, title }: StatProps) {
   const body = (
     <span className="inline-flex items-center gap-1.5">
-      <Icon className="h-3.5 w-3.5 text-foreground/45" />
+      <Icon className="size-3.5 text-muted-foreground" />
       {value === null ? (
-        <span className="inline-block h-3.5 w-5 animate-pulse rounded-sm bg-foreground/10 align-middle" />
+        <span className="inline-block h-3.5 w-5 animate-pulse rounded-sm bg-muted align-middle" />
       ) : (
         <span className="font-semibold tabular-nums tracking-tight text-foreground">
           {formatCompact(value)}
         </span>
       )}
-      <span className="text-foreground/55">{label}</span>
+      <span className="text-muted-foreground">{label}</span>
     </span>
   );
 
-  const common =
-    "rounded-md px-2 py-1 text-[13px] leading-none transition-colors";
+  const base = "rounded-md px-2 py-1 text-[13px] leading-none transition-colors";
   return onClick ? (
     <button
       type="button"
       onClick={onClick}
       title={title}
-      className={`${common} -mx-1 hover:bg-foreground/[0.05]`}
+      className={`${base} -mx-1 hover:bg-accent hover:text-accent-foreground`}
     >
       {body}
     </button>
   ) : (
-    <span className={common} title={title}>
+    <span className={base} title={title}>
       {body}
     </span>
   );
@@ -69,7 +68,7 @@ function Stat({ icon: Icon, value, label, onClick, title }: StatProps) {
 
 function Sep() {
   return (
-    <span aria-hidden className="select-none text-foreground/20">
+    <span aria-hidden className="select-none text-border">
       ·
     </span>
   );

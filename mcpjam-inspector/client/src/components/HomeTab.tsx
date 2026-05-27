@@ -114,7 +114,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
 
   if (!organizationId) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#FAFAF7] p-8 text-center dark:bg-neutral-950">
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8 text-center">
         <p className="text-lg font-medium">Welcome to MCPJam</p>
         <p className="max-w-sm text-sm text-muted-foreground">
           Join or create an organization to see your team&apos;s activity, connected
@@ -128,26 +128,18 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const isLoading = data === undefined;
 
   return (
-    <div className="relative h-full overflow-y-auto bg-[#FAFAF7] dark:bg-neutral-950">
-      {/* Atmospheric backdrop — soft warm blooms anchored to the top */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-[520px] overflow-hidden"
-      >
-        <div className="absolute -left-40 -top-48 h-[640px] w-[640px] rounded-full bg-gradient-to-br from-amber-100/60 via-orange-50/40 to-transparent blur-3xl dark:from-amber-500/[0.06] dark:via-orange-500/[0.04]" />
-        <div className="absolute -right-44 top-10 h-[520px] w-[520px] rounded-full bg-gradient-to-bl from-rose-100/50 via-rose-50/20 to-transparent blur-3xl dark:from-rose-500/[0.05]" />
-        <div className="absolute right-1/3 -top-32 h-[360px] w-[360px] rounded-full bg-gradient-to-b from-stone-100/60 to-transparent blur-3xl dark:from-stone-500/[0.04]" />
-      </div>
-
-      <div className="relative mx-auto flex max-w-6xl flex-col gap-7 px-8 pb-20 pt-12">
+    <div className="h-full overflow-y-auto bg-background">
+      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-8 pb-20 pt-14">
         {/* Greeting */}
-        <header className="flex flex-col gap-1.5">
-          <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-foreground/55">
+        <header className="flex flex-col gap-2">
+          <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             {dateLabel}
           </p>
-          <h1 className="text-[40px] font-semibold leading-[1.05] tracking-[-0.025em] text-foreground sm:text-[44px]">
+          <h1 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[40px]">
             {greeting},{" "}
-            <span className="text-foreground/70">{firstName}</span>
+            <span className="font-semibold text-muted-foreground">
+              {firstName}
+            </span>
           </h1>
         </header>
 
