@@ -157,7 +157,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
 
         {/* Hero card */}
         <RecommendedServers
-          servers={isLoading ? [] : data!.recommendedServers}
+          servers={data?.recommendedServers}
           projectId={projectId}
         />
 

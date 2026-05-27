@@ -1176,7 +1176,7 @@ export function ServersRedirectRoute() {
 export function HomeRoute() {
   const { activeOrganizationId, activeProjectId } = useAppRouteContext();
   const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
-  if (!homeEnabled) return <ServersTabBody />;
+  if (!homeEnabled) return <ServersRoute />;
   return (
     <HomeTab
       organizationId={activeOrganizationId ?? null}

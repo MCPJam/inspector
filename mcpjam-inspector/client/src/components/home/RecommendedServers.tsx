@@ -32,7 +32,7 @@ interface RecommendedServer {
 }
 
 interface RecommendedServersProps {
-  servers: readonly RecommendedServer[];
+  servers: readonly RecommendedServer[] | undefined;
   projectId: string | null;
 }
 
@@ -123,7 +123,25 @@ export function RecommendedServers({
       <div className="border-t border-border/60" />
 
       <CardContent className="px-3 py-2">
-        {servers.length === 0 ? (
+        {servers === undefined ? (
+          <ul aria-busy="true" aria-label="Loading recommended servers">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <li
+                key={i}
+                className={`flex items-center gap-4 rounded-lg px-3 py-3.5 ${
+                  i === 2 ? "" : "border-b border-border/40"
+                }`}
+              >
+                <div className="size-10 shrink-0 animate-pulse rounded-lg bg-muted" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="h-3.5 w-32 animate-pulse rounded-sm bg-muted" />
+                  <div className="h-3 w-48 animate-pulse rounded-sm bg-muted" />
+                </div>
+                <div className="h-8 w-[88px] shrink-0 animate-pulse rounded-md bg-muted" />
+              </li>
+            ))}
+          </ul>
+        ) : servers.length === 0 ? (
           <div className="px-3 py-10 text-center">
             <p className="text-sm text-muted-foreground">
               No recommendations available right now.
