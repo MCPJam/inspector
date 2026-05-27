@@ -24,7 +24,6 @@ const {
   getStoredTokensMock,
   getInitializationInfoMock,
   mockUseDbUserReady,
-  useFeatureFlagEnabledMock,
 } = vi.hoisted(() => ({
   reconnectServerMock: vi.fn(),
   tryResolveProjectServerMock: vi.fn<
@@ -33,16 +32,6 @@ const {
   getStoredTokensMock: vi.fn(),
   getInitializationInfoMock: vi.fn(),
   mockUseDbUserReady: vi.fn(() => true),
-  // Controllable per-test. Returning `false` by default matches the
-  // production rollout posture (flag off until explicit opt-in).
-  useFeatureFlagEnabledMock: vi.fn<(flag: string) => boolean | undefined>(
-    () => true,
-  ),
-}));
-
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: (flag: string) => useFeatureFlagEnabledMock(flag),
-  usePostHog: () => null,
 }));
 
 vi.mock("sonner", () => ({
@@ -235,12 +224,6 @@ beforeEach(() => {
     initInfo: null,
   });
   mockUseDbUserReady.mockReturnValue(true);
-  // Default: stateless rollout flag ON for the bulk of these tests
-  // (the in-isolation Cursor / codex reviewers exercised the
-  // flag-on path). Specific tests flip it via `mockReturnValue`.
-  useFeatureFlagEnabledMock.mockImplementation((flag: string) =>
-    flag === "stateless-mcp-enabled" ? true : false,
-  );
 });
 
 describe("useServerState mcpProtocolVersion re-validation", () => {
@@ -395,78 +378,4 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     expect(reconnectServerMock).not.toHaveBeenCalled();
   });
 
-  it("re-tests when the stateless rollout flag flips ON for a server with a persisted DRAFT pin", async () => {
-    // Flag-flip regression. Scenario:
-    // 1. Flag OFF, persisted pin DRAFT-2026-v1. Server connected with
-    //    legacy transport (the gate in `buildResolverConnectionDefaults`
-    //    drops stateless pins when the flag is off).
-    // 2. Flag flips ON. `buildResolverConnectionDefaults` now stamps
-    //    DRAFT-2026-v1 → wire mode silently changes from legacy to
-    //    stateless. Without tracking the *effective* (flag-gated) pin,
-    //    the re-validation effect saw `previous === effective ===
-    //    "DRAFT-2026-v1"` and skipped the re-test.
-    useFeatureFlagEnabledMock.mockImplementation((flag: string) =>
-      flag === "stateless-mcp-enabled" ? false : false,
-    );
-    reconnectServerMock.mockResolvedValue({ success: true, initInfo: null });
-
-    const dispatch = vi.fn();
-    const { rerender } = renderRevalidationHook(dispatch, {
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
-      hostConfig: buildHostConfig(),
-    });
-
-    await flushAsyncWork(5);
-    expect(reconnectServerMock).not.toHaveBeenCalled();
-
-    // Flip the flag ON. Rerender with the same profile/hostConfig —
-    // only the flag changed. Effective pin: undefined → DRAFT-2026-v1.
-    useFeatureFlagEnabledMock.mockImplementation((flag: string) =>
-      flag === "stateless-mcp-enabled" ? true : false,
-    );
-    rerender({
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
-      hostConfig: buildHostConfig(),
-    });
-
-    await waitFor(() => {
-      expect(reconnectServerMock).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  it("re-tests when the stateless rollout flag flips OFF for a server with a persisted DRAFT pin", async () => {
-    // Mirror of the previous test: flag ON → OFF with a persisted DRAFT
-    // pin means stateless transport silently drops back to legacy.
-    // Connected stateless servers must re-test against the new
-    // (legacy) transport so a stateless-only fixture doesn't keep
-    // claiming "Connected" while every request actually fails.
-    useFeatureFlagEnabledMock.mockImplementation((flag: string) =>
-      flag === "stateless-mcp-enabled" ? true : false,
-    );
-    reconnectServerMock.mockResolvedValue({
-      success: false,
-      error: "legacy server cannot speak DRAFT-2026-v1 anyway",
-    });
-
-    const dispatch = vi.fn();
-    const { rerender } = renderRevalidationHook(dispatch, {
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
-      hostConfig: buildHostConfig(),
-    });
-
-    await flushAsyncWork(5);
-    expect(reconnectServerMock).not.toHaveBeenCalled();
-
-    useFeatureFlagEnabledMock.mockImplementation((flag: string) =>
-      flag === "stateless-mcp-enabled" ? false : false,
-    );
-    rerender({
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
-      hostConfig: buildHostConfig(),
-    });
-
-    await waitFor(() => {
-      expect(reconnectServerMock).toHaveBeenCalledTimes(1);
-    });
-  });
 });
