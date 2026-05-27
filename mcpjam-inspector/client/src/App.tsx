@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -460,6 +461,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <EvalsRoute />;
     case "ci-evals":
       return <CiEvalsRoute />;
+    case "home":
+      return <HomeRoute />;
     case "servers":
     default:
       return <ServersRoute />;
@@ -1167,6 +1170,13 @@ export function ChatAliasRoute() {
 
 export function ServersRedirectRoute() {
   return <Navigate to={routePaths.servers} replace />;
+}
+
+export function HomeRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
+  if (!homeEnabled) return <ServersTabBody />;
+  return <HomeTab organizationId={activeOrganizationId ?? null} />;
 }
 
 export default function App() {
