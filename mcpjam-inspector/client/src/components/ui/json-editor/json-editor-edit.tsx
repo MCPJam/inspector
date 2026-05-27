@@ -638,7 +638,13 @@ export function JsonEditorEdit({
                 "pointer-events-none m-0",
                 "text-muted-foreground", // Base color for unhighlighted text during typing
               )}
-              style={fontStyle}
+              // scrollbar-gutter: stable reserves the same width on both the
+              // textarea (which scrolls) and this overlay (which doesn't), so
+              // the textarea's wrap column always matches the overlay's. Without
+              // this, when the textarea's vertical scrollbar appears it eats
+              // ~15px of width and the two wrap at different character counts,
+              // making clicked lines and rendered lines drift apart.
+              style={{ ...fontStyle, scrollbarGutter: "stable" }}
               aria-hidden="true"
             >
               <div
@@ -689,7 +695,7 @@ export function JsonEditorEdit({
                   ? "overflow-auto whitespace-pre-wrap break-words"
                   : "overflow-auto whitespace-pre",
               )}
-              style={{ ...fontStyle, tabSize: 2 }}
+              style={{ ...fontStyle, tabSize: 2, scrollbarGutter: "stable" }}
             />
           </>
         )}
