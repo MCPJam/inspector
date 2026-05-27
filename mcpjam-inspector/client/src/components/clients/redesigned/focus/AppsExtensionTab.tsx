@@ -849,9 +849,11 @@ const OPENAI_APPS_METHOD_LABELS: Array<{
  * "fullscreen-only displayMode, no requestModal / uploadFile").
  *
  * Layout:
- * - Master row at the top mirrors the old behavior: inject the shim
- *   or don't. When off, the per-method disclosure stays expandable but
- *   renders read-only as a preview of the surface injection would add.
+ * - Master row at the top toggles injection with the style preset's
+ *   full surface. When off, the per-method disclosure stays expandable
+ *   and its rows are interactive: switching on one method injects the
+ *   shim with ONLY that method, letting users build an exact subset from
+ *   scratch instead of starting from the full preset.
  * - A collapsed disclosure summarizes "N of 13 enabled" and expands to
  *   the full per-method list. Defaults inherit from the active host
  *   template (`client-templates.ts`), so picking ChatGPT / Copilot /
@@ -918,10 +920,54 @@ function OpenaiAppsCapabilityMatrix({
       } else {
         (nextOverrides as Record<string, unknown>)[key] = value;
       }
+      // If the edit leaves no method enabled, flip injection off and clear
+      // the now-meaningless overrides — the inverse of building a subset
+      // up from the off state.
+      const surfaceEmpty = OPENAI_APPS_METHOD_LABELS.every(({ key: k }) => {
+        const v =
+          k in nextOverrides
+            ? (nextOverrides as Record<string, unknown>)[k]
+            : presetCapabilities[k];
+        return k === "requestDisplayMode" ? v === "none" : v !== true;
+      });
+      if (surfaceEmpty) {
+        return setCompatRuntimeOnDraft(prev, {
+          openaiApps: false,
+          openaiAppsOverrides: undefined,
+        });
+      }
       const prevInjection = prev.mcpProfile?.apps?.compatRuntime?.openaiApps;
       return setCompatRuntimeOnDraft(prev, {
         openaiApps: prevInjection,
         openaiAppsOverrides: nextOverrides,
+      });
+    });
+  };
+
+  // When injection is off the matrix presents an empty surface (every
+  // method shown off) so users can build the exact subset they want from
+  // scratch. Switching on a single method here flips injection on and
+  // enables ONLY that method. The resolver merges overrides onto the
+  // style preset's base surface, so "only this one" means recording
+  // sparse overrides that turn every *other* method off (and the picked
+  // one on when the base didn't already have it) — same sparse-diff
+  // contract as `setMethodOverride`.
+  const enableSingleMethodFromOff = (
+    key: keyof OpenAiAppsCapabilities,
+    value: boolean | "all" | "fullscreen-only"
+  ) => {
+    onDraftChange((prev) => {
+      const overrides: OpenAiAppsCapabilities = {};
+      for (const { key: k } of OPENAI_APPS_METHOD_LABELS) {
+        const target =
+          k === key ? value : k === "requestDisplayMode" ? "none" : false;
+        if (target !== presetCapabilities[k]) {
+          (overrides as Record<string, unknown>)[k] = target;
+        }
+      }
+      return setCompatRuntimeOnDraft(prev, {
+        openaiApps: true,
+        openaiAppsOverrides: overrides,
       });
     });
   };
@@ -938,26 +984,12 @@ function OpenaiAppsCapabilityMatrix({
       enabledCount += 1;
     }
   }
-  const overrideCount = overridesRecord
-    ? Object.keys(overridesRecord).length
-    : 0;
-
-  // Subline shows the live method count + any override count. Omitted when
-  // injection is off — the master Switch already communicates that state.
-  const sublineParts: string[] = [];
-  if (injected) {
-    sublineParts.push(
-      `${enabledCount} of ${OPENAI_APPS_METHOD_LABELS.length} methods`
-    );
-    if (overrideCount > 0) {
-      sublineParts.push(`${overrideCount} overridden`);
-    }
-  }
-  // When injection is off the subline invites the user to preview the
-  // surface they're missing out on, rather than going silent.
+  // Subline: live count of enabled methods when injecting. When off, the
+  // matrix is an empty build-from-scratch surface, so the subline invites
+  // the user to expand and switch on the methods they want.
   const sublineText = injected
-    ? sublineParts.join(" · ")
-    : `Off · expand to preview ${OPENAI_APPS_METHOD_LABELS.length} methods`;
+    ? `${enabledCount} of ${OPENAI_APPS_METHOD_LABELS.length} methods`
+    : `Off · expand to enable any of ${OPENAI_APPS_METHOD_LABELS.length} methods`;
 
   return (
     <div className="rounded-[10px] border border-border bg-background">
@@ -967,8 +999,8 @@ function OpenaiAppsCapabilityMatrix({
           distinct controls — clicking near the Switch can't open the
           disclosure because the Switch lives outside the disclosure
           button entirely. The disclosure stays expandable even when
-          injection is off so users can preview the window.openai surface
-          they'd gain by enabling it (rows render read-only in that case). */}
+          injection is off, and its rows stay interactive — switching one
+          on injects the shim with just that method. */}
       <div className="flex items-stretch border-b border-border">
         <button
           type="button"
@@ -1002,60 +1034,60 @@ function OpenaiAppsCapabilityMatrix({
       </div>
 
       {/* Per-method matrix — expand to override individual methods on
-          top of the host template's defaults. Still expandable when
-          injection is off, but rows render read-only as a preview of the
-          surface enabling injection would provide. */}
+          top of the host template's defaults. Stays open when injection
+          is off, where every row shows off and switching one on injects
+          the shim with ONLY that method (build the subset from scratch). */}
       {methodsOpen ? (
         <div id="apps-extension-openai-methods" className="flex flex-col">
           {!injected ? (
             <div className="border-b border-border/50 bg-muted/30 px-3.5 py-2 text-[11px] text-muted-foreground">
-              Preview — turn on the toggle to inject these into{" "}
-              <span className="font-mono">window.openai</span>.
+              Switch on the methods you want — injecting{" "}
+              <span className="font-mono">window.openai</span> turns on
+              automatically.
             </div>
           ) : null}
           {OPENAI_APPS_METHOD_LABELS.map(({ key, label }) => {
-            const effective = effectiveCapabilities[key];
+            // Off → empty surface: show every method off regardless of the
+            // preset so the user builds their subset up from nothing.
+            const effective = injected
+              ? effectiveCapabilities[key]
+              : key === "requestDisplayMode"
+              ? "none"
+              : false;
             const presetValue = presetCapabilities[key];
-            const overridden =
-              injected &&
-              overridesRecord !== undefined &&
-              key in overridesRecord;
             return (
               <div
                 key={key}
-                className={`flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0 ${
-                  injected ? "" : "opacity-60"
-                }`}
+                className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
               >
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-mono text-[12px]">{label}</span>
-                  {overridden ? (
-                    <span className="w-fit rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
-                      Overridden
-                    </span>
-                  ) : null}
-                </div>
+                <span className="font-mono text-[12px]">{label}</span>
                 {key === "requestDisplayMode" ? (
                   <RequestDisplayModeControl
                     value={effective as "all" | "fullscreen-only" | "none"}
-                    disabled={!injected}
-                    onChange={(next) =>
-                      setMethodOverride(
-                        key,
-                        next === presetValue ? undefined : next
-                      )
-                    }
+                    onChange={(next) => {
+                      if (injected) {
+                        setMethodOverride(
+                          key,
+                          next === presetValue ? undefined : next
+                        );
+                      } else if (next !== "none") {
+                        enableSingleMethodFromOff(key, next);
+                      }
+                    }}
                   />
                 ) : (
                   <Switch
                     checked={Boolean(effective)}
-                    disabled={!injected}
-                    onCheckedChange={(checked) =>
-                      setMethodOverride(
-                        key,
-                        checked === presetValue ? undefined : checked
-                      )
-                    }
+                    onCheckedChange={(checked) => {
+                      if (injected) {
+                        setMethodOverride(
+                          key,
+                          checked === presetValue ? undefined : checked
+                        );
+                      } else if (checked) {
+                        enableSingleMethodFromOff(key, true);
+                      }
+                    }}
                     aria-label={label}
                   />
                 )}
@@ -1072,11 +1104,9 @@ function OpenaiAppsCapabilityMatrix({
 function RequestDisplayModeControl({
   value,
   onChange,
-  disabled = false,
 }: {
   value: "all" | "fullscreen-only" | "none";
   onChange: (next: "all" | "fullscreen-only" | "none") => void;
-  disabled?: boolean;
 }) {
   const options: Array<{
     value: "all" | "fullscreen-only" | "none";
@@ -1092,11 +1122,10 @@ function RequestDisplayModeControl({
         <button
           key={opt.value}
           type="button"
-          disabled={disabled}
           className={
             opt.value === value
-              ? "bg-foreground/10 px-2 py-0.5 font-medium disabled:cursor-not-allowed"
-              : "px-2 py-0.5 text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              ? "bg-foreground/10 px-2 py-0.5 font-medium"
+              : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
           }
           onClick={() => onChange(opt.value)}
         >
@@ -1322,13 +1351,17 @@ const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
 
 /**
  * Per-dimension capability matrix for the SEP-1865 `app.*` spec bridge.
- * Sibling to {@link OpenaiAppsCapabilityMatrix} but represents a
- * different surface — the spec bridge is the primary MCP Apps protocol,
- * not a vendor compat shim, so there's no "inject" master toggle and
- * no tri-state (the matrix is always advertised).
+ * Sibling to {@link OpenaiAppsCapabilityMatrix}, for the SEP-1865 `app.*`
+ * spec bridge. A master Switch advertises the MCP UI client extension.
+ * When off, the disclosure stays expandable and its rows are interactive:
+ * switching one on advertises support with ONLY that dimension, letting
+ * users build an exact subset from scratch (the mandatory
+ * `availableDisplayModes` row falls back to its `inline` minimum, the
+ * `widgetDisplayModeRequests` policy to the most-restrictive `decline`).
  *
  * Layout:
  * - `availableDisplayModes` cluster at the top.
+ * - `widgetDisplayModeRequests` tri-state policy.
  * - Flat list of all boolean matrix dimensions below.
  *
  * The matrix round-trips through `appsToJson` / `applyJsonToDraft` so
@@ -1430,45 +1463,76 @@ function McpAppsCapabilityMatrix({
     };
   };
 
+  // Add the MCP UI client extension so the host advertises MCP App
+  // support. Shared by the master Switch and the build-from-off path.
+  const withMcpUiExtension = (prev: HostConfigInputV2): HostConfigInputV2 => {
+    const nextCaps: Record<string, unknown> = {
+      ...(prev.clientCapabilities ?? {}),
+    };
+    const exts: Record<string, unknown> = isRecord(nextCaps.extensions)
+      ? { ...nextCaps.extensions }
+      : {};
+    const defaultCaps = getDefaultClientCapabilities() as Record<
+      string,
+      unknown
+    >;
+    const defaultExts = isRecord(defaultCaps.extensions)
+      ? defaultCaps.extensions
+      : {};
+    const defaultUi = defaultExts[MCP_UI_EXTENSION_ID];
+    exts[MCP_UI_EXTENSION_ID] = isRecord(defaultUi)
+      ? { ...defaultUi }
+      : { mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE] };
+    nextCaps.extensions = exts;
+    return { ...prev, clientCapabilities: nextCaps };
+  };
+
+  // Drop the MCP UI extension and clear the (now-inert) overrides + legacy
+  // narrowing. Host-side caps are inert without the client extension, so
+  // turning off support clears overrides the same way the window.openai
+  // master toggle clears per-method overrides. Shared by the master Switch
+  // and the "last capability off" auto-disable.
+  const withoutMcpUiExtension = (prev: HostConfigInputV2): HostConfigInputV2 => {
+    const nextCaps: Record<string, unknown> = {
+      ...(prev.clientCapabilities ?? {}),
+    };
+    const exts: Record<string, unknown> = isRecord(nextCaps.extensions)
+      ? { ...nextCaps.extensions }
+      : {};
+    delete exts[MCP_UI_EXTENSION_ID];
+    nextCaps.extensions = exts;
+    let nextDraft: HostConfigInputV2 = { ...prev, clientCapabilities: nextCaps };
+    nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
+    if (nextDraft.hostCapabilitiesOverride !== undefined) {
+      nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
+    }
+    return nextDraft;
+  };
+
   const setAdvertised = (next: boolean) => {
-    onDraftChange((prev) => {
-      const nextCaps: Record<string, unknown> = {
-        ...(prev.clientCapabilities ?? {}),
-      };
-      const exts: Record<string, unknown> = isRecord(nextCaps.extensions)
-        ? { ...nextCaps.extensions }
-        : {};
-      if (next) {
-        const defaultCaps = getDefaultClientCapabilities() as Record<
-          string,
-          unknown
-        >;
-        const defaultExts = isRecord(defaultCaps.extensions)
-          ? defaultCaps.extensions
-          : {};
-        const defaultUi = defaultExts[MCP_UI_EXTENSION_ID];
-        exts[MCP_UI_EXTENSION_ID] = isRecord(defaultUi)
-          ? { ...defaultUi }
-          : { mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE] };
-      } else {
-        delete exts[MCP_UI_EXTENSION_ID];
-      }
-      nextCaps.extensions = exts;
-      let nextDraft: HostConfigInputV2 = {
-        ...prev,
-        clientCapabilities: nextCaps,
-      };
-      if (!next) {
-        // Host-side caps are inert without the client extension — clear
-        // overrides the same way turning off window.openai injection
-        // clears per-method overrides.
-        nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
-        if (nextDraft.hostCapabilitiesOverride !== undefined) {
-          nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
-        }
-      }
-      return nextDraft;
+    onDraftChange((prev) =>
+      next ? withMcpUiExtension(prev) : withoutMcpUiExtension(prev)
+    );
+  };
+
+  // The empty baseline (every boolean off, the inline-only minimum, the
+  // most-restrictive decline policy) is the off state. If an edit lands
+  // the effective surface there, advertising auto-disables — the inverse
+  // of build-from-off.
+  const mcpAppsSurfaceIsEmpty = (
+    overrides: McpAppsCapabilities,
+    prev: HostConfigInputV2
+  ): boolean => {
+    const effective = resolveEffectiveMcpAppsCapabilities({
+      profile: { profileVersion: 1, apps: { mcpAppsOverrides: overrides } },
+      hostStyle: prev.hostStyle,
     });
+    return (
+      MCP_APPS_DIMENSIONS.every(({ key }) => !effective[key]) &&
+      effective.widgetDisplayModeRequests === "decline" &&
+      effective.availableDisplayModes.length === 1 &&
+      effective.availableDisplayModes[0] === "inline"
+    );
   };
 
   /** Set or clear a boolean dimension override. Pass `undefined` to revert to preset. */
@@ -1490,6 +1554,9 @@ function McpAppsCapabilityMatrix({
         delete (nextOverrides as Record<string, unknown>)[key];
       } else {
         (nextOverrides as Record<string, unknown>)[key] = nextEffective;
+      }
+      if (mcpAppsSurfaceIsEmpty(nextOverrides, prev)) {
+        return withoutMcpUiExtension(prev);
       }
       return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
     });
@@ -1539,6 +1606,9 @@ function McpAppsCapabilityMatrix({
       } else {
         nextOverrides.availableDisplayModes = nextModesList as DisplayMode[];
       }
+      if (mcpAppsSurfaceIsEmpty(nextOverrides, prev)) {
+        return withoutMcpUiExtension(prev);
+      }
       return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
     });
   };
@@ -1564,46 +1634,94 @@ function McpAppsCapabilityMatrix({
       } else {
         nextOverrides.widgetDisplayModeRequests = next;
       }
+      if (mcpAppsSurfaceIsEmpty(nextOverrides, prev)) {
+        return withoutMcpUiExtension(prev);
+      }
       return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
     });
   };
 
+  // When support isn't advertised the matrix presents an empty surface
+  // (every boolean off, the mandatory display-mode list at its `inline`
+  // minimum, widget policy at the most-restrictive `decline`). Switching
+  // on any control here advertises support and applies that single choice
+  // on top of the empty baseline — same build-from-scratch model as the
+  // window.openai matrix. Recorded as a sparse diff against the style
+  // preset, matching the other setters.
+  const enableSingleDimensionFromOff = (
+    apply: (target: McpAppsCapabilities) => void
+  ) => {
+    onDraftChange((prev) => {
+      const target: McpAppsCapabilities = {
+        availableDisplayModes: ["inline"],
+        widgetDisplayModeRequests: "decline",
+      };
+      for (const { key } of MCP_APPS_DIMENSIONS) {
+        (target as Record<string, unknown>)[key] = false;
+      }
+      apply(target);
+
+      const preset = resolveEffectiveMcpAppsCapabilities({
+        profile: undefined,
+        hostStyle: prev.hostStyle,
+      });
+      const overrides: McpAppsCapabilities = {};
+      for (const { key } of MCP_APPS_DIMENSIONS) {
+        if (target[key] !== preset[key]) {
+          (overrides as Record<string, unknown>)[key] = target[key];
+        }
+      }
+      if (
+        stableStringifyJson(target.availableDisplayModes) !==
+        stableStringifyJson(preset.availableDisplayModes)
+      ) {
+        overrides.availableDisplayModes = target.availableDisplayModes;
+      }
+      if (
+        target.widgetDisplayModeRequests !== preset.widgetDisplayModeRequests
+      ) {
+        overrides.widgetDisplayModeRequests = target.widgetDisplayModeRequests;
+      }
+      return setMcpAppsOverridesOnDraft(withMcpUiExtension(prev), overrides);
+    });
+  };
+
+  // No subline when advertised (the rows speak for themselves); when off,
+  // invite the user to expand the now-interactive build-from-scratch list.
+  const sublineText = advertised
+    ? null
+    : "Off · expand to enable capabilities";
+
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Single header row: left half is the disclosure (label +
-          chevron), right half is the master Switch in its own hit zone.
-          Mirrors the window.openai section above. When the client does
-          not advertise the MCP UI extension the disclosure renders as
-          static (chevron hidden, no hover) since the dimension list is
-          inert without it. */}
+      {/* Single header row: left half is the disclosure (label + subline
+          + chevron), right half is the master Switch in its own hit zone.
+          Mirrors the window.openai section above. The disclosure stays
+          expandable even when support isn't advertised, and its rows stay
+          interactive — switching one on advertises support with just that
+          dimension. */}
       <div className="flex items-stretch border-b border-border">
-        {advertised ? (
-          <button
-            type="button"
-            onClick={() => setDimensionsOpen((v) => !v)}
-            aria-expanded={dimensionsOpen}
-            aria-controls="apps-extension-mcp-apps-dimensions"
-            className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
-          >
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[12px] font-medium">MCP App support</span>
-            </div>
-            <ChevronDown
-              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
-                dimensionsOpen ? "rotate-180" : ""
-              }`}
-            />
-          </button>
-        ) : (
-          <div className="flex flex-1 items-center px-3.5 py-2.5">
-            <label
-              htmlFor="apps-extension-mcp-apps-toggle"
-              className="text-[12px] font-medium"
-            >
-              MCP App support
-            </label>
+        <button
+          type="button"
+          onClick={() => setDimensionsOpen((v) => !v)}
+          aria-expanded={dimensionsOpen}
+          aria-controls="apps-extension-mcp-apps-dimensions"
+          className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
+        >
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[12px] font-medium">MCP App support</span>
+            {sublineText ? (
+              <span className="text-[11px] text-muted-foreground">
+                {sublineText}
+              </span>
+            ) : null}
           </div>
-        )}
+          <ChevronDown
+            className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+              dimensionsOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
         <div className="flex items-center border-l border-border pl-3 pr-3.5">
           <Switch
             id="apps-extension-mcp-apps-toggle"
@@ -1614,8 +1732,14 @@ function McpAppsCapabilityMatrix({
         </div>
       </div>
 
-      {advertised && dimensionsOpen ? (
+      {dimensionsOpen ? (
         <div id="apps-extension-mcp-apps-dimensions">
+          {!advertised ? (
+            <div className="border-b border-border/50 bg-muted/30 px-3.5 py-2 text-[11px] text-muted-foreground">
+              Switch on the capabilities you want — MCP App support turns on
+              automatically.
+            </div>
+          ) : null}
           {/* availableDisplayModes — multi-checkbox cluster. */}
           <div
             data-testid="mcp-apps-dimension-availableDisplayModes"
@@ -1628,8 +1752,11 @@ function McpAppsCapabilityMatrix({
             </div>
             <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border text-[11px]">
               {ALL_DISPLAY_MODES.map((mode) => {
-                const enabled =
-                  effectiveCapabilities.availableDisplayModes.includes(mode);
+                // Off → empty surface: only the mandatory `inline` minimum
+                // shows selected so the user builds the set up from there.
+                const enabled = advertised
+                  ? effectiveCapabilities.availableDisplayModes.includes(mode)
+                  : mode === "inline";
                 return (
                   <button
                     key={mode}
@@ -1641,7 +1768,21 @@ function McpAppsCapabilityMatrix({
                         ? "bg-foreground/10 px-2.5 py-0.5 font-medium"
                         : "px-2.5 py-0.5 text-muted-foreground hover:bg-muted"
                     }
-                    onClick={() => toggleDisplayMode(mode)}
+                    onClick={() =>
+                      advertised
+                        ? toggleDisplayMode(mode)
+                        : enableSingleDimensionFromOff((t) => {
+                            const base = t.availableDisplayModes ?? [];
+                            const toggled = base.includes(mode)
+                              ? base.filter((m) => m !== mode)
+                              : [...base, mode];
+                            const ordered = ALL_DISPLAY_MODES.filter((m) =>
+                              toggled.includes(m)
+                            );
+                            t.availableDisplayModes =
+                              ordered.length > 0 ? ordered : ["inline"];
+                          })
+                    }
                   >
                     {DISPLAY_MODE_LABELS[mode]}
                   </button>
@@ -1668,8 +1809,20 @@ function McpAppsCapabilityMatrix({
               </span>
             </div>
             <WidgetDisplayModeRequestsControl
-              value={effectiveCapabilities.widgetDisplayModeRequests}
-              onChange={setWidgetDisplayModeRequestsOverride}
+              value={
+                advertised
+                  ? effectiveCapabilities.widgetDisplayModeRequests
+                  : "decline"
+              }
+              onChange={(next) =>
+                advertised
+                  ? setWidgetDisplayModeRequestsOverride(next)
+                  : next !== "decline"
+                  ? enableSingleDimensionFromOff((t) => {
+                      t.widgetDisplayModeRequests = next;
+                    })
+                  : undefined
+              }
             />
           </div>
 
@@ -1679,8 +1832,16 @@ function McpAppsCapabilityMatrix({
                 key={key}
                 dimensionKey={key}
                 description={description}
-                effective={Boolean(effectiveCapabilities[key])}
-                onToggle={(next) => setBooleanOverride(key, next)}
+                effective={advertised ? Boolean(effectiveCapabilities[key]) : false}
+                onToggle={(next) =>
+                  advertised
+                    ? setBooleanOverride(key, next)
+                    : next
+                    ? enableSingleDimensionFromOff((t) => {
+                        (t as Record<string, unknown>)[key] = true;
+                      })
+                    : undefined
+                }
               />
             ))}
           </div>
