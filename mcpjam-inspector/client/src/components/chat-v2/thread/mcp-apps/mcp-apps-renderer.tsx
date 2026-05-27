@@ -2818,7 +2818,7 @@ export function MCPAppsRendererSurface({
         // capability, fetch its tool list with the SDK bridge and register
         // it so the next chat POST can advertise no-execute AI SDK tools.
         // Feature-detect the capability; do not install rejecting stubs.
-        if (appCaps?.tools) {
+        if (appCaps?.tools && effectiveMcpAppsCapabilities.appTools) {
           const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
           appToolsBridgeIdRef.current = bridgeId;
           setAppToolsBridgeIdState(bridgeId);

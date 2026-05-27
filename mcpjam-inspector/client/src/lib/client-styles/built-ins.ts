@@ -119,6 +119,9 @@ export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
   serverResources: true,
   logging: true,
   updateModelContext: true,
+  // App-provided tools are opt-in per host per SEP-1865 security guidance.
+  // MCPJam overrides this to true below; all other presets inherit false.
+  appTools: false,
   message: true,
   sandboxPermissions: true,
   cspFrameDomains: true,
@@ -154,6 +157,7 @@ export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
   serverResources: false,
   logging: false,
   updateModelContext: false,
+  appTools: false,
   message: false,
   sandboxPermissions: false,
   cspFrameDomains: false,
@@ -199,6 +203,7 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
   serverResources: false,
   logging: false,
   updateModelContext: true,
+  appTools: false,
   message: true,
   sandboxPermissions: false,
   cspFrameDomains: false,
@@ -425,10 +430,11 @@ export const MCPJAM_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.MCP_APPS,
     platform: MCPJAM_PLATFORM,
     fontCss: MCPJAM_FONT_CSS,
-    // MCPJam is the inspector's own dev surface and intentionally
-    // maximalist — full MCP Apps spec surface advertised so developers
-    // testing here see every dimension a widget might touch.
-    mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
+    // MCPJam is the inspector's own dev surface — app-provided tools are opt-in
+    // globally (FULL_SURFACE sets appTools: false) but turned on here so
+    // developers testing the inspector against app-tools widgets (e.g.
+    // tic-tac-toe) don't need to flip a toggle first.
+    mcpAppsCapabilities: { ...MCP_APPS_FULL_SURFACE, appTools: true },
     resolveStyleVariables: getMcpJamStyleVariables,
     // MCPJam is the inspector's own house chrome and intentionally
     // maximalist: developers testing here should see the full

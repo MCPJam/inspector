@@ -481,6 +481,7 @@ export function applyJsonToDraft(
       "serverResources",
       "logging",
       "updateModelContext",
+      "appTools",
       "message",
       "sandboxPermissions",
       "cspFrameDomains",
@@ -1277,6 +1278,11 @@ const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
   {
     key: "updateModelContext",
     description: "Accept ui/update-model-context requests from the app",
+  },
+  {
+    key: "appTools",
+    description:
+      "Host policy: discover app-registered tools (tools/list) and dispatch them (tools/call) to the LLM agent. Pull-path complement to updateModelContext (push). Off by default per SEP-1865 security guidance; opt in per host as you trust it. No matching hostCapabilities field — apps advertise via appCapabilities.tools.",
   },
   {
     key: "message",

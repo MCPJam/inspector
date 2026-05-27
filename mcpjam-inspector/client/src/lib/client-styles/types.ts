@@ -266,6 +266,14 @@ export type McpAppsCapabilities = {
   serverResources?: boolean;
   logging?: boolean;
   updateModelContext?: boolean;
+  /**
+   * Host policy: discover app-registered tools (`tools/list`) and dispatch
+   * them (`tools/call`) to the LLM agent. Pull-path sibling of
+   * `updateModelContext` (push path) — both are app→LLM channels.
+   * Off by default per SEP-1865 security guidance; opt in per host.
+   * No wire counterpart — apps advertise via `appCapabilities.tools`.
+   */
+  appTools?: boolean;
   message?: boolean;
   sandboxPermissions?: boolean;
   cspFrameDomains?: boolean;
@@ -322,6 +330,7 @@ export type ResolvedMcpAppsCapabilities = {
   serverResources: boolean;
   logging: boolean;
   updateModelContext: boolean;
+  appTools: boolean;
   message: boolean;
   sandboxPermissions: boolean;
   cspFrameDomains: boolean;
