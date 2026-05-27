@@ -147,14 +147,13 @@ npm start -- --config path/to/config.json --server myserver
   arguments to the underlying script.
 </Info>
 
-Every server in the config is saved to your active project and persists across
-refreshes. `--server` only chooses which one auto-connects on launch — the rest
-are saved but left idle. If you aren't signed in yet, you'll be sent to sign in
-first and returned here automatically once you're done.
+All servers in the config get added to your project. By default they all
+connect on launch; pass `--server <name>` to only connect that one. If
+you're not signed in, we'll send you to sign in and bring you right back.
 
 Example configuration file structure:
 
-```json
+```json config.json
 {
   "mcpServers": {
     "everything": {
