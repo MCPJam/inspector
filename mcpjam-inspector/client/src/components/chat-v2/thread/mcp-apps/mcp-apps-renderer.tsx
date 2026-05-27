@@ -1531,6 +1531,17 @@ export function MCPAppsRenderer({
         isLive?: () => boolean;
       } = {}
     ) => {
+      // SEP-1865 App-Provided Tools: centralized host-policy gate.
+      // Read through the ref (not a closure on effectiveMcpAppsCapabilities)
+      // for the same stale-closure reason as the widgetDisplayModeRequests
+      // guard at L2800. This is the single source of truth for the appTools
+      // policy so every entry point (inline oninitialized, modal oninitialized,
+      // renderer list_changed, modal list_changed) is covered without
+      // requiring per-call-site guards.
+      if (!mcpAppsCapabilitiesRef.current?.appTools) {
+        return;
+      }
+
       const surface = options.surface ?? "inline";
       const getIframeElement =
         options.getIframeElement ??
@@ -2533,7 +2544,7 @@ export function MCPAppsRenderer({
         // capability, fetch its tool list with the SDK bridge and register
         // it so the next chat POST can advertise no-execute AI SDK tools.
         // Feature-detect the capability; do not install rejecting stubs.
-        if (appCaps?.tools && mcpAppsCapabilitiesRef.current?.appTools) {
+        if (appCaps?.tools) {
           const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
           appToolsBridgeIdRef.current = bridgeId;
           setAppToolsBridgeIdState(bridgeId);
