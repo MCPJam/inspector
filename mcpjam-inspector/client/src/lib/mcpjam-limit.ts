@@ -7,8 +7,6 @@ const MCPJAM_LIMIT_CODES = new Set([
   MCPJAM_RATE_LIMIT_CODE,
   MCPJAM_USER_RATE_LIMIT_CODE,
 ]);
-const MCPJAM_RATE_LIMIT_CODE_PATTERN =
-  /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
 
 export type MCPJamLimitKind = "total" | "concurrency";
 
@@ -35,107 +33,63 @@ const tryParseJson = (value: string): unknown => {
   }
 };
 
-const collectJsonCandidates = (value: string): unknown[] => {
-  const candidates: unknown[] = [];
+/** Extract a JSON object embedded in a string. Backend errors come through
+ * the AI SDK transport wrapped like `Backend stream error: 429 {"code":...}`,
+ * so we accept either a full JSON string or one with a prefix. Returns null
+ * for anything that isn't a top-level JSON object — we deliberately don't
+ * dig further. */
+const extractEmbeddedJsonObject = (
+  value: string,
+): Record<string, unknown> | null => {
   const parsed = tryParseJson(value);
-  if (parsed !== null) {
-    candidates.push(parsed);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
   }
 
   const jsonStart = value.indexOf("{");
   if (jsonStart > 0) {
     const parsedSuffix = tryParseJson(value.slice(jsonStart));
-    if (parsedSuffix !== null) {
-      candidates.push(parsedSuffix);
+    if (
+      parsedSuffix &&
+      typeof parsedSuffix === "object" &&
+      !Array.isArray(parsedSuffix)
+    ) {
+      return parsedSuffix as Record<string, unknown>;
     }
   }
 
-  return candidates;
+  return null;
 };
 
-const collectStringValues = (
-  value: unknown,
-  strings: string[] = [],
-  seen = new WeakSet<object>(),
-): string[] => {
-  if (typeof value === "string") {
-    strings.push(value);
-    return strings;
-  }
-
-  if (!value || typeof value !== "object") {
-    return strings;
-  }
-
-  if (seen.has(value)) {
-    return strings;
-  }
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectStringValues(item, strings, seen);
-    }
-    return strings;
-  }
-
-  for (const item of Object.values(value)) {
-    collectStringValues(item, strings, seen);
-  }
-
-  return strings;
-};
-
-const findMCPJamRateLimitCode = (
-  value: unknown,
-  seen = new WeakSet<object>(),
-): string | undefined => {
-  if (!value || typeof value !== "object") return undefined;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-
-  if (
-    "code" in value &&
-    typeof (value as { code?: unknown }).code === "string" &&
-    MCPJAM_LIMIT_CODES.has((value as { code: string }).code)
-  ) {
-    return (value as { code: string }).code;
-  }
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    const code = findMCPJamRateLimitCode(item, seen);
-    if (code) return code;
-  }
-
-  return undefined;
-};
-
-const findMCPJamLimitKind = (
-  value: unknown,
-  seen = new WeakSet<object>(),
+const limitKindFromShape = (
+  shape: Record<string, unknown>,
 ): MCPJamLimitKind | undefined => {
-  if (!value || typeof value !== "object") return undefined;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-
-  const limitKind = getStringProperty(value, "limitKind");
-  if (limitKind === "total" || limitKind === "concurrency") {
-    return limitKind;
-  }
-
-  const values = Array.isArray(value) ? value : Object.values(value);
-  for (const item of values) {
-    const nestedLimitKind = findMCPJamLimitKind(item, seen);
-    if (nestedLimitKind) return nestedLimitKind;
-  }
-
-  return undefined;
+  const value = shape.limitKind;
+  return value === "total" || value === "concurrency" ? value : undefined;
 };
 
-const isMCPJamLimitString = (value: string): boolean =>
-  MCPJAM_MODEL_LIMIT_PATTERN.test(value) ||
-  MCPJAM_RATE_LIMIT_CODE_PATTERN.test(value);
+/** Expand `value` into the top-level JSON object(s) we're willing to
+ * inspect for a rate-limit signal. Recurses one extra level into a
+ * stringified `details` field so backend stream errors wrapped by
+ * `formatStreamError` as `{message, details: "<raw upstream JSON>"}`
+ * still surface the upstream `code`/`limitKind`. */
+const collectShapes = (
+  value: unknown,
+  shapes: Record<string, unknown>[],
+): void => {
+  let shape: Record<string, unknown> | null = null;
+  if (value && typeof value === "object") {
+    shape = value as Record<string, unknown>;
+  } else if (typeof value === "string" && value.length > 0) {
+    shape = extractEmbeddedJsonObject(value);
+  }
+  if (!shape) return;
+  shapes.push(shape);
+  if (typeof shape.details === "string") {
+    const inner = extractEmbeddedJsonObject(shape.details);
+    if (inner) shapes.push(inner);
+  }
+};
 
 export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // Single source of truth for the concurrency carve-out: a transient
@@ -143,43 +97,56 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // never the modal. Downstream consumers don't need to re-check.
   if (args.limitKind === "concurrency") return false;
 
-  if (args.code === MCPJAM_RATE_LIMIT_CODE) return true;
-  if (args.code === MCPJAM_USER_RATE_LIMIT_CODE) return true;
+  if (args.code && MCPJAM_LIMIT_CODES.has(args.code)) return true;
 
-  const valuesToInspect = [args.message, args.details];
-  for (const value of valuesToInspect) {
-    if (typeof value === "string") {
-      for (const parsed of collectJsonCandidates(value)) {
-        const code = findMCPJamRateLimitCode(parsed);
-        const limitKind = findMCPJamLimitKind(parsed);
-        const hasLimitString = collectStringValues(parsed).some((item) =>
-          isMCPJamLimitString(item),
-        );
-        if (
-          limitKind === "concurrency" &&
-          (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
-        ) {
-          return false;
-        }
-        if (code || hasLimitString) return true;
-      }
+  // Only inspect well-defined shapes the backend actually emits:
+  //   - `details` as an already-parsed object
+  //   - `details` as a raw JSON string (notifyMCPJamLimitErrorFromResponse keeps
+  //     the raw text when JSON.parse fails)
+  //   - `message` as a JSON-prefixed string (AI SDK wraps SSE error chunks
+  //     like `Backend stream error: 429 {"code":...}`)
+  //   - a stringified `shape.details` one level deeper — the inspector's
+  //     `formatStreamError` wraps non-auth backend errors as
+  //     `{message, details: "<raw response body>"}`, so the real rate-limit
+  //     code lives nested in `details`.
+  // We deliberately avoid walking arbitrary nested keys or substring-matching
+  // the bare `user_rate_limit` identifier — those caught unrelated error
+  // payloads that happened to mention the identifier in passing and opened
+  // the modal for guests on their first send.
+  const shapes: Array<Record<string, unknown>> = [];
+  collectShapes(args.details, shapes);
+  collectShapes(args.message, shapes);
 
-      if (isMCPJamLimitString(value)) return true;
-      continue;
+  // First pass: a concurrency carve-out declared anywhere in the
+  // inspected shapes is global — the wrapper produced by
+  // `formatStreamError` and its parsed `details` describe the same
+  // error, so neither a sibling shape's `message` field nor the raw
+  // message regex below should re-open the modal for a transient
+  // throttle.
+  for (const shape of shapes) {
+    if (limitKindFromShape(shape) === "concurrency") return false;
+  }
+
+  for (const shape of shapes) {
+    const code = typeof shape.code === "string" ? shape.code : undefined;
+    if (code && MCPJAM_LIMIT_CODES.has(code)) return true;
+
+    const errorMessage =
+      typeof shape.error === "string"
+        ? shape.error
+        : typeof shape.message === "string"
+          ? shape.message
+          : undefined;
+    if (errorMessage && MCPJAM_MODEL_LIMIT_PATTERN.test(errorMessage)) {
+      return true;
     }
+  }
 
-    const code = findMCPJamRateLimitCode(value);
-    const limitKind = findMCPJamLimitKind(value);
-    const hasLimitString = collectStringValues(value).some((item) =>
-      isMCPJamLimitString(item),
-    );
-    if (
-      limitKind === "concurrency" &&
-      (code === MCPJAM_USER_RATE_LIMIT_CODE || hasLimitString)
-    ) {
-      return false;
-    }
-    if (code || hasLimitString) return true;
+  if (
+    typeof args.message === "string" &&
+    MCPJAM_MODEL_LIMIT_PATTERN.test(args.message)
+  ) {
+    return true;
   }
 
   return false;
