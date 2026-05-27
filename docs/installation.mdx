@@ -147,6 +147,11 @@ npm start -- --config path/to/config.json --server myserver
   arguments to the underlying script.
 </Info>
 
+Every server in the config is saved to your active project and persists across
+refreshes. `--server` only chooses which one auto-connects on launch — the rest
+are saved but left idle. If you aren't signed in yet, you'll be sent to sign in
+first and returned here automatically once you're done.
+
 Example configuration file structure:
 
 ```json
