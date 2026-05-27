@@ -79,6 +79,7 @@ import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -1173,10 +1174,15 @@ export function ServersRedirectRoute() {
 }
 
 export function HomeRoute() {
-  const { activeOrganizationId } = useAppRouteContext();
+  const { activeOrganizationId, activeProjectId } = useAppRouteContext();
   const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
   if (!homeEnabled) return <ServersTabBody />;
-  return <HomeTab organizationId={activeOrganizationId ?? null} />;
+  return (
+    <HomeTab
+      organizationId={activeOrganizationId ?? null}
+      projectId={activeProjectId ?? null}
+    />
+  );
 }
 
 export default function App() {
@@ -1655,6 +1661,7 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
+  usePostHogOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
