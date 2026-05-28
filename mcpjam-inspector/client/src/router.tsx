@@ -3,7 +3,6 @@ import App, {
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
-  ChatV2Route,
   CiEvalsRoute,
   ConformanceRoute,
   EvalsRoute,
@@ -67,7 +66,6 @@ export function createAppRouter(): AppRouter {
         { path: "xaa-flow", element: <XAAFlowRoute /> },
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
-        { path: "chat-v2", element: <ChatV2Route /> },
         // `/chatboxes` — publish-surface tab (Publish / Sessions / Clusters)
         // for the chatbox bound 1:1 to the currently-selected host. The
         // Hosts hub at `/hosts` is the primary navigation entry; tests

@@ -202,12 +202,6 @@ const navigationSections: NavSection[] = [
         featureFlag: "registry-enabled",
       },
       {
-        title: "Chat",
-        url: "/chat-v2",
-        icon: MessageCircle,
-        hiddenByFlag: "playground-tab-enabled",
-      },
-      {
         title: "Chatboxes",
         url: "/chatboxes",
         icon: Box,
@@ -580,7 +574,6 @@ export function MCPSidebar({
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
-  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
@@ -649,7 +642,6 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
-      "playground-tab-enabled": playgroundTabEnabled === true,
       "home-page-enabled": homePageEnabled === true && isAuthenticated,
       xaa: xaaEnabled === true,
     }),
@@ -659,7 +651,6 @@ export function MCPSidebar({
       registryEnabled,
       conformanceEnabled,
       hostsEnabled,
-      playgroundTabEnabled,
       homePageEnabled,
       xaaEnabled,
       isAuthenticated,

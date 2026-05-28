@@ -582,9 +582,9 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         | ExecuteToolInspectorCommand
         | RenderToolResultInspectorCommand
     ) => {
-      // Accept both `app-builder` (legacy) and `playground` (transition). The
-      // `playground-tab-enabled` flag controls which surface actually mounts,
-      // so at most one consumer is alive at a time — no double-handler race.
+      // Accept both `app-builder` (legacy) and `playground` (transition). Only
+      // the Playground surface mounts now, so at most one consumer is alive at
+      // a time — no double-handler race.
       if (
         command.payload.surface !== "app-builder" &&
         command.payload.surface !== "playground"

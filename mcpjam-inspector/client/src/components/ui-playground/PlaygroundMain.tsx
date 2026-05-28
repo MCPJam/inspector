@@ -261,8 +261,7 @@ interface PlaygroundMainProps {
    * When set, Playground consumes the handoff once `isSessionBootstrapComplete`
    * flips true: applies executionConfig (model, system prompt, temperature,
    * tool-approval), seeds the thread, and calls `onEvalChatHandoffConsumed`.
-   * Mirrors the ChatTabV2 behavior so eval "Continue in chat" lands here when
-   * `playground-tab-enabled` is on.
+   * Mirrors the ChatTabV2 behavior so eval "Continue in chat" lands here.
    */
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
@@ -1218,9 +1217,8 @@ export function PlaygroundMain({
     setSelectedModelIds,
   ]);
 
-  // Eval "Continue in chat" handoff. Mirrors ChatTabV2:1283-1340 so that when
-  // `playground-tab-enabled` is on (and `#chat-v2` redirects to `#playground`)
-  // the handoff still seeds a chat with the eval's model + messages.
+  // Eval "Continue in chat" handoff. Mirrors ChatTabV2:1283-1340 so that the
+  // handoff seeds a chat in Playground with the eval's model + messages.
   const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!evalChatHandoff) return;
