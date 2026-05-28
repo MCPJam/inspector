@@ -748,6 +748,31 @@ export function useServerState({
       ),
     [effectiveServers]
   );
+
+  // What chat-input's "Servers" popover (and any other "show me everything
+  // we can talk to" surface) should iterate: the project catalog PLUS any
+  // runtime-connected/connecting servers that aren't in it yet. The catalog
+  // (effectiveServers) is the Convex `project_servers` query in hosted mode
+  // and can lag mcpjam-backend's `MCPClientManager` — a server is genuinely
+  // connected (Tools pane and tool calls work against it) but its catalog
+  // row hasn't synced, so the popover used to hide it. We only merge
+  // runtime entries that are currently connected/connecting; disconnected
+  // runtime leftovers from a previous session/project never surface here.
+  const displayServerConfigs = useMemo(() => {
+    const result: Record<string, ServerWithName> = { ...effectiveServers };
+    for (const [name, runtime] of Object.entries(appState.servers)) {
+      if (result[name]) continue;
+      if (
+        runtime.connectionStatus !== "connected" &&
+        runtime.connectionStatus !== "connecting"
+      ) {
+        continue;
+      }
+      result[name] = runtime;
+    }
+    return result;
+  }, [effectiveServers, appState.servers]);
+
   const latestEffectiveServersRef = useRef(effectiveServers);
 
   useEffect(() => {
@@ -3934,6 +3959,7 @@ export function useServerState({
     activeProject,
     effectiveServers,
     projectServers: effectiveServers,
+    displayServerConfigs,
     connectedOrConnectingServerConfigs,
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,

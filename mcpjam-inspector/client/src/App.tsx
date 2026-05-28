@@ -937,6 +937,7 @@ export function ChatV2Route() {
     activeHost,
     activeHostId,
     convexProjectId,
+    displayServerConfigs,
     evalChatHandoff,
     handleConnect,
     handleReconnect,
@@ -969,7 +970,7 @@ export function ChatV2Route() {
       <ClientStyledChatTabV2
         connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
         selectedServerNames={appState.selectedMultipleServers}
-        allServerConfigs={projectServers}
+        allServerConfigs={displayServerConfigs}
         onServerToggle={toggleServerSelection}
         onReconnectServer={handleReconnect}
         onAddServer={handleConnect}
@@ -1578,6 +1579,7 @@ export default function App() {
     isLoadingRemoteProjects,
     areServersHydrated,
     projectServers,
+    displayServerConfigs,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     selectedServerEntry,
@@ -2759,7 +2761,7 @@ export default function App() {
     if (activeTab !== "app-builder" && activeTab !== "playground")
       return undefined;
     return {
-      serverConfigs: projectServers,
+      serverConfigs: displayServerConfigs,
       selectedServer: appState.selectedServer,
       selectedMultipleServers: appState.selectedMultipleServers,
       // Playground supports multi-server selection — the user can toggle
@@ -2777,7 +2779,7 @@ export default function App() {
     };
   }, [
     activeTab,
-    projectServers,
+    displayServerConfigs,
     appState.selectedServer,
     appState.selectedMultipleServers,
     setSelectedServer,
@@ -2895,6 +2897,10 @@ export default function App() {
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
+          // Stays on projectServers (NOT displayServerConfigs): the header
+          // picker also drives the OAuth Debugger / XAA tabs, and tests
+          // explicitly guard against surfacing runtime-only entries there
+          // (cross-project / cross-org leak prevention).
           serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
@@ -2954,6 +2960,7 @@ export default function App() {
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
     consumeCheckoutIntent,
+    displayServerConfigs,
     convexProjectId,
     defaultHubRoute,
     ensureServersReady,
