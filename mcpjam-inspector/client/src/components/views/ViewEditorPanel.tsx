@@ -269,7 +269,6 @@ export function ViewEditorPanel({
         mode="edit"
         showToolbar={true}
         showModeToggle={false}
-        editSurface="codemirror"
         wrapLongLinesInEdit={true}
         allowMaximize={true}
         height="100%"

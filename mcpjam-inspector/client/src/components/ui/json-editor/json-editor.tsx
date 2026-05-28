@@ -56,7 +56,7 @@ export function JsonEditor({
   expandJsonStrings = false,
   autoFormatOnEdit = true,
   wrapLongLinesInEdit = false,
-  editSurface = "legacy",
+  editSurface = "codemirror",
   wrapLongLinesInView = true,
   showLineNumbers = true,
   toolbarLeftContent,

@@ -111,6 +111,7 @@ describe("JsonEditor", () => {
           rawContent='{"text":"long long long long long long"}'
           mode="edit"
           showToolbar={false}
+          editSurface="legacy"
           wrapLongLinesInEdit={true}
         />,
       );
@@ -126,6 +127,7 @@ describe("JsonEditor", () => {
           rawContent='{"text":"long long long long long long"}'
           mode="edit"
           showToolbar={false}
+          editSurface="legacy"
         />,
       );
 
@@ -133,14 +135,13 @@ describe("JsonEditor", () => {
       expect(textarea.getAttribute("wrap")).toBe("off");
     });
 
-    it("can render the CodeMirror edit surface for wrapped editing", () => {
+    it("uses the CodeMirror edit surface by default", () => {
       const { container } = render(
         <JsonEditor
           height="100%"
           rawContent='{"text":"long long long long long long"}'
           mode="edit"
           showToolbar={false}
-          editSurface="codemirror"
           wrapLongLinesInEdit={true}
         />,
       );
