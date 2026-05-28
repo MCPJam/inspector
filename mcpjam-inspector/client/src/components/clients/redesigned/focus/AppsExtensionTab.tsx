@@ -811,14 +811,31 @@ function setCompatRuntimeOnDraft(
   ) {
     compatBlock.openaiAppsOverrides = next.openaiAppsOverrides;
   }
-  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {
-    ...prevApps,
-    compatRuntime:
-      Object.keys(compatBlock).length > 0 ? compatBlock : undefined,
-  };
+  // Rebuild apps without the previous compatRuntime so an empty new block
+  // doesn't leave a `compatRuntime: undefined` key behind — keeps the
+  // envelope-empty check honest so toggle-on-then-off round-trips to the
+  // saved state (which is `mcpProfile: undefined` for fresh hosts).
+  const { compatRuntime: _prevCompat, ...prevAppsWithoutCompat } = prevApps;
+  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> =
+    Object.keys(compatBlock).length > 0
+      ? { ...prevAppsWithoutCompat, compatRuntime: compatBlock }
+      : prevAppsWithoutCompat;
+  const hasApps = Object.keys(nextApps).length > 0;
+  const hasInitialize =
+    prevProfile.initialize !== undefined &&
+    (prevProfile.initialize.clientInfo !== undefined ||
+      (prevProfile.initialize.supportedProtocolVersions &&
+        prevProfile.initialize.supportedProtocolVersions.length > 0));
+  const profileEmpty = !hasApps && !hasInitialize && !prevProfile.extensions;
+  if (profileEmpty) {
+    return { ...prev, mcpProfile: undefined };
+  }
   return {
     ...prev,
-    mcpProfile: { ...prevProfile, apps: nextApps },
+    mcpProfile: {
+      ...prevProfile,
+      apps: hasApps ? nextApps : undefined,
+    },
   };
 }
 
@@ -895,14 +912,20 @@ function OpenaiAppsCapabilityMatrix({
   };
 
   const setInjected = (next: boolean) => {
-    onDraftChange((prev) =>
-      setCompatRuntimeOnDraft(prev, {
-        openaiApps: next,
+    onDraftChange((prev) => {
+      // If the new value matches the host preset, write `undefined` so
+      // the override is cleared entirely — otherwise an explicit literal
+      // (e.g. `openaiApps: false` on a preset-off host) leaves the
+      // envelope populated and the dirty check stays lit even though the
+      // effective state matches the saved baseline.
+      const matchesPreset = next === presetInjected;
+      return setCompatRuntimeOnDraft(prev, {
+        openaiApps: matchesPreset ? undefined : next,
         // Clear per-method overrides on master toggle off — they're
         // meaningless without injection.
         openaiAppsOverrides: next ? overridesRecord : undefined,
-      })
-    );
+      });
+    });
   };
 
   const setMethodOverride = (
@@ -931,8 +954,11 @@ function OpenaiAppsCapabilityMatrix({
         return k === "requestDisplayMode" ? v === "none" : v !== true;
       });
       if (surfaceEmpty) {
+        // Match preset → clear; only write an explicit `false` when the
+        // preset is "on" (real override). Otherwise an empty-surface
+        // round-trip on a preset-off host would leave a dirty envelope.
         return setCompatRuntimeOnDraft(prev, {
-          openaiApps: false,
+          openaiApps: presetInjected ? false : undefined,
           openaiAppsOverrides: undefined,
         });
       }
@@ -972,35 +998,8 @@ function OpenaiAppsCapabilityMatrix({
     });
   };
 
-  // Summary line for the collapsed disclosure. Count methods whose
-  // effective value is "on" — booleans true, requestDisplayMode anything
-  // other than "none".
-  let enabledCount = 0;
-  for (const { key } of OPENAI_APPS_METHOD_LABELS) {
-    const value = { ...presetCapabilities, ...(overridesRecord ?? {}) }[key];
-    if (key === "requestDisplayMode") {
-      if (value !== "none") enabledCount += 1;
-    } else if (value === true) {
-      enabledCount += 1;
-    }
-  }
-  // Subline: live count of enabled methods when injecting. When off, the
-  // matrix is an empty build-from-scratch surface, so the subline invites
-  // the user to expand and switch on the methods they want.
-  const sublineText = injected
-    ? `${enabledCount} of ${OPENAI_APPS_METHOD_LABELS.length} methods`
-    : `Off · expand to enable any of ${OPENAI_APPS_METHOD_LABELS.length} methods`;
-
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Single header row: left half is the disclosure (label + subline +
-          chevron), right half is the master Switch in its own hit zone.
-          A hairline `border-l` between them telegraphs that they're
-          distinct controls — clicking near the Switch can't open the
-          disclosure because the Switch lives outside the disclosure
-          button entirely. The disclosure stays expandable even when
-          injection is off, and its rows stay interactive — switching one
-          on injects the shim with just that method. */}
       <div className="flex items-stretch border-b border-border">
         <button
           type="button"
@@ -1012,9 +1011,6 @@ function OpenaiAppsCapabilityMatrix({
           <div className="flex flex-col gap-0.5">
             <span className="text-[12px] font-medium">
               Inject <span className="font-mono">window.openai</span>
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              {sublineText}
             </span>
           </div>
           <ChevronDown
@@ -1039,13 +1035,6 @@ function OpenaiAppsCapabilityMatrix({
           the shim with ONLY that method (build the subset from scratch). */}
       {methodsOpen ? (
         <div id="apps-extension-openai-methods" className="flex flex-col">
-          {!injected ? (
-            <div className="border-b border-border/50 bg-muted/30 px-3.5 py-2 text-[11px] text-muted-foreground">
-              Switch on the methods you want — injecting{" "}
-              <span className="font-mono">window.openai</span> turns on
-              automatically.
-            </div>
-          ) : null}
           {OPENAI_APPS_METHOD_LABELS.map(({ key, label }) => {
             // Off → empty surface: show every method off regardless of the
             // preset so the user builds their subset up from nothing.
@@ -1500,7 +1489,14 @@ function McpAppsCapabilityMatrix({
       ? { ...nextCaps.extensions }
       : {};
     delete exts[MCP_UI_EXTENSION_ID];
-    nextCaps.extensions = exts;
+    // Drop the extensions container if it's now empty — leaving an
+    // empty `extensions: {}` on a clientCapabilities that originally had
+    // no extensions key reads as a diff to the deep-equal dirty check.
+    if (Object.keys(exts).length > 0) {
+      nextCaps.extensions = exts;
+    } else {
+      delete nextCaps.extensions;
+    }
     let nextDraft: HostConfigInputV2 = { ...prev, clientCapabilities: nextCaps };
     nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
     if (nextDraft.hostCapabilitiesOverride !== undefined) {
@@ -1686,20 +1682,8 @@ function McpAppsCapabilityMatrix({
     });
   };
 
-  // No subline when advertised (the rows speak for themselves); when off,
-  // invite the user to expand the now-interactive build-from-scratch list.
-  const sublineText = advertised
-    ? null
-    : "Off · expand to enable capabilities";
-
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Single header row: left half is the disclosure (label + subline
-          + chevron), right half is the master Switch in its own hit zone.
-          Mirrors the window.openai section above. The disclosure stays
-          expandable even when support isn't advertised, and its rows stay
-          interactive — switching one on advertises support with just that
-          dimension. */}
       <div className="flex items-stretch border-b border-border">
         <button
           type="button"
@@ -1710,11 +1694,6 @@ function McpAppsCapabilityMatrix({
         >
           <div className="flex flex-col gap-0.5">
             <span className="text-[12px] font-medium">MCP App support</span>
-            {sublineText ? (
-              <span className="text-[11px] text-muted-foreground">
-                {sublineText}
-              </span>
-            ) : null}
           </div>
           <ChevronDown
             className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
@@ -1734,12 +1713,6 @@ function McpAppsCapabilityMatrix({
 
       {dimensionsOpen ? (
         <div id="apps-extension-mcp-apps-dimensions">
-          {!advertised ? (
-            <div className="border-b border-border/50 bg-muted/30 px-3.5 py-2 text-[11px] text-muted-foreground">
-              Switch on the capabilities you want — MCP App support turns on
-              automatically.
-            </div>
-          ) : null}
           {/* availableDisplayModes — multi-checkbox cluster. */}
           <div
             data-testid="mcp-apps-dimension-availableDisplayModes"
