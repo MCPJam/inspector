@@ -116,7 +116,7 @@ import {
   extractHostTheme,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
-import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
+import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,

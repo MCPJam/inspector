@@ -944,7 +944,7 @@ export function PlaygroundRoute() {
     projectServers,
     remoteFirstRunOnboardingShown,
     selectedMCPConfig,
-    setAppBuilderOnboarding,
+    setPlaygroundOnboarding,
     setEvalChatHandoff,
     workOsUser,
   } = useAppRouteContext();
@@ -965,7 +965,7 @@ export function PlaygroundRoute() {
       onConnect={handleConnect}
       onSaveHostContext={handleUpdateHostContext}
       ensureServersReady={ensureServersReady}
-      onOnboardingChange={setAppBuilderOnboarding}
+      onOnboardingChange={setPlaygroundOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
       activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
@@ -1084,7 +1084,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
-  const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
+  const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const billingDeepLinkNavRef = useRef(false);
@@ -2895,7 +2895,7 @@ export default function App() {
     saveServerConfigWithoutConnecting,
     selectedMCPConfig,
     selectedServerEntry,
-    setAppBuilderOnboarding,
+    setPlaygroundOnboarding,
     setActiveHostId,
     setEvalChatHandoff,
     setHostsTabSelectedHostId,
@@ -2911,7 +2911,7 @@ export default function App() {
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
-        hidden={appBuilderOnboarding}
+        hidden={playgroundOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
         projects={projects}
@@ -2934,7 +2934,7 @@ export default function App() {
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
-          hidden={appBuilderOnboarding}
+          hidden={playgroundOnboarding}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />

@@ -1571,7 +1571,7 @@ describe("PlaygroundMain", () => {
         />,
       );
 
-      const hint = screen.getByTestId("app-builder-send-nux-hint");
+      const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
       expect(hint).toHaveTextContent("Try this prompt with a demo MCP server");
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
@@ -1582,7 +1582,7 @@ describe("PlaygroundMain", () => {
       expect(hint.querySelector("svg")).toBeTruthy();
     });
 
-    it("keeps App Builder send NUX hint visible after server connects", () => {
+    it("keeps Playground send NUX hint visible after server connects", () => {
       mockSharedAppState.servers["test-server"] = {
         connectionStatus: "connected",
       };
@@ -1596,7 +1596,7 @@ describe("PlaygroundMain", () => {
         />,
       );
 
-      expect(screen.getByTestId("app-builder-send-nux-hint")).toHaveTextContent(
+      expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
         "Try this prompt with a demo MCP server",
       );
     });

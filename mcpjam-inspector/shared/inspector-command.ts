@@ -76,7 +76,7 @@ export interface SetAppContextInspectorCommand {
 }
 
 export interface ToolInvocationPayload {
-  surface: "tools" | "app-builder" | "playground";
+  surface: "tools" | "playground";
   serverName?: string;
   toolName: string;
   parameters?: Record<string, unknown>;
@@ -100,7 +100,7 @@ export interface RenderToolResultInspectorCommand {
   id: string;
   type: "renderToolResult";
   payload: {
-    surface: "tools" | "app-builder" | "playground";
+    surface: "tools" | "playground";
     serverName?: string;
     toolName: string;
     parameters?: Record<string, unknown>;
@@ -112,7 +112,7 @@ export interface RenderToolResultInspectorCommand {
 export interface SnapshotAppInspectorCommand {
   id: string;
   type: "snapshotApp";
-  payload: { surface?: "app-builder" | "playground" };
+  payload: { surface?: "playground" };
   timeoutMs?: number;
 }
 

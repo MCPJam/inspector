@@ -19,13 +19,13 @@ export type {
 } from "./useToolExecution";
 export { useToolExecution } from "./useToolExecution";
 export type {
-  AppBuilderLoadingState,
-  UseAppBuilderStateOptions,
-  UseAppBuilderStateReturn,
-} from "./use-app-builder-state";
+  PlaygroundLoadingState,
+  UsePlaygroundStateOptions,
+  UsePlaygroundStateReturn,
+} from "./use-playground-state";
 export {
-  APP_BUILDER_FIRST_RUN_PROMPT,
-  AppBuilderStateProvider,
-  useAppBuilderState,
-  useAppBuilderStateContext,
-} from "./use-app-builder-state";
+  PLAYGROUND_FIRST_RUN_PROMPT,
+  PlaygroundStateProvider,
+  usePlaygroundState,
+  usePlaygroundStateContext,
+} from "./use-playground-state";

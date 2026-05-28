@@ -3,9 +3,9 @@ import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import {
-  AppBuilderStateProvider,
-  useAppBuilderState,
-} from "@/components/ui-playground/hooks/use-app-builder-state";
+  PlaygroundStateProvider,
+  usePlaygroundState,
+} from "@/components/ui-playground/hooks/use-playground-state";
 import {
   ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
@@ -93,8 +93,8 @@ interface PlaygroundTabProps {
  * in v2. Chat-v2 also keeps these local, and matching that behavior keeps the
  * mental model simple ("rails are workspace chrome, not part of a view").
  *
- * Owns the single `useAppBuilderState()` call for the surface; the
- * `AppBuilderStateProvider` exposes it to both the left rail's Tools tab and
+ * Owns the single `usePlaygroundState()` call for the surface; the
+ * `PlaygroundStateProvider` exposes it to both the left rail's Tools tab and
  * the center pane.
  */
 export function PlaygroundTab(props: PlaygroundTabProps) {
@@ -186,7 +186,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     requiredServerNames: effectiveHostRequiredNames,
   });
 
-  const appBuilderState = useAppBuilderState({
+  const playgroundState = usePlaygroundState({
     activeProjectId: props.activeProjectId,
     serverConfig: props.serverConfig,
     serverName: props.serverName,
@@ -201,7 +201,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     onSaveHostContext: props.onSaveHostContext,
     ensureServersReady: props.ensureServersReady,
     onOnboardingChange: props.onOnboardingChange,
-    surface: "playground",
     // Playground supports multi-server tool selection — pass the active
     // multi-server set through so the docked tools pane aggregates across
     // all of them and execution routes to the right server per tool.
@@ -221,7 +220,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
 
   return (
-    <AppBuilderStateProvider value={appBuilderState}>
+    <PlaygroundStateProvider value={playgroundState}>
       <ActiveMcpProfileProvider value={activeMcpProfile}>
         <ActiveHostCapsResolverScope
           // Preview-mode (explicit picker selection) wins; otherwise fall
@@ -356,6 +355,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           </ChatboxHostStyleProvider>
         </ActiveHostCapsResolverScope>
       </ActiveMcpProfileProvider>
-    </AppBuilderStateProvider>
+    </PlaygroundStateProvider>
   );
 }

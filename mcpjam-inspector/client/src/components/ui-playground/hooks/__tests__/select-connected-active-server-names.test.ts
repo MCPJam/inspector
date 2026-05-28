@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { selectConnectedActiveServerNames } from "../use-app-builder-state";
+import { selectConnectedActiveServerNames } from "../use-playground-state";
 
 function server(
   name: string,
