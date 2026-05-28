@@ -173,8 +173,8 @@ describe("NavMain", () => {
             icon: FakeIcon,
           },
           {
-            title: "Chat",
-            url: "#chat-v2",
+            title: "Chatboxes",
+            url: "#chatboxes",
             icon: FakeIcon,
           },
         ]}
@@ -183,7 +183,7 @@ describe("NavMain", () => {
     );
 
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
-    expect(screen.queryByTestId("learn-more-chat-v2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("learn-more-chatboxes")).not.toBeInTheDocument();
   });
 
   it("suppresses the built-in collapsed tooltip when learn more is handling it", () => {
