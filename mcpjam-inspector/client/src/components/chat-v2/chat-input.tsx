@@ -3,9 +3,14 @@ import {
   useState,
   useCallback,
   useLayoutEffect,
-  type ChangeEvent,
 } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type {
+  ChangeEvent,
+  ClipboardEvent,
+  DragEvent,
+  FormEvent,
+  KeyboardEvent,
+} from "react";
 import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/chat-utils";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -79,6 +84,62 @@ import {
   getChatboxHostFamily,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
+
+type AttachmentInputSource = "picker" | "paste" | "drop";
+
+const FILE_TRANSFER_TYPE = "Files";
+const DROP_OVERLAY_TEXT = "Drop image or file to attach";
+
+function hasFileTransfer(types: DataTransfer["types"] | readonly string[]) {
+  return Array.from(types).includes(FILE_TRANSFER_TYPE);
+}
+
+function getExtensionForMediaType(mediaType: string): string {
+  const extensionByMediaType: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+    "application/json": "json",
+    "text/plain": "txt",
+    "text/csv": "csv",
+  };
+
+  return extensionByMediaType[mediaType] ?? "bin";
+}
+
+function normalizeIncomingFile(
+  file: File,
+  source: AttachmentInputSource,
+  index: number,
+): File {
+  if (source !== "paste" || file.name.trim().length > 0) {
+    return file;
+  }
+
+  const isImage = file.type.startsWith("image/");
+  const prefix = isImage ? "pasted-image" : "pasted-file";
+  const extension = getExtensionForMediaType(file.type);
+
+  return new File([file], `${prefix}-${index + 1}.${extension}`, {
+    type: file.type,
+    lastModified: file.lastModified,
+  });
+}
+
+function getFilesFromClipboardData(dataTransfer: DataTransfer): File[] {
+  const filesFromItems = Array.from(dataTransfer.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+
+  if (filesFromItems.length > 0) {
+    return filesFromItems;
+  }
+
+  return Array.from(dataTransfer.files);
+}
 
 interface ChatInputProps {
   value: string;
@@ -240,6 +301,7 @@ export function ChatInput({
     string | null
   >(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [fileDragDepth, setFileDragDepth] = useState(0);
   const posthog = usePostHog();
   const [plusPopoverOpen, setPlusPopoverOpen] = useState(false);
   const handlePlusPopoverOpenChange = (nextOpen: boolean) => {
@@ -303,18 +365,25 @@ export function ChatInput({
     onChangeMcpPromptResults(mcpPromptResults.filter((_, i) => i !== index));
   };
 
+  const canHandleFileTransfers = Boolean(onChangeFileAttachments);
+  const canAttachFiles = canHandleFileTransfers && !disabled;
+  const isFileDragActive = fileDragDepth > 0;
+
   // File attachment handlers
-  const handleFileInputChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files;
-      if (!files || files.length === 0 || !onChangeFileAttachments) return;
+  const addFileAttachments = useCallback(
+    (files: Iterable<File>, source: AttachmentInputSource) => {
+      if (!onChangeFileAttachments) return false;
+
+      const incomingFiles = Array.from(files).map((file, index) =>
+        normalizeIncomingFile(file, source, index),
+      );
+      if (incomingFiles.length === 0) return false;
 
       setFileError(null);
       const newAttachments: FileAttachment[] = [];
       const errors: string[] = [];
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      for (const file of incomingFiles) {
         const validation = validateFile(file);
 
         if (validation.valid) {
@@ -334,10 +403,92 @@ export function ChatInput({
         setTimeout(() => setFileError(null), 5000);
       }
 
+      return true;
+    },
+    [fileAttachments, onChangeFileAttachments],
+  );
+
+  const handleFileInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (!files || files.length === 0) return;
+
+      addFileAttachments(Array.from(files), "picker");
+
       // Reset input so the same file can be selected again
       event.target.value = "";
     },
-    [fileAttachments, onChangeFileAttachments],
+    [addFileAttachments],
+  );
+
+  const handlePaste = useCallback(
+    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      if (!canAttachFiles) return;
+
+      const files = getFilesFromClipboardData(event.clipboardData);
+      if (files.length === 0) return;
+
+      event.preventDefault();
+      addFileAttachments(files, "paste");
+      textareaRef.current?.focus();
+    },
+    [addFileAttachments, canAttachFiles],
+  );
+
+  const handleDragEnter = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!canHandleFileTransfers || !hasFileTransfer(event.dataTransfer.types))
+        return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (disabled) return;
+
+      setFileDragDepth((depth) => depth + 1);
+    },
+    [canHandleFileTransfers, disabled],
+  );
+
+  const handleDragOver = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!canHandleFileTransfers || !hasFileTransfer(event.dataTransfer.types))
+        return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = disabled ? "none" : "copy";
+    },
+    [canHandleFileTransfers, disabled],
+  );
+
+  const handleDragLeave = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!canHandleFileTransfers || !hasFileTransfer(event.dataTransfer.types))
+        return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (disabled) return;
+
+      setFileDragDepth((depth) => Math.max(0, depth - 1));
+    },
+    [canHandleFileTransfers, disabled],
+  );
+
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!canHandleFileTransfers || !hasFileTransfer(event.dataTransfer.types))
+        return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setFileDragDepth(0);
+      if (disabled) return;
+
+      addFileAttachments(Array.from(event.dataTransfer.files), "drop");
+      textareaRef.current?.focus();
+    },
+    [addFileAttachments, canHandleFileTransfers, disabled],
   );
 
   const removeFileAttachment = useCallback(
@@ -511,11 +662,28 @@ export function ChatInput({
       >
         <div
           ref={containerRef}
+          data-testid="chat-input-composer"
           className={cn(
             "relative flex w-full flex-col px-2 pt-2 pb-2",
+            isFileDragActive &&
+              "ring-2 ring-primary/45 ring-offset-2 ring-offset-background",
             composerClasses,
           )}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
+          {isFileDragActive && (
+            <div
+              className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border-2 border-dashed border-primary/60 bg-background/85 px-4 text-center text-sm font-medium text-foreground shadow-inner backdrop-blur-sm"
+              role="status"
+              aria-live="polite"
+            >
+              {DROP_OVERLAY_TEXT}
+            </div>
+          )}
+
           <PromptsPopover
             anchor={caret}
             selectedServers={selectedServers}
@@ -608,6 +776,7 @@ export function ChatInput({
               onChange(e.target.value);
               setCaretIndex(e.target.selectionStart);
             }}
+            onPaste={handlePaste}
             onKeyDown={handleKeyDown}
             onKeyUp={(e) => setCaretIndex(e.currentTarget.selectionStart)}
             placeholder={placeholder}
