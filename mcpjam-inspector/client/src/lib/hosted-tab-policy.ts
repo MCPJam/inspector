@@ -13,7 +13,6 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "registry",
   "chat-v2",
   "chatboxes",
-  "app-builder",
   "playground",
   "views",
   "client-config",

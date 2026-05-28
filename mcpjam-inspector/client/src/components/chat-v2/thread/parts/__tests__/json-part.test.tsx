@@ -50,7 +50,7 @@ describe("JsonPart", () => {
     );
   });
 
-  it("allows app-builder style json parts to auto-size", () => {
+  it("allows json parts to auto-size", () => {
     render(<JsonPart label="Result" value={{ ok: true }} autoHeight />);
 
     expect(screen.getByTestId("json-editor")).toHaveAttribute(

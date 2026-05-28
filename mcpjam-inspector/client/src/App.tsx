@@ -14,7 +14,6 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
-import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -39,8 +38,8 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
-import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
+import { HomeTab } from "./components/HomeTab";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -79,7 +78,6 @@ import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
-import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -184,10 +182,10 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
-import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   buildClientsPath,
   buildOrganizationPath,
@@ -215,7 +213,7 @@ import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import type {
   NavigateInspectorCommand,
-  OpenAppBuilderInspectorCommand,
+  OpenPlaygroundInspectorCommand,
   SelectServerInspectorCommand,
 } from "@/shared/inspector-command.js";
 
@@ -442,8 +440,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatV2Route />;
     case "chatboxes":
       return <ChatboxesRoute />;
-    case "app-builder":
-      return <AppBuilderRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "views":
@@ -984,7 +980,6 @@ export function ChatV2Route() {
                 temperature: activeHost.temperature,
                 requireToolApproval: activeHost.requireToolApproval,
                 progressiveToolDiscovery: activeHost.progressiveToolDiscovery,
-                respectToolVisibility: activeHost.respectToolVisibility,
               }
             : undefined
         }
@@ -1002,47 +997,6 @@ export function ChatV2Route() {
 
 export function TracingRoute() {
   return <TracingTab />;
-}
-
-export function AppBuilderRoute() {
-  const {
-    selectedMCPConfig,
-    appState,
-    projectServers,
-    activeProjectId,
-    workOsUser,
-    isWorkOsLoading,
-    isAuthenticated,
-    activeProject,
-    remoteFirstRunOnboardingShown,
-    isSelectedServerSyncing,
-    handleConnect,
-    handleUpdateHostContext,
-    ensureServersReady,
-    setAppBuilderOnboarding,
-    playgroundServerSelectorProps,
-  } = useAppRouteContext();
-
-  return (
-    <AppBuilderTab
-      serverConfig={selectedMCPConfig}
-      serverName={appState.selectedServer}
-      servers={projectServers}
-      activeProjectId={activeProjectId}
-      isSignedInWithWorkOs={!!workOsUser}
-      isWorkOsAuthLoading={isWorkOsLoading}
-      isConvexAuthenticated={isAuthenticated}
-      isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
-      hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
-      isServerSyncing={isSelectedServerSyncing}
-      onConnect={handleConnect}
-      onSaveHostContext={handleUpdateHostContext}
-      ensureServersReady={ensureServersReady}
-      onOnboardingChange={setAppBuilderOnboarding}
-      playgroundServerSelectorProps={playgroundServerSelectorProps}
-      enableMultiModelChat
-    />
-  );
 }
 
 export function PlaygroundRoute() {
@@ -1226,6 +1180,13 @@ export default function App() {
   const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+  // Rollout kill-switch for the DRAFT-2026-v1 stateless transport. Gates
+  // both UI controls (ProtocolTab, ServerDetailModal, EditServerFormContent,
+  // AdvancedConnectionSettingsSection) AND request stamping — a persisted
+  // override from a prior flag-on session must NOT bypass the switch
+  // (otherwise hosted validate/tools/resources/prompts flows still
+  // activate the stateless transport).
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     getAccessToken,
     signIn,
@@ -1661,7 +1622,6 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
-  usePostHogOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
@@ -1795,7 +1755,7 @@ export default function App() {
   // Auto-select a connected server when navigating to tabs that need one
   useEffect(() => {
     const needsServer =
-      activeTab === "app-builder" ||
+      activeTab === "playground" ||
       activeTab === "tools" ||
       activeTab === "resources" ||
       activeTab === "prompts" ||
@@ -1835,12 +1795,6 @@ export default function App() {
     getEffectiveProjectClientCapabilities(activeProject?.clientConfig) ??
     getDefaultClientCapabilities()) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
-  const projectServerConfigDto = useQuery(
-    "projectServerConfig:getConfig" as never,
-    convexProjectId ? ({ projectId: convexProjectId } as never) : "skip"
-  ) as ProjectServerConfigDto | null | undefined;
-  const isProjectServerConfigLoading =
-    Boolean(convexProjectId) && projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
@@ -2053,16 +2007,12 @@ export default function App() {
         ? rawHostPin
         : undefined;
 
-    const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
-      {};
+    const mcpProtocolVersionsByServerId: Record<
+      string,
+      McpProtocolVersion
+    > = {};
     for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
-      // Project-server config is the control-plane source for per-server
-      // protocol overrides. Host config mirrors it through Convex fan-out,
-      // but hosted API calls should not fall back to the host default while
-      // that reactive host snapshot is still catching up.
       const rawServerOverride =
-        projectServerConfigDto?.overrides?.[serverId]
-          ?.mcpProtocolVersionOverride ??
         activeHost?.serverConnectionOverrides?.[serverId]
           ?.mcpProtocolVersionOverride;
       const serverOverride: McpProtocolVersion | undefined =
@@ -2075,6 +2025,15 @@ export default function App() {
         hostPin
       );
       if (!effective) continue;
+      // Persisted stateless pins (DRAFT-2026-v1) MUST NOT bypass the
+      // rollout flag. The UI gates only control authoring; without this
+      // gate, a server config saved while the flag was on (or set by an
+      // admin) would still route every hosted call through the stateless
+      // preview after the flag is flipped off. Stateful pins like
+      // "2025-11-25" are unaffected.
+      if (!statelessMcpEnabled && isStatelessProtocolVersion(effective)) {
+        continue;
+      }
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
 
@@ -2090,7 +2049,7 @@ export default function App() {
     activeHost?.serverConnectionOverrides,
     activeMcpProfile,
     hostedServerIdsByName,
-    projectServerConfigDto?.overrides,
+    statelessMcpEnabled,
   ]);
   useApiContext({
     projectId: convexProjectId,
@@ -2100,8 +2059,7 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
-    clientConfigSyncPending:
-      isClientConfigSyncPending || isProjectServerConfigLoading,
+    clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
     // `ApiContext.isAuthenticated` means "WorkOS user is signed in",
@@ -2235,10 +2193,10 @@ export default function App() {
       }
     );
 
-    const unregisterOpenAppBuilder = registerInspectorCommandHandler(
-      "openAppBuilder",
+    const unregisterOpenPlayground = registerInspectorCommandHandler(
+      "openPlayground",
       async (rawCommand) => {
-        const command = rawCommand as OpenAppBuilderInspectorCommand;
+        const command = rawCommand as OpenPlaygroundInspectorCommand;
 
         if (command.payload.serverName) {
           let serverState = getInspectorServerState(command.payload.serverName);
@@ -2265,11 +2223,11 @@ export default function App() {
           }
         }
 
-        navigateApp(routePaths.appBuilder);
+        navigateApp(routePaths.playground);
         await waitForUiCommit();
 
         return {
-          activeTab: "app-builder",
+          activeTab: "playground",
           selectedServer:
             command.payload.serverName || selectedServerRef.current || "none",
         };
@@ -2279,7 +2237,7 @@ export default function App() {
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
-      unregisterOpenAppBuilder();
+      unregisterOpenPlayground();
     };
   }, [getInspectorServerState, setSelectedServer, syncAgentStatus]);
 
@@ -2304,8 +2262,8 @@ export default function App() {
       return;
     }
 
-    // Hosted guests need Convex auth and their actor-owned project before App
-    // Builder can auto-connect Excalidraw against the right project.
+    // Hosted guests need Convex auth and their actor-owned project before
+    // Playground can auto-connect Excalidraw against the right project.
     if (
       HOSTED_MODE &&
       (!isAuthenticated ||
@@ -2324,7 +2282,7 @@ export default function App() {
         remoteFirstRunOnboardingShown
       )
     ) {
-      navigateApp(routePaths.appBuilder);
+      navigateApp(routePaths.playground);
     }
   }, [
     activeProjectId,
@@ -2544,10 +2502,8 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "playground" && playgroundTabEnabled !== true) {
-      navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
-      (activeTab === "chat-v2" || activeTab === "app-builder") &&
+      activeTab === "chat-v2" &&
       playgroundTabEnabled === true
     ) {
       navigateApp(routePaths.playground, { replace: true });
@@ -2756,8 +2712,7 @@ export default function App() {
   const playgroundServerSelectorProps = useMemo(():
     | PlaygroundServerSelectorProps
     | undefined => {
-    if (activeTab !== "app-builder" && activeTab !== "playground")
-      return undefined;
+    if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
@@ -2765,8 +2720,7 @@ export default function App() {
       // Playground supports multi-server selection — the user can toggle
       // several servers on simultaneously, the chat session sees their union,
       // and the docked tools pane aggregates tools across all of them.
-      // App Builder stays single-server.
-      isMultiSelectEnabled: activeTab === "playground",
+      isMultiSelectEnabled: true,
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
       onSelectMultipleServers: setSelectedMCPConfigs,

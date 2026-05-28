@@ -141,7 +141,7 @@ export function registerToolsCommands(program: Command): void {
       )
       .option(
         "--ui",
-        "Render the tool result in Inspector App Builder; opens a browser by default in a TTY",
+        "Render the tool result in Inspector Playground; opens a browser by default in a TTY",
       )
       .option(
         "--require-render",
@@ -681,7 +681,7 @@ function writeInspectorRenderWarning(options: {
       ? options.render.browserUrl
       : undefined;
   process.stderr.write(
-    `Tip: open the Inspector App Builder${browserUrl ? ` at ${browserUrl}` : ""}, or rerun without --no-open or with --open to launch a browser automatically.\n`,
+    `Tip: open the Inspector Playground${browserUrl ? ` at ${browserUrl}` : ""}, or rerun without --no-open or with --open to launch a browser automatically.\n`,
   );
 }
 

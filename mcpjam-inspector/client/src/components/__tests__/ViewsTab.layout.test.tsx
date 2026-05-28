@@ -178,7 +178,7 @@ describe("ViewsTab layout", () => {
     expect(screen.getByText("No saved views yet")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Save tool executions from Chat or App Builder to create reusable views.",
+        "Save tool executions from Chat or Playground to create reusable views.",
       ),
     ).toBeInTheDocument();
   });

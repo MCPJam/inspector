@@ -1,6 +1,5 @@
 import { createBrowserRouter, RouterProvider } from "react-router";
 import App, {
-  AppBuilderRoute,
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
@@ -75,7 +74,6 @@ export function createAppRouter(): AppRouter {
         // exercise the hosted-OAuth callback path via `/hosts` rather
         // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
-        { path: "app-builder", element: <AppBuilderRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
         { path: "views", element: <ViewsRoute /> },
         { path: "support", element: <SupportRoute /> },

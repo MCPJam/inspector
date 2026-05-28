@@ -9,7 +9,6 @@ import {
   BookOpen,
   FlaskConical,
   Workflow,
-  Anvil,
   Layers,
   ListTodo,
   SquareSlash,
@@ -218,7 +217,6 @@ const navigationSections: NavSection[] = [
         title: "Playground",
         url: "/playground",
         icon: MessageCircle,
-        featureFlag: "playground-tab-enabled",
         announcement: {
           id: "playground-tab-rename-2026-05",
           badge: "NEW",
@@ -231,12 +229,6 @@ const navigationSections: NavSection[] = [
   {
     id: "mcp-apps",
     items: [
-      {
-        title: "App Builder",
-        url: "/app-builder",
-        icon: Anvil,
-        hiddenByFlag: "playground-tab-enabled",
-      },
       {
         title: "Views",
         url: "/views",

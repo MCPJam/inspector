@@ -80,12 +80,12 @@ describe("ResultsPanel", () => {
     );
   });
 
-  describe("App Builder banner gate", () => {
+  describe("Playground banner gate", () => {
     const uiResult = {
       content: [{ type: "text", text: "{}" }],
     };
 
-    it("renders the App Builder banner when the host supports widgets", () => {
+    it("renders the Playground banner when the host supports widgets", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       const caps = {
         extensions: {

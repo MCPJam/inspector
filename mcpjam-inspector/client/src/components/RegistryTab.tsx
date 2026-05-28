@@ -92,7 +92,7 @@ export function RegistryTab({
     if (liveServer?.connectionStatus === "connected") {
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
-      onNavigate?.("app-builder");
+      onNavigate?.("playground");
     }
   }, [pendingQuickConnect, servers, onNavigate]);
 
