@@ -368,6 +368,79 @@ describe("useAutoConnectProjectServers", () => {
     expect(setSelectedServerNames).toHaveBeenCalledTimes(1);
   });
 
+  it("merges newly-required servers without wiping manual picks in the same scope", async () => {
+    // Regression: connecting a server updated the project catalog so a host-
+    // referenced id resolved into `requiredServerNames` mid-session (same
+    // host scope). The old code REPLACED the selection with the required set,
+    // silently dropping servers the user had toggled on by hand — they stayed
+    // connected but their toggle flipped off. Within a scope we now merge.
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const setSelectedServerNames = vi.fn();
+    const appStateHolder: { current: any } = {
+      current: {
+        servers: {
+          amazon: { name: "amazon", connectionStatus: "connected" },
+          worldcup: { name: "worldcup", connectionStatus: "connected" },
+          champions: { name: "champions", connectionStatus: "connected" },
+        },
+        // Before the user touches anything the selection matches the host.
+        selectedMultipleServers: ["amazon"],
+      },
+    };
+
+    const { rerender } = renderHook(
+      ({
+        requiredServerNames,
+      }: {
+        requiredServerNames: ReadonlyArray<string>;
+      }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-merge",
+          hostScopeKey: "host-a",
+          requiredServerNames,
+        }),
+      {
+        initialProps: { requiredServerNames: ["amazon"] },
+        wrapper: ({ children }) =>
+          wrapper({
+            children,
+            ensureServersReady,
+            appState: appStateHolder.current,
+            setSelectedServerNames,
+          }),
+      },
+    );
+
+    await flushMicrotasks();
+    // First resolve for this scope: replace with the host's required set.
+    expect(setSelectedServerNames).toHaveBeenLastCalledWith(["amazon"]);
+
+    // User manually toggles "worldcup" on — not part of the host's set.
+    appStateHolder.current = {
+      ...appStateHolder.current,
+      selectedMultipleServers: ["amazon", "worldcup"],
+    };
+    setSelectedServerNames.mockClear();
+
+    // Connecting "champions" makes it resolve into the required set — same
+    // scope, required names changed.
+    rerender({ requiredServerNames: ["amazon", "champions"] });
+    await flushMicrotasks();
+
+    // "champions" is merged in; "worldcup" is preserved, not wiped.
+    expect(setSelectedServerNames).toHaveBeenCalledTimes(1);
+    expect(setSelectedServerNames).toHaveBeenLastCalledWith([
+      "amazon",
+      "worldcup",
+      "champions",
+    ]);
+  });
+
   it("re-attempts on every host transition, including returning to a previously-visited host", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
