@@ -318,7 +318,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           reject(
             createInspectorCommandClientError(
               "timeout",
-              `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`
+              `Tool result was not rendered in Playground within ${effectiveTimeoutMs}ms.`
             )
           );
         }, effectiveTimeoutMs);
@@ -379,7 +379,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         waiter.reject(
           createInspectorCommandClientError(
             "unsupported_in_mode",
-            "App Builder unmounted before the tool result rendered."
+            "Playground unmounted before the tool result rendered."
           )
         );
       }
@@ -424,7 +424,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       if (!serverName) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "No server is selected in the App Builder."
+          "No server is selected in the Playground."
         );
       }
 
@@ -591,7 +591,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "unsupported_in_mode",
-          `AppBuilderTab cannot handle ${command.type} for ${command.payload.surface}.`
+          `Playground cannot handle ${command.type} for ${command.payload.surface}.`
         );
       }
 
@@ -602,7 +602,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "The App Builder requires a connected server before tools can be selected."
+          "The Playground requires a connected server before tools can be selected."
         );
       }
 
@@ -612,7 +612,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "unknown_server",
-          `App Builder is focused on "${serverName}", not "${command.payload.serverName}".`
+          `Playground is focused on "${serverName}", not "${command.payload.serverName}".`
         );
       }
 
@@ -782,7 +782,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         ) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            `AppBuilderTab cannot snapshot ${command.payload.surface}.`
+            `Playground cannot snapshot ${command.payload.surface}.`
           );
         }
 
