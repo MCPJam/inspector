@@ -222,6 +222,24 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     return c.json({ error: validation.error }, 400);
   }
 
+  // Project-backed transcription is billed against the user's MCPJam quota
+  // and must go through the hosted /api/web auth gate. The MCP-mounted copy
+  // of this route serves only local users with their own OpenRouter key —
+  // accepting a projectId there would proxy a billed call without the auth
+  // checks that /api/web enforces.
+  if (
+    validation.value.projectId &&
+    !c.req.path.startsWith("/api/web/")
+  ) {
+    return c.json(
+      {
+        error:
+          "Project-backed transcription is only available on the hosted /api/web audio endpoint.",
+      },
+      403
+    );
+  }
+
   const {
     apiKey,
     model,

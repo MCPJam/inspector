@@ -451,9 +451,12 @@ export function ChatInput({
   const { getToken } = useAiProviderKeys();
   const localOpenRouterApiKey = getToken("openrouter").trim();
   const { balance: creditBalance } = useCreditBalance({ includeGuests: true });
-  // Only the hosted backend enforces a per-user voice budget. Local users
-  // running with their own OpenRouter key are unbounded — they pay directly.
-  const voiceBudgetTracked = Boolean(voiceInputContext?.projectId);
+  // Track voice budget whenever the hosted backend enforces one — that's
+  // any HOSTED_MODE session (including unauthenticated guests, who have a
+  // daily quota) and any local session wired to a project. Local users with
+  // their own OpenRouter key pay directly and aren't tracked here.
+  const voiceBudgetTracked =
+    HOSTED_MODE || Boolean(voiceInputContext?.projectId);
   const voiceSecondsRemaining =
     voiceBudgetTracked && creditBalance
       ? creditBalance.voiceSecondsRemaining
@@ -1735,7 +1738,7 @@ export function ChatInput({
                   <TooltipContent>Use voice input</TooltipContent>
                 </Tooltip>
               )}
-              {voiceInputState === "idle" && !minimalMode && (
+              {voiceInputState === "idle" && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button

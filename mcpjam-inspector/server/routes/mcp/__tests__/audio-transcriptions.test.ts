@@ -20,7 +20,10 @@ const ORIGINAL_ENV = {
 };
 
 const app = new Hono();
+// Production mounts the same router on both prefixes (see routes/mcp/index.ts
+// and routes/web/index.ts). Mirror that here so tests cover both paths.
 app.route("/api/mcp/audio", audioTranscriptions);
+app.route("/api/web/audio", audioTranscriptions);
 
 async function postTranscription(body: Record<string, unknown>) {
   return app.request("/api/mcp/audio/transcriptions", {
@@ -150,7 +153,7 @@ describe("audio transcriptions route", () => {
       );
     });
 
-    const response = await app.request("/api/mcp/audio/transcriptions", {
+    const response = await app.request("/api/web/audio/transcriptions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -197,7 +200,7 @@ describe("audio transcriptions route", () => {
       });
     });
 
-    const response = await app.request("/api/mcp/audio/transcriptions", {
+    const response = await app.request("/api/web/audio/transcriptions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -225,6 +228,34 @@ describe("audio transcriptions route", () => {
       "guest-ip-hash"
     );
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects project-backed transcription on the MCP mount", async () => {
+    // /api/mcp/audio is the local-only mount: project-backed transcription
+    // would bill against the user's MCPJam quota and must stay on /api/web
+    // where the auth gate runs. Confirm the local mount refuses any request
+    // that carries a projectId before it can reach the upstream call.
+    const response = await app.request("/api/mcp/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-voice",
+        input_audio: {
+          data: "UklGRiQA",
+          format: "webm",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Project-backed transcription is only available on the hosted /api/web audio endpoint.",
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("normalizes OpenRouter errors", async () => {
