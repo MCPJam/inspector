@@ -495,7 +495,7 @@ console.log(result.getText());
 ```
 
 <Note>
-Tools with `visibility: ["app"]` are automatically filtered out by `TestAgent` per MCP specification. These tools are callable by apps but should not be exposed to the AI model.
+`getTools()` returns all tools including app-only ones. Tools with `_meta.ui.visibility = ["app"]` are filtered out by `getToolsForAiSdk()` per SEP-1865 before being passed to the model. These tools remain callable by apps via the MCP bridge.
 </Note>
 
 ---
