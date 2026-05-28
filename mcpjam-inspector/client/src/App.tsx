@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -39,7 +40,6 @@ import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { HomeTab } from "./components/HomeTab";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -78,6 +78,7 @@ import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -182,10 +183,10 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
-  isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
+import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   buildClientsPath,
   buildOrganizationPath,
@@ -980,6 +981,7 @@ export function ChatV2Route() {
                 temperature: activeHost.temperature,
                 requireToolApproval: activeHost.requireToolApproval,
                 progressiveToolDiscovery: activeHost.progressiveToolDiscovery,
+                respectToolVisibility: activeHost.respectToolVisibility,
               }
             : undefined
         }
@@ -1180,13 +1182,6 @@ export default function App() {
   const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
-  // Rollout kill-switch for the DRAFT-2026-v1 stateless transport. Gates
-  // both UI controls (ProtocolTab, ServerDetailModal, EditServerFormContent,
-  // AdvancedConnectionSettingsSection) AND request stamping — a persisted
-  // override from a prior flag-on session must NOT bypass the switch
-  // (otherwise hosted validate/tools/resources/prompts flows still
-  // activate the stateless transport).
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     getAccessToken,
     signIn,
@@ -1622,6 +1617,7 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
+  usePostHogOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
@@ -1769,8 +1765,26 @@ export default function App() {
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);
+      // Playground reads `selectedMultipleServers` as the authoritative
+      // selection; if we only seed `selectedServer`, the first toggle in
+      // the composer popover flips the auto-selected server off because
+      // the multi-set goes from `[]` → `[toggled]` and the single-server
+      // fallback drops out.
+      if (
+        activeTab === "playground" &&
+        appState.selectedMultipleServers.length === 0
+      ) {
+        setSelectedMCPConfigs([firstConnected[0]]);
+      }
     }
-  }, [activeTab, selectedMCPConfig, projectServers, setSelectedServer]);
+  }, [
+    activeTab,
+    selectedMCPConfig,
+    projectServers,
+    setSelectedServer,
+    setSelectedMCPConfigs,
+    appState.selectedMultipleServers,
+  ]);
 
   // Create effective app state that uses the correct projects (Convex when authenticated)
   const effectiveAppState = useMemo(
@@ -1795,6 +1809,12 @@ export default function App() {
     getEffectiveProjectClientCapabilities(activeProject?.clientConfig) ??
     getDefaultClientCapabilities()) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const projectServerConfigDto = useQuery(
+    "projectServerConfig:getConfig" as never,
+    convexProjectId ? ({ projectId: convexProjectId } as never) : "skip"
+  ) as ProjectServerConfigDto | null | undefined;
+  const isProjectServerConfigLoading =
+    Boolean(convexProjectId) && projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
@@ -2007,12 +2027,16 @@ export default function App() {
         ? rawHostPin
         : undefined;
 
-    const mcpProtocolVersionsByServerId: Record<
-      string,
-      McpProtocolVersion
-    > = {};
+    const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
+      {};
     for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
+      // Project-server config is the control-plane source for per-server
+      // protocol overrides. Host config mirrors it through Convex fan-out,
+      // but hosted API calls should not fall back to the host default while
+      // that reactive host snapshot is still catching up.
       const rawServerOverride =
+        projectServerConfigDto?.overrides?.[serverId]
+          ?.mcpProtocolVersionOverride ??
         activeHost?.serverConnectionOverrides?.[serverId]
           ?.mcpProtocolVersionOverride;
       const serverOverride: McpProtocolVersion | undefined =
@@ -2025,15 +2049,6 @@ export default function App() {
         hostPin
       );
       if (!effective) continue;
-      // Persisted stateless pins (DRAFT-2026-v1) MUST NOT bypass the
-      // rollout flag. The UI gates only control authoring; without this
-      // gate, a server config saved while the flag was on (or set by an
-      // admin) would still route every hosted call through the stateless
-      // preview after the flag is flipped off. Stateful pins like
-      // "2025-11-25" are unaffected.
-      if (!statelessMcpEnabled && isStatelessProtocolVersion(effective)) {
-        continue;
-      }
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
 
@@ -2049,7 +2064,7 @@ export default function App() {
     activeHost?.serverConnectionOverrides,
     activeMcpProfile,
     hostedServerIdsByName,
-    statelessMcpEnabled,
+    projectServerConfigDto?.overrides,
   ]);
   useApiContext({
     projectId: convexProjectId,
@@ -2059,7 +2074,8 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
-    clientConfigSyncPending: isClientConfigSyncPending,
+    clientConfigSyncPending:
+      isClientConfigSyncPending || isProjectServerConfigLoading,
     getAccessToken,
     oauthTokensByServerId,
     // `ApiContext.isAuthenticated` means "WorkOS user is signed in",
