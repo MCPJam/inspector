@@ -9,6 +9,7 @@ import App, {
   ConformanceRoute,
   EvalsRoute,
   ClientsRoute,
+  HomeRoute,
   LearningRoute,
   OAuthFlowRoute,
   OrganizationsRoute,
@@ -47,7 +48,8 @@ export function createAppRouter(): AppRouter {
     {
       element: <App />,
       children: [
-        { index: true, element: <ServersRoute /> },
+        { index: true, element: <HomeRoute /> },
+        { path: "home", element: <HomeRoute /> },
         { path: "servers", element: <ServersRoute /> },
         { path: "clients", element: <ClientsRoute /> },
         { path: "clients/:hostId", element: <ClientsRoute /> },

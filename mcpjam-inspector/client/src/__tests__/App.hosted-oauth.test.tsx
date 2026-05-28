@@ -268,6 +268,10 @@ vi.mock("../hooks/usePostHogIdentify", () => ({
   usePostHogIdentify: vi.fn(),
 }));
 
+vi.mock("../hooks/usePostHogOrgContext", () => ({
+  usePostHogOrgContext: vi.fn(),
+}));
+
 vi.mock("../lib/config", () => ({
   HOSTED_MODE: true,
   NON_PROD_LOCKDOWN: false,
