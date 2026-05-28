@@ -17,14 +17,14 @@ import {
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
-type HostProtocolDropdownValue = "latest" | "draft";
+type HostProtocolDropdownValue = "latest" | "rc";
 
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
 }> = [
-  { value: "latest", label: "Latest" },
-  { value: "draft", label: "Draft" },
+  { value: "latest", label: "Latest (2025-11-25)" },
+  { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
 
 interface ProtocolTabProps {
@@ -264,8 +264,8 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
   // since they route to the same code path; saving normalizes back to
   // undefined.
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion === "DRAFT-2026-v1"
-      ? "draft"
+    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28"
+      ? "rc"
       : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
@@ -300,7 +300,7 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
           <div className="flex items-center gap-3">
             <span
               className="text-[12px] font-medium"
-              title="Latest: current stable MCP wire version (whatever the SDK ships). Draft: experimental DRAFT-2026-v1 stateless transport."
+              title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: 2026-07-28 stateless RC transport."
             >
               Protocol version
             </span>
@@ -308,7 +308,7 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
               value={selectedDropdownValue}
               onValueChange={(next) => {
                 setProtocolVersion(
-                  next === "draft" ? "DRAFT-2026-v1" : undefined,
+                  next === "rc" ? "2026-07-28" : undefined,
                 );
               }}
             >

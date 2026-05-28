@@ -18,8 +18,8 @@ interface ProductUpdate {
 const UPDATES: ProductUpdate[] = [
   {
     date: "May 2026",
-    title: "Stateless MCP (DRAFT-2026-v1)",
-    body: "Configure per-server protocol mode for stateless HTTP MCP — three layers of control from org default to per-server override.",
+    title: "Stateless MCP (2026 RC, 2026-07-28)",
+    body: "Try the MCP 2026-07-28 stateless RC against your own servers — per-server protocol mode with three layers of control from org default to per-server override.",
     tag: "New",
   },
   {

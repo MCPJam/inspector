@@ -106,7 +106,7 @@ export type McpProtocolVersion =
   | "2025-03-26"
   | "2025-06-18"
   | "2025-11-25"
-  | "DRAFT-2026-v1";
+  | "2026-07-28";
 
 /**
  * Resolve the effective pinned protocol version for a server connection.

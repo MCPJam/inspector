@@ -16,10 +16,10 @@ import type { McpProtocolVersion } from "@/lib/client-config-v2";
  *   - "inherit" → `undefined`, defers to the host default (or SDK default if
  *     no host default is set).
  *   - "latest"  → `"2025-11-25"`, explicit stable pin — overrides a
- *     host-level Draft default.
- *   - "draft"   → `"DRAFT-2026-v1"`, the stateless preview client.
+ *     host-level RC default.
+ *   - "rc"      → `"2026-07-28"`, the stateless RC preview client.
  */
-type DropdownValue = "inherit" | "latest" | "draft";
+type DropdownValue = "inherit" | "latest" | "rc";
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
@@ -28,8 +28,8 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   flagGated?: boolean;
 }> = [
   { value: "inherit", label: "Host default" },
-  { value: "latest", label: "Latest" },
-  { value: "draft", label: "Draft", flagGated: true },
+  { value: "latest", label: "Latest (2025-11-25)" },
+  { value: "rc", label: "2026 RC (2026-07-28)", flagGated: true },
 ];
 
 interface HeaderEntry {
@@ -61,7 +61,7 @@ interface AdvancedConnectionSettingsSectionProps {
   /**
    * Visibility flag for the protocol-version override row. Wired from
    * `useFeatureFlagEnabled("stateless-mcp-enabled")` at the caller. When
-   * false, the entire dropdown is hidden AND the `DRAFT-2026-v1` option
+   * false, the entire dropdown is hidden AND the `2026-07-28` RC option
    * is omitted from the option list (the RC option is the flag-gated
    * piece; stateful options are always available behind the same flag).
    * Defaults to false. Host-default JSON keeps working regardless —
@@ -120,17 +120,17 @@ export function AdvancedConnectionSettingsSection({
   const showProtocolVersionControl = showMcpProtocolVersionOverride;
   const canEditProtocolVersion =
     onMcpProtocolVersionOverrideChange !== undefined;
-  // "Draft" is Streamable HTTP POST only — picking it on stdio / sse
+  // The RC is Streamable HTTP POST only — picking it on stdio / sse
   // would fail at construction with `StatelessRequiresHttpTransport`.
   // Hide it on non-HTTP transports as the user-friendly safety net.
   const isHttp = transportKind === "http";
   const visibleOptions = MCP_PROTOCOL_OPTIONS.filter((opt) => {
-    if (opt.value === "draft" && !isHttp) return false;
+    if (opt.value === "rc" && !isHttp) return false;
     return true;
   });
   const selectedDropdownValue: DropdownValue =
-    mcpProtocolVersionOverride === "DRAFT-2026-v1"
-      ? "draft"
+    mcpProtocolVersionOverride === "2026-07-28"
+      ? "rc"
       : mcpProtocolVersionOverride === "2025-11-25"
       ? "latest"
       : "inherit";
@@ -271,17 +271,17 @@ export function AdvancedConnectionSettingsSection({
             </div>
           )}
 
-          {/* Per-server MCP protocol-version pin. Binary picker:
-              "Latest" → `undefined` (legacy adapter + SDK-chosen wire
-              version); "Draft" → `"DRAFT-2026-v1"` (stateless preview
-              client). Gated by `stateless-mcp-enabled` at the caller.
-              "Draft" is hidden on non-HTTP transports because the
-              stateless client requires Streamable HTTP. */}
+          {/* Per-server MCP protocol-version pin. Tri-state picker:
+              "Latest" → `"2025-11-25"` (legacy adapter + initialize
+              handshake); "2026 RC" → `"2026-07-28"` (stateless RC
+              preview client). Gated by `stateless-mcp-enabled` at the
+              caller. The RC option is hidden on non-HTTP transports
+              because the stateless client requires Streamable HTTP. */}
           {showProtocolVersionControl && (
             <div className="space-y-1.5">
               <label
                 className="text-xs font-medium text-foreground"
-                title="Latest: the current stable MCP wire version (whatever the SDK ships). Draft: the experimental DRAFT-2026-v1 stateless transport (HTTP only)."
+                title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: the 2026-07-28 stateless RC transport (HTTP only)."
               >
                 Protocol version
               </label>
@@ -291,8 +291,8 @@ export function AdvancedConnectionSettingsSection({
                 onValueChange={(next) => {
                   if (!onMcpProtocolVersionOverrideChange) return;
                   onMcpProtocolVersionOverrideChange(
-                    next === "draft"
-                      ? "DRAFT-2026-v1"
+                    next === "rc"
+                      ? "2026-07-28"
                       : next === "latest"
                       ? "2025-11-25"
                       : undefined

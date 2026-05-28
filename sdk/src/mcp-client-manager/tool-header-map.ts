@@ -1,5 +1,5 @@
 /**
- * Per-tool `Mcp-Param-*` header discovery cache for the DRAFT-2026-v1
+ * Per-tool `Mcp-Param-*` header discovery cache for the 2026-07-28
  * stateless preview. See SEP-2243 ("Header conveyance for sensitive
  * params") for the wire spec, and `peppy-popping-flask.md` PR2 for plan
  * context.
@@ -232,7 +232,7 @@ export class ToolHeaderMap {
    *   - `headers`: `{ "Mcp-Param-<Name>": <encoded value>, ... }`
    *   - `bodyArguments`: the original `args` unchanged.
    *
-   * The DRAFT-2026-v1 wire contract is **mirror, not lift**: the
+   * The 2026-07-28 wire contract is **mirror, not lift**: the
    * annotated value is sent BOTH in `params.arguments[<name>]` (the
    * normal JSON-RPC body) AND in `Mcp-Param-<HeaderName>`. The server
    * validates that the two arrived consistently and rejects with

@@ -379,7 +379,7 @@ export class MCPClientManager {
 
   /**
    * Gets the `ManagedMcpClient` for a server — works for both the legacy
-   * adapter and the DRAFT-2026-v1 stateless preview. Use this in new
+   * adapter and the 2026-07-28 stateless preview. Use this in new
    * code instead of `getClient()`.
    */
   getManagedClient(
@@ -1404,7 +1404,7 @@ export class MCPClientManager {
       this.liveClientStates.set(serverId, state);
 
       // Auto-`setLoggingLevel("debug")` — gated on the server actually
-      // advertising the logging capability. The DRAFT-2026-v1 stateless
+      // advertising the logging capability. The 2026-07-28 stateless
       // preview synthesizes capabilities that omit `logging` (it can't
       // honor the call without an `initialize` round-trip), so firing
       // blindly would either no-op + warn or RPC-error. The adapter

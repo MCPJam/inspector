@@ -51,7 +51,7 @@ const mcpProtocolVersionEnum = z.enum([
   "2025-03-26",
   "2025-06-18",
   "2025-11-25",
-  "DRAFT-2026-v1",
+  "2026-07-28",
 ]);
 // Per-server `mcpProtocolVersion` map. Map entries are validated against
 // the wire-mode enum so a typo in one server's pin doesn't tank the whole
@@ -133,7 +133,7 @@ export const promptsListMultiSchema = z.object({
   // single-server calls. `clientInfo` and `supportedProtocolVersions` are
   // host-level (uniform per batch). `mcpProtocolVersionsByServerId` is
   // per-server so different servers in the batch can be on different
-  // wire modes (e.g. one pinned to DRAFT-2026-v1 stateless, others on
+  // wire modes (e.g. one pinned to 2026-07-28 stateless, others on
   // legacy 2025-11-25 negotiation).
   clientInfo: clientInfoBatchSchema,
   supportedProtocolVersions: supportedProtocolVersionsBatchSchema,
@@ -498,7 +498,7 @@ export function toHttpConfig(
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     /**
-     * Outbound wire mode (DRAFT-2026-v1 stateless preview). Forwarded
+     * Outbound wire mode (2026-07-28 stateless preview). Forwarded
      * onto `HttpServerConfig.mcpProtocolVersion` so the SDK factory branches
      * to `StatelessMcpHttpPreviewClient` when set. Without this,
      * the hosted handler dropped the pin at the route boundary and
@@ -631,7 +631,7 @@ export async function createAuthorizedManager(
      * `mcpProtocolVersion` is the batch-uniform fallback wire mode;
      * `mcpProtocolVersionsByServerId` (sibling option below) overrides
      * it per server. This lets a batch contain one server pinned to
-     * DRAFT-2026-v1 stateless alongside another on legacy
+     * 2026-07-28 stateless alongside another on legacy
      * 2025-11-25 negotiation.
      */
     initializePins?: {

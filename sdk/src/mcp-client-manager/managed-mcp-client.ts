@@ -2,7 +2,7 @@
  * `ManagedMcpClient` is the surface area `MCPClientManager` calls into for
  * every server connection. It exists so the manager can swap between the
  * legacy upstream `Client` (via `OfficialSdkClientAdapter`) and the
- * stateless DRAFT-2026-v1 preview transport
+ * stateless 2026-07-28 preview transport
  * (`StatelessMcpHttpPreviewClient`) without per-call branching. Selection
  * is driven by the per-server `mcpProtocolVersion` pin (`McpProtocolVersion`
  * in `./mcp-protocol-version.ts`) — the factory uses

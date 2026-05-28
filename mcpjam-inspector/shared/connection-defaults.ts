@@ -55,7 +55,7 @@ export type ConnectionDefaults = {
    * `isStatelessProtocolVersion`), the legacy upstream `Client` +
    * initialize handshake runs with the pin in
    * `supportedProtocolVersions`. When set to a stateless version
-   * (today: `"DRAFT-2026-v1"`), the SDK routes through
+   * (today: `"2026-07-28"`), the SDK routes through
    * `StatelessMcpHttpPreviewClient` — HTTP POST only; factory throws
    * `StatelessRequiresHttpTransport` for stdio / SSE, so the resolver
    * never has to gate on transport here.

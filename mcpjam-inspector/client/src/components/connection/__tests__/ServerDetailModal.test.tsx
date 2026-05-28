@@ -304,7 +304,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         projectId="project_123"
         hostedServerId="server_123"
-        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+        hostDefaultMcpProtocolVersion="2026-07-28"
       />
     );
 
@@ -316,7 +316,7 @@ describe("ServerDetailModal", () => {
     expect(protocolSelect).toBeEnabled();
 
     await user.click(protocolSelect);
-    await user.click(await screen.findByRole("option", { name: "Latest" }));
+    await user.click(await screen.findByRole("option", { name: "Latest (2025-11-25)" }));
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
@@ -349,7 +349,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         projectId="project_123"
         hostedServerId="server_123"
-        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+        hostDefaultMcpProtocolVersion="2026-07-28"
       />
     );
     const { unmount } = render(renderModal());
@@ -361,7 +361,7 @@ describe("ServerDetailModal", () => {
     expect(hostDefaultSelect).toHaveTextContent("Host default");
 
     await user.click(hostDefaultSelect);
-    await user.click(await screen.findByRole("option", { name: "Latest" }));
+    await user.click(await screen.findByRole("option", { name: "Latest (2025-11-25)" }));
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
@@ -378,7 +378,7 @@ describe("ServerDetailModal", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByRole("option", { name: "Latest" })
+        screen.queryByRole("option", { name: "Latest (2025-11-25)" })
       ).not.toBeInTheDocument();
     });
     unmount();
@@ -400,7 +400,7 @@ describe("ServerDetailModal", () => {
     );
 
     const latestSelect = getProtocolVersionCombobox();
-    expect(latestSelect).toHaveTextContent("Latest");
+    expect(latestSelect).toHaveTextContent("Latest (2025-11-25)");
 
     await user.click(latestSelect);
     await user.click(
@@ -437,7 +437,7 @@ describe("ServerDetailModal", () => {
         {...defaultProps}
         projectId="project_123"
         hostedServerId="server_123"
-        hostDefaultMcpProtocolVersion="DRAFT-2026-v1"
+        hostDefaultMcpProtocolVersion="2026-07-28"
       />
     );
 
@@ -445,7 +445,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const protocolSelect = getProtocolVersionCombobox();
-    expect(protocolSelect).toHaveTextContent("Latest");
+    expect(protocolSelect).toHaveTextContent("Latest (2025-11-25)");
 
     await user.click(protocolSelect);
     await user.click(

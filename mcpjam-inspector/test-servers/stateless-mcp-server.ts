@@ -1,5 +1,5 @@
 /**
- * Fixture HTTP server for the DRAFT-2026-v1 stateless transport preview.
+ * Fixture HTTP server for the 2026-07-28 stateless transport (RC).
  * Stands up a minimal "spec-conforming enough" target so unit + integration
  * tests can exercise `StatelessMcpHttpPreviewClient` without an
  * external dependency.
@@ -7,8 +7,9 @@
  * What it implements (per `peppy-popping-flask.md` PR2 prerequisite):
  *   - Accepts POSTs without `initialize` / `Mcp-Session-Id`.
  *   - Validates body `_meta.io.modelcontextprotocol/protocolVersion ===
- *     "DRAFT-2026-v1"` — rejects with `-32004` + `data.supported:
- *     ["DRAFT-2026-v1"]`.
+ *     "2026-07-28"` — rejects with `-32004` + `data.supported:
+ *     ["2026-07-28"]` and `data.requested: <client's value>` per
+ *     upstream `schema.ts` (`UnsupportedProtocolVersionError`).
  *   - Validates required headers match body case-insensitively
  *     (RFC 9110) — rejects with `-32001 HeaderMismatch`.
  *   - Surfaces one plain tool and one annotated tool (`x-mcp-header:
@@ -30,7 +31,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-const DRAFT_2026_V1 = "DRAFT-2026-v1";
+const RC_2026_07_28 = "2026-07-28";
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
 
 export interface StatelessMcpFixtureOptions {
@@ -43,7 +44,7 @@ export interface StatelessMcpFixtureOptions {
   /**
    * Reject `server/discover` requests with `-32004 Unsupported protocol
    * version` (carrying `data.supported: ["2025-11-25"]`). Simulates a
-   * 2025-only server rejecting a DRAFT-2026-v1 client. Only the discover
+   * 2025-only server rejecting a 2026-07-28 client. Only the discover
    * request is affected; other methods still validate normally so tests
    * can exercise the negative-path probe in isolation.
    */
@@ -96,13 +97,22 @@ export function startStatelessMcpFixture(
 
     // 1. Validate _meta protocolVersion.
     const meta = (body.params?._meta ?? {}) as Record<string, unknown>;
-    if (meta[PROTOCOL_VERSION_META_KEY] !== DRAFT_2026_V1) {
+    if (meta[PROTOCOL_VERSION_META_KEY] !== RC_2026_07_28) {
+      // UnsupportedProtocolVersionError carries `{ supported, requested }`
+      // in `error.data` per upstream `schema.ts` — NOT `supportedVersions`
+      // (that field belongs to DiscoverResult).
       respondJsonRpcError(
         res,
         body.id,
         -32004,
         "Unsupported protocol version",
-        { supported: [DRAFT_2026_V1] },
+        {
+          supported: [RC_2026_07_28],
+          requested:
+            typeof meta[PROTOCOL_VERSION_META_KEY] === "string"
+              ? (meta[PROTOCOL_VERSION_META_KEY] as string)
+              : null,
+        },
         opts,
       );
       return;
@@ -122,7 +132,7 @@ export function startStatelessMcpFixture(
         body.id,
         -32004,
         "Unsupported protocol version",
-        { supported: ["2025-11-25"], requested: DRAFT_2026_V1 },
+        { supported: ["2025-11-25"], requested: RC_2026_07_28 },
         opts,
       );
       return;
@@ -130,7 +140,7 @@ export function startStatelessMcpFixture(
 
     // 2. Validate MCP-Protocol-Version header matches.
     const headerVersion = headerLookup(req, "mcp-protocol-version");
-    if (headerVersion !== DRAFT_2026_V1) {
+    if (headerVersion !== RC_2026_07_28) {
       respondJsonRpcError(
         res,
         body.id,
@@ -138,7 +148,7 @@ export function startStatelessMcpFixture(
         "HeaderMismatch",
         {
           field: "MCP-Protocol-Version",
-          expected: DRAFT_2026_V1,
+          expected: RC_2026_07_28,
           got: headerVersion ?? null,
         },
         opts,
@@ -236,15 +246,22 @@ async function dispatch(
       // `discoverThrowsUnsupportedVersion`) is handled before dispatch
       // by the outer version-validation block, so the success body here
       // is what a conforming server returns.
+      // DiscoverResult per SEP-2575 + upstream `schema.ts:585`:
+      // `supportedVersions` is plural (distinct from the `supported`
+      // singular on UnsupportedProtocolVersionError.error.data). The
+      // base Result also carries `resultType` — clients treat an absent
+      // field as "complete" but emitting it explicitly is the canonical
+      // shape the fixture should model. Upstream has NO `protocolVersion`
+      // field on DiscoverResult — that value lives in request `_meta`.
       return {
-        protocolVersion: DRAFT_2026_V1,
+        resultType: "complete",
         serverInfo: { name: "stateless-mcp-fixture", version: "0.1.0" },
         capabilities: {
           tools: {},
           resources: {},
           prompts: {},
         },
-        supportedVersions: [DRAFT_2026_V1],
+        supportedVersions: [RC_2026_07_28],
       };
     case "ping":
       return {};
@@ -487,6 +504,6 @@ if (
   const port = Number(process.env.PORT ?? 4040);
   startStatelessMcpFixture(port).then(({ port: bound }) => {
     // eslint-disable-next-line no-console
-    console.log(`stateless-mcp fixture (DRAFT-2026-v1) listening on ${bound}`);
+    console.log(`stateless-mcp fixture (2026-07-28) listening on ${bound}`);
   });
 }

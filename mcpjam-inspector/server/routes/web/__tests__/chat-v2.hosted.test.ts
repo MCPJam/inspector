@@ -315,9 +315,9 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Stateless"],
         clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-        supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+        supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
         mcpProtocolVersionsByServerId: {
-          "server-1": "DRAFT-2026-v1",
+          "server-1": "2026-07-28",
         },
         chatSessionId: "chat-session-stateless",
         messages: [{ role: "user", content: "hello" }],
@@ -336,8 +336,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         "server-1": expect.objectContaining({
           url: "https://server-1.example.com/mcp",
           clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-          supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
-          mcpProtocolVersion: "DRAFT-2026-v1",
+          supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+          mcpProtocolVersion: "2026-07-28",
         }),
       },
       expect.any(Object)
@@ -355,10 +355,10 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-stateful", "server-stateless"],
         selectedServerNames: ["Excalidraw", "stateless"],
         clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-        supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+        supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
         mcpProtocolVersionsByServerId: {
           "server-stateful": "2025-11-25",
-          "server-stateless": "DRAFT-2026-v1",
+          "server-stateless": "2026-07-28",
         },
         chatSessionId: "chat-session-mixed",
         messages: [{ role: "user", content: "hello" }],
@@ -381,8 +381,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         }),
         "server-stateless": expect.objectContaining({
           url: "https://server-stateless.example.com/mcp",
-          supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
-          mcpProtocolVersion: "DRAFT-2026-v1",
+          supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+          mcpProtocolVersion: "2026-07-28",
         }),
       },
       expect.any(Object)
