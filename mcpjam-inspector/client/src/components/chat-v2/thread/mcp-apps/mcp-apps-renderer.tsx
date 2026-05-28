@@ -2004,6 +2004,34 @@ export function MCPAppsRenderer({
     hostContextRef.current = hostContext;
   }, [hostContext]);
 
+  // SEP-1865 App-Provided Tools: policy-change cleanup. The centralized
+  // gate in `refreshAppProvidedTools` only blocks future `tools/list`
+  // refreshes; it cannot undo a registration that already landed in
+  // `useAppToolsRegistry`. The bridge-connect effect's dep list keys off
+  // `effectiveHostCapabilities` / `activeMcpProfile`, but `appTools` lives
+  // on the matrix (`effectiveMcpAppsCapabilities`) — neither identity
+  // changes when only the policy flips. So a mid-session toggle to
+  // `appTools: false` would leave the existing registration live, and the
+  // next chat POST would still dispatch the widget's tools.
+  //
+  // This effect closes that gap: when the policy transitions to false
+  // (or is false while a bridge is still registered), drop the
+  // registration and reset the per-bridge tracking refs — mirroring the
+  // cleanup at bridge teardown below. The bridge itself stays up; only
+  // the agent-facing tool surface is withdrawn, which is the correct
+  // semantics for a host-side policy (vs. tearing down the view).
+  useEffect(() => {
+    if (effectiveMcpAppsCapabilities?.appTools !== false) return;
+    const bridgeId = appToolsBridgeIdRef.current;
+    if (!bridgeId) return;
+    useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+    appToolsListedBridgeIdsRef.current.delete(bridgeId);
+    appToolsListInFlightBridgeIdsRef.current.delete(bridgeId);
+    appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
+    appToolsBridgeIdRef.current = null;
+    setAppToolsBridgeIdState(null);
+  }, [effectiveMcpAppsCapabilities?.appTools]);
+
   // Resolve the effective sandbox policy ONCE, at component scope, so the
   // same value reaches three independent consumers without drift:
   //   - the AppBridge constructor below (capability handshake)

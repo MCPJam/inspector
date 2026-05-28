@@ -1348,7 +1348,6 @@ function McpAppsCapabilityMatrix({
   ) => void;
 }) {
   const [dimensionsOpen, setDimensionsOpen] = useState(false);
-  const [hostPoliciesOpen, setHostPoliciesOpen] = useState(false);
   const advertised = clientAdvertisesMcpApps(draft.clientCapabilities);
   const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
   const legacyOverride = draft.hostCapabilitiesOverride;
@@ -1570,7 +1569,6 @@ function McpAppsCapabilityMatrix({
   };
 
   return (
-    <>
     <div className="rounded-[10px] border border-border bg-background">
       {/* Single header row: left half is the disclosure (label +
           chevron), right half is the master Switch in its own hit zone.
@@ -1685,44 +1683,24 @@ function McpAppsCapabilityMatrix({
                 onToggle={(next) => setBooleanOverride(key, next)}
               />
             ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-    {/* Host policies — behaviors with no wire counterpart. Spec
-        capabilities like `serverTools` map to `hostCapabilities.*`
-        fields the host advertises in `ui/initialize`; these rows are
-        host-internal policies that gate whether the inspector acts on
-        an app-advertised capability. Separated visually so server
-        authors don't mistake them for spec-defined wire fields. */}
-    {advertised ? (
-      <div className="rounded-[10px] border border-border bg-background">
-        <button
-          type="button"
-          onClick={() => setHostPoliciesOpen((v) => !v)}
-          aria-expanded={hostPoliciesOpen}
-          aria-controls="apps-extension-mcp-apps-host-policies"
-          className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
-        >
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-[12px] font-medium">
-              MCP App host policies
-            </span>
-            <span className="text-[10.5px] text-muted-foreground">
-              Host behaviors with no wire counterpart in hostCapabilities
-            </span>
-          </div>
-          <ChevronDown
-            className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
-              hostPoliciesOpen ? "rotate-180" : ""
-            }`}
-          />
-        </button>
-        {hostPoliciesOpen ? (
-          <div
-            id="apps-extension-mcp-apps-host-policies"
-            className="border-t border-border"
-          >
+            {/* Host-policy subgroup divider. Rows below this header have
+                no `hostCapabilities` counterpart — they're host-internal
+                policies that gate whether the inspector acts on an
+                app-advertised capability. Surfaced inside the same
+                dropdown (gated by the MCP App support master toggle)
+                but visually separated so server authors don't mistake
+                them for spec-defined wire fields. */}
+            <div
+              data-testid="mcp-apps-host-policies-subheader"
+              className="flex flex-col gap-0.5 border-t border-border bg-muted/30 px-3.5 py-1.5"
+            >
+              <span className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">
+                Host policies
+              </span>
+              <span className="text-[10.5px] text-muted-foreground">
+                No wire counterpart in hostCapabilities
+              </span>
+            </div>
             <McpAppsDimensionRow
               dimensionKey="appTools"
               description="Host policy: discover app-registered tools (tools/list) and dispatch them (tools/call) to the LLM agent. Pull-path complement to updateModelContext (push). Off by default per SEP-1865 security guidance; opt in per host as you trust it. No matching hostCapabilities field — apps advertise via appCapabilities.tools."
@@ -1730,10 +1708,9 @@ function McpAppsCapabilityMatrix({
               onToggle={(next) => setBooleanOverride("appTools", next)}
             />
           </div>
-        ) : null}
-      </div>
-    ) : null}
-    </>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
