@@ -28,7 +28,10 @@ import type {
   EvalWidgetSnapshotInput,
   MCPServerReplayConfig,
 } from "./eval-reporting-types.js";
-import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
+import {
+  ensureJsonSchemaObject,
+  isAppOnlyTool,
+} from "./mcp-client-manager/tool-converters.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -88,10 +91,7 @@ function convertToToolSet(tools: Tool[]): ToolSet {
   const toolSet: ToolSet = {};
   for (const tool of tools) {
     // Filter out app-only tools (visibility: ["app"]) per SEP-1865
-    const visibility = (tool._meta?.ui as any)?.visibility as
-      | Array<"model" | "app">
-      | undefined;
-    if (visibility && visibility.length === 1 && visibility[0] === "app") {
+    if (isAppOnlyTool(tool._meta as Record<string, unknown> | undefined)) {
       continue;
     }
 

@@ -634,6 +634,13 @@ export class MCPClientManager {
     options: {
       schemas?: ToolSchemaOverrides | "automatic";
       needsApproval?: boolean;
+      /**
+       * When true, include SEP-1865 app-only tools (`_meta.ui.visibility = ["app"]`)
+       * in the returned tool set. Defaults to `false` (spec-compliant: app-only
+       * tools are hidden from the model). Use this only when intentionally
+       * mirroring a host that does not implement visibility filtering.
+       */
+      includeAppOnly?: boolean;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -650,6 +657,7 @@ export class MCPClientManager {
           const tools = await convertMCPToolsToVercelTools(listToolsResult, {
             schemas: options.schemas,
             needsApproval: options.needsApproval,
+            includeAppOnly: options.includeAppOnly,
             callTool: async ({ name, args, options: callOptions }) => {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }
