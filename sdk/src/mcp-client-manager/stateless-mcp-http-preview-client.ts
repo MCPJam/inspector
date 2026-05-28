@@ -190,20 +190,31 @@ export interface StatelessMcpHttpPreviewClientOptions {
 }
 
 /**
- * Result of `server/discover` per SEP-2575 / draft `DiscoverResult` schema.
- * Carries the negotiated `protocolVersion`, the server's `serverInfo` +
- * `capabilities` + optional `instructions`, and the full
- * `supportedVersions` list so a client can retry against a mutually
- * supported version on its own. The field name is `capabilities` (NOT
- * `serverCapabilities` — that's the pre-2026 negotiation-flow naming;
- * SEP-2575 deliberately uses `capabilities` to match the rest of the
- * draft's result shapes).
+ * Result of `server/discover` per upstream `schema.ts:585` (SEP-2575).
+ * Extends the base `Result` shape — `resultType` is required for
+ * new-spec servers; an absent field is treated as `"complete"` per
+ * `schema.ts:182-185`. Carries the server's `serverInfo` + `capabilities`
+ * + optional `instructions`, and the `supportedVersions` list (plural)
+ * so a client can retry against a mutually supported version on its
+ * own. The field name is `capabilities` (NOT `serverCapabilities` —
+ * that's the pre-2026 negotiation-flow naming; the RC deliberately uses
+ * `capabilities` to match the rest of the result shapes).
+ *
+ * Note: upstream `DiscoverResult` has NO `protocolVersion` field — the
+ * value lives in `_meta.io.modelcontextprotocol/protocolVersion` on
+ * every request body, not in the discover response. Earlier drafts of
+ * this interface fabricated one; it's been removed to align with spec.
  */
 export interface DiscoverResult {
-  protocolVersion: string;
+  /**
+   * Result envelope discriminator. Optional in the type for backward
+   * compatibility with servers that omit it (treated as `"complete"`);
+   * new-spec servers MUST emit it.
+   */
+  resultType?: "complete" | "input_required";
   serverInfo: Implementation;
   capabilities: ServerCapabilities;
-  supportedVersions?: string[];
+  supportedVersions: string[];
   instructions?: string;
 }
 

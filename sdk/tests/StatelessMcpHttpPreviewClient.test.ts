@@ -60,13 +60,19 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
     const protoVersion =
       body?.params?._meta?.["io.modelcontextprotocol/protocolVersion"];
     if (protoVersion !== LATEST_STATELESS_PROTOCOL_VERSION) {
+      // Upstream UnsupportedProtocolVersionError.error.data carries
+      // both `supported` AND `requested` (schema.ts:392-406). Emitting
+      // both here exercises the spec-correct envelope.
       return respond(res, opts, {
         jsonrpc: "2.0",
         id: body.id ?? null,
         error: {
           code: -32004,
           message: "Unsupported protocol version",
-          data: { supported: [LATEST_STATELESS_PROTOCOL_VERSION] },
+          data: {
+            supported: [LATEST_STATELESS_PROTOCOL_VERSION],
+            requested: typeof protoVersion === "string" ? protoVersion : null,
+          },
         },
       });
     }
@@ -112,11 +118,14 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
 
     switch (body.method) {
       case "server/discover":
+        // DiscoverResult extends Result, which requires `resultType` on
+        // new-spec servers (schema.ts:182-187). Upstream has no
+        // `protocolVersion` field — that lives in request _meta only.
         return respond(res, opts, {
           jsonrpc: "2.0",
           id: body.id,
           result: {
-            protocolVersion: LATEST_STATELESS_PROTOCOL_VERSION,
+            resultType: "complete",
             serverInfo: { name: "fixture-server", version: "0.1.0" },
             capabilities: {
               tools: {},

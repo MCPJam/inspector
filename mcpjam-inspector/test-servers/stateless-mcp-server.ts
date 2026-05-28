@@ -251,10 +251,10 @@ async function dispatch(
       // singular on UnsupportedProtocolVersionError.error.data). The
       // base Result also carries `resultType` — clients treat an absent
       // field as "complete" but emitting it explicitly is the canonical
-      // shape the fixture should model.
+      // shape the fixture should model. Upstream has NO `protocolVersion`
+      // field on DiscoverResult — that value lives in request `_meta`.
       return {
         resultType: "complete",
-        protocolVersion: RC_2026_07_28,
         serverInfo: { name: "stateless-mcp-fixture", version: "0.1.0" },
         capabilities: {
           tools: {},
