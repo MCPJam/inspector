@@ -18,6 +18,14 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ### Recent Updates
 
+#### Changed
+
+- **Stateless MCP protocol version updated to `2026-07-28` RC**
+  - The stateless transport protocol version has been updated from the retired `DRAFT-2026-v1` placeholder to the upstream RC literal `2026-07-28`, matching the canonical pin in `modelcontextprotocol/main`.
+  - The protocol version picker in the inspector UI now shows **Latest (2025-11-25)** and **2026 RC (2026-07-28)** instead of "Latest" and "Draft".
+  - The SDK constant `STATELESS_DRAFT_2026_V1` has been renamed to `LATEST_STATELESS_PROTOCOL_VERSION` and now equals `"2026-07-28"`.
+  - **Migration required**: If you had servers pinned to `DRAFT-2026-v1`, you must re-select the protocol version in the inspector UI. Stored `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004 UnsupportedProtocolVersionError`.
+
 #### Added
 
 - **OAuth Protocol 2025-03-26 Support**
