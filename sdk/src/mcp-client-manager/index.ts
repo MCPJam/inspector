@@ -131,7 +131,7 @@ export {
   PromptListChangedNotificationMethod,
 } from "./notification-handlers.js";
 
-// ManagedMcpClient: interface + adapters + factory for DRAFT-2026-v1
+// ManagedMcpClient: interface + adapters + factory for 2026-07-28
 // stateless preview. The manager types its client state as
 // `ManagedMcpClient` (PR3); SDK consumers that need the underlying
 // upstream `Client` keep using `getClient()`, while new consumers can
@@ -152,7 +152,7 @@ export {
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 export {
   StatelessMcpHttpPreviewClient,
-  STATELESS_DRAFT_2026_V1,
+  LATEST_STATELESS_PROTOCOL_VERSION,
   type StatelessMcpHttpPreviewClientOptions,
   type DiscoverResult,
 } from "./stateless-mcp-http-preview-client.js";

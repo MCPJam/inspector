@@ -22,7 +22,7 @@ describe("MCP_PROTOCOL_VERSIONS", () => {
       "2025-03-26",
       "2025-06-18",
       "2025-11-25",
-      "DRAFT-2026-v1",
+      "2026-07-28",
     ]);
   });
 });
@@ -32,7 +32,7 @@ describe("isKnownProtocolVersion (membership gate)", () => {
     "2025-03-26",
     "2025-06-18",
     "2025-11-25",
-    "DRAFT-2026-v1",
+    "2026-07-28",
   ])("accepts %s", (v) => {
     expect(isKnownProtocolVersion(v)).toBe(true);
   });
@@ -41,13 +41,17 @@ describe("isKnownProtocolVersion (membership gate)", () => {
     "",
     "legacy",
     "stateless",
-    "stateless-draft-2026-v1",
+    "stateless-2026-07-28",
     "DRAFT-2027-zzz",
     "2024-11-05",
     "2024-10-07",
-    " DRAFT-2026-v1",
-    "DRAFT-2026-v1 ",
-    "draft-2026-v1",
+    " 2026-07-28",
+    "2026-07-28 ",
+    // Regression guard: the pre-RC placeholder literal was retired on
+    // upstream's a11b1550 pin to "2026-07-28". It must NOT re-enter the
+    // accepted set; if it does, the validate-then-route discipline
+    // silently widens.
+    "DRAFT-2026-v1",
   ])("rejects %j", (v) => {
     expect(isKnownProtocolVersion(v)).toBe(false);
   });
@@ -68,8 +72,8 @@ describe("isStatelessProtocolVersion (routing predicate)", () => {
     expect(isStatelessProtocolVersion(v)).toBe(false);
   });
 
-  test("returns true for DRAFT-2026-v1", () => {
-    expect(isStatelessProtocolVersion("DRAFT-2026-v1")).toBe(true);
+  test("returns true for 2026-07-28", () => {
+    expect(isStatelessProtocolVersion("2026-07-28")).toBe(true);
   });
 
   test("returns true for unknown / typo strings — documents why membership must run first", () => {
@@ -80,5 +84,9 @@ describe("isStatelessProtocolVersion (routing predicate)", () => {
     expect(isStatelessProtocolVersion("DRAFT-2027-zzz")).toBe(true);
     expect(isStatelessProtocolVersion("stateless")).toBe(true);
     expect(isStatelessProtocolVersion("anything-not-stateful")).toBe(true);
+    // The retired placeholder routes stateless via the open predicate;
+    // it would still produce a malformed wire literal if the membership
+    // gate didn't reject it first.
+    expect(isStatelessProtocolVersion("DRAFT-2026-v1")).toBe(true);
   });
 });

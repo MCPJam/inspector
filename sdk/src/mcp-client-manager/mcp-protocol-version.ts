@@ -9,7 +9,8 @@
  * **Validate-then-route discipline:**
  *   - Trust boundaries (Convex validator, REST input parser, UI form
  *     submit) MUST gate on `isKnownProtocolVersion(v)` first. Typo strings
- *     like `"DRAFT-2027-zzz"` fail here.
+ *     like `"DRAFT-2027-zzz"` (and the retired pre-RC placeholder
+ *     `"DRAFT-2026-v1"`) fail here.
  *   - Inside trusted code (the factory, the preview client) use
  *     `isStatelessProtocolVersion(v)` for routing. It returns true for
  *     anything not on the closed `STATEFUL_PROTOCOL_VERSIONS` set —
@@ -29,7 +30,7 @@ export const MCP_PROTOCOL_VERSIONS = [
   "2025-03-26",
   "2025-06-18",
   "2025-11-25",
-  "DRAFT-2026-v1",
+  "2026-07-28",
 ] as const;
 export type McpProtocolVersion = (typeof MCP_PROTOCOL_VERSIONS)[number];
 

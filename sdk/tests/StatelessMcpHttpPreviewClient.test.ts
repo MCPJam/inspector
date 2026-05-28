@@ -1,7 +1,7 @@
 /**
  * Integration tests for `StatelessMcpHttpPreviewClient` against an
- * in-process HTTP server that enforces the DRAFT-2026-v1 wire contract:
- *   - body `_meta.io.modelcontextprotocol/protocolVersion === "DRAFT-2026-v1"`
+ * in-process HTTP server that enforces the 2026-07-28 wire contract:
+ *   - body `_meta.io.modelcontextprotocol/protocolVersion === "2026-07-28"`
  *   - `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers match
  *     body case-insensitively (RFC 9110)
  *   - `Mcp-Param-<Name>` mirrors `params.arguments.<param>` per SEP-2243
@@ -15,7 +15,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { AddressInfo } from "node:net";
 import {
   StatelessMcpHttpPreviewClient,
-  STATELESS_DRAFT_2026_V1,
+  LATEST_STATELESS_PROTOCOL_VERSION,
   NotYetSupportedInStateless,
   type DiscoverResult,
 } from "../src/mcp-client-manager/stateless-mcp-http-preview-client.js";
@@ -59,26 +59,26 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
 
     const protoVersion =
       body?.params?._meta?.["io.modelcontextprotocol/protocolVersion"];
-    if (protoVersion !== STATELESS_DRAFT_2026_V1) {
+    if (protoVersion !== LATEST_STATELESS_PROTOCOL_VERSION) {
       return respond(res, opts, {
         jsonrpc: "2.0",
         id: body.id ?? null,
         error: {
           code: -32004,
           message: "Unsupported protocol version",
-          data: { supported: [STATELESS_DRAFT_2026_V1] },
+          data: { supported: [LATEST_STATELESS_PROTOCOL_VERSION] },
         },
       });
     }
     const headerProto = pick(req, "mcp-protocol-version");
-    if (headerProto !== STATELESS_DRAFT_2026_V1) {
+    if (headerProto !== LATEST_STATELESS_PROTOCOL_VERSION) {
       return respond(res, opts, {
         jsonrpc: "2.0",
         id: body.id,
         error: {
           code: -32001,
           message: "HeaderMismatch",
-          data: { field: "MCP-Protocol-Version", expected: STATELESS_DRAFT_2026_V1 },
+          data: { field: "MCP-Protocol-Version", expected: LATEST_STATELESS_PROTOCOL_VERSION },
         },
       });
     }
@@ -104,7 +104,7 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
           message: "Unsupported protocol version",
           data: {
             supported: ["2025-11-25"],
-            requested: STATELESS_DRAFT_2026_V1,
+            requested: LATEST_STATELESS_PROTOCOL_VERSION,
           },
         },
       });
@@ -116,14 +116,14 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
           jsonrpc: "2.0",
           id: body.id,
           result: {
-            protocolVersion: STATELESS_DRAFT_2026_V1,
+            protocolVersion: LATEST_STATELESS_PROTOCOL_VERSION,
             serverInfo: { name: "fixture-server", version: "0.1.0" },
             capabilities: {
               tools: {},
               resources: {},
               prompts: {},
             },
-            supportedVersions: [STATELESS_DRAFT_2026_V1],
+            supportedVersions: [LATEST_STATELESS_PROTOCOL_VERSION],
           } satisfies DiscoverResult,
         });
       case "tools/list":
@@ -260,7 +260,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
     await fixture.close();
   });
 
-  test("listTools sends DRAFT-2026-v1 _meta and required headers, returns tools", async () => {
+  test("listTools sends 2026-07-28 _meta and required headers, returns tools", async () => {
     const result = await client.listTools();
     expect(result.tools).toHaveLength(2);
     const sent = fixture.captured[0];
@@ -268,12 +268,12 @@ describe("StatelessMcpHttpPreviewClient", () => {
     expect(
       (sent.body as { params?: { _meta?: Record<string, unknown> } }).params
         ?._meta?.["io.modelcontextprotocol/protocolVersion"],
-    ).toBe(STATELESS_DRAFT_2026_V1);
+    ).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
     expect(
       (sent.body as { params?: { _meta?: Record<string, unknown> } }).params
         ?._meta?.["io.modelcontextprotocol/clientInfo"],
     ).toEqual({ name: "test-client", version: "0.0.1" });
-    expect(sent.headers["mcp-protocol-version"]).toBe(STATELESS_DRAFT_2026_V1);
+    expect(sent.headers["mcp-protocol-version"]).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
     expect(sent.headers["mcp-method"]).toBe("tools/list");
   });
 
@@ -493,7 +493,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "MCP-Protocol-Version": STATELESS_DRAFT_2026_V1,
+        "MCP-Protocol-Version": LATEST_STATELESS_PROTOCOL_VERSION,
         "Mcp-Method": "tools/call",
         "Mcp-Name": "regional-echo",
         "Mcp-Param-Region": "us-west1",
@@ -508,7 +508,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
           // must reject.
           arguments: { value: "hi", region: "eu-central1" },
           _meta: {
-            "io.modelcontextprotocol/protocolVersion": STATELESS_DRAFT_2026_V1,
+            "io.modelcontextprotocol/protocolVersion": LATEST_STATELESS_PROTOCOL_VERSION,
             "io.modelcontextprotocol/clientInfo": { name: "raw", version: "0" },
             "io.modelcontextprotocol/clientCapabilities": {},
           },
@@ -551,7 +551,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
     // Our locked keys still present.
     expect(
       lastBody.params._meta["io.modelcontextprotocol/protocolVersion"],
-    ).toBe(STATELESS_DRAFT_2026_V1);
+    ).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
   });
 
   test("never sends Mcp-Session-Id header outbound", async () => {
@@ -660,7 +660,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
       const sent = localFixture.captured[0];
       expect(sent.body.method).toBe("server/discover");
       expect(sent.headers["mcp-method"]).toBe("server/discover");
-      expect(sent.headers["mcp-protocol-version"]).toBe(STATELESS_DRAFT_2026_V1);
+      expect(sent.headers["mcp-protocol-version"]).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
 
       // Capability getters now return the discover-populated values
       // instead of the permissive synthetic / undefined defaults.

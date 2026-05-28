@@ -1,7 +1,9 @@
 /**
  * `StatelessMcpHttpPreviewClient` — own-fetch implementation of
- * `ManagedMcpClient` for the experimental DRAFT-2026-v1 stateless MCP
- * transport. Does NOT extend upstream `Client` / `Protocol` /
+ * `ManagedMcpClient` for the 2026-07-28 RC stateless MCP transport
+ * (canonical wire literal post-`a11b1550` upstream pin; the pre-RC
+ * placeholder `DRAFT-2026-v1` is retired and rejects at the trust
+ * boundary). Does NOT extend upstream `Client` / `Protocol` /
  * `Transport`; upstream's private fields and missing per-send header
  * hooks make subclassing untenable (see `upstream_v2alpha_extension_points`
  * memory entry).
@@ -36,7 +38,7 @@
  *   - `subscriptions/listen` (throws `NotYetSupportedInStateless`)
  *   - Resumption tokens (`resumptionToken` / `onresumptiontoken` throw
  *     a labeled error)
- *   - Backward-compat probes against pre-DRAFT-2026-v1 servers
+ *   - Backward-compat probes against pre-2026-07-28 servers
  */
 
 import type {
@@ -77,10 +79,12 @@ import type { McpProtocolVersion } from "./mcp-protocol-version.js";
  * Default wire literal emitted in `_meta` and the `MCP-Protocol-Version`
  * header when the constructor's `protocolVersion` option is omitted. The
  * actual literal at request time always comes from `this.protocolVersion`
- * so a server pinned to a future stateless version (e.g. the post-RC
- * finalized `2026-07-28` date) routes through the same class.
+ * so a server pinned to a future stateless version routes through the
+ * same class — the factory passes `mcpProtocolVersion` verbatim, so this
+ * default only fires for direct-instantiation callers (tests, ad-hoc
+ * clients) and tracks the current RC canonical literal.
  */
-export const STATELESS_DRAFT_2026_V1 = "DRAFT-2026-v1" as const;
+export const LATEST_STATELESS_PROTOCOL_VERSION = "2026-07-28" as const;
 
 /**
  * Capabilities the preview commits to honoring. Locked per
@@ -133,9 +137,9 @@ export interface StatelessMcpHttpPreviewClientOptions {
   /**
    * Wire literal to emit in `_meta.io.modelcontextprotocol/protocolVersion`
    * and the `MCP-Protocol-Version` header. Defaults to
-   * `STATELESS_DRAFT_2026_V1`. Parameterized so the same class serves
-   * future stateless drafts without a subclass; the factory passes the
-   * resolved `mcpProtocolVersion` here.
+   * `LATEST_STATELESS_PROTOCOL_VERSION`. Parameterized so the same class
+   * serves future stateless drafts without a subclass; the factory passes
+   * the resolved `mcpProtocolVersion` here.
    */
   protocolVersion?: McpProtocolVersion;
   /** Static headers (e.g. project-level overrides). Bearer is set via authProvider. */
@@ -290,7 +294,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   constructor(opts: StatelessMcpHttpPreviewClientOptions) {
     this.url = typeof opts.url === "string" ? new URL(opts.url) : opts.url;
     this.clientInfo = opts.clientInfo;
-    this.protocolVersion = opts.protocolVersion ?? STATELESS_DRAFT_2026_V1;
+    this.protocolVersion = opts.protocolVersion ?? LATEST_STATELESS_PROTOCOL_VERSION;
     this.staticHeaders = { ...(opts.staticHeaders ?? {}) };
     this.getAccessToken = opts.getAccessToken;
     this.on401 = opts.on401;
@@ -313,7 +317,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     // our `protocolVersion`. A `-32004 UnsupportedProtocolVersionError`
     // from discover propagates as a connect failure with the error
     // envelope intact — that's how the inspector surfaces "this server
-    // doesn't speak DRAFT-2026-v1" instead of a misleading "Connected".
+    // doesn't speak 2026-07-28" instead of a misleading "Connected".
     if (this.closed) {
       throw new Error("StatelessMcpHttpPreviewClient: connect() after close()");
     }
@@ -582,7 +586,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     _options?: RequestOptions,
   ): Promise<void> {
     this.warn(
-      "setLoggingLevel is a no-op in the DRAFT-2026-v1 stateless preview (clientCapabilities omits logging).",
+      "setLoggingLevel is a no-op in the 2026-07-28 stateless preview (clientCapabilities omits logging).",
     );
   }
 
@@ -625,14 +629,14 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     if (taskOpt !== undefined) {
       throw new NotYetSupportedInStateless(
         `${method} (RequestOptions.task)`,
-        "task-augmented requests require MRTR / InputRequiredResult, which is out of scope for the DRAFT-2026-v1 preview",
+        "task-augmented requests require MRTR / InputRequiredResult, which is out of scope for the 2026-07-28 preview",
       );
     }
     const relatedTaskOpt = (opts as RequestOptions).relatedTask;
     if (relatedTaskOpt !== undefined) {
       throw new NotYetSupportedInStateless(
         `${method} (RequestOptions.relatedTask)`,
-        "related-task requests require MRTR / InputRequiredResult, which is out of scope for the DRAFT-2026-v1 preview",
+        "related-task requests require MRTR / InputRequiredResult, which is out of scope for the 2026-07-28 preview",
       );
     }
 
@@ -769,7 +773,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       if (seenSessionId) {
         this.nonConformingSessionIdSeen = true;
         this.warn(
-          `Server returned mcp-session-id: "${seenSessionId}" on a stateless request. Discarded. Server is non-conforming under DRAFT-2026-v1.`,
+          `Server returned mcp-session-id: "${seenSessionId}" on a stateless request. Discarded. Server is non-conforming under 2026-07-28.`,
         );
         this.onSessionIdResponse?.(seenSessionId);
       }

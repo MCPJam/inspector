@@ -182,9 +182,9 @@ describe("hosted web context", () => {
       projectId: "ws_stateless",
       serverIdsByName: { stateless: "srv_stateless" },
       clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
       mcpProtocolVersionsByServerId: {
-        srv_stateless: "DRAFT-2026-v1",
+        srv_stateless: "2026-07-28",
       },
       getAccessToken: async () => null,
     });
@@ -195,8 +195,8 @@ describe("hosted web context", () => {
       serverName: "stateless",
       clientCapabilities: defaultClientCapabilities,
       clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
-      mcpProtocolVersion: "DRAFT-2026-v1",
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      mcpProtocolVersion: "2026-07-28",
     });
   });
 
@@ -208,10 +208,10 @@ describe("hosted web context", () => {
         stateless: "srv_stateless",
       },
       clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
       mcpProtocolVersionsByServerId: {
         srv_stateful: "2025-11-25",
-        srv_stateless: "DRAFT-2026-v1",
+        srv_stateless: "2026-07-28",
       },
       getAccessToken: async () => null,
     });
@@ -222,10 +222,10 @@ describe("hosted web context", () => {
       serverNames: ["Excalidraw", "stateless"],
       clientCapabilities: defaultClientCapabilities,
       clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
       mcpProtocolVersionsByServerId: {
         srv_stateful: "2025-11-25",
-        srv_stateless: "DRAFT-2026-v1",
+        srv_stateless: "2026-07-28",
       },
     });
   });
@@ -238,10 +238,10 @@ describe("hosted web context", () => {
         stateless: "srv_stateless",
       },
       clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
       mcpProtocolVersionsByServerId: {
         srv_stateful: "2025-11-25",
-        srv_stateless: "DRAFT-2026-v1",
+        srv_stateless: "2026-07-28",
       },
       getAccessToken: async () => null,
     });
@@ -259,10 +259,10 @@ describe("hosted web context", () => {
       serverNames: ["Excalidraw", "stateless"],
       clientCapabilities: defaultClientCapabilities,
       clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
-      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
       mcpProtocolVersionsByServerId: {
         srv_stateful: "2025-11-25",
-        srv_stateless: "DRAFT-2026-v1",
+        srv_stateless: "2026-07-28",
       },
       accessScope: "chat_v2",
     });
