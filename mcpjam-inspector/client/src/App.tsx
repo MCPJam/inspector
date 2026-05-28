@@ -1785,6 +1785,7 @@ export default function App() {
   useEffect(() => {
     const needsServer =
       activeTab === "app-builder" ||
+      activeTab === "playground" ||
       activeTab === "tools" ||
       activeTab === "resources" ||
       activeTab === "prompts" ||

@@ -481,6 +481,7 @@ export function applyJsonToDraft(
       "serverResources",
       "logging",
       "updateModelContext",
+      "appTools",
       "message",
       "sandboxPermissions",
       "cspFrameDomains",
@@ -1682,6 +1683,24 @@ function McpAppsCapabilityMatrix({
                 onToggle={(next) => setBooleanOverride(key, next)}
               />
             ))}
+            {/* Subgroup divider for rows that gate whether the host acts
+                on an app-advertised capability (no `hostCapabilities`
+                counterpart). Visually separated so server authors don't
+                mistake them for spec-defined wire fields. */}
+            <div
+              data-testid="mcp-apps-host-policies-subheader"
+              className="flex flex-col gap-0.5 border-t border-border bg-muted/30 px-3.5 py-1.5"
+            >
+              <span className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">
+                Allow app capabilities
+              </span>
+            </div>
+            <McpAppsDimensionRow
+              dimensionKey="appTools"
+              description="Host policy: discover app-registered tools (tools/list) and dispatch them (tools/call) to the LLM agent. Pull-path complement to updateModelContext (push). Off by default per SEP-1865 security guidance; opt in per host as you trust it. No matching hostCapabilities field — apps advertise via appCapabilities.tools."
+              effective={Boolean(effectiveCapabilities.appTools)}
+              onToggle={(next) => setBooleanOverride("appTools", next)}
+            />
           </div>
         </div>
       ) : null}

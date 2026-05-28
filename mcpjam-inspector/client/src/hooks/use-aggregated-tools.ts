@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { listTools } from "@/lib/apis/mcp-tools-api";
+import {
+  getApiContextRevision,
+  subscribeApiContext,
+} from "@/lib/apis/web/context";
 
 export interface ServerScopedTool {
   serverId: string;
@@ -36,6 +47,15 @@ export interface AggregatedToolsState {
 export function useAggregatedTools(
   serverNames: string[],
 ): AggregatedToolsState {
+  // Re-fetch when the hosted API context bumps — `injectHostedServerMapping`
+  // lands the server-name → server-id mapping after a connect completes, and
+  // without this the first fetch can fire too early and return empty with no
+  // retry.
+  const apiContextRevision = useSyncExternalStore(
+    subscribeApiContext,
+    getApiContextRevision,
+    getApiContextRevision,
+  );
   const [toolsByServer, setToolsByServer] = useState<Record<string, Tool[]>>(
     {},
   );
@@ -121,7 +141,7 @@ export function useAggregatedTools(
       for (const { serverId } of results) next[serverId] = false;
       return next;
     });
-  }, [serversKey]);
+  }, [serversKey, apiContextRevision]);
 
   useEffect(() => {
     void fetchAll();

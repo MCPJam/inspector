@@ -1015,6 +1015,11 @@ export function MCPAppsRenderer({
   const appToolsListRefreshPendingBridgeIdsRef = useRef<Set<string>>(
     new Set()
   );
+  // Tracks whether the currently connected guest advertised `tools` in
+  // `ui/initialize`. Gates the policy re-enable effect below: we never
+  // synthesize a registration the guest didn't ask for (advertise=enforce).
+  // Set inside `oninitialized`; reset to false on every bridge rebuild.
+  const inlineAppAdvertisedToolsRef = useRef(false);
   // Reactive mirror of `appToolsBridgeIdRef` so the in-flight busy
   // indicator can subscribe to `useAppToolsRegistry.pendingControllers`
   // by bridge id. Refs alone don't trigger re-renders.
@@ -1531,6 +1536,17 @@ export function MCPAppsRenderer({
         isLive?: () => boolean;
       } = {}
     ) => {
+      // SEP-1865 App-Provided Tools: centralized host-policy gate.
+      // Read through the ref (not a closure on effectiveMcpAppsCapabilities)
+      // for the same stale-closure reason as the widgetDisplayModeRequests
+      // guard at L2800. This is the single source of truth for the appTools
+      // policy so every entry point (inline oninitialized, modal oninitialized,
+      // renderer list_changed, modal list_changed) is covered without
+      // requiring per-call-site guards.
+      if (!mcpAppsCapabilitiesRef.current?.appTools) {
+        return;
+      }
+
       const surface = options.surface ?? "inline";
       const getIframeElement =
         options.getIframeElement ??
@@ -1992,6 +2008,55 @@ export function MCPAppsRenderer({
   useEffect(() => {
     hostContextRef.current = hostContext;
   }, [hostContext]);
+
+  // SEP-1865 App-Provided Tools: policy-change enforcement. The
+  // centralized gate in `refreshAppProvidedTools` only blocks future
+  // `tools/list` refreshes; it cannot undo a registration that already
+  // landed in `useAppToolsRegistry`, and it cannot re-register once a
+  // policy-off cleanup has cleared the bridge id. The bridge-connect
+  // effect's dep list keys off `effectiveHostCapabilities` /
+  // `activeMcpProfile`, but `appTools` lives on the matrix
+  // (`effectiveMcpAppsCapabilities`) — neither identity changes when
+  // only the policy flips, so the bridge does not rebuild and
+  // `oninitialized` does not re-fire.
+  //
+  // This effect closes both gaps. The bridge itself stays up across the
+  // toggle; only the agent-facing tool surface is withdrawn and
+  // restored — the correct semantics for a host-side policy (vs.
+  // tearing down the view).
+  //
+  //  Policy → false: drop the registration and reset per-bridge tracking
+  //                  refs, mirroring the cleanup at bridge teardown.
+  //  Policy → true:  if a guest is connected and advertised `tools` in
+  //                  `ui/initialize`, mint a fresh bridge id and call
+  //                  `refreshAppProvidedTools` to repopulate the
+  //                  registry. Gated on `inlineAppAdvertisedToolsRef` so
+  //                  we never synthesize a registration the guest did
+  //                  not advertise (advertise = enforce).
+  const appToolsPolicyEnabled =
+    effectiveMcpAppsCapabilities?.appTools !== false;
+  useEffect(() => {
+    if (!appToolsPolicyEnabled) {
+      const bridgeId = appToolsBridgeIdRef.current;
+      if (!bridgeId) return;
+      useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+      appToolsListedBridgeIdsRef.current.delete(bridgeId);
+      appToolsListInFlightBridgeIdsRef.current.delete(bridgeId);
+      appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
+      appToolsBridgeIdRef.current = null;
+      setAppToolsBridgeIdState(null);
+      return;
+    }
+    if (appToolsBridgeIdRef.current) return;
+    const bridge = bridgeRef.current;
+    if (!bridge) return;
+    if (!isReadyRef.current) return;
+    if (!inlineAppAdvertisedToolsRef.current) return;
+    const bridgeId = crypto.randomUUID();
+    appToolsBridgeIdRef.current = bridgeId;
+    setAppToolsBridgeIdState(bridgeId);
+    void refreshAppProvidedTools(bridge, bridgeId);
+  }, [appToolsPolicyEnabled, refreshAppProvidedTools]);
 
   // Resolve the effective sandbox policy ONCE, at component scope, so the
   // same value reaches three independent consumers without drift:
@@ -2533,11 +2598,26 @@ export function MCPAppsRenderer({
         // capability, fetch its tool list with the SDK bridge and register
         // it so the next chat POST can advertise no-execute AI SDK tools.
         // Feature-detect the capability; do not install rejecting stubs.
+        // The ref tracks the advertised bit so a mid-session policy toggle
+        // (off then back on) can re-register without waiting for a fresh
+        // handshake — see policy effect below.
+        inlineAppAdvertisedToolsRef.current = Boolean(appCaps?.tools);
         if (appCaps?.tools) {
-          const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
-          appToolsBridgeIdRef.current = bridgeId;
-          setAppToolsBridgeIdState(bridgeId);
-          void refreshAppProvidedTools(bridge, bridgeId);
+          // Gate the registry write on the current policy. Without this
+          // check, an `oninitialized` that fires while the policy is off
+          // would still mint a bridgeId here — the centralized gate in
+          // `refreshAppProvidedTools` short-circuits the listTools call
+          // but leaves the dangling ref behind, which then blocks the
+          // re-enable effect's `bridgeIdRef.current === null` precondition
+          // when the user toggles policy on. Advertised-tools ref above
+          // is the policy-on path's source of truth.
+          if (mcpAppsCapabilitiesRef.current?.appTools !== false) {
+            const bridgeId =
+              appToolsBridgeIdRef.current ?? crypto.randomUUID();
+            appToolsBridgeIdRef.current = bridgeId;
+            setAppToolsBridgeIdState(bridgeId);
+            void refreshAppProvidedTools(bridge, bridgeId);
+          }
 
           // SEP-1865 host UX: app-tools widgets are interactive — the
           // dev will want to chat with them. Auto-promote to fullscreen
@@ -2994,6 +3074,9 @@ export function MCPAppsRenderer({
     setBridgeTransportReady(false);
     setIsReady(false);
     isReadyRef.current = false;
+    // Reset the advertised-tools gate so the policy re-enable effect can't
+    // fire against a stale handshake while the new bridge is still mid-init.
+    inlineAppAdvertisedToolsRef.current = false;
     logWidgetDebug("host-to-ui", "debug/bridge-connect-start", {
       cspMode,
       // Reflect the resolved (host-policy-applied) sandbox so the debug
@@ -3687,6 +3770,13 @@ export function MCPAppsRenderer({
         // app.getHostCapabilities() returns the same record regardless
         // of which iframe the widget is mounted in.
         effectiveHostCapabilities={effectiveHostCapabilities}
+        // SEP-1865 App-Provided Tools: the host policy is observed by
+        // inline and modal independently. The modal owns its own
+        // `useAppToolsRegistry` entry under `surface: "modal"`, so
+        // toggling the policy off while a modal is open must
+        // unregister that entry too. Same source of truth as the inline
+        // effect above.
+        appToolsPolicyEnabled={appToolsPolicyEnabled}
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}

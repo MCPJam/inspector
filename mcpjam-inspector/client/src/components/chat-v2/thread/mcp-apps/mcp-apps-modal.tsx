@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useLayoutEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -92,6 +92,15 @@ export interface McpAppsModalProps {
    * permissions props.
    */
   effectiveHostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
+  /**
+   * SEP-1865 App-Provided Tools host policy. `false` means the host has
+   * withdrawn the agent-facing tool surface; the modal must unregister
+   * its instance from `useAppToolsRegistry` even while its iframe stays
+   * mounted. `true` re-arms registration if the modal's guest already
+   * advertised `tools` in `ui/initialize` and the bridge is still live.
+   * The view itself is unaffected — only the model-visible aliases.
+   */
+  appToolsPolicyEnabled: boolean;
   toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
   toolOutputRef: React.RefObject<unknown>;
   themeModeRef: React.RefObject<string>;
@@ -128,6 +137,7 @@ export function McpAppsModal({
   cspMode,
   injectOpenAiCompat,
   effectiveHostCapabilities,
+  appToolsPolicyEnabled,
   toolInputRef,
   toolOutputRef,
   themeModeRef,
@@ -143,6 +153,19 @@ export function McpAppsModal({
   // tools separate. Cleared on teardown so `isLive` short-circuits any
   // in-flight `listTools` after the modal closes.
   const modalAppToolsBridgeIdRef = useRef<string | null>(null);
+  // Tracks whether the modal's guest advertised `tools` in
+  // `ui/initialize`. Gates the policy re-enable effect below so a
+  // mid-session toggle can't synthesize a registration the guest never
+  // advertised. Reset to false when the bridge effect tears down.
+  const modalAppAdvertisedToolsRef = useRef(false);
+  // Live mirror of the policy prop so the `oninitialized` handler — set
+  // inside a useEffect that doesn't dep on `appToolsPolicyEnabled` —
+  // reads the current value instead of a stale closure when deciding
+  // whether to mint a bridgeId at handshake time.
+  const appToolsPolicyEnabledRef = useRef(appToolsPolicyEnabled);
+  useLayoutEffect(() => {
+    appToolsPolicyEnabledRef.current = appToolsPolicyEnabled;
+  }, [appToolsPolicyEnabled]);
   // Same scope as the inline renderer — `ActiveMcpProfileProvider` wraps
   // both. Used to resolve `hostInfo` for the modal's AppBridge handshake.
   const activeMcpProfile = useActiveMcpProfile();
@@ -286,7 +309,16 @@ export function McpAppsModal({
       }
 
       const appCaps = bridge.getAppCapabilities();
-      if (appCaps?.tools) {
+      // Record the advertised bit before the registration branch so the
+      // policy re-enable effect can repopulate the registry after a
+      // mid-session toggle without waiting for a fresh handshake.
+      modalAppAdvertisedToolsRef.current = Boolean(appCaps?.tools);
+      // Gate on the policy too: if the modal initializes while the
+      // host has app-tools off, do NOT mint a bridgeId — the centralized
+      // gate in `refreshAppProvidedTools` would short-circuit and leave
+      // a dangling ref that blocks the policy re-enable effect's
+      // null-bridgeId precondition on toggle back to on.
+      if (appCaps?.tools && appToolsPolicyEnabledRef.current) {
         const bridgeId =
           modalAppToolsBridgeIdRef.current ?? crypto.randomUUID();
         modalAppToolsBridgeIdRef.current = bridgeId;
@@ -376,6 +408,9 @@ export function McpAppsModal({
     return () => {
       isActive = false;
       modalBridgeRef.current = null;
+      // Reset the advertised gate so the policy effect can't act on a
+      // stale handshake before the next bridge wires up.
+      modalAppAdvertisedToolsRef.current = false;
       // SEP-1865 App-Provided Tools: unregister on effect teardown
       // (component unmount or modalHtml refetch). Clearing the ref
       // first ensures any in-flight `listTools` short-circuits via
@@ -404,6 +439,40 @@ export function McpAppsModal({
     activeMcpProfile,
     effectiveHostCapabilities,
   ]);
+
+  // SEP-1865 App-Provided Tools: modal-side policy enforcement.
+  // Mirrors the inline renderer's effect — the host policy lives outside
+  // the bridge lifecycle, so a mid-session toggle cannot rely on the
+  // bridge rebuilding to (un)register. While the modal is open, this
+  // keeps `useAppToolsRegistry` in sync with the policy independently of
+  // the inline surface.
+  //
+  //  Policy → false: unregister, clear the bridge id so any in-flight
+  //                  `listTools` short-circuits via `isLive`.
+  //  Policy → true:  if the modal's guest already advertised `tools`
+  //                  and the bridge is live, mint a new id and call
+  //                  `refreshAppProvidedTools` with `surface: "modal"`.
+  useEffect(() => {
+    if (!appToolsPolicyEnabled) {
+      const bridgeId = modalAppToolsBridgeIdRef.current;
+      if (!bridgeId) return;
+      modalAppToolsBridgeIdRef.current = null;
+      useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+      return;
+    }
+    if (modalAppToolsBridgeIdRef.current) return;
+    const bridge = modalBridgeRef.current;
+    if (!bridge) return;
+    if (!modalAppAdvertisedToolsRef.current) return;
+    const bridgeId = crypto.randomUUID();
+    modalAppToolsBridgeIdRef.current = bridgeId;
+    void refreshAppProvidedTools(bridge, bridgeId, {
+      surface: "modal",
+      getIframeElement: () =>
+        modalSandboxRef.current?.getIframeElement() ?? null,
+      isLive: () => modalAppToolsBridgeIdRef.current === bridgeId,
+    });
+  }, [appToolsPolicyEnabled, refreshAppProvidedTools]);
 
   const handleModalMessage = (event: MessageEvent) => {
     const data = event.data;

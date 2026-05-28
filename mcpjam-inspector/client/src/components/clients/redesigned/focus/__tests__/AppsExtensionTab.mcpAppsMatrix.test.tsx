@@ -210,6 +210,87 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
   });
 });
 
+describe("AppsExtensionTab — Host policies appTools row", () => {
+  it("renders the appTools row under the Host policies subheader inside the MCP App support dropdown", async () => {
+    const user = userEvent.setup();
+    renderMatrix();
+    // The host-policies subheader and the appTools row both live inside
+    // the MCP App support dropdown, gated by the master advertise toggle
+    // — there's no separate card. The subheader provides visual
+    // separation so server authors don't mistake `appTools` for a
+    // spec-defined wire field; it has no `hostCapabilities` counterpart.
+    expect(
+      screen.queryByTestId("mcp-apps-host-policies-subheader"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("mcp-apps-dimension-appTools"),
+    ).not.toBeInTheDocument();
+    await expandMcpAppsDimensions(user);
+    expect(
+      screen.getByTestId("mcp-apps-host-policies-subheader"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("mcp-apps-dimension-appTools"),
+    ).toBeInTheDocument();
+  });
+
+  it("toggling appTools round-trips through applyJsonToDraft and produces a sparse override", async () => {
+    const user = userEvent.setup();
+    // Claude preset has appTools: false (inherits MCP_APPS_FULL_SURFACE default).
+    // Toggling on should write appTools: true to the override.
+    const { draftRef } = renderMatrix({ hostStyle: "claude" });
+    await expandMcpAppsDimensions(user);
+    const row = screen.getByTestId("mcp-apps-dimension-appTools");
+    const toggle = within(row).getByRole("switch");
+    // Claude preset: appTools is false, so toggle flips to true.
+    await user.click(toggle);
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides?.appTools,
+    ).toBe(true);
+    // Toggle back — override should collapse (matches preset false).
+    await user.click(toggle);
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides?.appTools,
+    ).toBeUndefined();
+  });
+
+  it("MCPJam preset has appTools: true by default", async () => {
+    const user = userEvent.setup();
+    renderMatrix({ hostStyle: "mcpjam" });
+    await expandMcpAppsDimensions(user);
+    const row = screen.getByTestId("mcp-apps-dimension-appTools");
+    const toggle = within(row).getByRole("switch");
+    expect(toggle).toBeChecked();
+  });
+
+  it("Claude preset has appTools: false by default", async () => {
+    const user = userEvent.setup();
+    renderMatrix({ hostStyle: "claude" });
+    await expandMcpAppsDimensions(user);
+    const row = screen.getByTestId("mcp-apps-dimension-appTools");
+    const toggle = within(row).getByRole("switch");
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("ChatGPT preset has appTools: false by default", async () => {
+    const user = userEvent.setup();
+    renderMatrix({ hostStyle: "chatgpt" });
+    await expandMcpAppsDimensions(user);
+    const row = screen.getByTestId("mcp-apps-dimension-appTools");
+    const toggle = within(row).getByRole("switch");
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("Copilot preset has appTools: false by default", async () => {
+    const user = userEvent.setup();
+    renderMatrix({ hostStyle: "copilot" });
+    await expandMcpAppsDimensions(user);
+    const row = screen.getByTestId("mcp-apps-dimension-appTools");
+    const toggle = within(row).getByRole("switch");
+    expect(toggle).not.toBeChecked();
+  });
+});
+
 describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration", () => {
   it("displays a legacy hostCapabilitiesOverride as a virtually-migrated matrix (effective values reflect what the resolver advertises)", async () => {
     const user = userEvent.setup();
