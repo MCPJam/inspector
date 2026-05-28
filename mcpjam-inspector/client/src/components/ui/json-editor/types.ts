@@ -43,6 +43,9 @@ export interface JsonEditorProps {
   // Soft-wrap long lines in edit mode while preserving logical line numbers
   wrapLongLinesInEdit?: boolean;
 
+  // Experimental edit surface for callers that need robust wrapped editing.
+  editSurface?: "legacy" | "codemirror";
+
   // Soft-wrap long lines in read-only flat view. Enabled by default because
   // most product surfaces use the viewer for inspection rather than raw code.
   wrapLongLinesInView?: boolean;

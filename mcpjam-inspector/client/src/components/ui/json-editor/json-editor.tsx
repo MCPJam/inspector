@@ -6,6 +6,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { expandJsonStringsInValue, useJsonEditor } from "./use-json-editor";
 import { JsonEditorView } from "./json-editor-view";
 import { JsonEditorEdit } from "./json-editor-edit";
+import { CodeMirrorJsonEditor } from "./codemirror-json-editor";
 import { JsonEditorToolbar } from "./json-editor-toolbar";
 import { JsonEditorStatusBar } from "./json-editor-status-bar";
 import type { JsonEditorProps, JsonEditorMode } from "./types";
@@ -55,6 +56,7 @@ export function JsonEditor({
   expandJsonStrings = false,
   autoFormatOnEdit = true,
   wrapLongLinesInEdit = false,
+  editSurface = "legacy",
   wrapLongLinesInView = true,
   showLineNumbers = true,
   toolbarLeftContent,
@@ -254,6 +256,20 @@ export function JsonEditor({
               showLineNumbers={showLineNumbers}
               collapseStringsAfterLength={collapseStringsAfterLength}
               wrapLongLinesInView={wrapLongLinesInView}
+            />
+          ) : editSurface === "codemirror" ? (
+            <CodeMirrorJsonEditor
+              content={editor.content}
+              onChange={editor.setContent}
+              onCursorChange={editor.setCursorPosition}
+              onUndo={editor.undo}
+              onRedo={editor.redo}
+              onEscape={handleEscape}
+              isValid={editor.isValid}
+              height={height ?? "100%"}
+              maxHeight={isMaximized ? undefined : maxHeight}
+              showLineNumbers={showLineNumbers}
+              wrapLongLines={wrapLongLinesInEdit}
             />
           ) : (
             <JsonEditorEdit

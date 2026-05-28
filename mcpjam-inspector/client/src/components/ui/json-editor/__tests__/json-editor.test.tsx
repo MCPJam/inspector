@@ -132,6 +132,23 @@ describe("JsonEditor", () => {
       const textarea = screen.getByRole("textbox");
       expect(textarea.getAttribute("wrap")).toBe("off");
     });
+
+    it("can render the CodeMirror edit surface for wrapped editing", () => {
+      const { container } = render(
+        <JsonEditor
+          height="100%"
+          rawContent='{"text":"long long long long long long"}'
+          mode="edit"
+          showToolbar={false}
+          editSurface="codemirror"
+          wrapLongLinesInEdit={true}
+        />,
+      );
+
+      expect(container.querySelector(".cm-editor")).toBeTruthy();
+      expect(container.querySelector(".cm-lineWrapping")).toBeTruthy();
+      expect(container.querySelector("textarea")).toBeNull();
+    });
   });
 
   describe("collapsible tree view sizing", () => {
