@@ -2230,6 +2230,17 @@ export default function App() {
           }
 
           setSelectedServer(command.payload.serverName);
+          // Playground reads `selectedMultipleServers` as the authoritative
+          // selection whenever it is non-empty (see PlaygroundMain /
+          // PlaygroundTab). If we only set `selectedServer`, an external
+          // `openPlayground` command targeting server C while the user
+          // already has `[A, B]` selected lands on Playground with the
+          // header focused on C but tools/LLM still scoped to A+B; and
+          // the `needsServer` auto-select effect can't rescue it because
+          // `selectedMCPConfig` is now set, so it early-returns. The
+          // command's intent is "focus Playground on this server", so
+          // replace the multi-set rather than merging.
+          setSelectedMCPConfigs([command.payload.serverName]);
           const runtimeForPersist = serverState.runtimeServer;
           if (runtimeForPersist?.connectionStatus === "connected") {
             void persistRuntimeServerToProjectRef.current(
@@ -2255,7 +2266,12 @@ export default function App() {
       unregisterSelectServer();
       unregisterOpenPlayground();
     };
-  }, [getInspectorServerState, setSelectedServer, syncAgentStatus]);
+  }, [
+    getInspectorServerState,
+    setSelectedServer,
+    setSelectedMCPConfigs,
+    syncAgentStatus,
+  ]);
 
   useLayoutEffect(() => {
     if (isHostedChatRoute) {
