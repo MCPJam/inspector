@@ -171,9 +171,16 @@ export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
  * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps
  *
  * Diffs from FULL:
- *   - `availableDisplayModes` clamped to `["fullscreen"]` (only fullscreen
- *     is honored; the docs say `requestDisplayMode` is supported as
- *     "fullscreen only").
+ *   - `availableDisplayModes` is `["inline", "fullscreen"]` (no `pip`).
+ *     Copilot renders widgets INLINE by default and supports fullscreen as
+ *     a mode the widget can request. The docs phrase
+ *     `requestDisplayMode` as supported "fullscreen only" — that means
+ *     fullscreen is the only expansion a widget may request, NOT that
+ *     inline is unavailable (the docs show an inline widget screenshot and
+ *     a user-clicked "Enter Fullscreen" button). Advertising
+ *     `["fullscreen"]` alone made the clamp coerce the initial mode to
+ *     fullscreen and trap the widget there (the close button could never
+ *     return to inline).
  *   - `toolInputPartial`, `toolCancelled`, `hostContextChanged`,
  *     `resourceTeardown` off — these `ui/notifications/*` are not
  *     delivered by Copilot.
@@ -188,7 +195,7 @@ export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
  * Note: `updateModelContext` and `message` stay on (Copilot honors both).
  */
 export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["fullscreen"],
+  availableDisplayModes: ["inline", "fullscreen"],
   toolInputPartial: false,
   toolCancelled: false,
   hostContextChanged: false,
