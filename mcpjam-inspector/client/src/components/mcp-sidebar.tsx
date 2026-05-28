@@ -2,6 +2,7 @@ import * as React from "react";
 import { useState, useMemo } from "react";
 import {
   Hammer,
+  House,
   MessageCircle,
   Settings,
   MessageSquareCode,
@@ -176,6 +177,12 @@ const navigationSections: NavSection[] = [
   {
     id: "connection",
     items: [
+      {
+        title: "Home",
+        url: "/home",
+        icon: House,
+        featureFlag: "home-page-enabled",
+      },
       {
         title: "Connect",
         url: "/servers",
@@ -586,6 +593,7 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
+  const homePageEnabled = useFeatureFlagEnabled("home-page-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -650,6 +658,7 @@ export function MCPSidebar({
       "mcpjam-conformance": conformanceEnabled === true,
       "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
       "playground-tab-enabled": playgroundTabEnabled === true,
+      "home-page-enabled": homePageEnabled === true && isAuthenticated,
       xaa: xaaEnabled === true,
     }),
     [
@@ -659,6 +668,7 @@ export function MCPSidebar({
       conformanceEnabled,
       hostsEnabled,
       playgroundTabEnabled,
+      homePageEnabled,
       xaaEnabled,
       isAuthenticated,
     ]

@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -78,6 +79,7 @@ import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -460,6 +462,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <EvalsRoute />;
     case "ci-evals":
       return <CiEvalsRoute />;
+    case "home":
+      return <HomeRoute />;
     case "servers":
     default:
       return <ServersRoute />;
@@ -1169,6 +1173,18 @@ export function ServersRedirectRoute() {
   return <Navigate to={routePaths.servers} replace />;
 }
 
+export function HomeRoute() {
+  const { activeOrganizationId, activeProjectId } = useAppRouteContext();
+  const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
+  if (!homeEnabled) return <ServersRoute />;
+  return (
+    <HomeTab
+      organizationId={activeOrganizationId ?? null}
+      projectId={activeProjectId ?? null}
+    />
+  );
+}
+
 export default function App() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
@@ -1645,6 +1661,7 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
+  usePostHogOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);

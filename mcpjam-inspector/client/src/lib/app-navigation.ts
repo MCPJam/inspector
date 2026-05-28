@@ -25,6 +25,7 @@ export type OrganizationRouteSection = "overview" | "billing" | "models";
 /** Typed canonical paths used across the app. */
 export const routePaths = {
   root: "/",
+  home: "/home",
   servers: "/servers",
   clients: "/clients",
   registry: "/registry",
@@ -214,6 +215,7 @@ const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
   ...HOSTED_HASH_ALLOWED_TABS,
   ...HOSTED_HASH_BLOCKED_TABS,
   "chat",
+  "home",
 ]);
 
 function isSpecialEntryPathname(pathname: string): boolean {
@@ -228,7 +230,7 @@ function isSpecialEntryPathname(pathname: string): boolean {
 
 export function pathnameToActiveTab(pathname: string): string {
   if (isSpecialEntryPathname(pathname)) return "servers";
-  const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "servers";
+  const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";
   const normalized = normalizeHostedHashTab(firstSegment);
   // Unknown first segments include chatbox slugs; App handles those surfaces
   // before route rendering, so the shell falls back to the safe servers body.
