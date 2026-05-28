@@ -823,8 +823,8 @@ export function useAppState({
     activeHostId,
     setActiveHostId,
     // Back-compat: `activeMcpProfile` was the per-call alias for
-    // `activeHost?.mcpProfile`. Surfaces that still destructure it (e.g.
-    // ChatV2Route) keep working without churn.
+    // `activeHost?.mcpProfile`. Surfaces that still destructure it keep
+    // working without churn.
     activeMcpProfile: activeHost?.mcpProfile,
 
     handleConnect: serverState.handleConnect,

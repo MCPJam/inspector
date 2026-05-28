@@ -40,7 +40,6 @@ export const routePaths = {
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
-  chatV2: "/chat-v2",
   chatboxes: "/chatboxes",
   playground: "/playground",
   views: "/views",

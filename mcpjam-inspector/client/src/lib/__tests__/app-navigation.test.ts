@@ -25,7 +25,7 @@ describe("pathnameToActiveTab", () => {
   });
 
   it("normalizes aliases", () => {
-    expect(pathnameToActiveTab("/chat/thread-1")).toBe("chat-v2");
+    expect(pathnameToActiveTab("/chat/thread-1")).toBe("playground");
   });
 
   it("renders special entry paths through the servers fallback", () => {
@@ -69,7 +69,7 @@ describe("path navigation compatibility helpers", () => {
     expect(navigationTargetToPath("#/evals/suite/s_1?view=test-cases")).toBe(
       "/evals/suite/s_1?view=test-cases",
     );
-    expect(navigationTargetToPath("chat")).toBe("/chat-v2");
+    expect(navigationTargetToPath("chat")).toBe("/playground");
     expect(navigationTargetToPath("not-a-tab")).toBe("/servers");
   });
 

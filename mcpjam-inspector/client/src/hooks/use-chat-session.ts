@@ -2276,7 +2276,7 @@ export function useChatSession(
 
   // When controlled, mirror `executionConfig` fields into local state; when
   // a field is undefined, reset to the hook default rather than retaining
-  // the prior host's value (e.g. ChatV2Route passes `executionConfig`
+  // the prior host's value (e.g. ChatTabV2 callers pass `executionConfig`
   // computed from `activeHost`, which is transiently undefined during
   // project/host bootstrap). When uncontrolled (Playground), skip — the
   // caller drives these via imperative setters and would otherwise race

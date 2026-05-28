@@ -56,7 +56,7 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
       headers: Object.fromEntries(
         Object.entries(req.headers).map(([k, v]) => [
           k,
-          Array.isArray(v) ? v.join(",") : (v ?? ""),
+          Array.isArray(v) ? v.join(",") : v ?? "",
         ])
       ),
       body,
@@ -390,7 +390,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
         headers: Object.fromEntries(
           Object.entries(req.headers).map(([k, v]) => [
             k,
-            Array.isArray(v) ? v.join(",") : (v ?? ""),
+            Array.isArray(v) ? v.join(",") : v ?? "",
           ])
         ),
         body,

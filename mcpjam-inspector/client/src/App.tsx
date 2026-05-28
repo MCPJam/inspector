@@ -22,7 +22,6 @@ import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
-import { ClientStyledChatTabV2 } from "./components/ClientStyledChatTabV2";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
@@ -49,7 +48,6 @@ import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
-import { ClientPicker } from "./components/clients/ClientPicker";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -437,8 +435,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <TracingRoute />;
     case "clients":
       return <ClientsRoute />;
-    case "chat-v2":
-      return <ChatV2Route />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "playground":
@@ -927,76 +923,6 @@ export function XAAFlowRoute() {
   );
 }
 
-export function ChatV2Route() {
-  const {
-    connectedOrConnectingServerConfigs,
-    appState,
-    activeHost,
-    activeHostId,
-    convexProjectId,
-    evalChatHandoff,
-    handleConnect,
-    handleReconnect,
-    hostsHubFlagEnabled,
-    isAuthenticated,
-    projectServers,
-    setActiveHostId,
-    setEvalChatHandoff,
-    setSelectedMCPConfigs,
-    toggleServerSelection,
-  } = useAppRouteContext();
-
-  return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      {hostsHubFlagEnabled && isAuthenticated && convexProjectId && (
-        <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
-          <span className="text-xs text-muted-foreground">Client:</span>
-          <div className="w-48">
-            <ClientPicker
-              projectId={convexProjectId}
-              value={activeHostId}
-              onChange={setActiveHostId}
-              location="chat_tab"
-              placeholder="Project default"
-              noneLabel="Project default"
-            />
-          </div>
-        </div>
-      )}
-      <ClientStyledChatTabV2
-        connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
-        selectedServerNames={appState.selectedMultipleServers}
-        allServerConfigs={projectServers}
-        onServerToggle={toggleServerSelection}
-        onReconnectServer={handleReconnect}
-        onAddServer={handleConnect}
-        onSelectedServerNamesChange={setSelectedMCPConfigs}
-        enableMultiModelChat
-        showHostStyleSelector
-        executionConfig={
-          activeHost
-            ? {
-                modelId: activeHost.modelId,
-                systemPrompt: activeHost.systemPrompt,
-                temperature: activeHost.temperature,
-                requireToolApproval: activeHost.requireToolApproval,
-                progressiveToolDiscovery: activeHost.progressiveToolDiscovery,
-                respectToolVisibility: activeHost.respectToolVisibility,
-              }
-            : undefined
-        }
-        activeHost={activeHost}
-        evalChatHandoff={evalChatHandoff}
-        onEvalChatHandoffConsumed={(id) =>
-          setEvalChatHandoff((current: EvalChatHandoff | null) =>
-            current?.id === id ? null : current
-          )
-        }
-      />
-    </div>
-  );
-}
-
 export function TracingRoute() {
   return <TracingTab />;
 }
@@ -1122,7 +1048,7 @@ export function OrganizationsRoute() {
 }
 
 export function ChatAliasRoute() {
-  return <Navigate to={routePaths.chatV2} replace />;
+  return <Navigate to={routePaths.playground} replace />;
 }
 
 export function ServersRedirectRoute() {
@@ -1179,7 +1105,6 @@ export default function App() {
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
-  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
@@ -1549,7 +1474,6 @@ export default function App() {
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleServerSelection,
-    setSelectedMultipleServersToAllServers,
     projects,
     activeProjectId,
     handleSwitchProject,
@@ -2118,15 +2042,6 @@ export default function App() {
     [navigateToTarget]
   );
 
-  const previousActiveTabRef = useRef(activeTab);
-  useEffect(() => {
-    const previousActiveTab = previousActiveTabRef.current;
-    if (activeTab === "chat-v2" && previousActiveTab !== "chat-v2") {
-      setSelectedMultipleServersToAllServers();
-    }
-    previousActiveTabRef.current = activeTab;
-  }, [activeTab, setSelectedMultipleServersToAllServers]);
-
   useEffect(() => {
     if (!routeOrganizationId || !hasRouteOrganization) {
       return;
@@ -2534,11 +2449,6 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (
-      activeTab === "chat-v2" &&
-      playgroundTabEnabled === true
-    ) {
-      navigateApp(routePaths.playground, { replace: true });
     }
   }, [
     conformanceEnabled,
@@ -2549,7 +2459,6 @@ export default function App() {
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
     xaaEnabled,
-    playgroundTabEnabled,
     isAuthenticated,
     activeTab,
     navigateToTarget,
@@ -2593,7 +2502,7 @@ export default function App() {
         ...handoff,
         id: `eval-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       });
-      navigateApp(routePaths.chatV2);
+      navigateApp(routePaths.playground);
     },
     [setSelectedMCPConfigs]
   );
@@ -2975,7 +2884,6 @@ export default function App() {
     navigateToTarget,
     pendingDashboardOAuth,
     playgroundEnabled,
-    playgroundTabEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,
