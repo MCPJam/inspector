@@ -687,12 +687,25 @@ export function PlaygroundMain({
     // already written `handoff.serverNames` into the multi-set, and the
     // handoff-consume effect (below) doesn't touch the server selection.
     // Without this guard the eval thread opens with the previewed host's
-    // server set instead of the eval's. Once consumed, the ref matches
-    // and this branch falls through normally.
+    // server set instead of the eval's.
+    //
+    // We ALSO mark `lastSeededHostRef` as committed for this (hostId,
+    // configId) — otherwise after the handoff is consumed and the parent
+    // clears `evalChatHandoff`, this effect re-runs (deps like
+    // `serversById` can hydrate later) and the reseed block fires,
+    // overwriting `handoff.serverNames` on the previewed host's required
+    // set. The eval's selection conceptually IS the seed for the
+    // current host this mount; if the user later switches hosts, the
+    // (hostId, configId) tuple changes and the reseed fires normally
+    // for the new host.
     if (
       evalChatHandoff &&
       appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id
     ) {
+      lastSeededHostRef.current = {
+        hostId: previewedHostId,
+        configId: previewedHost.config.id,
+      };
       return;
     }
     const configId = previewedHost.config.id;
