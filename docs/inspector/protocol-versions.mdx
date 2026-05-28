@@ -1,10 +1,10 @@
 ---
 title: "MCP protocol versions"
-description: "Pin the inspector to a specific MCP wire version — including the 2026-07-28 stateless RC — to test how your server behaves across versions."
+description: "Pin the inspector to a specific MCP protocol version — including the 2026-07-28 stateless RC — to test how your server behaves across versions."
 icon: "git-branch"
 ---
 
-The inspector can speak more than one version of the MCP wire protocol. By default it negotiates whatever the SDK considers current, but you can pin a different version when you want to test how your server behaves against a specific draft — including the new **2026-07-28 stateless RC**.
+The inspector can speak more than one version of the MCP protocol. By default it negotiates whatever the SDK considers current, but you can pin a different version when you want to test how your server behaves against a specific draft — including the new **2026-07-28 stateless RC**.
 
 This page covers how to pick a version. Automatic per-server version detection is on the roadmap; for now you tell the inspector which version to use.
 
@@ -19,13 +19,13 @@ Use the host default when you want every server in a Client to speak the same ve
 
 ## Available versions
 
-| Option                               | Wire value   | Transport                                       | Use it when                                                                                                                                 |
-| ------------------------------------ | ------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Latest**                           | `2025-11-25` | HTTP, STDIO, SSE                                | The current stable MCP. Default for everything not opted in to the RC.                                                                      |
-| **2026 RC**                          | `2026-07-28` | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
-| **Host default** _(per-server only)_ | —            | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+| Option                               | Protocol version | Transport                                       | Use it when                                                                                                                                 |
+| ------------------------------------ | ---------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Latest**                           | `2025-11-25`     | HTTP, STDIO, SSE                                | The current stable MCP. Default for everything not opted in to the RC.                                                                      |
+| **2026 RC**                          | `2026-07-28`     | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
+| **Host default** _(per-server only)_ | —                | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
 
-The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong wire mode.
+The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
 
 ## Setting the host default
 
@@ -58,9 +58,9 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 
 ### What the inspector tells you
 
-- If your server doesn't speak `2026-07-28`, `server/discover` returns `-32004 UnsupportedProtocolVersionError` and the connection fails with the supported-versions list visible in the wire log.
-- If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server — surface those in the wire log to confirm they reach you.
-- The wire log (server card → **Activity**) is the source of truth — every request and response, success or error, lands there so you can verify headers and `_meta` content.
+- If your server doesn't speak `2026-07-28`, `server/discover` returns `-32004 UnsupportedProtocolVersionError` and the connection fails with the supported-versions list visible in the Activity log.
+- If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server — surface those in the Activity log to confirm they reach you.
+- The **Activity** log (server card → **Activity**) is the source of truth — every request and response, success or error, lands there so you can verify headers and `_meta` content.
 
 ### Not yet supported in the RC client
 
