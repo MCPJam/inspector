@@ -397,15 +397,17 @@ export async function authorizeBatch(
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
           : {}),
-        // Tell Convex this request came from a local Inspector (npx /
-        // desktop) so it can skip the hosted-mode HTTPS-only check on
-        // MCP server URLs. Convex never connects to the MCP server
-        // itself — the Inspector does — so an `http://localhost` URL
-        // here is harmless metadata. The flag is only honored when the
-        // request has no browser Origin (server-to-server fetch from
-        // this Hono backend); a hosted browser at app.mcpjam.com can't
-        // smuggle it in to bypass the policy. See `normalizeAuthorizeResult`
-        // in mcpjam-backend/convex/http.ts.
+        // Skip Convex's hosted-mode HTTPS-only check on MCP server URLs
+        // when this Inspector instance is running locally. Convex doesn't
+        // open MCP server URLs itself (we do, from this Hono backend), so
+        // an `http://localhost` URL is harmless metadata in that case.
+        //
+        // Convex only honors `localRuntime` when the request has no
+        // browser Origin, so a hosted browser at app.mcpjam.com can't
+        // smuggle it in to bypass the policy. The flag itself isn't
+        // Inspector-specific — any non-browser caller can set it — see
+        // the docstring on `normalizeAuthorizeResult` in
+        // mcpjam-backend/convex/http.ts for the full rationale.
         ...(!HOSTED_MODE ? { localRuntime: true } : {}),
       }),
     });
