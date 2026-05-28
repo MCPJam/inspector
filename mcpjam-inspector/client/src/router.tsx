@@ -66,6 +66,11 @@ export function createAppRouter(): AppRouter {
         { path: "xaa-flow", element: <XAAFlowRoute /> },
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
+        // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
+        // Playground instead of the router's `*` catch-all (which would
+        // render ServersRoute while `pathnameToActiveTab` still resolves
+        // "chat" → "playground" — sidebar/content mismatch).
+        { path: "chat/*", element: <ChatAliasRoute /> },
         // `/chatboxes` — publish-surface tab (Publish / Sessions / Clusters)
         // for the chatbox bound 1:1 to the currently-selected host. The
         // Hosts hub at `/hosts` is the primary navigation entry; tests

@@ -670,12 +670,29 @@ export function PlaygroundMain({
   const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
     null
   );
+  // Declared early so the previewed-host reseed effect can early-return
+  // while an eval-chat handoff is still pending. The handoff-consume
+  // effect that flips this ref runs later in the file.
+  const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!previewedHostId || !previewedHost) {
       // Clear the dedupe ref so a later return to the same (hostId, configId)
       // — after a transient host-unavailable phase or project switch — still
       // reseeds the composer instead of short-circuiting on a stale ref.
       lastSeededHostRef.current = null;
+      return;
+    }
+    // Don't reseed `selectedMultipleServers` from the previewed host while
+    // an eval-chat handoff is pending: `handleContinueEvalInChat` has
+    // already written `handoff.serverNames` into the multi-set, and the
+    // handoff-consume effect (below) doesn't touch the server selection.
+    // Without this guard the eval thread opens with the previewed host's
+    // server set instead of the eval's. Once consumed, the ref matches
+    // and this branch falls through normally.
+    if (
+      evalChatHandoff &&
+      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id
+    ) {
       return;
     }
     const configId = previewedHost.config.id;
@@ -1219,7 +1236,8 @@ export function PlaygroundMain({
 
   // Eval "Continue in chat" handoff. Mirrors ChatTabV2:1283-1340 so that the
   // handoff seeds a chat in Playground with the eval's model + messages.
-  const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  // `appliedEvalChatHandoffIdRef` is declared earlier so the previewed-host
+  // reseed effect can gate on the handoff being pending.
   useEffect(() => {
     if (!evalChatHandoff) return;
     if (!isSessionBootstrapComplete) return;
