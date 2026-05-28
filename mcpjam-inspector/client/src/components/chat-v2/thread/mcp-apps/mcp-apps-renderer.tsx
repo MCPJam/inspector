@@ -2603,10 +2603,21 @@ export function MCPAppsRenderer({
         // handshake — see policy effect below.
         inlineAppAdvertisedToolsRef.current = Boolean(appCaps?.tools);
         if (appCaps?.tools) {
-          const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
-          appToolsBridgeIdRef.current = bridgeId;
-          setAppToolsBridgeIdState(bridgeId);
-          void refreshAppProvidedTools(bridge, bridgeId);
+          // Gate the registry write on the current policy. Without this
+          // check, an `oninitialized` that fires while the policy is off
+          // would still mint a bridgeId here — the centralized gate in
+          // `refreshAppProvidedTools` short-circuits the listTools call
+          // but leaves the dangling ref behind, which then blocks the
+          // re-enable effect's `bridgeIdRef.current === null` precondition
+          // when the user toggles policy on. Advertised-tools ref above
+          // is the policy-on path's source of truth.
+          if (mcpAppsCapabilitiesRef.current?.appTools !== false) {
+            const bridgeId =
+              appToolsBridgeIdRef.current ?? crypto.randomUUID();
+            appToolsBridgeIdRef.current = bridgeId;
+            setAppToolsBridgeIdState(bridgeId);
+            void refreshAppProvidedTools(bridge, bridgeId);
+          }
 
           // SEP-1865 host UX: app-tools widgets are interactive — the
           // dev will want to chat with them. Auto-promote to fullscreen

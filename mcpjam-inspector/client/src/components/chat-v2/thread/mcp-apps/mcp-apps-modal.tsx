@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useLayoutEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -158,6 +158,14 @@ export function McpAppsModal({
   // mid-session toggle can't synthesize a registration the guest never
   // advertised. Reset to false when the bridge effect tears down.
   const modalAppAdvertisedToolsRef = useRef(false);
+  // Live mirror of the policy prop so the `oninitialized` handler — set
+  // inside a useEffect that doesn't dep on `appToolsPolicyEnabled` —
+  // reads the current value instead of a stale closure when deciding
+  // whether to mint a bridgeId at handshake time.
+  const appToolsPolicyEnabledRef = useRef(appToolsPolicyEnabled);
+  useLayoutEffect(() => {
+    appToolsPolicyEnabledRef.current = appToolsPolicyEnabled;
+  }, [appToolsPolicyEnabled]);
   // Same scope as the inline renderer — `ActiveMcpProfileProvider` wraps
   // both. Used to resolve `hostInfo` for the modal's AppBridge handshake.
   const activeMcpProfile = useActiveMcpProfile();
@@ -305,7 +313,12 @@ export function McpAppsModal({
       // policy re-enable effect can repopulate the registry after a
       // mid-session toggle without waiting for a fresh handshake.
       modalAppAdvertisedToolsRef.current = Boolean(appCaps?.tools);
-      if (appCaps?.tools) {
+      // Gate on the policy too: if the modal initializes while the
+      // host has app-tools off, do NOT mint a bridgeId — the centralized
+      // gate in `refreshAppProvidedTools` would short-circuit and leave
+      // a dangling ref that blocks the policy re-enable effect's
+      // null-bridgeId precondition on toggle back to on.
+      if (appCaps?.tools && appToolsPolicyEnabledRef.current) {
         const bridgeId =
           modalAppToolsBridgeIdRef.current ?? crypto.randomUUID();
         modalAppToolsBridgeIdRef.current = bridgeId;
