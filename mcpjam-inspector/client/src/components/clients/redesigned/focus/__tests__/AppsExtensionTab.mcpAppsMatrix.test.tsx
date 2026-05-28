@@ -284,3 +284,40 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
   });
 
 });
+
+describe("AppsExtensionTab — master-toggle round-trip", () => {
+  it("toggling Inject window.openai on then off returns the draft to its original profile state", async () => {
+    // Regression: setCompatRuntimeOnDraft used to leave an explicit
+    // `compatRuntime: { openaiApps: false }` block on the envelope after
+    // toggle-on then toggle-off on a preset-off host (e.g. Claude). The
+    // dirty check treats that as distinct from the saved `mcpProfile:
+    // undefined`, so the save button stayed lit.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    expect(draftRef.current.mcpProfile).toBeUndefined();
+    const toggle = screen.getByRole("switch", {
+      name: "Inject window.openai",
+    });
+    await user.click(toggle); // on (write override)
+    await user.click(toggle); // off (matches preset → clear)
+    expect(draftRef.current.mcpProfile).toBeUndefined();
+  });
+
+  it("toggling Advertise MCP App support off then on returns clientCapabilities.extensions to its original shape", async () => {
+    // Regression: withoutMcpUiExtension used to write `extensions: {}`
+    // unconditionally; if the saved baseline matched the preset's
+    // extensions exactly, toggling off then on must restore the same
+    // shape — otherwise the dirty check trips on a structural diff.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    const original = JSON.parse(
+      JSON.stringify(draftRef.current.clientCapabilities ?? {}),
+    );
+    const toggle = screen.getByRole("switch", {
+      name: "Advertise MCP App support",
+    });
+    await user.click(toggle); // off
+    await user.click(toggle); // back on
+    expect(draftRef.current.clientCapabilities).toEqual(original);
+  });
+});
