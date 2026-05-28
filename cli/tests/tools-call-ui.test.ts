@@ -376,7 +376,7 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
     assert.equal(payload.inspectorUi, true);
     assert.equal(
       payload.inspectorBrowserUrl,
-      `http://127.0.0.1:${server.port}/#app-builder`,
+      `http://127.0.0.1:${server.port}/#playground`,
     );
     assert.deepEqual(payload.result, toolResult);
     assert.deepEqual(payload.parameterKeys, ["shape"]);
@@ -387,10 +387,10 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
     assert.equal(payload.inspectorRender.urlHydratesRender, false);
     assert.equal(
       payload.inspectorRender.browserUrl,
-      `http://127.0.0.1:${server.port}/#app-builder`,
+      `http://127.0.0.1:${server.port}/#playground`,
     );
     assert.deepEqual(payload.inspectorRender.commands, {
-      openAppBuilder: { status: "success" },
+      openPlayground: { status: "success" },
       setAppContext: { status: "success" },
       renderToolResult: { status: "success" },
       snapshot: { status: "success" },
@@ -418,7 +418,7 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
     );
     assert.deepEqual(
       commandRequests.map((entry) => (entry.body as { type?: string }).type),
-      ["openAppBuilder", "setAppContext", "renderToolResult", "snapshotApp"],
+      ["openPlayground", "setAppContext", "renderToolResult", "snapshotApp"],
     );
     const renderRequest = commandRequests.find(
       (entry) => (entry.body as { type?: string }).type === "renderToolResult",
@@ -465,7 +465,7 @@ test("tools call --ui --frontend-url uses the explicit browser URL without probi
     assert.equal(payload.success, true);
     assert.equal(
       payload.inspectorBrowserUrl,
-      `http://localhost:${server.port}/inspector/#app-builder`,
+      `http://localhost:${server.port}/inspector/#playground`,
     );
     assert.equal(
       payload.inspectorFrontendUrl,
@@ -473,7 +473,7 @@ test("tools call --ui --frontend-url uses the explicit browser URL without probi
     );
     assert.equal(
       payload.inspectorRender.browserUrl,
-      `http://localhost:${server.port}/inspector/#app-builder`,
+      `http://localhost:${server.port}/inspector/#playground`,
     );
     assert.equal(payload.inspectorRender.browserOpenRequested, false);
     assert.equal(
@@ -538,7 +538,7 @@ test("tools call --ui --no-open in JSON mode skips render without an active Insp
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stderr, /Warning: Inspector UI render skipped/);
-    assert.match(result.stderr, /Tip: open the Inspector App Builder/);
+    assert.match(result.stderr, /Tip: open the Inspector Playground/);
     const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
       string,
       any
@@ -546,7 +546,7 @@ test("tools call --ui --no-open in JSON mode skips render without an active Insp
     assert.equal(payload.success, true);
     assert.equal(
       payload.inspectorBrowserUrl,
-      `http://127.0.0.1:${server.port}/#app-builder`,
+      `http://127.0.0.1:${server.port}/#playground`,
     );
     assert.equal(payload.inspectorRender.status, "skipped");
     assert.equal(payload.inspectorRender.remediation, "open_browser");
@@ -593,7 +593,7 @@ test("tools call --ui defaults to no-open in a non-TTY shell", async () => {
     ]);
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.doesNotMatch(result.stderr, /Inspector App Builder URL:/);
+    assert.doesNotMatch(result.stderr, /Inspector Playground URL:/);
     const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
       string,
       any
@@ -655,7 +655,7 @@ test("tools call --ui --no-open --quiet --format json does not scan nearby front
     assert.equal(payload.success, true);
     assert.equal(
       payload.inspectorBrowserUrl,
-      `${staleFrontendUrl}/#app-builder`,
+      `${staleFrontendUrl}/#playground`,
     );
     assert.equal(payload.inspectorRender.status, "skipped");
     assert.equal(payload.inspectorRender.hasActiveClient, false);
@@ -738,7 +738,7 @@ test("tools call --ui opens by default in a TTY and may render while waiting for
     );
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.match(result.stderr, /Inspector App Builder URL:/);
+    assert.match(result.stderr, /Inspector Playground URL:/);
     assert.match(result.stderr, /Waiting for Inspector browser client/);
     const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
       string,
@@ -750,7 +750,7 @@ test("tools call --ui opens by default in a TTY and may render while waiting for
       server.requests
         .filter((entry) => entry.url === "/api/mcp/command")
         .map((entry) => (entry.body as { type?: string }).type),
-      ["openAppBuilder", "renderToolResult", "snapshotApp"],
+      ["openPlayground", "renderToolResult", "snapshotApp"],
     );
   } finally {
     await server.stop();
@@ -760,7 +760,7 @@ test("tools call --ui opens by default in a TTY and may render while waiting for
 test("tools call --ui --open keeps milestone progress but drops the elapsed heartbeat when stderr is not a TTY", async () => {
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({
-    commandDelays: { openAppBuilder: 2_100 },
+    commandDelays: { openPlayground: 2_100 },
     hasActiveClient: false,
     toolResult,
   });
@@ -791,7 +791,7 @@ test("tools call --ui --open keeps milestone progress but drops the elapsed hear
     );
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.match(result.stderr, /Inspector App Builder URL:/);
+    assert.match(result.stderr, /Inspector Playground URL:/);
     assert.match(result.stderr, /Waiting for Inspector browser client to connect/);
     assert.doesNotMatch(
       result.stderr,
@@ -806,7 +806,7 @@ test("tools call --ui --open treats Inspector command timeouts as render skips",
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({
     commandErrors: {
-      openAppBuilder: {
+      openPlayground: {
         code: "timeout",
         message: "Inspector command timed out after 30000ms.",
         status: 504,
@@ -834,7 +834,7 @@ test("tools call --ui --open treats Inspector command timeouts as render skips",
     ]);
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.match(result.stderr, /Inspector App Builder URL:/);
+    assert.match(result.stderr, /Inspector Playground URL:/);
     const payload = JSON.parse(lastJsonLine(result.stdout)) as Record<
       string,
       any
@@ -848,14 +848,14 @@ test("tools call --ui --open treats Inspector command timeouts as render skips",
     assert.equal(payload.inspectorRender.warning.code, "timeout");
     assert.equal(payload.inspectorRender.warning.remediation, "retry");
     assert.equal(
-      payload.inspectorRender.commands.openAppBuilder.error.code,
+      payload.inspectorRender.commands.openPlayground.error.code,
       "timeout",
     );
     assert.deepEqual(
       server.requests
         .filter((entry) => entry.url === "/api/mcp/command")
         .map((entry) => (entry.body as { type?: string }).type),
-      ["openAppBuilder"],
+      ["openPlayground"],
     );
   } finally {
     await server.stop();
@@ -866,7 +866,7 @@ test("tools call --ui classifies disconnected Inspector clients for agent recove
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({
     commandErrors: {
-      openAppBuilder: {
+      openPlayground: {
         code: "disconnected_server",
         message: "The Inspector client disconnected before the command completed.",
         status: 409,
@@ -915,9 +915,9 @@ test("tools call --ui classifies unsupported Inspector modes for agent recovery"
   const toolResult = { content: [{ type: "text", text: "view created" }] };
   const server = await startMockServer({
     commandErrors: {
-      openAppBuilder: {
+      openPlayground: {
         code: "unsupported_in_mode",
-        message: "App Builder is unavailable in the current Inspector mode.",
+        message: "Playground is unavailable in the current Inspector mode.",
         status: 409,
       },
     },
@@ -999,7 +999,7 @@ test("tools call --ui --open can discover a nearby dev frontend", async () => {
       any
     >;
     assert.equal(payload.success, true);
-    assert.equal(payload.inspectorBrowserUrl, `${frontend.url}/#app-builder`);
+    assert.equal(payload.inspectorBrowserUrl, `${frontend.url}/#playground`);
     assert.equal(payload.inspectorFrontendUrl, frontend.url);
     assert.equal(payload.inspectorRender.browserOpenRequested, true);
   } finally {
@@ -1099,7 +1099,7 @@ test("tools call --ui keeps the tool result when Inspector render fails", async 
     );
     assert.deepEqual(
       commandRequests.map((entry) => (entry.body as { type?: string }).type),
-      ["openAppBuilder", "renderToolResult"],
+      ["openPlayground", "renderToolResult"],
     );
   } finally {
     await server.stop();
@@ -1291,7 +1291,7 @@ test("tools call --ui accepts frontend-url with open", async () => {
     assert.equal(payload.success, true);
     assert.equal(
       payload.inspectorBrowserUrl,
-      `http://localhost:${server.port}/client/#app-builder`,
+      `http://localhost:${server.port}/client/#playground`,
     );
     assert.equal(payload.inspectorRender.browserOpenRequested, true);
   } finally {

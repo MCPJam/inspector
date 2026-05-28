@@ -17,7 +17,7 @@ export type InspectorCommandErrorCode =
 export type InspectorCommandType =
   | "navigate"
   | "selectServer"
-  | "openAppBuilder"
+  | "openPlayground"
   | "setAppContext"
   | "selectTool"
   | "executeTool"
@@ -27,7 +27,7 @@ export type InspectorCommandType =
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
   "selectServer",
-  "openAppBuilder",
+  "openPlayground",
   "setAppContext",
   "selectTool",
   "executeTool",
@@ -55,9 +55,9 @@ export interface SelectServerInspectorCommand {
   timeoutMs?: number;
 }
 
-export interface OpenAppBuilderInspectorCommand {
+export interface OpenPlaygroundInspectorCommand {
   id: string;
-  type: "openAppBuilder";
+  type: "openPlayground";
   payload: { serverName?: string };
   timeoutMs?: number;
 }
@@ -119,7 +119,7 @@ export interface SnapshotAppInspectorCommand {
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
-  | OpenAppBuilderInspectorCommand
+  | OpenPlaygroundInspectorCommand
   | SetAppContextInspectorCommand
   | SelectToolInspectorCommand
   | ExecuteToolInspectorCommand

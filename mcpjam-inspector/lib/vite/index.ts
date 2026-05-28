@@ -32,7 +32,7 @@ export interface MCPInspectorPluginOptions {
   };
 
   /**
-   * Initial tab to navigate to. Defaults to "app-builder".
+   * Initial tab to navigate to. Defaults to "playground".
    */
   defaultTab?: string;
 
@@ -49,7 +49,7 @@ export interface MCPInspectorPluginOptions {
   verbose?: boolean;
 
   /**
-   * Content Security Policy mode for the App Builder sandbox.
+   * Content Security Policy mode for the Playground sandbox.
    * - "permissive": disables CSP enforcement for easier development (default)
    * - "widget-declared": enforces CSP directives declared by the widget
    */
@@ -72,7 +72,7 @@ export interface MCPInspectorPluginOptions {
  *         name: 'My MCP Server',
  *         url: 'http://localhost:3000/mcp',
  *       },
- *       defaultTab: 'app-builder',
+ *       defaultTab: 'playground',
  *     }),
  *   ],
  * });
@@ -93,7 +93,7 @@ export function mcpInspector(options: MCPInspectorPluginOptions = {}): Plugin {
         try {
           inspector = await launchInspector({
             server: options.server,
-            defaultTab: options.defaultTab ?? "app-builder",
+            defaultTab: options.defaultTab ?? "playground",
             verbose: options.verbose,
             cspMode: options.cspMode,
           });

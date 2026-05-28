@@ -33,7 +33,7 @@ export interface LaunchOptions {
 
   /**
    * Initial tab to navigate to.
-   * Options: "servers", "tools", "resources", "prompts", "chat", "app-builder"
+   * Options: "servers", "tools", "resources", "prompts", "chat", "playground"
    */
   defaultTab?: string;
 
@@ -100,7 +100,7 @@ async function waitForServer(port: number, timeout = 30000): Promise<void> {
  *     name: 'My MCP Server',
  *     url: 'http://localhost:3000/mcp',
  *   },
- *   defaultTab: 'app-builder',
+ *   defaultTab: 'playground',
  * });
  *
  * console.log(`Inspector running at ${inspector.url}`);

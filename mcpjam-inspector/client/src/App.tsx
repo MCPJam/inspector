@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -38,7 +39,6 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
-import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
@@ -78,6 +78,7 @@ import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -213,7 +214,7 @@ import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import type {
   NavigateInspectorCommand,
-  OpenAppBuilderInspectorCommand,
+  OpenPlaygroundInspectorCommand,
   SelectServerInspectorCommand,
 } from "@/shared/inspector-command.js";
 
@@ -440,8 +441,6 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatV2Route />;
     case "chatboxes":
       return <ChatboxesRoute />;
-    case "app-builder":
-      return <AppBuilderRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "views":
@@ -460,6 +459,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <EvalsRoute />;
     case "ci-evals":
       return <CiEvalsRoute />;
+    case "home":
+      return <HomeRoute />;
     case "servers":
     default:
       return <ServersRoute />;
@@ -1000,47 +1001,6 @@ export function TracingRoute() {
   return <TracingTab />;
 }
 
-export function AppBuilderRoute() {
-  const {
-    selectedMCPConfig,
-    appState,
-    projectServers,
-    activeProjectId,
-    workOsUser,
-    isWorkOsLoading,
-    isAuthenticated,
-    activeProject,
-    remoteFirstRunOnboardingShown,
-    isSelectedServerSyncing,
-    handleConnect,
-    handleUpdateHostContext,
-    ensureServersReady,
-    setAppBuilderOnboarding,
-    playgroundServerSelectorProps,
-  } = useAppRouteContext();
-
-  return (
-    <AppBuilderTab
-      serverConfig={selectedMCPConfig}
-      serverName={appState.selectedServer}
-      servers={projectServers}
-      activeProjectId={activeProjectId}
-      isSignedInWithWorkOs={!!workOsUser}
-      isWorkOsAuthLoading={isWorkOsLoading}
-      isConvexAuthenticated={isAuthenticated}
-      isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
-      hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
-      isServerSyncing={isSelectedServerSyncing}
-      onConnect={handleConnect}
-      onSaveHostContext={handleUpdateHostContext}
-      ensureServersReady={ensureServersReady}
-      onOnboardingChange={setAppBuilderOnboarding}
-      playgroundServerSelectorProps={playgroundServerSelectorProps}
-      enableMultiModelChat
-    />
-  );
-}
-
 export function PlaygroundRoute() {
   const {
     activeHost,
@@ -1167,6 +1127,18 @@ export function ChatAliasRoute() {
 
 export function ServersRedirectRoute() {
   return <Navigate to={routePaths.servers} replace />;
+}
+
+export function HomeRoute() {
+  const { activeOrganizationId, activeProjectId } = useAppRouteContext();
+  const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
+  if (!homeEnabled) return <ServersRoute />;
+  return (
+    <HomeTab
+      organizationId={activeOrganizationId ?? null}
+      projectId={activeProjectId ?? null}
+    />
+  );
 }
 
 export default function App() {
@@ -1645,6 +1617,7 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
+  usePostHogOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
@@ -1778,7 +1751,7 @@ export default function App() {
   // Auto-select a connected server when navigating to tabs that need one
   useEffect(() => {
     const needsServer =
-      activeTab === "app-builder" ||
+      activeTab === "playground" ||
       activeTab === "tools" ||
       activeTab === "resources" ||
       activeTab === "prompts" ||
@@ -1792,8 +1765,26 @@ export default function App() {
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);
+      // Playground reads `selectedMultipleServers` as the authoritative
+      // selection; if we only seed `selectedServer`, the first toggle in
+      // the composer popover flips the auto-selected server off because
+      // the multi-set goes from `[]` → `[toggled]` and the single-server
+      // fallback drops out.
+      if (
+        activeTab === "playground" &&
+        appState.selectedMultipleServers.length === 0
+      ) {
+        setSelectedMCPConfigs([firstConnected[0]]);
+      }
     }
-  }, [activeTab, selectedMCPConfig, projectServers, setSelectedServer]);
+  }, [
+    activeTab,
+    selectedMCPConfig,
+    projectServers,
+    setSelectedServer,
+    setSelectedMCPConfigs,
+    appState.selectedMultipleServers,
+  ]);
 
   // Create effective app state that uses the correct projects (Convex when authenticated)
   const effectiveAppState = useMemo(
@@ -2218,10 +2209,10 @@ export default function App() {
       }
     );
 
-    const unregisterOpenAppBuilder = registerInspectorCommandHandler(
-      "openAppBuilder",
+    const unregisterOpenPlayground = registerInspectorCommandHandler(
+      "openPlayground",
       async (rawCommand) => {
-        const command = rawCommand as OpenAppBuilderInspectorCommand;
+        const command = rawCommand as OpenPlaygroundInspectorCommand;
 
         if (command.payload.serverName) {
           let serverState = getInspectorServerState(command.payload.serverName);
@@ -2239,6 +2230,17 @@ export default function App() {
           }
 
           setSelectedServer(command.payload.serverName);
+          // Playground reads `selectedMultipleServers` as the authoritative
+          // selection whenever it is non-empty (see PlaygroundMain /
+          // PlaygroundTab). If we only set `selectedServer`, an external
+          // `openPlayground` command targeting server C while the user
+          // already has `[A, B]` selected lands on Playground with the
+          // header focused on C but tools/LLM still scoped to A+B; and
+          // the `needsServer` auto-select effect can't rescue it because
+          // `selectedMCPConfig` is now set, so it early-returns. The
+          // command's intent is "focus Playground on this server", so
+          // replace the multi-set rather than merging.
+          setSelectedMCPConfigs([command.payload.serverName]);
           const runtimeForPersist = serverState.runtimeServer;
           if (runtimeForPersist?.connectionStatus === "connected") {
             void persistRuntimeServerToProjectRef.current(
@@ -2248,11 +2250,11 @@ export default function App() {
           }
         }
 
-        navigateApp(routePaths.appBuilder);
+        navigateApp(routePaths.playground);
         await waitForUiCommit();
 
         return {
-          activeTab: "app-builder",
+          activeTab: "playground",
           selectedServer:
             command.payload.serverName || selectedServerRef.current || "none",
         };
@@ -2262,9 +2264,14 @@ export default function App() {
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
-      unregisterOpenAppBuilder();
+      unregisterOpenPlayground();
     };
-  }, [getInspectorServerState, setSelectedServer, syncAgentStatus]);
+  }, [
+    getInspectorServerState,
+    setSelectedServer,
+    setSelectedMCPConfigs,
+    syncAgentStatus,
+  ]);
 
   useLayoutEffect(() => {
     if (isHostedChatRoute) {
@@ -2287,8 +2294,8 @@ export default function App() {
       return;
     }
 
-    // Hosted guests need Convex auth and their actor-owned project before App
-    // Builder can auto-connect Excalidraw against the right project.
+    // Hosted guests need Convex auth and their actor-owned project before
+    // Playground can auto-connect Excalidraw against the right project.
     if (
       HOSTED_MODE &&
       (!isAuthenticated ||
@@ -2307,7 +2314,7 @@ export default function App() {
         remoteFirstRunOnboardingShown
       )
     ) {
-      navigateApp(routePaths.appBuilder);
+      navigateApp(routePaths.playground);
     }
   }, [
     activeProjectId,
@@ -2527,10 +2534,8 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "playground" && playgroundTabEnabled !== true) {
-      navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
-      (activeTab === "chat-v2" || activeTab === "app-builder") &&
+      activeTab === "chat-v2" &&
       playgroundTabEnabled === true
     ) {
       navigateApp(routePaths.playground, { replace: true });
@@ -2739,8 +2744,7 @@ export default function App() {
   const playgroundServerSelectorProps = useMemo(():
     | PlaygroundServerSelectorProps
     | undefined => {
-    if (activeTab !== "app-builder" && activeTab !== "playground")
-      return undefined;
+    if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
@@ -2748,8 +2752,7 @@ export default function App() {
       // Playground supports multi-server selection — the user can toggle
       // several servers on simultaneously, the chat session sees their union,
       // and the docked tools pane aggregates tools across all of them.
-      // App Builder stays single-server.
-      isMultiSelectEnabled: activeTab === "playground",
+      isMultiSelectEnabled: true,
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
       onSelectMultipleServers: setSelectedMCPConfigs,

@@ -46,7 +46,7 @@ describe("pathnameToActiveTab", () => {
 
     const { result } = renderHook(() => useActiveTab());
 
-    expect(result.current).toBe("servers");
+    expect(result.current).toBe("home");
   });
 
   it("does not treat arbitrary chatbox session hashes as app tabs", () => {
@@ -54,7 +54,7 @@ describe("pathnameToActiveTab", () => {
 
     const { result } = renderHook(() => useActiveTab());
 
-    expect(result.current).toBe("servers");
+    expect(result.current).toBe("home");
   });
 });
 

@@ -17,7 +17,7 @@ export type AppRenderContext = {
 };
 
 type InspectorAppRenderResult = {
-  openAppBuilder: InspectorCommandResponse;
+  openPlayground: InspectorCommandResponse;
   setAppContext?: InspectorCommandResponse;
   renderToolResult?: InspectorCommandResponse;
   snapshot?: InspectorCommandResponse;
@@ -57,12 +57,12 @@ export async function runUiRender(options: {
     openBrowser,
     skipDiscovery: options.skipDiscovery,
     startIfNeeded: options.startIfNeeded ?? true,
-    tab: "app-builder",
+    tab: "playground",
     timeoutMs: options.timeoutMs,
   });
 
   if (openBrowser) {
-    options.onProgress?.(`Inspector App Builder URL: ${ensureResult.url}`);
+    options.onProgress?.(`Inspector Playground URL: ${ensureResult.url}`);
     if (!ensureResult.hasActiveClient) {
       options.onProgress?.(
         "Waiting for Inspector browser client to connect...",
@@ -75,7 +75,7 @@ export async function runUiRender(options: {
       ? " Inspector was just started by the CLI and is still running."
       : "";
     throw operationalError(
-      `Inspector has no active browser client.${startedNote} Open the Inspector App Builder URL in your browser, then rerun \`tools call --ui\`; or pass \`--open\` to let the CLI open a system browser.`,
+      `Inspector has no active browser client.${startedNote} Open the Inspector Playground URL in your browser, then rerun \`tools call --ui\`; or pass \`--open\` to let the CLI open a system browser.`,
       {
         hasActiveClient: ensureResult.hasActiveClient,
         inspectorBrowserUrl: ensureResult.url,
@@ -124,13 +124,13 @@ async function runInspectorAppRender(options: {
   toolName: string;
   toolResult: unknown;
 }): Promise<InspectorAppRenderResult> {
-  const openAppBuilder = await executeInspectorCommandWithClient(options, {
-    type: "openAppBuilder",
+  const openPlayground = await executeInspectorCommandWithClient(options, {
+    type: "openPlayground",
     payload: { serverName: options.serverName },
     timeoutMs: options.timeoutMs,
   });
-  if (openAppBuilder.status === "error") {
-    return { openAppBuilder };
+  if (openPlayground.status === "error") {
+    return { openPlayground };
   }
 
   const contextPayload = compactRecord(options.renderContext);
@@ -143,13 +143,13 @@ async function runInspectorAppRender(options: {
         })
       : undefined;
   if (setAppContext?.status === "error") {
-    return { openAppBuilder, setAppContext };
+    return { openPlayground, setAppContext };
   }
 
   const renderToolResult = await executeInspectorCommandWithClient(options, {
     type: "renderToolResult",
     payload: {
-      surface: "app-builder",
+      surface: "playground",
       serverName: options.serverName,
       toolName: options.toolName,
       parameters: options.params,
@@ -159,7 +159,7 @@ async function runInspectorAppRender(options: {
   });
   if (renderToolResult.status === "error") {
     return {
-      openAppBuilder,
+      openPlayground,
       ...(setAppContext ? { setAppContext } : {}),
       renderToolResult,
     };
@@ -167,12 +167,12 @@ async function runInspectorAppRender(options: {
 
   const snapshotApp = await executeInspectorCommandWithClient(options, {
     type: "snapshotApp",
-    payload: { surface: "app-builder" },
+    payload: { surface: "playground" },
     timeoutMs: options.timeoutMs,
   });
 
   return {
-    openAppBuilder,
+    openPlayground,
     ...(setAppContext ? { setAppContext } : {}),
     renderToolResult,
     snapshot: snapshotApp,
@@ -263,7 +263,7 @@ export function findInspectorRenderError(
   const priority = [
     "renderToolResult",
     "setAppContext",
-    "openAppBuilder",
+    "openPlayground",
     "snapshot",
     "snapshotApp",
   ];

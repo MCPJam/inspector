@@ -2,13 +2,13 @@ import * as React from "react";
 import { useState, useMemo } from "react";
 import {
   Hammer,
+  House,
   MessageCircle,
   Settings,
   MessageSquareCode,
   BookOpen,
   FlaskConical,
   Workflow,
-  Anvil,
   Layers,
   ListTodo,
   SquareSlash,
@@ -177,6 +177,12 @@ const navigationSections: NavSection[] = [
     id: "connection",
     items: [
       {
+        title: "Home",
+        url: "/home",
+        icon: House,
+        featureFlag: "home-page-enabled",
+      },
+      {
         title: "Connect",
         url: "/servers",
         icon: MCPIcon,
@@ -211,7 +217,6 @@ const navigationSections: NavSection[] = [
         title: "Playground",
         url: "/playground",
         icon: MessageCircle,
-        featureFlag: "playground-tab-enabled",
         announcement: {
           id: "playground-tab-rename-2026-05",
           badge: "NEW",
@@ -224,12 +229,6 @@ const navigationSections: NavSection[] = [
   {
     id: "mcp-apps",
     items: [
-      {
-        title: "App Builder",
-        url: "/app-builder",
-        icon: Anvil,
-        hiddenByFlag: "playground-tab-enabled",
-      },
       {
         title: "Views",
         url: "/views",
@@ -586,6 +585,7 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
+  const homePageEnabled = useFeatureFlagEnabled("home-page-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -650,6 +650,7 @@ export function MCPSidebar({
       "mcpjam-conformance": conformanceEnabled === true,
       "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
       "playground-tab-enabled": playgroundTabEnabled === true,
+      "home-page-enabled": homePageEnabled === true && isAuthenticated,
       xaa: xaaEnabled === true,
     }),
     [
@@ -659,6 +660,7 @@ export function MCPSidebar({
       conformanceEnabled,
       hostsEnabled,
       playgroundTabEnabled,
+      homePageEnabled,
       xaaEnabled,
       isAuthenticated,
     ]

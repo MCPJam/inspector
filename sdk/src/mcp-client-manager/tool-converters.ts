@@ -103,6 +103,14 @@ export interface ConvertOptions<
   callTool: CallToolExecutor;
   /** When true, each tool requires user approval before execution */
   needsApproval?: boolean;
+  /**
+   * When true, include tools whose `_meta.ui.visibility` is `["app"]`
+   * (SEP-1865 app-only tools) in the returned tool set. Defaults to `false`,
+   * which is the spec-compliant behavior: app-only tools are hidden from the
+   * model-facing tool set. Set to `true` only when intentionally mirroring a
+   * host that does not implement SEP-1865 visibility filtering.
+   */
+  includeAppOnly?: boolean;
 }
 
 /**
@@ -132,6 +140,26 @@ export function isChatGPTAppTool(
 ): boolean {
   if (!toolMeta) return false;
   return typeof toolMeta["openai/outputTemplate"] === "string";
+}
+
+/**
+ * Checks whether a tool is app-only per SEP-1865 (`_meta.ui.visibility = ["app"]`).
+ *
+ * Per SEP-1865, tools whose visibility does not include `"model"` MUST NOT be
+ * included in the agent's tool list. They remain callable from the iframe/app
+ * via `tools/call`, but the model never sees them.
+ *
+ * @param toolMeta - The tool's `_meta` field from listTools result
+ * @returns true if the tool is app-only (must be hidden from the model)
+ */
+export function isAppOnlyTool(
+  toolMeta: Record<string, unknown> | undefined
+): boolean {
+  if (!toolMeta) return false;
+  const visibility = (toolMeta as { ui?: { visibility?: unknown } }).ui
+    ?.visibility;
+  if (!Array.isArray(visibility)) return false;
+  return visibility.length === 1 && visibility[0] === "app";
 }
 
 /**
@@ -210,6 +238,7 @@ export async function convertMCPToolsToVercelTools(
     schemas = "automatic",
     callTool,
     needsApproval,
+    includeAppOnly = false,
   }: ConvertOptions<ToolSchemaOverrides | "automatic">
 ): Promise<ToolSet> {
   const tools: ToolSet = {};
@@ -219,6 +248,12 @@ export async function convertMCPToolsToVercelTools(
     const toolMeta = toolDescription._meta as
       | Record<string, unknown>
       | undefined;
+
+    // SEP-1865: hosts that negotiate `io.modelcontextprotocol/ui` MUST NOT
+    // include tools whose visibility omits `"model"` in the agent's tool list.
+    if (!includeAppOnly && isAppOnlyTool(toolMeta)) {
+      continue;
+    }
 
     // Create the execute function that delegates to the provided callTool
     const execute = async (args: unknown, options?: ToolCallOptions) => {

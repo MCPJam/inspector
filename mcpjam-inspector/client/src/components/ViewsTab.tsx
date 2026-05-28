@@ -1015,7 +1015,7 @@ export function ViewsTab({
         <EmptyState
           icon={Layers}
           title="No saved views yet"
-          description="Save tool executions from Chat or App Builder to create reusable views."
+          description="Save tool executions from Chat or Playground to create reusable views."
           className="h-[calc(100vh-200px)]"
         />
       </div>

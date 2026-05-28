@@ -492,17 +492,13 @@ export function PlaygroundMain({
   const appState = useSharedAppState();
   const servers = appState.servers;
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  // Multi-server: when the host has flipped `isMultiSelectEnabled` on (today
-  // only the Playground does), `playgroundServerSelectorProps.selectedMultipleServers`
-  // is the source of truth for which servers the chat session sees. Otherwise
-  // fall back to the single `serverName` prop (App Builder / hosted flows).
+  // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
+  // the source of truth for which servers the chat session sees in the
+  // Playground tab. Views and other read-only surfaces don't pass this and
+  // fall through to the single `serverName` prop below.
   const multiSelectedServerNames = useMemo(() => {
     const propsMulti = playgroundServerSelectorProps?.selectedMultipleServers;
-    if (
-      playgroundServerSelectorProps?.isMultiSelectEnabled &&
-      Array.isArray(propsMulti) &&
-      propsMulti.length > 0
-    ) {
+    if (Array.isArray(propsMulti) && propsMulti.length > 0) {
       return propsMulti.filter(
         (name) => servers[name]?.connectionStatus === "connected",
       );
@@ -525,25 +521,12 @@ export function PlaygroundMain({
 
   const handlePlaygroundServerToggle = useCallback(
     (name: string) => {
-      // Multi-server: toggle membership in the multi-server set so users can
-      // have several servers active at once (LLM sees the union of tools,
-      // docked tools pane aggregates across them).
-      if (
-        playgroundServerSelectorProps?.isMultiSelectEnabled &&
-        playgroundServerSelectorProps?.onMultiServerToggle
-      ) {
-        playgroundServerSelectorProps.onMultiServerToggle(name);
-        return;
-      }
-      // Single-server (App Builder, hosted): toggle clears if already selected,
-      // else switches to the clicked server.
-      if (name === serverName) {
-        playgroundServerSelectorProps?.onServerChange("none");
-      } else {
-        playgroundServerSelectorProps?.onServerChange(name);
-      }
+      // Playground is always multi-server: toggle membership in the set so
+      // users can have several servers active at once. The LLM sees the union
+      // of tools, and the docked tools pane aggregates across them.
+      playgroundServerSelectorProps?.onMultiServerToggle?.(name);
     },
-    [serverName, playgroundServerSelectorProps]
+    [playgroundServerSelectorProps]
   );
 
   // Hosted mode context (projectId, serverIds, OAuth tokens)
