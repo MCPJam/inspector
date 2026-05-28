@@ -28,6 +28,7 @@
         "group": "Inspector Features",
         "icon": "star",
         "pages": [
+          "inspector/home",
           "inspector/playground",
           "inspector/clients",
           "inspector/guided-oauth",
