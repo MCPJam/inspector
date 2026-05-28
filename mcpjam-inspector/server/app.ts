@@ -73,7 +73,7 @@ export function createHonoApp() {
         code: "FEATURE_NOT_SUPPORTED",
         message: `${path} is disabled in hosted mode`,
       },
-      410,
+      410
     );
   const isElectron = process.env.ELECTRON_APP === "true";
   const isProduction = process.env.NODE_ENV === "production";
@@ -114,7 +114,7 @@ export function createHonoApp() {
           timestamp: new Date().toISOString(),
         });
       },
-    },
+    }
   );
 
   // Initialize elicitation callback immediately so tasks/result calls work
@@ -149,7 +149,7 @@ export function createHonoApp() {
   // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
   if (HOSTED_MODE) {
     app.use("/api/session-token", (c) =>
-      strictModeResponse(c, "/api/session-token"),
+      strictModeResponse(c, "/api/session-token")
     );
     app.use("/api/mcp", (c, next) => {
       if (c.req.path === "/api/mcp/health") return next();
@@ -184,7 +184,7 @@ export function createHonoApp() {
       "*",
       logger((message) => {
         appLogger.info(scrubTokenFromUrl(message));
-      }),
+      })
     );
   }
   app.use(
@@ -192,23 +192,44 @@ export function createHonoApp() {
     cors({
       origin: CORS_ORIGINS,
       credentials: true,
-    }),
+    })
   );
 
-  // Hosted web APIs enforce a 1MB max JSON body.
-  app.use(
-    "/api/web/*",
-    bodyLimit({
-      maxSize: 1024 * 1024,
-      onError: (c) =>
-        c.json(
-          {
-            code: "VALIDATION_ERROR",
-            message: "Request body exceeds 1MB limit",
-          },
-          400,
-        ),
-    }),
+  const hostedWebBodyLimit = bodyLimit({
+    maxSize: 1024 * 1024,
+    onError: (c) =>
+      c.json(
+        {
+          code: "VALIDATION_ERROR",
+          message: "Request body exceeds 1MB limit",
+        },
+        400
+      ),
+  });
+
+  // Audio routes carry base64-encoded audio (~4/3 the raw size). Convex
+  // accepts up to 25MB of raw audio (≈34MB after base64), so cap a bit
+  // higher to leave room for envelope fields. Without this, /api/web/audio/*
+  // would inherit no limit and the proxy's c.req.json() could read
+  // unbounded.
+  const hostedWebAudioBodyLimit = bodyLimit({
+    maxSize: 40 * 1024 * 1024,
+    onError: (c) =>
+      c.json(
+        {
+          code: "VALIDATION_ERROR",
+          message: "Audio transcription body exceeds 40MB limit",
+        },
+        413
+      ),
+  });
+
+  // Hosted web APIs enforce a 1MB max JSON body. Audio transcription carries
+  // base64 audio so it gets its own, larger ceiling.
+  app.use("/api/web/*", (c, next) =>
+    c.req.path.startsWith("/api/web/audio/")
+      ? hostedWebAudioBodyLimit(c, next)
+      : hostedWebBodyLimit(c, next)
   );
 
   // API Routes
@@ -222,14 +243,14 @@ export function createHonoApp() {
         service: "MCP API",
         status: "ready",
         timestamp: new Date().toISOString(),
-      }),
+      })
     );
     app.get("/api/apps/health", (c) =>
       c.json({
         service: "Apps API",
         status: "ready",
         timestamp: new Date().toISOString(),
-      }),
+      })
     );
   }
   app.route("/api/web", webRoutes);
@@ -257,7 +278,7 @@ export function createHonoApp() {
             "Cache-Control": "no-store",
             "Content-Type": "application/json",
           },
-        },
+        }
       );
     }
 
@@ -283,7 +304,7 @@ export function createHonoApp() {
 
     if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
       appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${host}`,
+        `[Security] Token request denied - Host not allowed: ${host}`
       );
       return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
@@ -335,7 +356,7 @@ export function createHonoApp() {
         } else {
           // Host not allowed - no token (security measure)
           appLogger.warn(
-            `[Security] Token not injected - Host not allowed: ${host}`,
+            `[Security] Token not injected - Host not allowed: ${host}`
           );
           const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);

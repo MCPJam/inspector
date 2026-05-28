@@ -62,7 +62,7 @@ process.on("unhandledRejection", (reason, _promise) => {
     {
       error: reason instanceof Error ? reason : undefined,
       sentry: true,
-    },
+    }
   );
 });
 
@@ -83,7 +83,7 @@ function logBox(content: string, title?: string) {
         " ".repeat(titlePadding) +
         title +
         " ".repeat(width - title.length - titlePadding) +
-        "│",
+        "│"
     );
     console.log("├" + "─".repeat(width) + "┤");
   }
@@ -140,7 +140,7 @@ function getMCPConfigFromEnv() {
               headers: serverConfig.headers, // Custom headers for HTTP
               useOAuth: serverConfig.useOAuth, // Trigger OAuth flow
             };
-          },
+          }
         );
 
         // Check for auto-connect server filter
@@ -227,7 +227,7 @@ const strictModeResponse = (c: any, path: string) =>
       code: "FEATURE_NOT_SUPPORTED",
       message: `${path} is disabled in hosted mode`,
     },
-    410,
+    410
   );
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
@@ -243,7 +243,7 @@ const mcpClientManager = new MCPClientManager(
         message,
       });
     },
-  },
+  }
 );
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
@@ -263,7 +263,7 @@ app.use("*", originValidationMiddleware);
 // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
 if (HOSTED_MODE) {
   app.use("/api/session-token", (c) =>
-    strictModeResponse(c, "/api/session-token"),
+    strictModeResponse(c, "/api/session-token")
   );
   app.use("/api/mcp", (c, next) => {
     if (c.req.path === "/api/mcp/health") return next();
@@ -297,7 +297,7 @@ if (enableHttpLogs) {
     "*",
     logger((message) => {
       appLogger.info(scrubTokenFromUrl(message));
-    }),
+    })
   );
 }
 app.use(
@@ -305,22 +305,41 @@ app.use(
   cors({
     origin: CORS_ORIGINS,
     credentials: true,
-  }),
+  })
 );
 
-app.use(
-  "/api/web/*",
-  bodyLimit({
-    maxSize: 1024 * 1024,
-    onError: (c) =>
-      c.json(
-        {
-          code: "VALIDATION_ERROR",
-          message: "Request body exceeds 1MB limit",
-        },
-        400,
-      ),
-  }),
+const hostedWebBodyLimit = bodyLimit({
+  maxSize: 1024 * 1024,
+  onError: (c) =>
+    c.json(
+      {
+        code: "VALIDATION_ERROR",
+        message: "Request body exceeds 1MB limit",
+      },
+      400
+    ),
+});
+
+// Audio uploads need a larger ceiling than the generic 1MB cap because they
+// carry base64 audio (~4/3 raw size). Cap at 40MB to leave headroom over
+// Convex's 25MB upstream limit. Without this the audio path would inherit
+// no limit at all and c.req.json() could read unbounded.
+const hostedWebAudioBodyLimit = bodyLimit({
+  maxSize: 40 * 1024 * 1024,
+  onError: (c) =>
+    c.json(
+      {
+        code: "VALIDATION_ERROR",
+        message: "Audio transcription body exceeds 40MB limit",
+      },
+      413
+    ),
+});
+
+app.use("/api/web/*", (c, next) =>
+  c.req.path.startsWith("/api/web/audio/")
+    ? hostedWebAudioBodyLimit(c, next)
+    : hostedWebBodyLimit(c, next)
 );
 
 // Typed event logging context (matches app.ts)
@@ -337,14 +356,14 @@ if (!HOSTED_MODE) {
       service: "MCP API",
       status: "ready",
       timestamp: new Date().toISOString(),
-    }),
+    })
   );
   app.get("/api/apps/health", (c) =>
     c.json({
       service: "Apps API",
       status: "ready",
       timestamp: new Date().toISOString(),
-    }),
+    })
   );
 }
 app.route("/api/web", webRoutes);
@@ -384,11 +403,11 @@ app.get("/api/session-token", (c) => {
 
   if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
     appLogger.warn(
-      `[Security] Token request denied - non-allowed Host: ${host}`,
+      `[Security] Token request denied - non-allowed Host: ${host}`
     );
     return c.json(
       { error: "Token only available via localhost or allowed hosts" },
-      403,
+      403
     );
   }
 
@@ -447,7 +466,7 @@ if (process.env.NODE_ENV === "production") {
       } else {
         // Non-allowed host access - no token (security measure)
         appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`,
+          `[Security] Token not injected - non-allowed Host: ${host}`
         );
         const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
@@ -457,7 +476,7 @@ if (process.env.NODE_ENV === "production") {
       if (runtimeConfigScript) {
         htmlContent = htmlContent.replace(
           "</head>",
-          `${runtimeConfigScript}</head>`,
+          `${runtimeConfigScript}</head>`
         );
       }
 
@@ -465,7 +484,7 @@ if (process.env.NODE_ENV === "production") {
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
         const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
-          mcpConfig,
+          mcpConfig
         )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
@@ -514,7 +533,7 @@ const server = serve({
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
-  10,
+  10
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
@@ -524,7 +543,7 @@ const logFlushExitMs = 1000;
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs,
+    logFlushExitMs
   );
   exitFallbackTimer.unref();
 
@@ -549,7 +568,7 @@ async function shutdown() {
   const forceExitTimer = setTimeout(() => {
     appLogger.error(
       "Shutdown timed out; forcing process exit.",
-      new Error("Shutdown timed out; forcing process exit."),
+      new Error("Shutdown timed out; forcing process exit.")
     );
     exitAfterLogFlush(1);
   }, shutdownForceExitMs);

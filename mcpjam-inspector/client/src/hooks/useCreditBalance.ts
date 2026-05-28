@@ -23,6 +23,12 @@ export interface CreditBalanceState {
   freeDailyPercentUsed: number;
   /** Epoch ms when the daily bucket resets. */
   freeDailyResetAt: number;
+  /**
+   * Seconds of voice transcription the user can still afford today.
+   * Derived on the backend from remaining cents at Whisper-1 pricing so the
+   * client never sees the dollar amount. 0 means the mic should be disabled.
+   */
+  voiceSecondsRemaining: number;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -58,6 +64,7 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
     hasPurchaseHistory,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
+    voiceSecondsRemaining: Math.max(0, optionalNumber(r.voiceSecondsRemaining)),
   };
 };
 

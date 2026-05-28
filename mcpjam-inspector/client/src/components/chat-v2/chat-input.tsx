@@ -3,6 +3,7 @@ import {
   useState,
   useCallback,
   useLayoutEffect,
+  useEffect,
   type ChangeEvent,
 } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
@@ -20,6 +21,8 @@ import {
   Plus,
   Settings2,
   Loader2,
+  Mic,
+  X,
 } from "lucide-react";
 import { Switch } from "@mcpjam/design-system/switch";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
@@ -75,13 +78,115 @@ import {
   getChatboxHostFamily,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
+import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
+import { useCreditBalance } from "@/hooks/useCreditBalance";
+import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+
+const OPENROUTER_STT_MODEL = "openai/whisper-1";
+const VOICE_TRANSCRIPTION_TIMEOUT_MS = 25_000;
+const VOICE_TRANSCRIPTION_GUARD_MS = VOICE_TRANSCRIPTION_TIMEOUT_MS + 2_000;
+const VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE =
+  "Voice transcription timed out. Try a shorter recording.";
+const VOICE_GLOBAL_MAX_SECONDS = 180;
+const VOICE_WARNING_THRESHOLD_SECONDS = 300;
+
+function formatVoiceSeconds(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (remainder === 0) {
+    return `${minutes} min`;
+  }
+  return `${minutes} min ${remainder}s`;
+}
+
+const SUPPORTED_RECORDING_MIME_TYPES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4",
+  "audio/ogg;codecs=opus",
+  "audio/ogg",
+];
+
+type VoiceInputState = "idle" | "recording" | "transcribing";
+
+type TranscriptionAbortState = {
+  controller: AbortController;
+  reason: "timeout" | null;
+};
+
+type VoiceInputBackendContext = {
+  projectId?: string | null;
+  selectedServerIds?: string[];
+  chatboxId?: string;
+  accessVersion?: number;
+};
+
+function getPreferredRecordingMimeType(): string | undefined {
+  if (typeof MediaRecorder === "undefined") return undefined;
+  if (typeof MediaRecorder.isTypeSupported !== "function") return undefined;
+
+  return SUPPORTED_RECORDING_MIME_TYPES.find((mimeType) =>
+    MediaRecorder.isTypeSupported(mimeType)
+  );
+}
+
+function getAudioFormatFromMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes("webm")) return "webm";
+  if (normalized.includes("mp4")) return "m4a";
+  if (normalized.includes("ogg")) return "ogg";
+  if (normalized.includes("mpeg")) return "mp3";
+  if (normalized.includes("wav")) return "wav";
+  if (normalized.includes("flac")) return "flac";
+  if (normalized.includes("aac")) return "aac";
+  return "webm";
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  if (typeof blob.arrayBuffer !== "function") {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const [, base64 = ""] = result.split(",");
+        resolve(base64);
+      };
+      reader.onerror = () =>
+        reject(reader.error ?? new Error("Failed to read audio data."));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+
+  return btoa(binary);
+}
+
+function mergeTranscriptIntoDraft(draft: string, transcript: string): string {
+  const trimmedTranscript = transcript.trim();
+  if (!trimmedTranscript) return draft;
+  if (!draft.trim()) return trimmedTranscript;
+  if (/\s$/.test(draft)) return `${draft}${trimmedTranscript}`;
+  return `${draft} ${trimmedTranscript}`;
+}
 
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (
     event: FormEvent<HTMLFormElement>,
-    additionalInput?: string,
+    additionalInput?: string
   ) => void;
   stop: () => void;
   disabled?: boolean;
@@ -146,6 +251,10 @@ interface ChatInputProps {
   onReconnectServer?: (serverName: string) => Promise<void>;
   /** Add a new server (opens the add-server modal). */
   onAddServer?: (formData: ServerFormData) => void;
+  /** Server-side provider context used to resolve the OpenRouter STT key. */
+  voiceInputContext?: VoiceInputBackendContext;
+  /** WorkOS/guest bearer used by local inspector routes to resolve provider keys. */
+  voiceInputAuthHeaders?: Record<string, string>;
   /** Hosted chatbox: optional servers not yet connected (Add server popover). */
   chatboxAttachableServers?: Array<{
     serverId: string;
@@ -205,6 +314,8 @@ export function ChatInput({
   onServerToggle,
   onReconnectServer,
   onAddServer,
+  voiceInputContext,
+  voiceInputAuthHeaders,
   chatboxAttachableServers,
   onAttachChatboxServer,
 }: ChatInputProps) {
@@ -217,18 +328,60 @@ export function ChatInput({
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const recordedAudioChunksRef = useRef<Blob[]>([]);
+  const recordingMimeTypeRef = useRef("audio/webm");
+  const recordingFinalizedRef = useRef(false);
+  const stopFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const recordingCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const recordingDurationSecondsRef = useRef<number>(0);
+  const transcriptionRunRef = useRef(0);
+  const transcriptionAbortRef = useRef<TranscriptionAbortState | null>(null);
+  const mountedRef = useRef(true);
+  const valueRef = useRef(value);
   const [caretIndex, setCaretIndex] = useState(0);
   const [mcpPromptPopoverKeyTrigger, setMcpPromptPopoverKeyTrigger] = useState<
     string | null
   >(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [voiceInputState, setVoiceInputState] =
+    useState<VoiceInputState>("idle");
+  const [voiceInputError, setVoiceInputError] = useState<string | null>(null);
   const posthog = usePostHog();
+  const { getToken } = useAiProviderKeys();
+  const localOpenRouterApiKey = getToken("openrouter").trim();
+  const { balance: creditBalance } = useCreditBalance({ includeGuests: true });
+  // Only the hosted backend enforces a per-user voice budget. Local users
+  // running with their own OpenRouter key are unbounded — they pay directly.
+  const voiceBudgetTracked = Boolean(voiceInputContext?.projectId);
+  const voiceSecondsRemaining =
+    voiceBudgetTracked && creditBalance
+      ? creditBalance.voiceSecondsRemaining
+      : null;
+  const voiceRecordingCapSeconds =
+    voiceSecondsRemaining == null
+      ? VOICE_GLOBAL_MAX_SECONDS
+      : Math.min(VOICE_GLOBAL_MAX_SECONDS, voiceSecondsRemaining);
+  const voiceBudgetWarning =
+    voiceSecondsRemaining != null &&
+    voiceSecondsRemaining > 0 &&
+    voiceSecondsRemaining < VOICE_WARNING_THRESHOLD_SECONDS
+      ? `You have about ${formatVoiceSeconds(voiceSecondsRemaining)} of voice left today — recording will stop automatically.`
+      : null;
+  const voiceBudgetExhausted =
+    voiceSecondsRemaining != null && voiceSecondsRemaining <= 0;
   const [plusPopoverOpen, setPlusPopoverOpen] = useState(false);
   const handlePlusPopoverOpenChange = (nextOpen: boolean) => {
     if (nextOpen && !plusPopoverOpen) {
       posthog.capture(
         "chat_options_plus_clicked",
-        standardEventProps("chat_input"),
+        standardEventProps("chat_input")
       );
     }
     setPlusPopoverOpen(nextOpen);
@@ -238,8 +391,8 @@ export function ChatInput({
   const selectorHostStyle = hostStyle ?? chatboxHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
-    onServerToggle &&
-    Object.keys(allServerConfigs).length > 0,
+      onServerToggle &&
+      Object.keys(allServerConfigs).length > 0
   );
   const hasServerOptions = Boolean(onAddServer || hasServerRows);
   const showHostStyleSelectorControl =
@@ -251,8 +404,44 @@ export function ChatInput({
     textareaRef,
     containerRef,
     value,
-    caretIndex,
+    caretIndex
   );
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
+  const stopAudioStream = useCallback(() => {
+    audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioStreamRef.current = null;
+  }, []);
+
+  const clearStopFallbackTimer = useCallback(() => {
+    if (!stopFallbackTimerRef.current) return;
+    clearTimeout(stopFallbackTimerRef.current);
+    stopFallbackTimerRef.current = null;
+  }, []);
+
+  const clearRecordingCapTimer = useCallback(() => {
+    if (!recordingCapTimerRef.current) return;
+    clearTimeout(recordingCapTimerRef.current);
+    recordingCapTimerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearStopFallbackTimer();
+      clearRecordingCapTimer();
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+      transcriptionAbortRef.current?.controller.abort();
+      transcriptionAbortRef.current = null;
+      stopAudioStream();
+    };
+  }, [clearRecordingCapTimer, clearStopFallbackTimer, stopAudioStream]);
 
   useLayoutEffect(() => {
     if (moveCaretToEndTrigger === undefined) return;
@@ -278,7 +467,7 @@ export function ChatInput({
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
     },
-    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults],
+    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults]
   );
 
   const removeMCPPromptResult = (index: number) => {
@@ -319,7 +508,7 @@ export function ChatInput({
       // Reset input so the same file can be selected again
       event.target.value = "";
     },
-    [fileAttachments, onChangeFileAttachments],
+    [fileAttachments, onChangeFileAttachments]
   );
 
   const removeFileAttachment = useCallback(
@@ -333,12 +522,430 @@ export function ChatInput({
 
       onChangeFileAttachments(fileAttachments.filter((a) => a.id !== id));
     },
-    [fileAttachments, onChangeFileAttachments],
+    [fileAttachments, onChangeFileAttachments]
   );
 
   const openFilePicker = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  const commitTranscriptToDraft = useCallback(
+    (transcript: string) => {
+      const nextValue = mergeTranscriptIntoDraft(valueRef.current, transcript);
+      if (nextValue === valueRef.current) return;
+
+      onChange(nextValue);
+      valueRef.current = nextValue;
+
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        const end = nextValue.length;
+        textarea.setSelectionRange(end, end);
+        setCaretIndex(end);
+      });
+    },
+    [onChange]
+  );
+
+  const transcribeAudio = useCallback(
+    async (audioBlob: Blob): Promise<string> => {
+      const abortState: TranscriptionAbortState = {
+        controller: new AbortController(),
+        reason: null,
+      };
+      transcriptionAbortRef.current = abortState;
+      let timeoutId: number | undefined;
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeoutId = window.setTimeout(() => {
+          abortState.reason = "timeout";
+          abortState.controller.abort();
+          reject(new Error(VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE));
+        }, VOICE_TRANSCRIPTION_TIMEOUT_MS);
+      });
+
+      const transcriptionRequest = (async () => {
+        const base64Audio = await blobToBase64(audioBlob);
+        if (abortState.controller.signal.aborted) {
+          throw new Error(
+            abortState.reason === "timeout"
+              ? VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE
+              : "Voice transcription was interrupted."
+          );
+        }
+
+        const useBackendProviderKey = Boolean(voiceInputContext?.projectId);
+        const transcriptionEndpoint = useBackendProviderKey
+          ? "/api/web/audio/transcriptions"
+          : HOSTED_MODE
+          ? "/api/web/audio/transcriptions"
+          : "/api/mcp/audio/transcriptions";
+        const response = await authFetch(transcriptionEndpoint, {
+          method: "POST",
+          headers: {
+            ...(HOSTED_MODE ? undefined : voiceInputAuthHeaders),
+            "Content-Type": "application/json",
+          },
+          signal: abortState.controller.signal,
+          body: JSON.stringify({
+            ...(!useBackendProviderKey && localOpenRouterApiKey
+              ? { apiKey: localOpenRouterApiKey }
+              : {}),
+            ...(voiceInputContext?.projectId
+              ? { projectId: voiceInputContext.projectId }
+              : {}),
+            ...(voiceInputContext?.selectedServerIds &&
+            voiceInputContext.selectedServerIds.length > 0
+              ? { selectedServerIds: voiceInputContext.selectedServerIds }
+              : {}),
+            ...(voiceInputContext?.chatboxId
+              ? { chatboxId: voiceInputContext.chatboxId }
+              : {}),
+            ...(voiceInputContext?.accessVersion !== undefined
+              ? { accessVersion: voiceInputContext.accessVersion }
+              : {}),
+            model: OPENROUTER_STT_MODEL,
+            input_audio: {
+              data: base64Audio,
+              format: getAudioFormatFromMimeType(audioBlob.type),
+            },
+            ...(recordingDurationSecondsRef.current > 0
+              ? {
+                  audioDurationSeconds: recordingDurationSecondsRef.current,
+                }
+              : {}),
+          }),
+        });
+
+        const result = (await response.json().catch(() => null)) as {
+          text?: unknown;
+          error?: unknown;
+        } | null;
+
+        if (!response.ok) {
+          const message =
+            typeof result?.error === "string"
+              ? result.error
+              : "OpenRouter transcription failed";
+          throw new Error(message);
+        }
+
+        if (!result || typeof result.text !== "string") {
+          throw new Error("OpenRouter returned an empty transcription.");
+        }
+
+        return result.text;
+      })();
+
+      try {
+        return await Promise.race([transcriptionRequest, timeoutPromise]);
+      } catch (error) {
+        if (abortState.controller.signal.aborted) {
+          throw new Error(
+            abortState.reason === "timeout"
+              ? VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE
+              : "Voice transcription was interrupted."
+          );
+        }
+        throw error;
+      } finally {
+        if (timeoutId !== undefined) {
+          window.clearTimeout(timeoutId);
+        }
+        if (transcriptionAbortRef.current === abortState) {
+          transcriptionAbortRef.current = null;
+        }
+      }
+    },
+    [
+      localOpenRouterApiKey,
+      voiceInputAuthHeaders,
+      voiceInputContext?.accessVersion,
+      voiceInputContext?.chatboxId,
+      voiceInputContext?.projectId,
+      voiceInputContext?.selectedServerIds,
+    ]
+  );
+
+  const handleRecordedAudio = useCallback(
+    async (audioBlob: Blob): Promise<string> => {
+      if (audioBlob.size === 0) {
+        throw new Error("No audio was captured. Try recording again.");
+      }
+
+      return transcribeAudio(audioBlob);
+    },
+    [transcribeAudio]
+  );
+
+  const finalizeRecordedAudio = useCallback(
+    (recorder?: MediaRecorder | null) => {
+      if (recordingFinalizedRef.current) return;
+      recordingFinalizedRef.current = true;
+      clearStopFallbackTimer();
+
+      if (recordingStartedAtRef.current != null) {
+        recordingDurationSecondsRef.current = Math.max(
+          0,
+          (Date.now() - recordingStartedAtRef.current) / 1000
+        );
+        recordingStartedAtRef.current = null;
+      }
+
+      const chunks = recordedAudioChunksRef.current;
+      recordedAudioChunksRef.current = [];
+      stopAudioStream();
+
+      if (!mountedRef.current) return;
+
+      const audioBlob = new Blob(chunks, {
+        type:
+          recorder?.mimeType || recordingMimeTypeRef.current || "audio/webm",
+      });
+
+      setVoiceInputState("transcribing");
+      const runId = transcriptionRunRef.current + 1;
+      transcriptionRunRef.current = runId;
+      const guardTimer = window.setTimeout(() => {
+        if (!mountedRef.current || transcriptionRunRef.current !== runId) {
+          return;
+        }
+        transcriptionRunRef.current += 1;
+        transcriptionAbortRef.current?.controller.abort();
+        transcriptionAbortRef.current = null;
+        mediaRecorderRef.current = null;
+        setVoiceInputError(VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE);
+        setVoiceInputState("idle");
+      }, VOICE_TRANSCRIPTION_GUARD_MS);
+
+      handleRecordedAudio(audioBlob)
+        .then((transcript) => {
+          if (!mountedRef.current || transcriptionRunRef.current !== runId) {
+            return;
+          }
+          commitTranscriptToDraft(transcript);
+        })
+        .catch((error) => {
+          if (!mountedRef.current || transcriptionRunRef.current !== runId) {
+            return;
+          }
+          setVoiceInputError(
+            error instanceof Error
+              ? error.message
+              : "OpenRouter transcription failed."
+          );
+        })
+        .finally(() => {
+          window.clearTimeout(guardTimer);
+          if (!mountedRef.current || transcriptionRunRef.current !== runId) {
+            return;
+          }
+          mediaRecorderRef.current = null;
+          setVoiceInputState("idle");
+        });
+    },
+    [
+      clearStopFallbackTimer,
+      commitTranscriptToDraft,
+      handleRecordedAudio,
+      stopAudioStream,
+    ]
+  );
+
+  const startVoiceInput = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      setVoiceInputError("Voice input is not supported in this browser.");
+      return;
+    }
+
+    if (voiceBudgetExhausted) {
+      setVoiceInputError(
+        "You've used your voice budget for today. It resets at the next daily cycle."
+      );
+      return;
+    }
+
+    try {
+      setVoiceInputError(null);
+      recordedAudioChunksRef.current = [];
+      recordingFinalizedRef.current = false;
+      clearStopFallbackTimer();
+      clearRecordingCapTimer();
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+
+      const mimeType = getPreferredRecordingMimeType();
+      recordingMimeTypeRef.current = mimeType || "audio/webm";
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined
+      );
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedAudioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        recordingFinalizedRef.current = true;
+        clearStopFallbackTimer();
+        clearRecordingCapTimer();
+        stopAudioStream();
+        mediaRecorderRef.current = null;
+        recordedAudioChunksRef.current = [];
+        if (!mountedRef.current) return;
+        setVoiceInputState("idle");
+        setVoiceInputError("Voice input recording failed. Try again.");
+      };
+
+      recorder.onstop = () => {
+        finalizeRecordedAudio(recorder);
+      };
+
+      recorder.start(500);
+      recordingStartedAtRef.current = Date.now();
+      recordingDurationSecondsRef.current = 0;
+      setVoiceInputState("recording");
+      recordingCapTimerRef.current = setTimeout(() => {
+        recordingCapTimerRef.current = null;
+        if (mediaRecorderRef.current?.state === "recording") {
+          try {
+            mediaRecorderRef.current.stop();
+          } catch {
+            // Best-effort stop; the recorder may already be stopping from
+            // another path (user click, unmount). Either way the onstop
+            // handler runs finalize.
+          }
+        }
+      }, voiceRecordingCapSeconds * 1000);
+      posthog.capture(
+        "chat_voice_input_recording_started",
+        standardEventProps("chat_input")
+      );
+    } catch (error) {
+      stopAudioStream();
+      mediaRecorderRef.current = null;
+      setVoiceInputState("idle");
+      setVoiceInputError(
+        error instanceof Error ? error.message : "Could not start voice input."
+      );
+    }
+  }, [
+    clearRecordingCapTimer,
+    clearStopFallbackTimer,
+    finalizeRecordedAudio,
+    posthog,
+    stopAudioStream,
+    voiceBudgetExhausted,
+    voiceRecordingCapSeconds,
+  ]);
+
+  const stopVoiceInput = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
+
+    setVoiceInputError(null);
+    clearRecordingCapTimer();
+    if (typeof recorder.requestData === "function") {
+      try {
+        recorder.requestData();
+      } catch {
+        // Some browser implementations throw if data is already queued.
+      }
+    }
+    try {
+      stopFallbackTimerRef.current = setTimeout(() => {
+        finalizeRecordedAudio(recorder);
+      }, 1500);
+      recorder.stop();
+      setVoiceInputState("transcribing");
+    } catch (error) {
+      clearStopFallbackTimer();
+      stopAudioStream();
+      mediaRecorderRef.current = null;
+      setVoiceInputState("idle");
+      setVoiceInputError(
+        error instanceof Error ? error.message : "Could not stop voice input."
+      );
+      return;
+    }
+    posthog.capture(
+      "chat_voice_input_recording_stopped",
+      standardEventProps("chat_input")
+    );
+  }, [
+    clearRecordingCapTimer,
+    clearStopFallbackTimer,
+    finalizeRecordedAudio,
+    posthog,
+    stopAudioStream,
+  ]);
+
+  const cancelVoiceInput = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+
+    transcriptionRunRef.current += 1;
+    transcriptionAbortRef.current?.controller.abort();
+    transcriptionAbortRef.current = null;
+    recordingFinalizedRef.current = true;
+    clearStopFallbackTimer();
+    clearRecordingCapTimer();
+    recordedAudioChunksRef.current = [];
+
+    if (recorder?.state === "recording") {
+      try {
+        recorder.stop();
+      } catch {
+        // The recording is being discarded, so failing to stop is non-fatal.
+      }
+    }
+
+    stopAudioStream();
+    mediaRecorderRef.current = null;
+    setVoiceInputError(null);
+    setVoiceInputState("idle");
+    posthog.capture(
+      "chat_voice_input_recording_canceled",
+      standardEventProps("chat_input")
+    );
+  }, [clearRecordingCapTimer, clearStopFallbackTimer, posthog, stopAudioStream]);
+
+  useEffect(() => {
+    if (voiceInputState !== "transcribing") return;
+
+    const timeout = window.setTimeout(() => {
+      transcriptionRunRef.current += 1;
+      transcriptionAbortRef.current?.controller.abort();
+      transcriptionAbortRef.current = null;
+      recordingFinalizedRef.current = true;
+      clearStopFallbackTimer();
+      stopAudioStream();
+      mediaRecorderRef.current = null;
+      recordedAudioChunksRef.current = [];
+      if (!mountedRef.current) return;
+      setVoiceInputError(VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE);
+      setVoiceInputState("idle");
+    }, VOICE_TRANSCRIPTION_GUARD_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [clearStopFallbackTimer, stopAudioStream, voiceInputState]);
+
+  const handleVoiceInputClick = useCallback(() => {
+    if (voiceInputState === "recording") {
+      stopVoiceInput();
+      return;
+    }
+
+    void startVoiceInput();
+  }, [startVoiceInput, stopVoiceInput, voiceInputState]);
 
   const onSkillSelected = useCallback(
     (skillResult: SkillResult) => {
@@ -352,7 +959,7 @@ export function ChatInput({
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
     },
-    [value, caretIndex, onChange, skillResults, onChangeSkillResults],
+    [value, caretIndex, onChange, skillResults, onChangeSkillResults]
   );
 
   const removeSkillResult = (index: number) => {
@@ -453,36 +1060,54 @@ export function ChatInput({
           "chatbox-host-composer rounded-[1.75rem]",
           isDarkChatboxTheme
             ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
-            : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
+            : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]"
         )
       : chatboxHostFamily === "claude"
-        ? cn(
-            "chatbox-host-composer rounded-[1.35rem]",
-            isDarkChatboxTheme
-              ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
-              : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]",
-          )
-        : "rounded-3xl border border-border/40 bg-muted/70";
+      ? cn(
+          "chatbox-host-composer rounded-[1.35rem]",
+          isDarkChatboxTheme
+            ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
+            : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]"
+        )
+      : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =
     chatboxHostFamily === "chatgpt"
       ? isDarkChatboxTheme
         ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
         : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
       : chatboxHostFamily === "claude"
-        ? isDarkChatboxTheme
-          ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
-          : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
-        : "bg-primary text-primary-foreground hover:bg-primary/90";
+      ? isDarkChatboxTheme
+        ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
+        : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
+      : "bg-primary text-primary-foreground hover:bg-primary/90";
   const inactiveSubmitButtonClasses =
     chatboxHostFamily === "chatgpt"
       ? isDarkChatboxTheme
         ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
         : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
       : chatboxHostFamily === "claude"
-        ? isDarkChatboxTheme
-          ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
-          : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
-        : "bg-muted text-muted-foreground cursor-not-allowed";
+      ? isDarkChatboxTheme
+        ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
+        : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
+      : "bg-muted text-muted-foreground cursor-not-allowed";
+  const voiceInputButtonLabel =
+    voiceInputState === "recording"
+      ? "Stop recording voice input"
+      : "Start voice input";
+  const voiceInputTooltip =
+    voiceInputState === "recording"
+      ? "Stop and transcribe"
+      : voiceInputState === "transcribing"
+      ? "Transcribing recording"
+      : voiceBudgetExhausted
+      ? "Out of voice budget for today"
+      : "Voice input";
+  const voiceInputDisabled =
+    voiceInputState === "transcribing" ||
+    (voiceInputState === "idle" &&
+      (disabled || isLoading || voiceBudgetExhausted));
+  const textareaDisplayValue =
+    voiceInputState === "recording" ? "Listening..." : value;
 
   return (
     <>
@@ -495,7 +1120,7 @@ export function ChatInput({
           ref={containerRef}
           className={cn(
             "relative flex w-full flex-col px-2 pt-2 pb-2",
-            composerClasses,
+            composerClasses
           )}
         >
           <PromptsPopover
@@ -583,25 +1208,43 @@ export function ChatInput({
             </div>
           )}
 
+          {voiceInputError && (
+            <div className="px-4 py-1" role="status" aria-live="polite">
+              <p className="text-xs text-destructive">{voiceInputError}</p>
+            </div>
+          )}
+
+          {!voiceInputError &&
+            voiceInputState === "recording" &&
+            voiceBudgetWarning && (
+              <div className="px-4 py-1" role="status" aria-live="polite">
+                <p className="text-xs text-muted-foreground">
+                  {voiceBudgetWarning}
+                </p>
+              </div>
+            )}
+
           <TextareaAutosize
             ref={textareaRef}
-            value={value}
+            value={textareaDisplayValue}
             onChange={(e) => {
+              if (voiceInputState !== "idle") return;
               onChange(e.target.value);
               setCaretIndex(e.target.selectionStart);
             }}
             onKeyDown={handleKeyDown}
             onKeyUp={(e) => setCaretIndex(e.currentTarget.selectionStart)}
             placeholder={placeholder}
-            disabled={disabled}
-            readOnly={disabled}
+            disabled={disabled && voiceInputState === "idle"}
+            readOnly={disabled || voiceInputState !== "idle"}
             minRows={2}
             maxRows={4}
             className={cn(
               "min-h-[64px] w-full resize-none overflow-y-auto overscroll-contain border-none bg-transparent dark:bg-transparent px-4",
               "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
               "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
-              disabled ? "cursor-not-allowed text-muted-foreground" : "",
+              voiceInputState === "recording" && "italic text-muted-foreground",
+              disabled ? "cursor-not-allowed text-muted-foreground" : ""
             )}
             autoFocus={!disabled}
           />
@@ -671,10 +1314,10 @@ export function ChatInput({
                                   const statusColor = isConnected
                                     ? "bg-green-500 dark:bg-green-400"
                                     : isConnecting
-                                      ? "bg-yellow-500 dark:bg-yellow-400 animate-pulse"
-                                      : isFailed
-                                        ? "bg-red-500 dark:bg-red-400"
-                                        : "bg-muted-foreground";
+                                    ? "bg-yellow-500 dark:bg-yellow-400 animate-pulse"
+                                    : isFailed
+                                    ? "bg-red-500 dark:bg-red-400"
+                                    : "bg-muted-foreground";
 
                                   return (
                                     <div
@@ -685,7 +1328,7 @@ export function ChatInput({
                                         <div
                                           className={cn(
                                             "w-2 h-2 rounded-full shrink-0",
-                                            statusColor,
+                                            statusColor
                                           )}
                                         />
                                         <span
@@ -693,7 +1336,7 @@ export function ChatInput({
                                             "text-sm font-medium truncate",
                                             !isConnected &&
                                               !isConnecting &&
-                                              "text-muted-foreground",
+                                              "text-muted-foreground"
                                           )}
                                         >
                                           {name}
@@ -723,7 +1366,7 @@ export function ChatInput({
                                                 onServerToggle(name);
                                               }
                                               onReconnectServer?.(name).catch(
-                                                () => {},
+                                                () => {}
                                               );
                                             }}
                                           >
@@ -757,7 +1400,7 @@ export function ChatInput({
                         "px-1 pb-1",
                         allServerConfigs &&
                           Object.keys(allServerConfigs).length > 0 &&
-                          "border-t border-border mt-1 pt-1",
+                          "border-t border-border mt-1 pt-1"
                       )}
                     >
                       {onChangeFileAttachments && (
@@ -767,7 +1410,7 @@ export function ChatInput({
                           onClick={() => {
                             posthog.capture(
                               "chat_attachment_button_clicked",
-                              standardEventProps("chat_input"),
+                              standardEventProps("chat_input")
                             );
                             setPlusPopoverOpen(false);
                             openFilePicker();
@@ -843,110 +1486,193 @@ export function ChatInput({
             </div>
 
             <div className="flex items-center gap-2 flex-shrink-0">
-              {!minimalMode && !hideContextPopover && (
-                <Context
-                  usedTokens={tokenUsage?.totalTokens ?? 0}
-                  usage={
-                    tokenUsage && tokenUsage.totalTokens > 0
-                      ? {
-                          inputTokens: tokenUsage.inputTokens,
-                          outputTokens: tokenUsage.outputTokens,
-                          totalTokens: tokenUsage.totalTokens,
-                          inputTokenDetails: {
-                            noCacheTokens: undefined,
-                            cacheReadTokens: undefined,
-                            cacheWriteTokens: undefined,
-                          },
-                          outputTokenDetails: {
-                            textTokens: undefined,
-                            reasoningTokens: undefined,
-                          },
-                        }
-                      : undefined
-                  }
-                  modelId={`${currentModel.id}`}
-                  selectedServers={selectedServers}
-                  mcpToolsTokenCount={mcpToolsTokenCount}
-                  mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
-                  connectedOrConnectingServerConfigs={
-                    connectedOrConnectingServerConfigs
-                  }
-                  systemPromptTokenCount={systemPromptTokenCount}
-                  systemPromptTokenCountLoading={systemPromptTokenCountLoading}
-                  hasMessages={hasMessages}
-                >
-                  <ContextTrigger />
-                  {/* Only render popover content when there's something to show */}
-                  {(hasMessages && tokenUsage && tokenUsage.totalTokens > 0) ||
-                  (systemPromptTokenCount && systemPromptTokenCount > 0) ||
-                  systemPromptTokenCountLoading ||
-                  (mcpToolsTokenCount &&
-                    Object.keys(mcpToolsTokenCount).length > 0) ||
-                  mcpToolsTokenCountLoading ? (
-                    <ContextContent>
-                      {hasMessages &&
-                        tokenUsage &&
-                        tokenUsage.totalTokens > 0 && <ContextContentHeader />}
-                      <ContextContentBody>
-                        {hasMessages &&
-                          tokenUsage &&
-                          tokenUsage.totalTokens > 0 && (
-                            <>
-                              <ContextInputUsage />
-                              <ContextOutputUsage />
-                            </>
-                          )}
-                        <ContextSystemPromptUsage />
-                        <ContextMCPServerUsage />
-                      </ContextContentBody>
-                    </ContextContent>
-                  ) : null}
-                </Context>
-              )}
-              {isLoading ? (
+              {(voiceInputState === "recording" ||
+                voiceInputState === "transcribing") && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       type="button"
                       size="icon"
-                      variant="secondary"
-                      className="size-[34px] rounded-full transition-colors"
-                      aria-label="Stop generating"
-                      onClick={() => stop()}
+                      variant="ghost"
+                      className="size-[34px] rounded-full text-muted-foreground shadow-none hover:bg-transparent hover:text-muted-foreground"
+                      aria-label="Cancel voice input"
+                      onClick={cancelVoiceInput}
                     >
-                      <Square size={16} />
+                      <X size={18} />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Stop generating</TooltipContent>
+                  <TooltipContent>Cancel voice input</TooltipContent>
                 </Tooltip>
-              ) : (
+              )}
+
+              {voiceInputState === "recording" && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      type="submit"
+                      type="button"
                       size="icon"
-                      aria-label="Send message"
                       className={cn(
                         "size-[34px] rounded-full transition-colors shadow-none",
-                        (value.trim() || hasResults) &&
-                          !disabled &&
-                          !submitDisabled
-                          ? activeSubmitButtonClasses
-                          : inactiveSubmitButtonClasses,
-                        pulseSubmit && "animate-onboarding-pulse",
+                        activeSubmitButtonClasses
                       )}
-                      disabled={
-                        (!value.trim() && !hasResults) ||
-                        disabled ||
-                        submitDisabled
-                      }
+                      aria-label="Stop recording voice input"
+                      onClick={stopVoiceInput}
                     >
                       <ArrowUp size={16} />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Send message</TooltipContent>
+                  <TooltipContent>Use voice input</TooltipContent>
                 </Tooltip>
               )}
+              {voiceInputState === "idle" && !minimalMode && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-[34px] rounded-full transition-colors shadow-none"
+                      aria-label={voiceInputButtonLabel}
+                      disabled={voiceInputDisabled}
+                      onClick={handleVoiceInputClick}
+                    >
+                      <Mic size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{voiceInputTooltip}</TooltipContent>
+                </Tooltip>
+              )}
+              {voiceInputState === "idle" &&
+                !minimalMode &&
+                !hideContextPopover && (
+                  <Context
+                    usedTokens={tokenUsage?.totalTokens ?? 0}
+                    usage={
+                      tokenUsage && tokenUsage.totalTokens > 0
+                        ? {
+                            inputTokens: tokenUsage.inputTokens,
+                            outputTokens: tokenUsage.outputTokens,
+                            totalTokens: tokenUsage.totalTokens,
+                            inputTokenDetails: {
+                              noCacheTokens: undefined,
+                              cacheReadTokens: undefined,
+                              cacheWriteTokens: undefined,
+                            },
+                            outputTokenDetails: {
+                              textTokens: undefined,
+                              reasoningTokens: undefined,
+                            },
+                          }
+                        : undefined
+                    }
+                    modelId={`${currentModel.id}`}
+                    selectedServers={selectedServers}
+                    mcpToolsTokenCount={mcpToolsTokenCount}
+                    mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
+                    connectedOrConnectingServerConfigs={
+                      connectedOrConnectingServerConfigs
+                    }
+                    systemPromptTokenCount={systemPromptTokenCount}
+                    systemPromptTokenCountLoading={
+                      systemPromptTokenCountLoading
+                    }
+                    hasMessages={hasMessages}
+                  >
+                    <ContextTrigger />
+                    {/* Only render popover content when there's something to show */}
+                    {(hasMessages &&
+                      tokenUsage &&
+                      tokenUsage.totalTokens > 0) ||
+                    (systemPromptTokenCount && systemPromptTokenCount > 0) ||
+                    systemPromptTokenCountLoading ||
+                    (mcpToolsTokenCount &&
+                      Object.keys(mcpToolsTokenCount).length > 0) ||
+                    mcpToolsTokenCountLoading ? (
+                      <ContextContent>
+                        {hasMessages &&
+                          tokenUsage &&
+                          tokenUsage.totalTokens > 0 && (
+                            <ContextContentHeader />
+                          )}
+                        <ContextContentBody>
+                          {hasMessages &&
+                            tokenUsage &&
+                            tokenUsage.totalTokens > 0 && (
+                              <>
+                                <ContextInputUsage />
+                                <ContextOutputUsage />
+                              </>
+                            )}
+                          <ContextSystemPromptUsage />
+                          <ContextMCPServerUsage />
+                        </ContextContentBody>
+                      </ContextContent>
+                    ) : null}
+                  </Context>
+                )}
+              {voiceInputState === "transcribing" ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      className={cn(
+                        "size-[34px] rounded-full transition-colors shadow-none",
+                        inactiveSubmitButtonClasses
+                      )}
+                      aria-label="Transcribing recording"
+                      disabled
+                    >
+                      <Loader2 size={16} className="animate-spin" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Transcribing recording…</TooltipContent>
+                </Tooltip>
+              ) : voiceInputState !== "recording" &&
+                (isLoading ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="secondary"
+                        className="size-[34px] rounded-full transition-colors"
+                        aria-label="Stop generating"
+                        onClick={() => stop()}
+                      >
+                        <Square size={16} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Stop generating</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="submit"
+                        size="icon"
+                        aria-label="Send message"
+                        className={cn(
+                          "size-[34px] rounded-full transition-colors shadow-none",
+                          (value.trim() || hasResults) &&
+                            !disabled &&
+                            !submitDisabled
+                            ? activeSubmitButtonClasses
+                            : inactiveSubmitButtonClasses,
+                          pulseSubmit && "animate-onboarding-pulse"
+                        )}
+                        disabled={
+                          (!value.trim() && !hasResults) ||
+                          disabled ||
+                          submitDisabled
+                        }
+                      >
+                        <ArrowUp size={16} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Send message</TooltipContent>
+                  </Tooltip>
+                ))}
             </div>
           </div>
         </div>

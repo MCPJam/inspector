@@ -241,7 +241,9 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 
   const parsed = resolveRequestUrl(input);
   if (parsed) {
-    return isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/");
+    return (
+      isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/")
+    );
   }
   return typeof input === "string" && input.startsWith("/api/");
 }
@@ -429,7 +431,7 @@ export async function authFetch(
   const retryInit = buildAuthFetchInit(
     input,
     init,
-    `Bearer ${refreshedGuestToken}`,
+    `Bearer ${refreshedGuestToken}`
   );
   return fetch(input, retryInit);
 }

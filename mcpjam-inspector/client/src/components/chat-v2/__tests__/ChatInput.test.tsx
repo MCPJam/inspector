@@ -1,11 +1,36 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
 import type { ModelDefinition } from "@/shared/types";
+import { authFetch } from "@/lib/session-token";
+
+const providerKeyState = vi.hoisted(() => ({
+  openrouterToken: "",
+}));
+
+vi.mock("@/hooks/use-ai-provider-keys", () => ({
+  useAiProviderKeys: () => ({
+    getToken: (provider: string) =>
+      provider === "openrouter" ? providerKeyState.openrouterToken : "",
+  }),
+}));
+
+vi.mock("@/hooks/useCreditBalance", () => ({
+  useCreditBalance: () => ({
+    balance: undefined,
+    isLoading: false,
+    isAuthenticated: false,
+    hasWorkOsUser: false,
+  }),
+}));
+
+vi.mock("@/lib/session-token", () => ({
+  authFetch: vi.fn(),
+}));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
@@ -92,6 +117,58 @@ vi.mock("@/hooks/use-textarea-caret-position", () => ({
   useTextareaCaretPosition: () => ({ x: 0, y: 0, height: 20 }),
 }));
 
+function installAudioRecordingMocks(options: { emitStopEvent?: boolean } = {}) {
+  const emitStopEvent = options.emitStopEvent ?? true;
+  const stopTrack = vi.fn();
+  const stream = {
+    getTracks: () => [{ stop: stopTrack }],
+  } as unknown as MediaStream;
+
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn().mockResolvedValue(stream),
+    },
+  });
+
+  class MockMediaRecorder {
+    static isTypeSupported = vi.fn(() => true);
+
+    state: RecordingState = "inactive";
+    mimeType: string;
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+
+    constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+      this.mimeType = options?.mimeType ?? "audio/webm";
+    }
+
+    start() {
+      this.state = "recording";
+    }
+
+    requestData() {
+      this.ondataavailable?.({
+        data: new Blob(["audio bytes"], { type: this.mimeType }),
+      });
+    }
+
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({
+        data: new Blob(["audio bytes"], { type: this.mimeType }),
+      });
+      if (emitStopEvent) {
+        this.onstop?.();
+      }
+    }
+  }
+
+  vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+
+  return { stopTrack };
+}
+
 describe("ChatInput", () => {
   const defaultModel: ModelDefinition = {
     id: "gpt-4",
@@ -127,6 +204,13 @@ describe("ChatInput", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(authFetch).mockReset();
+    providerKeyState.openrouterToken = "";
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   describe("rendering", () => {
@@ -153,7 +237,7 @@ describe("ChatInput", () => {
       render(<ChatInput {...defaultProps} value="Hello" />);
 
       expect(
-        screen.getByRole("button", { name: "Send message" }),
+        screen.getByRole("button", { name: "Send message" })
       ).toBeInTheDocument();
     });
 
@@ -161,11 +245,11 @@ describe("ChatInput", () => {
       render(
         <ChatboxHostStyleProvider value="chatgpt">
           <ChatInput {...defaultProps} value="Hello" />
-        </ChatboxHostStyleProvider>,
+        </ChatboxHostStyleProvider>
       );
 
       expect(screen.getByRole("button", { name: "Send message" })).toHaveClass(
-        "bg-[#1f1f1f]",
+        "bg-[#1f1f1f]"
       );
     });
 
@@ -175,12 +259,12 @@ describe("ChatInput", () => {
           <ChatboxHostThemeProvider value="dark">
             <ChatInput {...defaultProps} />
           </ChatboxHostThemeProvider>
-        </ChatboxHostStyleProvider>,
+        </ChatboxHostStyleProvider>
       );
 
       expect(screen.getByPlaceholderText("Type your message...")).toHaveClass(
         "bg-transparent",
-        "dark:bg-transparent",
+        "dark:bg-transparent"
       );
     });
   });
@@ -209,19 +293,19 @@ describe("ChatInput", () => {
           {...defaultProps}
           value="Draw me an MCP architecture diagram"
           moveCaretToEndTrigger={1}
-        />,
+        />
       );
 
       const textarea = screen.getByPlaceholderText(
-        "Type your message...",
+        "Type your message..."
       ) as HTMLTextAreaElement;
 
       expect(document.activeElement).toBe(textarea);
       expect(textarea.selectionStart).toBe(
-        "Draw me an MCP architecture diagram".length,
+        "Draw me an MCP architecture diagram".length
       );
       expect(textarea.selectionEnd).toBe(
-        "Draw me an MCP architecture diagram".length,
+        "Draw me an MCP architecture diagram".length
       );
     });
   });
@@ -244,7 +328,7 @@ describe("ChatInput", () => {
       // The submit button should be visually disabled
       const buttons = screen.getAllByRole("button");
       const submitButton = buttons.find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null
       );
       if (submitButton) {
         expect(submitButton).toBeDisabled();
@@ -256,7 +340,7 @@ describe("ChatInput", () => {
 
       const buttons = screen.getAllByRole("button");
       const submitButton = buttons.find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null
       );
       if (submitButton) {
         expect(submitButton).not.toBeDisabled();
@@ -265,12 +349,12 @@ describe("ChatInput", () => {
 
     it("disables submit when submitDisabled is true even if value has content", () => {
       render(
-        <ChatInput {...defaultProps} value="Hello" submitDisabled={true} />,
+        <ChatInput {...defaultProps} value="Hello" submitDisabled={true} />
       );
 
       const buttons = screen.getAllByRole("button");
       const submitButton = buttons.find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null
       );
       expect(submitButton).toBeDefined();
       expect(submitButton).toBeDisabled();
@@ -287,7 +371,7 @@ describe("ChatInput", () => {
           value="Hello"
           submitDisabled={true}
           onSubmit={vi.fn((e) => e.preventDefault())}
-        />,
+        />
       );
 
       const textarea = screen.getByPlaceholderText("Type your message...");
@@ -302,7 +386,7 @@ describe("ChatInput", () => {
   describe("onboarding send button", () => {
     it("applies glow animation only when pulseSubmit is true", () => {
       const { rerender } = render(
-        <ChatInput {...defaultProps} value="Hello" pulseSubmit={false} />,
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={false} />
       );
       let submit = screen
         .getAllByRole("button")
@@ -311,7 +395,7 @@ describe("ChatInput", () => {
       expect(submit?.className).not.toContain("animate-onboarding-pulse");
 
       rerender(
-        <ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />,
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />
       );
       submit = screen
         .getAllByRole("button")
@@ -351,7 +435,7 @@ describe("ChatInput", () => {
       // Stop button has Square icon
       const buttons = screen.getAllByRole("button");
       const stopButton = buttons.find(
-        (btn) => btn.querySelector("svg.lucide-square") !== null,
+        (btn) => btn.querySelector("svg.lucide-square") !== null
       );
       expect(stopButton).toBeDefined();
       expect(stopButton?.className).not.toContain("bg-destructive");
@@ -363,7 +447,7 @@ describe("ChatInput", () => {
 
       const buttons = screen.getAllByRole("button");
       const stopButton = buttons.find(
-        (btn) => btn.querySelector("svg.lucide-square") !== null,
+        (btn) => btn.querySelector("svg.lucide-square") !== null
       );
       if (stopButton) {
         fireEvent.click(stopButton);
@@ -375,7 +459,7 @@ describe("ChatInput", () => {
       render(<ChatInput {...defaultProps} isLoading={true} value="Draft" />);
 
       expect(
-        screen.getByPlaceholderText("Type your message..."),
+        screen.getByPlaceholderText("Type your message...")
       ).not.toBeDisabled();
     });
 
@@ -396,7 +480,7 @@ describe("ChatInput", () => {
           value="Draft"
           isLoading={true}
           onSubmit={vi.fn((e) => e.preventDefault())}
-        />,
+        />
       );
 
       fireEvent.keyDown(screen.getByPlaceholderText("Type your message..."), {
@@ -407,6 +491,393 @@ describe("ChatInput", () => {
       expect(requestSubmitSpy).not.toHaveBeenCalled();
 
       requestSubmitSpy.mockRestore();
+    });
+  });
+
+  describe("voice input", () => {
+    it("uses backend provider context without requiring a local OpenRouter key", async () => {
+      installAudioRecordingMocks();
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ text: "backend transcript" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      const onChange = vi.fn();
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value=""
+          onChange={onChange}
+          voiceInputContext={{
+            projectId: "project-1",
+            selectedServerIds: ["server-1"],
+            chatboxId: "chatbox-1",
+            accessVersion: 2,
+          }}
+          voiceInputAuthHeaders={{ Authorization: "Bearer user-token" }}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+      expect(screen.getByDisplayValue("Listening...")).toBeInTheDocument();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Stop recording voice input" })
+      );
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith("backend transcript");
+      });
+
+      expect(authFetch).toHaveBeenCalledWith(
+        "/api/web/audio/transcriptions",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            Authorization: "Bearer user-token",
+            "Content-Type": "application/json",
+          },
+        })
+      );
+      const [, init] = vi.mocked(authFetch).mock.calls[0];
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({
+        model: "openai/whisper-1",
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "chatbox-1",
+        accessVersion: 2,
+        input_audio: {
+          data: expect.any(String),
+          format: "webm",
+        },
+        audioDurationSeconds: expect.any(Number),
+      });
+    });
+
+    it("falls back to a local OpenRouter key when no backend context is available", async () => {
+      providerKeyState.openrouterToken = "sk-or-test";
+      installAudioRecordingMocks();
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ text: "hello there" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      const onChange = vi.fn();
+
+      render(
+        <ChatInput {...defaultProps} value="Existing" onChange={onChange} />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Stop recording voice input" })
+      );
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith("Existing hello there");
+      });
+
+      expect(authFetch).toHaveBeenCalledWith(
+        "/api/mcp/audio/transcriptions",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      const [, init] = vi.mocked(authFetch).mock.calls[0];
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({
+        apiKey: "sk-or-test",
+        model: "openai/whisper-1",
+        input_audio: {
+          data: expect.any(String),
+          format: "webm",
+        },
+        audioDurationSeconds: expect.any(Number),
+      });
+    });
+
+    it("keeps the existing input in listening mode until canceling voice input", async () => {
+      installAudioRecordingMocks();
+      const onChange = vi.fn();
+
+      render(<ChatInput {...defaultProps} value="" onChange={onChange} />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+      expect(screen.getByDisplayValue("Listening...")).toBeInTheDocument();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Cancel voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Start voice input" })
+        ).toBeInTheDocument();
+      });
+      expect(onChange).not.toHaveBeenCalled();
+      expect(authFetch).not.toHaveBeenCalled();
+    });
+
+    it("keeps the stop control available if the composer becomes disabled mid-recording", async () => {
+      providerKeyState.openrouterToken = "sk-or-test";
+      installAudioRecordingMocks();
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ text: "still captured" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <ChatInput {...defaultProps} value="" onChange={onChange} />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+
+      rerender(
+        <ChatInput
+          {...defaultProps}
+          value=""
+          onChange={onChange}
+          disabled={true}
+        />
+      );
+
+      const stopButton = screen.getByRole("button", {
+        name: "Stop recording voice input",
+      });
+      expect(stopButton).not.toBeDisabled();
+
+      fireEvent.click(stopButton);
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith("still captured");
+      });
+    });
+
+    it("finalizes recording if the browser never fires the stop event", async () => {
+      providerKeyState.openrouterToken = "sk-or-test";
+      installAudioRecordingMocks({ emitStopEvent: false });
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ text: "fallback transcript" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      const onChange = vi.fn();
+
+      render(<ChatInput {...defaultProps} value="" onChange={onChange} />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Stop recording voice input" })
+      );
+
+      await waitFor(
+        () => {
+          expect(onChange).toHaveBeenCalledWith("fallback transcript");
+        },
+        { timeout: 2500 }
+      );
+    });
+
+    it("keeps voice input cancellable while transcription is pending", async () => {
+      providerKeyState.openrouterToken = "sk-or-test";
+      installAudioRecordingMocks();
+      let resolveTranscription: ((response: Response) => void) | undefined;
+      vi.mocked(authFetch).mockImplementation(
+        (_url, init) =>
+          new Promise((resolve, reject) => {
+            resolveTranscription = resolve;
+            const signal = init?.signal;
+            if (!(signal instanceof AbortSignal)) return;
+            signal.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          })
+      );
+
+      render(<ChatInput {...defaultProps} value="" onChange={vi.fn()} />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Stop recording voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Transcribing recording" })
+        ).toBeInTheDocument();
+      });
+
+      expect(
+        screen.queryByRole("button", { name: "Start voice input" })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Cancel voice input" })
+      ).not.toBeDisabled();
+
+      await waitFor(() => {
+        expect(resolveTranscription).toBeDefined();
+      });
+      resolveTranscription!(
+        new Response(JSON.stringify({ text: "resolved transcript" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("button", { name: "Transcribing recording" })
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("times out hung voice transcription and releases the composer", async () => {
+      const realSetTimeout = window.setTimeout.bind(window);
+      const setTimeoutSpy = vi
+        .spyOn(window, "setTimeout")
+        .mockImplementation((handler, timeout, ...args) =>
+          realSetTimeout(
+            handler,
+            typeof timeout === "number" && timeout === 27_000 ? 0 : timeout,
+            ...args
+          )
+        );
+      providerKeyState.openrouterToken = "sk-or-test";
+      installAudioRecordingMocks();
+      vi.mocked(authFetch).mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!(signal instanceof AbortSignal)) return;
+            signal.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          })
+      );
+      const onChange = vi.fn();
+
+      try {
+        render(<ChatInput {...defaultProps} value="" onChange={onChange} />);
+
+        fireEvent.click(
+          screen.getByRole("button", { name: "Start voice input" })
+        );
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole("button", { name: "Stop recording voice input" })
+          ).toBeInTheDocument();
+        });
+
+        fireEvent.click(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        );
+
+        await waitFor(() => {
+          expect(
+            screen.getByText(
+              "Voice transcription timed out. Try a shorter recording."
+            )
+          ).toBeInTheDocument();
+        });
+        expect(
+          screen.getByRole("button", { name: "Start voice input" })
+        ).not.toBeDisabled();
+        expect(onChange).not.toHaveBeenCalled();
+      } finally {
+        setTimeoutSpy.mockRestore();
+      }
+    });
+
+    it("shows transcription errors without changing the draft", async () => {
+      providerKeyState.openrouterToken = "sk-or-test";
+      installAudioRecordingMocks();
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ error: "Invalid OpenRouter API key" }), {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      const onChange = vi.fn();
+
+      render(<ChatInput {...defaultProps} value="" onChange={onChange} />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Stop recording voice input" })
+      );
+
+      expect(
+        await screen.findByText("Invalid OpenRouter API key")
+      ).toBeInTheDocument();
+      expect(onChange).not.toHaveBeenCalled();
     });
   });
 
@@ -429,14 +900,14 @@ describe("ChatInput", () => {
           showHostStyleSelector={true}
           hostStyle="claude"
           onHostStyleChange={vi.fn()}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
       expect(screen.getByText("Client Style")).toBeInTheDocument();
       expect(
-        screen.getByRole("radio", { name: "ChatGPT" }),
+        screen.getByRole("radio", { name: "ChatGPT" })
       ).toBeInTheDocument();
       expect(screen.getByRole("radio", { name: "Claude" })).toBeInTheDocument();
     });
@@ -450,7 +921,7 @@ describe("ChatInput", () => {
           showHostStyleSelector={true}
           hostStyle="claude"
           onHostStyleChange={onHostStyleChange}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
@@ -466,7 +937,7 @@ describe("ChatInput", () => {
           showHostStyleSelector={true}
           hostStyle="claude"
           onHostStyleChange={vi.fn()}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
@@ -476,7 +947,7 @@ describe("ChatInput", () => {
 
       expect(
         toolApproval.compareDocumentPosition(hostStyle) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
+          Node.DOCUMENT_POSITION_FOLLOWING
       ).not.toBe(0);
     });
 
@@ -486,14 +957,14 @@ describe("ChatInput", () => {
           {...defaultProps}
           hostStyle="claude"
           onHostStyleChange={vi.fn()}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
       expect(screen.queryByText("Client Style")).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("radio", { name: "ChatGPT" }),
+        screen.queryByRole("radio", { name: "ChatGPT" })
       ).not.toBeInTheDocument();
     });
   });
@@ -512,7 +983,7 @@ describe("ChatInput", () => {
         <ChatInput
           {...defaultProps}
           mcpPromptResults={mcpPromptResults as any}
-        />,
+        />
       );
 
       expect(screen.getByTestId("mcp-prompt-card")).toBeInTheDocument();
@@ -533,7 +1004,7 @@ describe("ChatInput", () => {
           {...defaultProps}
           mcpPromptResults={mcpPromptResults as any}
           onChangeMcpPromptResults={onChangeMcpPromptResults}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByTestId("mcp-prompt-card"));
@@ -555,12 +1026,12 @@ describe("ChatInput", () => {
           {...defaultProps}
           value=""
           mcpPromptResults={mcpPromptResults as any}
-        />,
+        />
       );
 
       const buttons = screen.getAllByRole("button");
       const submitButton = buttons.find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null
       );
       if (submitButton) {
         expect(submitButton).not.toBeDisabled();
@@ -582,12 +1053,12 @@ describe("ChatInput", () => {
           value=""
           minimalMode={true}
           mcpPromptResults={mcpPromptResults as any}
-        />,
+        />
       );
 
       const buttons = screen.getAllByRole("button");
       const submitButton = buttons.find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null
       );
       if (submitButton) {
         expect(submitButton).not.toBeDisabled();
@@ -629,7 +1100,7 @@ describe("ChatInput", () => {
             outputTokens: 50,
             totalTokens: 150,
           }}
-        />,
+        />
       );
 
       expect(screen.getByTestId("context")).toBeInTheDocument();
@@ -642,11 +1113,11 @@ describe("ChatInput", () => {
 
       expect(screen.getByTestId("prompts-popover")).toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Options" }),
+        screen.queryByRole("button", { name: "Options" })
       ).not.toBeInTheDocument();
       expect(screen.queryByTestId("model-selector")).not.toBeInTheDocument();
       expect(
-        screen.queryByTestId("system-prompt-selector"),
+        screen.queryByTestId("system-prompt-selector")
       ).not.toBeInTheDocument();
     });
 
@@ -661,7 +1132,7 @@ describe("ChatInput", () => {
             outputTokens: 50,
             totalTokens: 150,
           }}
-        />,
+        />
       );
 
       expect(screen.queryByTestId("context")).not.toBeInTheDocument();
