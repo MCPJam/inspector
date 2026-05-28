@@ -57,8 +57,8 @@ interface PlaygroundLeftProps {
   onClose?: () => void;
   /**
    * Whether to render the inline LoggerView in the bottom resizable slot.
-   * Defaults to true for backward compat with AppBuilderTab. The Playground
-   * left rail passes `false` because the logger lives in the right rail.
+   * Defaults to true for legacy callers. The Playground left rail passes
+   * `false` because the logger lives in the right rail.
    */
   showLogger?: boolean;
 }
