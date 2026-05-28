@@ -801,6 +801,7 @@ export function useAppState({
     pendingDashboardOAuth,
 
     projectServers: serverState.projectServers,
+    displayServerConfigs: serverState.displayServerConfigs,
     connectedOrConnectingServerConfigs:
       serverState.connectedOrConnectingServerConfigs,
     selectedServerEntry: serverState.selectedServerEntry,
