@@ -46,11 +46,31 @@ const EMPTY_CONTEXT: ApiContext = {
 
 let apiContext: ApiContext = EMPTY_CONTEXT;
 let cachedBearerToken: { token: string; expiresAt: number } | null = null;
+let apiContextRevision = 0;
+const apiContextListeners = new Set<() => void>();
 
 const TOKEN_CACHE_TTL_MS = 30_000;
 
 export function resetTokenCache() {
   cachedBearerToken = null;
+}
+
+function notifyApiContextChanged() {
+  apiContextRevision += 1;
+  for (const listener of apiContextListeners) {
+    listener();
+  }
+}
+
+export function subscribeApiContext(listener: () => void): () => void {
+  apiContextListeners.add(listener);
+  return () => {
+    apiContextListeners.delete(listener);
+  };
+}
+
+export function getApiContextRevision(): number {
+  return apiContextRevision;
 }
 
 function assertHostedMode() {
@@ -108,6 +128,7 @@ export function setApiContext(next: ApiContext | null): void {
       }
     : EMPTY_CONTEXT;
   resetTokenCache();
+  notifyApiContextChanged();
 }
 
 /**
@@ -135,6 +156,7 @@ export function injectHostedServerMapping(
       [serverName]: serverId,
     },
   };
+  notifyApiContextChanged();
 }
 
 export function getHostedProjectId(): string {
