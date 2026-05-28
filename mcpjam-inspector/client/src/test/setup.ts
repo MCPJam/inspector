@@ -38,6 +38,34 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
 // cmdk / Command dialogs call scrollIntoView on active items
 Element.prototype.scrollIntoView = vi.fn();
 
+// CodeMirror measures DOM Range geometry, which JSDOM does not implement.
+if (typeof Range !== "undefined") {
+  const rect = {
+    bottom: 0,
+    height: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    width: 0,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect;
+
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: vi.fn(() => rect),
+  });
+  Object.defineProperty(Range.prototype, "getClientRects", {
+    configurable: true,
+    value: vi.fn(() => ({
+      length: 0,
+      item: () => null,
+      [Symbol.iterator]: function* () {},
+    })),
+  });
+}
+
 // Mock IntersectionObserver (required for lazy loading/virtual lists)
 global.IntersectionObserver = vi.fn().mockImplementation(() => ({
   observe: vi.fn(),
