@@ -1,0 +1,94 @@
+---
+title: "MCP protocol versions"
+description: "Pin the inspector to a specific MCP wire version — including the 2026-07-28 stateless RC — to test how your server behaves across versions."
+icon: "git-branch"
+---
+
+The inspector can speak more than one version of the MCP wire protocol. By default it negotiates whatever the SDK considers current, but you can pin a different version when you want to test how your server behaves against a specific draft — including the new **2026-07-28 stateless RC**.
+
+This page covers how to pick a version. Automatic per-server version detection is on the roadmap; for now you tell the inspector which version to use.
+
+## Where the setting lives
+
+There are two places to set a version, and they layer:
+
+1. **Client → MCP Protocol** — the _host default_ applied to every server attached to that Client.
+2. **Server card → Edit → Advanced settings → Protocol version** — a _per-server override_ that wins over the host default.
+
+Use the host default when you want every server in a Client to speak the same version. Use per-server overrides when you're testing a mix — for example, a stable 2025-11-25 server alongside one you're upgrading to the 2026 RC.
+
+## Available versions
+
+| Option                               | Wire value   | Transport                                       | Use it when                                                                                                                                 |
+| ------------------------------------ | ------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Latest**                           | `2025-11-25` | HTTP, STDIO, SSE                                | The current stable MCP. Default for everything not opted in to the RC.                                                                      |
+| **2026 RC**                          | `2026-07-28` | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
+| **Host default** _(per-server only)_ | —            | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+
+The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong wire mode.
+
+## Setting the host default
+
+1. Open the **Clients** tab.
+2. Pick the Client you want to edit (or create a new one).
+3. Open the **MCP Protocol** tab.
+4. In the **Protocol version** dropdown, pick **Latest** or **2026 RC (2026-07-28)**.
+5. Save.
+
+Every server attached to this Client now connects with that version unless it has its own per-server override.
+
+## Overriding a single server
+
+1. Go to the **Servers** tab.
+2. Click the three dots on the server card → **Edit** (or open **View server info** → **Edit**).
+3. Expand **Advanced settings**.
+4. Find **Protocol version** and pick **Host default**, **Latest (2025-11-25)**, or **2026 RC (2026-07-28)**.
+5. Save and reconnect the server.
+
+The per-server override is the more specific signal — it wins over whatever the Client's MCP Protocol tab says.
+
+## What changes when you pick the 2026 RC
+
+If your server already speaks `2026-07-28`, you mostly won't notice. A few things to know when you're testing:
+
+- **No `initialize` handshake.** The inspector connects, immediately fires `server/discover`, and uses the result to populate the server card's name, version, capabilities, and instructions.
+- **Per-request metadata.** Every request the inspector sends carries `MCP-Protocol-Version: 2026-07-28` as an HTTP header and the same value inside `params._meta["io.modelcontextprotocol/protocolVersion"]`. `clientInfo` and `clientCapabilities` ride along on every request too.
+- **No session IDs.** The inspector never sends an `mcp-session-id`. If your server returns one, the inspector discards it and surfaces a warning — your server isn't conforming to the stateless RC.
+- **Cancellation is closing the stream.** For SSE responses, the inspector closes the response stream to cancel; your server should treat that as a cancel signal.
+
+### What the inspector tells you
+
+- If your server doesn't speak `2026-07-28`, `server/discover` returns `-32004 UnsupportedProtocolVersionError` and the connection fails with the supported-versions list visible in the wire log.
+- If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server — surface those in the wire log to confirm they reach you.
+- The wire log (server card → **Activity**) is the source of truth — every request and response, success or error, lands there so you can verify headers and `_meta` content.
+
+### Not yet supported in the RC client
+
+The 2026 RC client is a **preview**. A handful of pieces from the SEP family aren't wired up yet — if you try them, the inspector throws a labeled error instead of silently no-op'ing:
+
+- `subscriptions/listen` (long-lived notification stream)
+- Server-initiated requests via MRTR / `InputRequiredResult` (sampling, elicitation, listRoots embedded in responses)
+- Resumption tokens
+- Backward-compat probes against pre-RC servers — if you point the RC client at an `initialize`-only server it will fail at `server/discover`, not fall back.
+
+For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the RC client behaves like the legacy one.
+
+## Recommended testing flow
+
+1. Build a Client called something like `2026 RC sandbox` with **MCP Protocol → 2026 RC** as the host default.
+2. Attach the HTTP server you're upgrading.
+3. Connect — confirm the server card shows the server info populated from `server/discover` (name, version, capabilities, instructions).
+4. Run a `tools/list` and a `tools/call` from the **Tools** tab.
+5. Watch the **Activity** log for the request `_meta` and the `MCP-Protocol-Version` header.
+6. Try an unsupported version on a second test server to confirm your `-32004` error envelope looks right.
+7. Once your server is happy on the RC, keep one Client on **Latest** so you can flip between versions without rewriting settings.
+
+If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the RC server stays pinned to `2026-07-28`, the rest fall back to Latest.
+
+## Recommended reading
+
+Background on the 2026-07-28 RC and the stateless direction the protocol is moving in:
+
+- [MCP Is Growing Up](https://aaif.io/blog/mcp-is-growing-up/) — AAIF's overview of what the 2026-07-28 RC means for teams building agentic systems.
+- [2026-07-28 release candidate announcement](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) — the official blog post walking through what the RC changes and why.
+- [MCP specification (draft)](https://modelcontextprotocol.io/specification/draft) — the in-progress spec text the inspector's RC client targets.

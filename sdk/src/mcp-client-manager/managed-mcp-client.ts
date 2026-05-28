@@ -100,7 +100,7 @@ export interface ManagedMcpClient {
   // ---- Lifecycle ----
   connect(
     transport: Transport,
-    options?: ManagedMcpClientConnectOptions,
+    options?: ManagedMcpClientConnectOptions
   ): Promise<void>;
   close(): Promise<void>;
   onerror?: (error: Error) => void;
@@ -114,11 +114,11 @@ export interface ManagedMcpClient {
   // ---- Tool calls ----
   listTools(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListToolsResult>;
   callTool(
     params: { name: string; arguments?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<CallToolResult>;
 
   // ---- Generic request (used by tasks extension + future spec methods) ----
@@ -131,25 +131,25 @@ export interface ManagedMcpClient {
   // ---- Resources ----
   listResources(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListResourcesResult>;
   readResource(
     params: { uri: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ReadResourceResult>;
   listResourceTemplates(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListResourceTemplatesResult>;
 
   // ---- Prompts ----
   listPrompts(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListPromptsResult>;
   getPrompt(
     params: { name: string; arguments?: Record<string, string> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<GetPromptResult>;
 
   // ---- Health ----
@@ -158,27 +158,24 @@ export interface ManagedMcpClient {
   // ---- Subscriptions (passthrough; stateless preview throws) ----
   subscribeResource(
     params: { uri: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<EmptyResult>;
   unsubscribeResource(
     params: { uri: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<EmptyResult>;
 
   // ---- Logging (stateless preview is a no-op + warning) ----
-  setLoggingLevel(
-    level: LoggingLevel,
-    options?: RequestOptions,
-  ): Promise<void>;
+  setLoggingLevel(level: LoggingLevel, options?: RequestOptions): Promise<void>;
 
   // ---- Handler registration (signatures mirror upstream Client) ----
   setNotificationHandler(
     method: ManagedMcpClientNotificationMethod,
-    handler: ManagedMcpClientNotificationHandler,
+    handler: ManagedMcpClientNotificationHandler
   ): void;
   setRequestHandler(
     method: ManagedMcpClientRequestMethod,
-    handler: ManagedMcpClientRequestHandler,
+    handler: ManagedMcpClientRequestHandler
   ): void;
   removeRequestHandler(method: ManagedMcpClientRequestMethod): void;
 }
@@ -200,7 +197,7 @@ export class NotYetSupportedInStateless extends Error {
     super(
       reason
         ? `Method "${method}" is not yet supported in the stateless MCP preview: ${reason}`
-        : `Method "${method}" is not yet supported in the stateless MCP preview.`,
+        : `Method "${method}" is not yet supported in the stateless MCP preview.`
     );
     this.name = "NotYetSupportedInStateless";
   }
@@ -209,16 +206,15 @@ export class NotYetSupportedInStateless extends Error {
 /**
  * Sentinel thrown by `createManagedMcpClient` when the resolved
  * `mcpProtocolVersion` is stateless but the server config selects stdio
- * or legacy SSE. Stateless MCP is Streamable HTTP POST only by design;
- * failing fast at construction prevents a half-baked client from failing
- * mysteriously on the first call. Drops `Preview` from the name because
- * the HTTP requirement is permanent, not preview-specific.
+ * or legacy SSE. MCPJam's current stateless preview supports Streamable
+ * HTTP POST only; failing fast at construction prevents a half-baked
+ * client from failing mysteriously on the first call.
  */
 export class StatelessRequiresHttpTransport extends Error {
   readonly transportKind: string;
   constructor(transportKind: string) {
     super(
-      `Stateless MCP requires Streamable HTTP POST; got transport kind "${transportKind}".`,
+      `MCPJam's current stateless preview requires Streamable HTTP POST; got transport kind "${transportKind}".`
     );
     this.name = "StatelessRequiresHttpTransport";
     this.transportKind = transportKind;
@@ -235,7 +231,7 @@ export class StatelessRequiresHttpTransport extends Error {
 export class PaginatedToolHeaderDiscoveryUnsupported extends Error {
   constructor() {
     super(
-      "Paginated tools/list is not supported during stateless MCP header discovery (Mcp-Param-*). Returning a partial header map would silently drop headers for unlisted tools.",
+      "Paginated tools/list is not supported during stateless MCP header discovery (Mcp-Param-*). Returning a partial header map would silently drop headers for unlisted tools."
     );
     this.name = "PaginatedToolHeaderDiscoveryUnsupported";
   }

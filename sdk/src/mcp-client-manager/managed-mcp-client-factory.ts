@@ -10,8 +10,8 @@
  * `isStatelessProtocolVersion` ONLY for routing — typo strings should
  * never reach here.
  *
- * **Transport gate.** The stateless preview supports Streamable HTTP
- * POST only. Stdio and legacy SSE / `preferSSE` configs throw
+ * **Transport gate.** MCPJam's current stateless preview supports
+ * Streamable HTTP POST only. Stdio and legacy SSE / `preferSSE` configs throw
  * `StatelessRequiresHttpTransport` at the factory rather than letting a
  * half-baked client fail mysteriously on the first call.
  *
@@ -21,7 +21,11 @@
  * construction (see `upstream_v2alpha_extension_points`).
  */
 
-import { Client, type ClientOptions, type Implementation } from "@modelcontextprotocol/client";
+import {
+  Client,
+  type ClientOptions,
+  type Implementation,
+} from "@modelcontextprotocol/client";
 import {
   StatelessRequiresHttpTransport,
   type ManagedMcpClient,
@@ -87,7 +91,7 @@ export interface CreateManagedMcpClientArgs {
  *     config. Throws `StatelessRequiresHttpTransport` for stdio / sse.
  */
 export function createManagedMcpClient(
-  args: CreateManagedMcpClientArgs,
+  args: CreateManagedMcpClientArgs
 ): ManagedMcpClient {
   const wantsStateless =
     args.mcpProtocolVersion !== undefined &&
@@ -99,7 +103,7 @@ export function createManagedMcpClient(
     }
     if (!args.preview) {
       throw new Error(
-        "createManagedMcpClient: stateless protocol version requires `preview` options",
+        "createManagedMcpClient: stateless protocol version requires `preview` options"
       );
     }
     return new StatelessMcpHttpPreviewClient({
@@ -111,7 +115,7 @@ export function createManagedMcpClient(
 
   if (!args.clientOptions) {
     throw new Error(
-      "createManagedMcpClient: legacy path requires `clientOptions`",
+      "createManagedMcpClient: legacy path requires `clientOptions`"
     );
   }
   const inner = new Client(args.clientInfo, args.clientOptions);

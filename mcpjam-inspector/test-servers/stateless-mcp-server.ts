@@ -17,7 +17,7 @@
  *   - Test-only mode (constructor flag) returns `mcp-session-id: foo` on
  *     every response — for asserting preview warn + discard + non-conf.
  *   - Responds to `tools/list`, `tools/call`, `resources/list`,
- *     `resources/read`, `prompts/list`, `prompts/get`, `ping`.
+ *     `resources/read`, `prompts/list`, `prompts/get`.
  *
  * What it intentionally does NOT implement (out of scope per plan):
  *   - SSE `tools/list_changed` long-lived stream.
@@ -29,7 +29,11 @@
  *   npx tsx test-servers/stateless-mcp-server.ts
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 
 const RC_2026_07_28 = "2026-07-28";
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
@@ -78,7 +82,7 @@ interface JsonRpcResult {
 
 export function startStatelessMcpFixture(
   port = 0,
-  opts: StatelessMcpFixtureOptions = {},
+  opts: StatelessMcpFixtureOptions = {}
 ): Promise<{ port: number; close: () => Promise<void> }> {
   const ttlMs = opts.toolsListTtlMs ?? 60_000;
   const host = opts.host ?? "127.0.0.1";
@@ -91,7 +95,14 @@ export function startStatelessMcpFixture(
 
     const body = await readJsonBody(req);
     if (!isJsonRpcRequest(body)) {
-      respondJsonRpcError(res, null, -32600, "Invalid Request", undefined, opts);
+      respondJsonRpcError(
+        res,
+        null,
+        -32600,
+        "Invalid Request",
+        undefined,
+        opts
+      );
       return;
     }
 
@@ -113,7 +124,7 @@ export function startStatelessMcpFixture(
               ? (meta[PROTOCOL_VERSION_META_KEY] as string)
               : null,
         },
-        opts,
+        opts
       );
       return;
     }
@@ -133,7 +144,7 @@ export function startStatelessMcpFixture(
         -32004,
         "Unsupported protocol version",
         { supported: ["2025-11-25"], requested: RC_2026_07_28 },
-        opts,
+        opts
       );
       return;
     }
@@ -151,7 +162,7 @@ export function startStatelessMcpFixture(
           expected: RC_2026_07_28,
           got: headerVersion ?? null,
         },
-        opts,
+        opts
       );
       return;
     }
@@ -164,8 +175,12 @@ export function startStatelessMcpFixture(
         body.id,
         -32001,
         "HeaderMismatch",
-        { field: "Mcp-Method", expected: body.method, got: headerMethod ?? null },
-        opts,
+        {
+          field: "Mcp-Method",
+          expected: body.method,
+          got: headerMethod ?? null,
+        },
+        opts
       );
       return;
     }
@@ -177,9 +192,7 @@ export function startStatelessMcpFixture(
       body.method === "prompts/get"
     ) {
       const expected =
-        body.method === "resources/read"
-          ? body.params?.uri
-          : body.params?.name;
+        body.method === "resources/read" ? body.params?.uri : body.params?.name;
       const headerName = headerLookup(req, "mcp-name");
       if (expected !== undefined && headerName !== expected) {
         respondJsonRpcError(
@@ -188,7 +201,7 @@ export function startStatelessMcpFixture(
           -32001,
           "HeaderMismatch",
           { field: "Mcp-Name", expected, got: headerName ?? null },
-          opts,
+          opts
         );
         return;
       }
@@ -206,7 +219,7 @@ export function startStatelessMcpFixture(
           -32001,
           "HeaderMismatch",
           { detail: err.message },
-          opts,
+          opts
         );
         return;
       }
@@ -225,7 +238,7 @@ export function startStatelessMcpFixture(
         port: boundPort,
         close: () =>
           new Promise<void>((resolveClose) =>
-            server.close(() => resolveClose()),
+            server.close(() => resolveClose())
           ),
       });
     });
@@ -235,7 +248,7 @@ export function startStatelessMcpFixture(
 async function dispatch(
   req: JsonRpcRequest,
   httpReq: IncomingMessage,
-  ttlMs: number,
+  ttlMs: number
 ): Promise<unknown> {
   switch (req.method) {
     case "server/discover":
@@ -263,8 +276,6 @@ async function dispatch(
         },
         supportedVersions: [RC_2026_07_28],
       };
-    case "ping":
-      return {};
     case "tools/list":
       return {
         tools: [
@@ -299,9 +310,7 @@ async function dispatch(
       const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
       if (name === "echo") {
         return {
-          content: [
-            { type: "text", text: String(args.value ?? "") },
-          ],
+          content: [{ type: "text", text: String(args.value ?? "") }],
         };
       }
       if (name === "regional-echo") {
@@ -317,22 +326,35 @@ async function dispatch(
           // Both absent: param wasn't supplied at all. Allowed —
           // schema's `required` field controls strictness.
           return {
-            content: [{ type: "text", text: JSON.stringify({ value: args.value ?? null, region: null }) }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  value: args.value ?? null,
+                  region: null,
+                }),
+              },
+            ],
           };
         }
         // Mirror semantics: decoded header value must equal the body
         // value when both are present. We only test ASCII primitives
         // in the fixture, so a string-equality check is exact.
         const decoded = decodeHeaderValue(region);
-        if (decoded === undefined || bodyRegion === undefined ||
-            String(bodyRegion) !== decoded) {
+        if (
+          decoded === undefined ||
+          bodyRegion === undefined ||
+          String(bodyRegion) !== decoded
+        ) {
           // Surface as a JSON-RPC error so tests see the contract
           // violation directly. Mirrors how a draft-conforming server
           // would respond with -32001 when headers don't match body.
           throw new HeaderMismatchError(
-            `Mcp-Param-Region (${region ?? "<absent>"}) must mirror params.arguments.region (${
+            `Mcp-Param-Region (${
+              region ?? "<absent>"
+            }) must mirror params.arguments.region (${
               bodyRegion === undefined ? "<absent>" : JSON.stringify(bodyRegion)
-            })`,
+            })`
           );
         }
         return {
@@ -389,7 +411,7 @@ function respondJsonRpcResult(
   res: ServerResponse,
   id: number | string,
   result: unknown,
-  opts: StatelessMcpFixtureOptions,
+  opts: StatelessMcpFixtureOptions
 ): void {
   const payload: JsonRpcResult = { jsonrpc: "2.0", id, result };
   const headers: Record<string, string> = {
@@ -406,7 +428,7 @@ function respondJsonRpcError(
   code: number,
   message: string,
   data: unknown,
-  opts: StatelessMcpFixtureOptions,
+  opts: StatelessMcpFixtureOptions
 ): void {
   const payload: JsonRpcError = {
     jsonrpc: "2.0",
@@ -426,7 +448,7 @@ function respondJsonRpcError(
 function respondHttpError(
   res: ServerResponse,
   status: number,
-  message: string,
+  message: string
 ): void {
   res.writeHead(status, { "Content-Type": "text/plain" });
   res.end(message);
@@ -458,7 +480,7 @@ function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
 
 function headerLookup(
   req: IncomingMessage,
-  nameLower: string,
+  nameLower: string
 ): string | undefined {
   const v = req.headers[nameLower];
   if (Array.isArray(v)) return v[0];

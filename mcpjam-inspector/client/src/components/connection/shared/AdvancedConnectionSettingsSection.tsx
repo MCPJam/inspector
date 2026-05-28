@@ -80,10 +80,10 @@ interface AdvancedConnectionSettingsSectionProps {
     version: McpProtocolVersion | undefined
   ) => void;
   /**
-   * Transport kind of this server. Stateless options are HTTP-POST only,
-   * so for stdio / SSE we filter the dropdown to stateful versions
-   * (factory rejects stateless on those transports — UI filter is the
-   * user-friendly safety net).
+   * Transport kind of this server. MCPJam's current stateless preview
+   * is HTTP-POST only, so for stdio / SSE we filter the dropdown to
+   * stateful versions (factory rejects stateless on those transports —
+   * UI filter is the user-friendly safety net).
    */
   transportKind?: "http" | "stdio" | "sse";
 }
@@ -120,8 +120,9 @@ export function AdvancedConnectionSettingsSection({
   const showProtocolVersionControl = showMcpProtocolVersionOverride;
   const canEditProtocolVersion =
     onMcpProtocolVersionOverrideChange !== undefined;
-  // The RC is Streamable HTTP POST only — picking it on stdio / sse
-  // would fail at construction with `StatelessRequiresHttpTransport`.
+  // MCPJam's current RC preview is Streamable HTTP POST only — picking
+  // it on stdio / sse would fail at construction with
+  // `StatelessRequiresHttpTransport`.
   // Hide it on non-HTTP transports as the user-friendly safety net.
   const isHttp = transportKind === "http";
   const visibleOptions = MCP_PROTOCOL_OPTIONS.filter((opt) => {
@@ -276,12 +277,13 @@ export function AdvancedConnectionSettingsSection({
               handshake); "2026 RC" → `"2026-07-28"` (stateless RC
               preview client). Gated by `stateless-mcp-enabled` at the
               caller. The RC option is hidden on non-HTTP transports
-              because the stateless client requires Streamable HTTP. */}
+              because MCPJam's current stateless client requires
+              Streamable HTTP. */}
           {showProtocolVersionControl && (
             <div className="space-y-1.5">
               <label
                 className="text-xs font-medium text-foreground"
-                title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: the 2026-07-28 stateless RC transport (HTTP only)."
+                title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
               >
                 Protocol version
               </label>
@@ -312,8 +314,8 @@ export function AdvancedConnectionSettingsSection({
               </Select>
               {!isHttp && (
                 <p className="text-xs text-muted-foreground">
-                  Draft requires Streamable HTTP — only Latest is selectable for
-                  this transport.
+                  MCPJam's current 2026 RC preview requires Streamable HTTP —
+                  only Latest is selectable for this transport.
                 </p>
               )}
               {!canEditProtocolVersion && (
