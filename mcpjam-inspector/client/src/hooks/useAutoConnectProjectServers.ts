@@ -129,6 +129,19 @@ export function useAutoConnectProjectServers({
     setSelectedServerNames,
   } = useServerActions();
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
+  // Latest multi-select, read inside the seed effect below WITHOUT making it
+  // an effect dependency. Depending on it would re-run the merge every time
+  // the selection changes (e.g. the user toggling a server off), which could
+  // undo a deliberate deselect. The seed should react only to host-scope /
+  // required-set changes, so we read the live value through a ref instead.
+  const selectedNamesRef = useRef(sharedAppState.selectedMultipleServers);
+  selectedNamesRef.current = sharedAppState.selectedMultipleServers;
+  // Which (project, host-scope) we last seeded the selection for. Component-
+  // scoped on purpose: the hook mounts on several surfaces (reconciler,
+  // Servers tab, Playground, Client builder) with DIFFERENT scopes, so a
+  // shared module map would thrash. Each mount seeds its own scope at most
+  // once and merges thereafter.
+  const seededSelectionScopeRef = useRef<string | null>(null);
 
   const scopeKey = hostScopeKey ?? "-";
   // Stable key for "what the active host wants selected". Drives the
@@ -187,16 +200,36 @@ export function useAutoConnectProjectServers({
     return candidates.join("\0");
   }, [enabled, projectId, requiredNames, sharedAppState.servers]);
 
-  // Sync the playground/chat multi-select to the host's required set
-  // whenever the (project, hostScope, required-names) tuple changes. Empty
-  // required sets are a no-op: surfaces with no explicit host selection
-  // should not wipe the active project/default host's server selection.
-  // React's dep comparison deduplicates re-renders that don't actually
-  // change the tuple, so this fires once per host switch (and once per
-  // edit to the host's required set after save).
+  // Seed the playground/chat multi-select from the active host's required
+  // set. On a host switch (scopeKey change, or the first resolve for this
+  // surface) we REPLACE the selection so the preview matches the picked
+  // client. Within the SAME scope, though, the required set can re-resolve
+  // for reasons that are NOT a host switch — most commonly, connecting
+  // another server updates the project's server catalog so a host-referenced
+  // id that didn't resolve before now does. Replacing there silently wiped
+  // servers the user had toggled on by hand: they stayed connected but
+  // dropped out of the selection (their toggle flipped off). So for an
+  // in-scope change we MERGE the required names into the current selection
+  // instead, never removing the user's manual picks. Empty required sets are
+  // a no-op so surfaces with no explicit host don't clear the selection.
   useEffect(() => {
     if (!enabled || !projectId || requiredNames.length === 0) return;
-    setSelectedServerNames(requiredNames);
+
+    const seedKey = `${projectId}::${scopeKey}`;
+    if (seededSelectionScopeRef.current !== seedKey) {
+      seededSelectionScopeRef.current = seedKey;
+      setSelectedServerNames(requiredNames);
+      return;
+    }
+
+    const current = selectedNamesRef.current ?? [];
+    const merged = current.slice();
+    for (const name of requiredNames) {
+      if (!merged.includes(name)) merged.push(name);
+    }
+    if (merged.length !== current.length) {
+      setSelectedServerNames(merged);
+    }
   }, [enabled, projectId, scopeKey, requiredNames, setSelectedServerNames]);
 
   // Detect a scope transition (user switched the previewed host) and
