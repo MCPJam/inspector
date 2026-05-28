@@ -361,9 +361,9 @@ describe("resolveEffectiveMcpAppsCapabilities", () => {
       hostStyle: "copilot",
       profile: undefined,
     });
-    // Copilot preset: fullscreen-only, no serverResources / logging,
-    // no notification gates.
-    expect(resolved.availableDisplayModes).toEqual(["fullscreen"]);
+    // Copilot preset: inline default + requestable fullscreen (no pip),
+    // no serverResources / logging, no notification gates.
+    expect(resolved.availableDisplayModes).toEqual(["inline", "fullscreen"]);
     expect(resolved.serverResources).toBe(false);
     expect(resolved.logging).toBe(false);
     expect(resolved.toolInputPartial).toBe(false);
