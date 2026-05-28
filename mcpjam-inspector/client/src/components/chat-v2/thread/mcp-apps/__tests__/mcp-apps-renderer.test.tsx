@@ -36,6 +36,10 @@ const {
     close: vi.fn().mockResolvedValue(undefined),
     connect: vi.fn().mockResolvedValue(undefined),
     getAppCapabilities: vi.fn().mockReturnValue(undefined),
+    listTools: vi.fn().mockResolvedValue({ tools: [], nextCursor: undefined }),
+    getAppVersion: vi
+      .fn()
+      .mockReturnValue({ name: "test-app", version: "1.0.0" }),
     // These callbacks get set by registerBridgeHandlers
     oninitialized: null as (() => void) | null,
     onmessage: null as any,
@@ -2640,5 +2644,127 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     });
 
     expect(mockBridge.onrequestteardown).toBeNull();
+  });
+});
+
+// SEP-1865 App-Provided Tools: mid-session host-policy toggle should
+// unregister AND re-register without requiring a fresh handshake. Two
+// bots (Cursor + chatgpt-codex-connector) flagged this on the inline
+// and modal surfaces respectively.
+describe("MCPAppsRenderer appTools policy mid-session toggle", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockHostContextStoreState.draftHostContext = {};
+    Object.assign(mockPreferencesState, {
+      themeMode: "light",
+      hostStyle: "claude",
+    });
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: false,
+      mcpAppsCspMode: "permissive",
+      globals: { locale: "en-US", timeZone: "UTC" },
+      displayMode: "inline",
+      capabilities: { hover: true, touch: false },
+      safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+      deviceType: "desktop",
+    });
+    mockBridge.oninitialized = null;
+    mockBridge.getAppCapabilities
+      .mockReset()
+      .mockReturnValue({ tools: {} } as any);
+    mockBridge.listTools
+      .mockReset()
+      .mockResolvedValue({
+        tools: [
+          {
+            name: "do-thing",
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        nextCursor: undefined,
+      });
+    mockBridge.getAppVersion
+      .mockReset()
+      .mockReturnValue({ name: "test-app", version: "1.0.0" });
+    sandboxedIframePropsRef.current = null;
+    sandboxedIframeElementRef.current = null;
+    sandboxedIframeMountsRef.current = 0;
+    sandboxedIframeUnmountsRef.current = 0;
+    sandboxProxyBehaviorRef.current.autoReady = true;
+    appBridgeArgsRef.current = null;
+
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: {},
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: false,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    const { useAppToolsRegistry } = await import("../app-tools-registry");
+    useAppToolsRegistry.setState({
+      instancesByBridgeId: new Map(),
+      aliases: new Map(),
+      activeBridgeByParent: new Map(),
+      pendingControllers: new Map(),
+    });
+  });
+
+  const profileWith = (appTools: boolean): HostConfigMcpProfileV1 => ({
+    profileVersion: 1,
+    apps: { mcpAppsOverrides: { appTools } },
+  });
+
+  it("does not register on re-enable when the guest never advertised tools", async () => {
+    mockBridge.getAppCapabilities.mockReturnValue(undefined as any);
+    const { useAppToolsRegistry } = await import("../app-tools-registry");
+
+    const { rerender } = render(
+      <ActiveMcpProfileProvider value={profileWith(true)}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.oninitialized).not.toBeNull();
+    });
+    await act(async () => {
+      triggerReady();
+    });
+    // Off, then back on — guest had no tools capability, so the
+    // re-enable effect must stay silent (advertise = enforce).
+    rerender(
+      <ActiveMcpProfileProvider value={profileWith(false)}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>
+    );
+    rerender(
+      <ActiveMcpProfileProvider value={profileWith(true)}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>
+    );
+    // Give async effects a turn.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useAppToolsRegistry.getState().instancesByBridgeId.size).toBe(0);
   });
 });
