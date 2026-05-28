@@ -3,7 +3,7 @@ import { Hammer, History } from "lucide-react";
 import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
-import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
+import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
@@ -130,7 +130,7 @@ function SessionsBody() {
 }
 
 function ToolsBody() {
-  const state = useAppBuilderStateContext();
+  const state = usePlaygroundStateContext();
   const isMulti = state.activeServerNames.length > 1;
 
   if (isMulti) {

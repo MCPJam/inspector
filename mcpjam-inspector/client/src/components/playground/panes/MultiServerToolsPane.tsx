@@ -27,7 +27,7 @@ import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import { RefreshCw } from "lucide-react";
 import { useAggregatedTools } from "@/hooks/use-aggregated-tools";
-import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
+import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
 import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeader";
 import { TabHeader } from "@/components/ui-playground/TabHeader";
@@ -54,7 +54,7 @@ interface Selection {
 }
 
 export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
-  const state = useAppBuilderStateContext();
+  const state = usePlaygroundStateContext();
   const { flat, collidingNames, loadingByServer, refetch } =
     useAggregatedTools(activeServerNames);
 
