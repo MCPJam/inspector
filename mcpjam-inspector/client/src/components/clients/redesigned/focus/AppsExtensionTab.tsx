@@ -1683,22 +1683,16 @@ function McpAppsCapabilityMatrix({
                 onToggle={(next) => setBooleanOverride(key, next)}
               />
             ))}
-            {/* Host-policy subgroup divider. Rows below this header have
-                no `hostCapabilities` counterpart — they're host-internal
-                policies that gate whether the inspector acts on an
-                app-advertised capability. Surfaced inside the same
-                dropdown (gated by the MCP App support master toggle)
-                but visually separated so server authors don't mistake
-                them for spec-defined wire fields. */}
+            {/* Subgroup divider for rows that gate whether the host acts
+                on an app-advertised capability (no `hostCapabilities`
+                counterpart). Visually separated so server authors don't
+                mistake them for spec-defined wire fields. */}
             <div
               data-testid="mcp-apps-host-policies-subheader"
               className="flex flex-col gap-0.5 border-t border-border bg-muted/30 px-3.5 py-1.5"
             >
               <span className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">
-                Host policies
-              </span>
-              <span className="text-[10.5px] text-muted-foreground">
-                No wire counterpart in hostCapabilities
+                Allow app capabilities
               </span>
             </div>
             <McpAppsDimensionRow
