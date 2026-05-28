@@ -11,7 +11,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 import { AddressInfo } from "node:net";
 import {
   StatelessMcpHttpPreviewClient,
@@ -52,7 +57,7 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
         Object.entries(req.headers).map(([k, v]) => [
           k,
           Array.isArray(v) ? v.join(",") : (v ?? ""),
-        ]),
+        ])
       ),
       body,
     });
@@ -84,7 +89,10 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
         error: {
           code: -32001,
           message: "HeaderMismatch",
-          data: { field: "MCP-Protocol-Version", expected: LATEST_STATELESS_PROTOCOL_VERSION },
+          data: {
+            field: "MCP-Protocol-Version",
+            expected: LATEST_STATELESS_PROTOCOL_VERSION,
+          },
         },
       });
     }
@@ -101,7 +109,10 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
       });
     }
 
-    if (opts.discoverThrowsUnsupportedVersion && body.method === "server/discover") {
+    if (
+      opts.discoverThrowsUnsupportedVersion &&
+      body.method === "server/discover"
+    ) {
       return respond(res, opts, {
         jsonrpc: "2.0",
         id: body.id,
@@ -143,7 +154,10 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
             tools: [
               {
                 name: "echo",
-                inputSchema: { type: "object", properties: { value: { type: "string" } } },
+                inputSchema: {
+                  type: "object",
+                  properties: { value: { type: "string" } },
+                },
               },
               {
                 name: "regional-echo",
@@ -188,7 +202,10 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
             id: body.id,
             result: {
               content: [
-                { type: "text", text: JSON.stringify({ region: headerRegion ?? null }) },
+                {
+                  type: "text",
+                  text: JSON.stringify({ region: headerRegion ?? null }),
+                },
               ],
             },
           });
@@ -206,8 +223,6 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
           },
         });
       }
-      case "ping":
-        return respond(res, opts, { jsonrpc: "2.0", id: body.id, result: {} });
       default:
         return respond(res, opts, {
           jsonrpc: "2.0",
@@ -237,9 +252,11 @@ function pick(req: IncomingMessage, name: string): string | undefined {
 function respond(
   res: ServerResponse,
   opts: FixtureOptions,
-  payload: unknown,
+  payload: unknown
 ): void {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (opts.emitSessionId) headers["Mcp-Session-Id"] = "fixture-session";
   res.writeHead(200, headers);
   res.end(JSON.stringify(payload));
@@ -276,13 +293,15 @@ describe("StatelessMcpHttpPreviewClient", () => {
     expect(sent.body.method).toBe("tools/list");
     expect(
       (sent.body as { params?: { _meta?: Record<string, unknown> } }).params
-        ?._meta?.["io.modelcontextprotocol/protocolVersion"],
+        ?._meta?.["io.modelcontextprotocol/protocolVersion"]
     ).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
     expect(
       (sent.body as { params?: { _meta?: Record<string, unknown> } }).params
-        ?._meta?.["io.modelcontextprotocol/clientInfo"],
+        ?._meta?.["io.modelcontextprotocol/clientInfo"]
     ).toEqual({ name: "test-client", version: "0.0.1" });
-    expect(sent.headers["mcp-protocol-version"]).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
+    expect(sent.headers["mcp-protocol-version"]).toBe(
+      LATEST_STATELESS_PROTOCOL_VERSION
+    );
     expect(sent.headers["mcp-method"]).toBe("tools/list");
   });
 
@@ -304,9 +323,11 @@ describe("StatelessMcpHttpPreviewClient", () => {
     expect(callRequest.body.method).toBe("tools/call");
     // Mirror: body keeps the annotated arg AND header carries it.
     expect(
-      (callRequest.body as {
-        params: { arguments: Record<string, unknown> };
-      }).params.arguments,
+      (
+        callRequest.body as {
+          params: { arguments: Record<string, unknown> };
+        }
+      ).params.arguments
     ).toEqual({ value: "hi", region: "us-west1" });
     expect(callRequest.headers["mcp-param-region"]).toBe("us-west1");
     expect(callRequest.headers["mcp-name"]).toBe("regional-echo");
@@ -321,15 +342,13 @@ describe("StatelessMcpHttpPreviewClient", () => {
     // `send()` so BOTH entry points emit the headers from the request
     // body without each caller threading nameHeader / extraHeaders
     // through opts.
-    const result = await client.request<{ content: unknown[] }>(
-      {
-        method: "tools/call",
-        params: {
-          name: "regional-echo",
-          arguments: { value: "hi", region: "us-west1" },
-        },
-      } as never,
-    );
+    const result = await client.request<{ content: unknown[] }>({
+      method: "tools/call",
+      params: {
+        name: "regional-echo",
+        arguments: { value: "hi", region: "us-west1" },
+      },
+    } as never);
     expect(result.content).toEqual([
       { type: "text", text: JSON.stringify({ region: "us-west1" }) },
     ]);
@@ -342,7 +361,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
     expect(callRequest.headers["mcp-param-region"]).toBe("us-west1");
     expect(
       (callRequest.body as { params: { arguments: Record<string, unknown> } })
-        .params.arguments,
+        .params.arguments
     ).toEqual({ value: "hi", region: "us-west1" });
   });
 
@@ -372,32 +391,36 @@ describe("StatelessMcpHttpPreviewClient", () => {
           Object.entries(req.headers).map(([k, v]) => [
             k,
             Array.isArray(v) ? v.join(",") : (v ?? ""),
-          ]),
+          ])
         ),
         body,
       });
       if (body.method === "tools/list") {
         // Serve a header-bearing tool definition so the lazy refresh
         // populates the header map.
-        return respond(res, {}, {
-          jsonrpc: "2.0",
-          id: body.id,
-          result: {
-            tools: [
-              {
-                name: "regional-echo",
-                inputSchema: {
-                  type: "object",
-                  properties: {
-                    value: { type: "string" },
-                    region: { type: "string", "x-mcp-header": "Region" },
+        return respond(
+          res,
+          {},
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              tools: [
+                {
+                  name: "regional-echo",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      value: { type: "string" },
+                      region: { type: "string", "x-mcp-header": "Region" },
+                    },
                   },
                 },
-              },
-            ],
-            ttlMs: 60_000,
-          },
-        });
+              ],
+              ttlMs: 60_000,
+            },
+          }
+        );
       }
       if (body.method === "tools/call" && firstRequest) {
         firstRequest = false;
@@ -409,24 +432,32 @@ describe("StatelessMcpHttpPreviewClient", () => {
       const mcpName = req.headers["mcp-name"];
       const mcpParamRegion = req.headers["mcp-param-region"];
       if (!mcpName || !mcpParamRegion) {
-        return respond(res, {}, {
+        return respond(
+          res,
+          {},
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            error: {
+              code: -32001,
+              message: "HeaderMismatch — 401 retry dropped required headers",
+              data: { mcpName, mcpParamRegion },
+            },
+          }
+        );
+      }
+      return respond(
+        res,
+        {},
+        {
           jsonrpc: "2.0",
           id: body.id,
-          error: {
-            code: -32001,
-            message: "HeaderMismatch — 401 retry dropped required headers",
-            data: { mcpName, mcpParamRegion },
-          },
-        });
-      }
-      return respond(res, {}, {
-        jsonrpc: "2.0",
-        id: body.id,
-        result: { content: [{ type: "text", text: "ok" }] },
-      });
+          result: { content: [{ type: "text", text: "ok" }] },
+        }
+      );
     });
     await new Promise<void>((r) =>
-      authServer.listen(0, "127.0.0.1", () => r()),
+      authServer.listen(0, "127.0.0.1", () => r())
     );
     const port = (authServer.address() as AddressInfo).port;
 
@@ -517,7 +548,8 @@ describe("StatelessMcpHttpPreviewClient", () => {
           // must reject.
           arguments: { value: "hi", region: "eu-central1" },
           _meta: {
-            "io.modelcontextprotocol/protocolVersion": LATEST_STATELESS_PROTOCOL_VERSION,
+            "io.modelcontextprotocol/protocolVersion":
+              LATEST_STATELESS_PROTOCOL_VERSION,
             "io.modelcontextprotocol/clientInfo": { name: "raw", version: "0" },
             "io.modelcontextprotocol/clientCapabilities": {},
           },
@@ -531,25 +563,19 @@ describe("StatelessMcpHttpPreviewClient", () => {
   });
 
   test("preserves caller _meta.progressToken and _meta.traceparent on merge", async () => {
-    await client.ping({
-      // RequestOptions onprogress isn't required; pass _meta via request()
-      // directly so we can pin the merge behavior.
-    });
     // Use the generic request() path which forwards caller params verbatim
     // through to send(), so we can assert merge from a known seed.
-    await client.request(
-      {
-        method: "ping",
-        params: {
-          _meta: {
-            progressToken: "tok-1",
-            traceparent: "00-aaa-bbb-01",
-            tracestate: "vendor=foo",
-            baggage: "userId=42",
-          },
+    await client.request({
+      method: "tools/list",
+      params: {
+        _meta: {
+          progressToken: "tok-1",
+          traceparent: "00-aaa-bbb-01",
+          tracestate: "vendor=foo",
+          baggage: "userId=42",
         },
-      } as never,
-    );
+      },
+    } as never);
     const lastBody = fixture.captured[fixture.captured.length - 1].body as {
       params: { _meta: Record<string, unknown> };
     };
@@ -559,8 +585,19 @@ describe("StatelessMcpHttpPreviewClient", () => {
     expect(lastBody.params._meta.baggage).toBe("userId=42");
     // Our locked keys still present.
     expect(
-      lastBody.params._meta["io.modelcontextprotocol/protocolVersion"],
+      lastBody.params._meta["io.modelcontextprotocol/protocolVersion"]
     ).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
+  });
+
+  test("ping compatibility probe uses server/discover instead of removed ping RPC", async () => {
+    const before = fixture.captured.length;
+    await client.ping();
+    const sent = fixture.captured[before];
+    expect(sent.body.method).toBe("server/discover");
+    expect(sent.headers["mcp-method"]).toBe("server/discover");
+    expect(fixture.captured.map((entry) => entry.body.method)).not.toContain(
+      "ping"
+    );
   });
 
   test("never sends Mcp-Session-Id header outbound", async () => {
@@ -591,10 +628,10 @@ describe("StatelessMcpHttpPreviewClient", () => {
 
   test("subscribeResource throws NotYetSupportedInStateless", async () => {
     await expect(client.subscribeResource({ uri: "x://" })).rejects.toThrow(
-      NotYetSupportedInStateless,
+      NotYetSupportedInStateless
     );
     await expect(client.unsubscribeResource({ uri: "x://" })).rejects.toThrow(
-      NotYetSupportedInStateless,
+      NotYetSupportedInStateless
     );
   });
 
@@ -611,25 +648,29 @@ describe("StatelessMcpHttpPreviewClient", () => {
       const chunks: Buffer[] = [];
       for await (const c of req) chunks.push(c as Buffer);
       const body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
-      respond(res, {}, {
-        jsonrpc: "2.0",
-        id: body.id,
-        result: {
-          tools: [
-            { name: "ok", inputSchema: { type: "object", properties: {} } },
-            {
-              name: "bad",
-              inputSchema: {
-                type: "object",
-                properties: {
-                  region: { type: "string", "x-mcp-header": "Bad Token" },
+      respond(
+        res,
+        {},
+        {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            tools: [
+              { name: "ok", inputSchema: { type: "object", properties: {} } },
+              {
+                name: "bad",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    region: { type: "string", "x-mcp-header": "Bad Token" },
+                  },
                 },
               },
-            },
-          ],
-          ttlMs: 60_000,
-        },
-      });
+            ],
+            ttlMs: 60_000,
+          },
+        }
+      );
     });
     await new Promise<void>((r) => bad.listen(0, "127.0.0.1", () => r()));
     const port = (bad.address() as AddressInfo).port;
@@ -642,7 +683,9 @@ describe("StatelessMcpHttpPreviewClient", () => {
     });
     await badClient.connect(undefined as never);
     const result = await badClient.listTools();
-    expect((result.tools as Array<{ name: string }>).map((t) => t.name)).toEqual(["ok"]);
+    expect(
+      (result.tools as Array<{ name: string }>).map((t) => t.name)
+    ).toEqual(["ok"]);
     await badClient.close();
     await new Promise<void>((r) => bad.close(() => r()));
   });
@@ -669,7 +712,9 @@ describe("StatelessMcpHttpPreviewClient", () => {
       const sent = localFixture.captured[0];
       expect(sent.body.method).toBe("server/discover");
       expect(sent.headers["mcp-method"]).toBe("server/discover");
-      expect(sent.headers["mcp-protocol-version"]).toBe(LATEST_STATELESS_PROTOCOL_VERSION);
+      expect(sent.headers["mcp-protocol-version"]).toBe(
+        LATEST_STATELESS_PROTOCOL_VERSION
+      );
 
       // Capability getters now return the discover-populated values
       // instead of the permissive synthetic / undefined defaults.
@@ -702,7 +747,7 @@ describe("StatelessMcpHttpPreviewClient", () => {
       // code + message; the wire log captures the full envelope via the
       // receive logger (fix from the prior commit).
       await expect(
-        rejectClient.connect(undefined as never),
+        rejectClient.connect(undefined as never)
       ).rejects.toMatchObject({
         code: -32004,
         message: expect.stringContaining("Unsupported protocol version"),
