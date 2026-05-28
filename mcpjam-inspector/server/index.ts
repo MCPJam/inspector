@@ -340,7 +340,8 @@ app.use(
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
 // route (multipart blobs; it applies its own higher bodyLimit at the mount
-// site below). See `webBodyLimit`.
+// site below) and a larger cap for base64 audio transcription bodies. See
+// `webBodyLimit`.
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)

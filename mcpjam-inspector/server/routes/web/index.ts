@@ -8,6 +8,7 @@ import resources from "./resources.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import mcpjamAgent from "./mcpjam-agent.js";
+import audioTranscriptions from "../mcp/audio-transcriptions.js";
 import chatboxes from "./chatboxes.js";
 import chatboxSessions from "./chatbox-sessions.js";
 import { harnessMcp } from "./harness-mcp.js";
@@ -36,6 +37,7 @@ web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/audio/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
@@ -68,6 +70,7 @@ web.route("/chatboxes", chatboxes);
 web.route("/chatboxes", chatboxSessions);
 web.route("/evals", evals);
 web.route("/export", exporter);
+web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
 // /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude

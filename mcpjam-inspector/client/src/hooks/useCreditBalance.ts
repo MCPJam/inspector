@@ -39,6 +39,12 @@ export interface CreditBalanceState {
   monthlyAllowanceRemaining?: number;
   /** Epoch ms when the monthly allowance resets. Only set when monthly. */
   monthlyResetAt?: number | null;
+  /**
+   * Seconds of voice transcription the user can still afford today.
+   * Derived on the backend from remaining cents at Whisper-1 pricing so the
+   * client never sees the dollar amount. 0 means the mic should be disabled.
+   */
+  voiceSecondsRemaining: number;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -77,6 +83,7 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
       r.monthlyAllowanceRemaining
     ),
     monthlyResetAt: optionalNumberOrUndefined(r.monthlyResetAt) ?? null,
+    voiceSecondsRemaining: Math.max(0, optionalNumber(r.voiceSecondsRemaining)),
   };
 };
 
