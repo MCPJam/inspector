@@ -6,14 +6,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { AlertCircle, Globe, MoreHorizontal, Plus, X } from "lucide-react";
-import { useConvexAuth } from "convex/react";
+import { Globe, MoreHorizontal, Plus, X } from "lucide-react";
 import { type HostListItem } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
-import { AttachmentEditor } from "@/components/clients/attachment-editor";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { EvalSuite } from "./types";
+import { ServerSetPicker } from "./server-set-picker";
 
 export interface SuiteOverviewHostBarProps {
   suite: EvalSuite;
@@ -25,6 +24,7 @@ export interface SuiteOverviewHostBarProps {
   projectHosts: HostListItem[];
   readOnly?: boolean;
   onUpdate?: (attachments: HostAttachmentDraft[]) => Promise<void>;
+  onUpdateServerSet?: (serverSetId: string) => Promise<void>;
   /** Merged with the outer bar container (e.g. tighter padding in {@link SuiteHeader}). */
   className?: string;
   /**
@@ -39,6 +39,7 @@ export function SuiteOverviewClientBar({
   projectHosts,
   readOnly = false,
   onUpdate,
+  onUpdateServerSet,
   className,
   containerVariant = "panel",
 }: SuiteOverviewHostBarProps) {
@@ -54,13 +55,6 @@ export function SuiteOverviewClientBar({
   const [attachments, setAttachments] =
     useState<HostAttachmentDraft[]>(initialAttachments);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
-  // Per-host AttachmentEditor open-state. Keyed by namedHostId so we
-  // can pop the editor for the just-attached host (or any pill the
-  // user clicks).
-  const [editorOpenHostId, setEditorOpenHostId] = useState<string | null>(
-    null,
-  );
-  const { isAuthenticated } = useConvexAuth();
 
   // Keep optimistic local state in sync with server-resolved suite data.
   useEffect(() => {
@@ -109,23 +103,7 @@ export function SuiteOverviewClientBar({
       { namedHostId: host.hostId, enabledOptionalServerIds: [] },
     ]);
     setAddMenuOpen(false);
-    // PR B: a freshly-attached host has an empty selection — the eval
-    // can't run until the user picks servers. Pop the editor so the
-    // picker is the obvious next step.
-    setEditorOpenHostId(host.hostId);
   };
-
-  const handleSaveSelection = useCallback(
-    async (namedHostId: string, selectedServerIds: string[]) => {
-      const next = attachments.map((a) =>
-        a.namedHostId === namedHostId
-          ? { ...a, enabledOptionalServerIds: selectedServerIds }
-          : a,
-      );
-      await persist(next);
-    },
-    [attachments, persist],
-  );
 
   const handleRemove = async (namedHostId: string) => {
     if (readOnly || !onUpdate) return;
@@ -206,6 +184,37 @@ export function SuiteOverviewClientBar({
         className,
       )}
     >
+      {/* Servers row — suite-level shared server set */}
+      {(suite.projectId && (editable || suite.serverSet)) ? (
+        <div
+          className={cn(
+            "flex items-center gap-2 px-1 py-0.5 sm:px-2",
+            containerVariant === "inline" && "w-full min-w-0",
+          )}
+        >
+          <span className="shrink-0 text-[11px] text-muted-foreground w-12">
+            Servers
+          </span>
+          {editable && suite.projectId && onUpdateServerSet ? (
+            <ServerSetPicker
+              projectId={suite.projectId}
+              value={suite.serverSetId ?? null}
+              onChange={onUpdateServerSet}
+            />
+          ) : suite.serverSet ? (
+            <span className="flex h-8 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-xs font-medium text-foreground">
+              <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+              {suite.serverSet.name}
+              <span className="text-[10px] text-muted-foreground">
+                · {suite.serverSet.serverIds.length} server
+                {suite.serverSet.serverIds.length === 1 ? "" : "s"}
+              </span>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Hosts row */}
       <div
         className={cn(
           "flex min-h-9 items-center gap-2 px-1 sm:px-2",
@@ -213,6 +222,11 @@ export function SuiteOverviewClientBar({
             "w-full min-w-0 max-w-full overflow-hidden",
         )}
       >
+        {(suite.projectId && (editable || suite.serverSet)) ? (
+          <span className="shrink-0 text-[11px] text-muted-foreground w-12">
+            Hosts
+          </span>
+        ) : null}
         <div
           className={cn(
             "flex min-w-0 items-center gap-2",
@@ -232,66 +246,20 @@ export function SuiteOverviewClientBar({
             ) : null}
 
             {attachments.map((attachment) => {
-              // Prefer the server-resolved name (catches host renames) and
-              // fall back to the project-host-list name, then the id, so the
-              // pill never renders empty even during initial load.
               const label =
                 hostNameByAttachment.get(attachment.namedHostId) ??
                 projectHosts.find((h) => h.hostId === attachment.namedHostId)
                   ?.name ??
                 attachment.namedHostId;
-              const hasNoServers =
-                attachment.enabledOptionalServerIds.length === 0;
               return (
                 <div
                   key={attachment.namedHostId}
-                  className={cn(
-                    "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
-                    hasNoServers
-                      ? "border-amber-500/50 bg-amber-500/10"
-                      : "border-border/60 bg-muted/40",
-                  )}
+                  className="flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-foreground"
                 >
-                  {editable ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEditorOpenHostId(attachment.namedHostId)
-                      }
-                      className="flex min-w-0 flex-1 items-center gap-1 rounded-full px-0.5 text-xs font-medium text-foreground outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
-                      aria-label={`Edit servers for ${label}`}
-                      title={
-                        hasNoServers
-                          ? "No servers picked — click to choose from project pool"
-                          : "Edit attached servers"
-                      }
-                    >
-                      {hasNoServers ? (
-                        <AlertCircle className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-                      ) : (
-                        <Globe className="size-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="min-w-0 flex-1 truncate text-left">
-                        {label}
-                        {hasNoServers ? (
-                          <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">
-                            · pick servers
-                          </span>
-                        ) : (
-                          <span className="ml-1 text-[10px] text-muted-foreground">
-                            · {attachment.enabledOptionalServerIds.length}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  ) : (
-                    <>
-                      <Globe className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-                        {label}
-                      </span>
-                    </>
-                  )}
+                  <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                    {label}
+                  </span>
                   {editable ? (
                     <>
                       <DropdownMenu>
@@ -304,20 +272,8 @@ export function SuiteOverviewClientBar({
                             <MoreHorizontal className="h-3.5 w-3.5" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent
-                          align="start"
-                          className="w-52"
-                        >
-                          <DropdownMenuItem
-                            onSelect={() =>
-                              setEditorOpenHostId(attachment.namedHostId)
-                            }
-                          >
-                            Edit servers
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onSelect={() => openHostsPage()}
-                          >
+                        <DropdownMenuContent align="start" className="w-52">
+                          <DropdownMenuItem onSelect={() => openHostsPage()}>
                             Open in Hosts page
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
@@ -335,9 +291,7 @@ export function SuiteOverviewClientBar({
                         type="button"
                         className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                         aria-label={`Remove ${label}`}
-                        onClick={() =>
-                          void handleRemove(attachment.namedHostId)
-                        }
+                        onClick={() => void handleRemove(attachment.namedHostId)}
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -351,36 +305,6 @@ export function SuiteOverviewClientBar({
           </div>
         </div>
       </div>
-
-      {/* PR B: AttachmentEditor mount. Opens for the host whose pill the
-          user clicked (or for the freshly-attached host). One Dialog per
-          host so the per-modal local draft doesn't bleed between hosts;
-          only one renders at a time. */}
-      {editable && suite.projectId
-        ? (() => {
-            const projectId = suite.projectId;
-            return attachments.map((attachment) => (
-              <AttachmentEditor
-                key={attachment.namedHostId}
-                open={editorOpenHostId === attachment.namedHostId}
-                onOpenChange={(next) =>
-                  setEditorOpenHostId(next ? attachment.namedHostId : null)
-                }
-                scope="suite"
-                hostId={attachment.namedHostId}
-                projectId={projectId}
-                isAuthenticated={isAuthenticated}
-                selectedServerIds={attachment.enabledOptionalServerIds}
-                onSave={({ selectedServerIds }) =>
-                  handleSaveSelection(
-                    attachment.namedHostId,
-                    selectedServerIds,
-                  )
-                }
-              />
-            ));
-          })()
-        : null}
     </div>
   );
 }

@@ -447,6 +447,7 @@ function EvalsTabContent({
           ...(payload.hostAttachments && payload.hostAttachments.length > 0
             ? { hostAttachments: payload.hostAttachments }
             : {}),
+          ...(payload.serverSetId ? { serverSetId: payload.serverSetId } : {}),
         });
 
         if (!createdSuite?._id) {

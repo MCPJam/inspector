@@ -229,6 +229,35 @@ export function useProjectServers({
   };
 }
 
+export function useProjectServerSets({
+  isAuthenticated,
+  projectId,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+}) {
+  const isUserReady = useDbUserReady();
+  const enableQuery =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
+  const queryProjectId = projectId?.trim() ?? "";
+
+  const serverSets = useQuery(
+    "serverSets:listServerSets" as any,
+    enableQuery ? ({ projectId: queryProjectId } as any) : "skip",
+  ) as Array<{
+    _id: string;
+    name: string;
+    serverIds: string[];
+    resolvedServerNames: string[];
+    createdAt: number;
+    updatedAt: number;
+  }> | undefined;
+
+  const isLoading = enableQuery && serverSets === undefined;
+
+  return { serverSets: serverSets ?? [], isLoading };
+}
+
 // Server mutation for creating servers
 export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);

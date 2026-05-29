@@ -438,6 +438,17 @@ export function SuiteIterationsView({
     }
   };
 
+  const handleUpdateServerSet = async (serverSetId: string) => {
+    try {
+      await updateSuite({ suiteId: suite._id, serverSetId });
+      toast.success("Server set updated");
+    } catch (error) {
+      toast.error(getBillingErrorMessage(error, "Failed to update server set"));
+      console.error("Failed to update server set:", error);
+      throw error;
+    }
+  };
+
   const handleRunClick = (runId: string) => {
     navigation.toRunDetail(suite._id, runId, undefined, {
       insightsFocus: true,
@@ -559,6 +570,9 @@ export function SuiteIterationsView({
             runningTestCaseId={runningTestCaseId}
             onSuiteHostAttachmentsUpdate={
               readOnlyConfig ? undefined : handleUpdateHostAttachments
+            }
+            onSuiteServerSetUpdate={
+              readOnlyConfig ? undefined : handleUpdateServerSet
             }
             projectHosts={projectHosts}
             runDetailKpiStrip={

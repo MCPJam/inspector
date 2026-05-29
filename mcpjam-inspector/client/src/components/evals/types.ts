@@ -69,6 +69,17 @@ export type EvalSuite = {
     hostName: string | null;
     resolvedServerNames: string[];
   }>;
+  /** Server Sets MVP: shared named server collection for all hosts in this suite. */
+  serverSetId?: string;
+  /** Hydrated by the backend resolver when serverSetId is set. */
+  serverSet?: EvalServerSet;
+};
+
+export type EvalServerSet = {
+  _id: string;
+  name: string;
+  serverIds: string[];
+  resolvedServerNames: string[];
 };
 
 export type EvalCase = {
