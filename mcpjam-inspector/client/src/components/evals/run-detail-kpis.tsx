@@ -1,8 +1,11 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { computeIterationResult } from "./pass-criteria";
 import { formatDuration } from "./helpers";
 import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";
+import {
+  computeRunPassFailStats,
+  normalizeRunPassRatePercent as normalizePercentFromHelpers,
+} from "./ai-triage-helpers";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
 export type RunDetailKpiStat = {
@@ -14,12 +17,11 @@ export type RunDetailKpiStat = {
   stripCellClass?: string;
 };
 
-export function normalizeRunPassRatePercent(passRate: number): number {
-  if (passRate > 0 && passRate <= 1) {
-    return Math.round(passRate * 100);
-  }
-  return Math.round(passRate);
-}
+/**
+ * Re-export so existing callers keep working after the helper moved into
+ * `ai-triage-helpers` (broke an import cycle between kpi + triage).
+ */
+export const normalizeRunPassRatePercent = normalizePercentFromHelpers;
 
 export function computeRunDashboardKpis({
   selectedRunDetails,
@@ -30,29 +32,10 @@ export function computeRunDashboardKpis({
   caseGroupsForSelectedRun: EvalIteration[];
   source?: "ui" | "sdk";
 }): RunDetailKpiStat[] {
-  const computedStats =
-    caseGroupsForSelectedRun.length === 0
-      ? (selectedRunDetails.summary ?? {
-          passed: 0,
-          failed: 0,
-          total: 0,
-          passRate: 0,
-        })
-      : (() => {
-          // Count terminal results only — pending/running iterations must not
-          // be marked as passed or failed mid-stream, and must not skew the
-          // in-progress accuracy.
-          const passed = caseGroupsForSelectedRun.filter(
-            (i) => computeIterationResult(i) === "passed",
-          ).length;
-          const failed = caseGroupsForSelectedRun.filter(
-            (i) => computeIterationResult(i) === "failed",
-          ).length;
-          const total = caseGroupsForSelectedRun.length;
-          const completed = passed + failed;
-          const passRate = completed > 0 ? passed / completed : 0;
-          return { passed, failed, total, passRate };
-        })();
+  const computedStats = computeRunPassFailStats({
+    selectedRunDetails,
+    caseGroupsForSelectedRun,
+  });
 
   const isRunning = selectedRunDetails.status === "running";
   const expected = selectedRunDetails.expectedIterations;

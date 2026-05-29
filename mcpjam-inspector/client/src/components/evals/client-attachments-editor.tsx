@@ -1,16 +1,30 @@
 import { useMemo, useState } from "react";
-import { Loader2, Lock, Plus, X } from "lucide-react";
+import { ChevronRight, Loader2, Plus, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { ClientPicker } from "@/components/clients/ClientPicker";
 import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
+import { AttachmentEditor } from "@/components/clients/attachment-editor";
 import { useHost, useHostList, type HostListItem } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
+import { cn } from "@/lib/utils";
 
 export type HostAttachmentDraft = {
   namedHostId: string;
+  /**
+   * The attachment's full server pick from the project pool. PR B
+   * model: no required/optional split, no inheritance from the bound
+   * host's hostConfig. Empty array = "user hasn't picked yet" (eval
+   * runs reject empty at run-start).
+   *
+   * The field name on the wire is still `enabledOptionalServerIds`
+   * because the suite-update mutation pre-dates this rename; PR B
+   * accepts both `enabledOptionalServerIds` and `selectedServerIds`
+   * and prefers the latter. The frontend draft type follows the
+   * legacy name to minimize churn in parent components that read
+   * `EvalSuite.hostAttachments`; rename in cleanup PR.
+   */
   enabledOptionalServerIds: string[];
 };
 
@@ -54,22 +68,22 @@ export function ClientAttachmentsEditor({
     onChange(value.filter((_, i) => i !== index));
   };
 
-  const handleToggleOptional = (
+  // PR 0 fix: per-id toggle creates a stale-closure bug when the modal's
+  // Save fires a diff-and-emit chain of N toggles in one tick — each
+  // toggle reads `value` from this closure, which doesn't see the
+  // previous toggle's update until React re-renders the parent. So
+  // multi-toggle saves were dropping all but the last change. Full-array
+  // setter applies the whole next selection atomically.
+  const handleSetSelectedServerIds = (
     index: number,
-    serverId: string,
-    enabled: boolean,
+    enabledOptionalServerIds: string[],
   ) => {
     onChange(
-      value.map((attachment, i) => {
-        if (i !== index) return attachment;
-        const current = new Set(attachment.enabledOptionalServerIds);
-        if (enabled) current.add(serverId);
-        else current.delete(serverId);
-        return {
-          ...attachment,
-          enabledOptionalServerIds: Array.from(current),
-        };
-      }),
+      value.map((attachment, i) =>
+        i === index
+          ? { ...attachment, enabledOptionalServerIds }
+          : attachment,
+      ),
     );
   };
 
@@ -91,8 +105,8 @@ export function ClientAttachmentsEditor({
               projectId={projectId}
               isAuthenticated={isAuthenticated}
               onRemove={() => handleRemoveAttachment(index)}
-              onToggleOptional={(serverId, enabled) =>
-                handleToggleOptional(index, serverId, enabled)
+              onSetSelectedServerIds={(next) =>
+                handleSetSelectedServerIds(index, next)
               }
               disabled={disabled}
             />
@@ -151,7 +165,12 @@ type HostAttachmentRowProps = {
   projectId: string;
   isAuthenticated: boolean;
   onRemove: () => void;
-  onToggleOptional: (serverId: string, enabled: boolean) => void;
+  /**
+   * Full-array setter. The AttachmentEditor produces the next full pick
+   * on Save; passing the array atomically avoids the stale-closure trap
+   * that a per-id toggle chain falls into when N edits batch in one tick.
+   */
+  onSetSelectedServerIds: (selectedServerIds: string[]) => void;
   disabled: boolean;
 };
 
@@ -161,7 +180,7 @@ function HostAttachmentRow({
   projectId,
   isAuthenticated,
   onRemove,
-  onToggleOptional,
+  onSetSelectedServerIds,
   disabled,
 }: HostAttachmentRowProps) {
   const { host, isLoading } = useHost({
@@ -173,103 +192,107 @@ function HostAttachmentRow({
     projectId,
   });
 
-  const enabledSet = useMemo(
-    () => new Set(attachment.enabledOptionalServerIds),
-    [attachment.enabledOptionalServerIds],
+  // PR B: row body is a click target that opens the AttachmentEditor.
+  // The modal owns the editable Servers tab (flat project-pool list).
+  const [editorOpen, setEditorOpen] = useState(false);
+
+  const resolveName = (serverId: string) =>
+    projectServers.find((s) => s._id === serverId)?.name ?? serverId;
+
+  // Compact summary: "N servers picked" — the attachment owns its full
+  // selection, no required/optional split to surface here. Empty
+  // selection is callout-worthy (eval cannot run).
+  const pickedCount = attachment.enabledOptionalServerIds.length;
+  const pickedNames = useMemo(
+    () => attachment.enabledOptionalServerIds.map(resolveName),
+    // resolveName closes over projectServers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attachment.enabledOptionalServerIds, projectServers],
   );
 
-  type ServerRow = {
-    id: string;
-    name: string;
-    required: boolean;
-  };
-
-  const serverRows: ServerRow[] = useMemo(() => {
-    if (!host) return [];
-    const resolveName = (serverId: string) =>
-      projectServers.find((candidate) => candidate._id === serverId)?.name ??
-      serverId;
-    const required = host.config.serverIds.map((id) => ({
-      id,
-      name: resolveName(id),
-      required: true,
-    }));
-    const optional = host.config.optionalServerIds.map((id) => ({
-      id,
-      name: resolveName(id),
-      required: false,
-    }));
-    return [...required, ...optional];
-  }, [host, projectServers]);
-
   return (
-    <div className="rounded-xl border bg-card/60 p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-foreground">
-              {hostName ?? host?.name ?? "Loading…"}
-            </span>
-            {isLoading ? (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            ) : null}
-          </div>
+    <>
+      <div className="rounded-xl border bg-card/60">
+        <div className="flex items-start justify-between gap-2 p-3">
+          <button
+            type="button"
+            onClick={() => setEditorOpen(true)}
+            disabled={disabled || !host}
+            className={cn(
+              "group flex min-w-0 flex-1 items-center gap-2 text-left",
+              "rounded-md px-1 py-0.5 -mx-1 -my-0.5",
+              "hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              (disabled || !host) && "cursor-not-allowed opacity-60",
+            )}
+            aria-label={`Edit attachment for ${hostName ?? host?.name ?? "host"}`}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium text-foreground">
+                  {hostName ?? host?.name ?? "Loading…"}
+                </span>
+                {isLoading ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                ) : null}
+              </div>
+              <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                {host ? (
+                  pickedCount === 0 ? (
+                    <span className="text-amber-600 dark:text-amber-400">
+                      No servers picked · click to choose from project pool
+                    </span>
+                  ) : (
+                    <>
+                      {pickedCount} server{pickedCount === 1 ? "" : "s"}{" "}
+                      picked
+                      {pickedNames.length > 0 ? (
+                        <span className="ml-1 truncate">
+                          · {pickedNames.slice(0, 3).join(", ")}
+                          {pickedNames.length > 3
+                            ? `, +${pickedNames.length - 3}`
+                            : ""}
+                        </span>
+                      ) : null}
+                    </>
+                  )
+                ) : (
+                  "Loading client profile…"
+                )}
+              </div>
+            </div>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-colors group-hover:text-foreground" />
+          </button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onRemove}
+            disabled={disabled}
+            aria-label={`Remove ${hostName ?? "host"}`}
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onRemove}
-          disabled={disabled}
-          aria-label={`Remove ${hostName ?? "host"}`}
-        >
-          <X className="h-4 w-4" />
-        </Button>
       </div>
 
-      <div className="mt-3 space-y-2">
-        <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          Servers
-        </Label>
-        {host && serverRows.length === 0 ? (
-          <p className="px-2 py-1 text-xs italic text-muted-foreground">
-            No servers attached to this client.
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {serverRows.map((server) =>
-              server.required ? (
-                <div
-                  key={server.id}
-                  className="flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground"
-                  title="This server is required by the client. Edit on the Client tab to change."
-                >
-                  <Checkbox checked disabled aria-label={`${server.name} (required)`} />
-                  <Lock className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden />
-                  <span className="truncate">{server.name}</span>
-                  <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                    Required by client
-                  </span>
-                </div>
-              ) : (
-                <label
-                  key={server.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent/30"
-                >
-                  <Checkbox
-                    checked={enabledSet.has(server.id)}
-                    onCheckedChange={(checked) =>
-                      onToggleOptional(server.id, checked === true)
-                    }
-                    disabled={disabled}
-                  />
-                  <span className="truncate">{server.name}</span>
-                </label>
-              ),
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+      {host ? (
+        <AttachmentEditor
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          scope="suite"
+          hostId={attachment.namedHostId}
+          projectId={projectId}
+          isAuthenticated={isAuthenticated}
+          selectedServerIds={attachment.enabledOptionalServerIds}
+          onSave={({ selectedServerIds }) => {
+            // PR B: AttachmentEditor returns the full picked array; the
+            // wire field on the parent draft is still named
+            // `enabledOptionalServerIds` (see HostAttachmentDraft
+            // comment). Pass through to the full-array setter.
+            onSetSelectedServerIds(selectedServerIds);
+          }}
+        />
+      ) : null}
+    </>
   );
 }

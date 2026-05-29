@@ -27,13 +27,12 @@ import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
-import { InsightPrimaryBlock } from "./insight-primary-block";
+import { AiTriageCard } from "./ai-triage-card";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import { ArrowUpDown, ExternalLink } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
-import { RunDetailInsightCollapsible } from "./run-detail-insight-collapsible";
 import {
   caseListCardClassName,
   caseListDataRowClassName,
@@ -498,7 +497,7 @@ export function RunDetailView({
   useRunInsights(selectedRunDetails, { autoRequest: true });
 
   const {
-    summary: serverQualitySummary,
+    result: serverQualityResult,
     pending: serverQualityPending,
     requested: serverQualityRequested,
     failedGeneration: serverQualityFailedGeneration,
@@ -532,27 +531,18 @@ export function RunDetailView({
   const hasSecondaryBreakdown =
     selectedRunChartData.modelData.length >= 2 || hasRunBarCharts;
 
-  const embeddedInsightCardClass =
-    "rounded-none border-0 border-l-0 bg-transparent p-0 py-0 shadow-none ring-0";
-
-  const serverQualityNarrative =
+  const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
-      <RunDetailInsightCollapsible title="Server quality">
-        <InsightPrimaryBlock
-          embedded
-          title="Server quality"
-          className={embeddedInsightCardClass}
-          summary={serverQualitySummary}
-          pending={serverQualityPending}
-          requested={serverQualityRequested}
-          failedGeneration={serverQualityFailedGeneration}
-          error={serverQualityError}
-          onRetry={() => requestServerQuality(true)}
-          pendingLabel="Analyzing server quality…"
-          requestingLabel="Requesting server quality analysis…"
-          emptyLabel="We will analyze your MCP server's tool quality and workflow efficiency here."
-        />
-      </RunDetailInsightCollapsible>
+      <AiTriageCard
+        run={selectedRunDetails}
+        iterations={caseGroupsForSelectedRun}
+        serverQuality={serverQualityResult ?? null}
+        pending={serverQualityPending}
+        requested={serverQualityRequested}
+        failedGeneration={serverQualityFailedGeneration}
+        error={serverQualityError}
+        onRetry={() => requestServerQuality(true)}
+      />
     ) : null;
 
   const runInsightsBody = (
@@ -596,7 +586,7 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      {serverQualityNarrative}
+      {serverQualityTriage}
 
       {hasSecondaryBreakdown ? (
         <div className="space-y-3">
