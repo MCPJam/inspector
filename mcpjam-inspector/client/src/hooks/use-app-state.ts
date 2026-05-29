@@ -180,6 +180,7 @@ export function useAppState({
   isLoadingOrganizations,
   validOrganizations,
   hostsHubFlagEnabled,
+  requestSignIn,
 }: {
   currentUserId: string | null;
   /**
@@ -199,6 +200,7 @@ export function useAppState({
    * via its shadow `projects.clientConfig`).
    */
   hostsHubFlagEnabled: boolean;
+  requestSignIn?: () => void | Promise<void>;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -527,6 +529,7 @@ export function useAppState({
     activeProjectServersFlat: projectState.activeProjectServersFlat,
     activeMcpProfile: activeHost?.mcpProfile,
     activeHostConfig: activeHost,
+    requestSignIn,
     logger,
   });
 
