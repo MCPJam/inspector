@@ -296,9 +296,15 @@ describe("web routes — chat-v2 hosted mode", () => {
       "https://example.convex.site/web/authorize-batch",
       expect.objectContaining({
         method: "POST",
+        // `localRuntime: true` is set whenever HOSTED_MODE is false (the
+        // default in tests — VITE_MCPJAM_HOSTED_MODE is not "true" here).
+        // Convex uses it to skip the HTTPS-only check on MCP server URLs
+        // for local Inspector callers; see normalizeAuthorizeResult in
+        // mcpjam-backend/convex/http.ts.
         body: JSON.stringify({
           projectId: "project-1",
           serverIds: ["server-1", "server-2"],
+          localRuntime: true,
         }),
       })
     );
