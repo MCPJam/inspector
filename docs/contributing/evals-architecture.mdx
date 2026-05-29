@@ -961,9 +961,10 @@ Potential areas for contribution:
 | **Actual Tools**     | Tools that were actually called during execution                 |
 | **Missing Tools**    | Expected tools that were not called (causes failure)             |
 | **Unexpected Tools** | Tools called but not expected (logged, doesn't fail)             |
-| **RunRecorder**      | Interface for persisting eval results to database                |
-| **MCPClientManager** | Manager for MCP server connections and tool execution            |
-| **AI SDK**           | Vercel's AI SDK for LLM interactions and tool calling            |
+| **RunRecorder**          | Interface for persisting eval results to database                              |
+| **MCPClientManager**     | Manager for MCP server connections and tool execution                          |
+| **AI SDK**               | Vercel's AI SDK for LLM interactions and tool calling                          |
+| **Execution Snapshot**   | Frozen server list (`suite.environment` / `suite.hostConfigId`) saved on first run; reruns use this snapshot unless `refreshSnapshot` is set |
 
 ---
 
