@@ -33,10 +33,10 @@ type SuiteExecutionConfigEditorProps = {
  *
  * Phase 3 read switch: the editor now reads + writes through the v2
  * `hostConfigsV2.{getSuiteConfig,setSuiteConfig}` API. Server selection
- * is hidden (servers come from `suite.environment`; the backend rejects
- * non-empty serverIds), but model / system prompt / temperature /
- * tool-approval / connection-defaults / capabilities / hostContext are
- * all editable through the shared ClientConfigEditor.
+ * is hidden, but preserved from the suite hostConfig while model /
+ * system prompt / temperature / tool-approval / connection-defaults /
+ * capabilities / hostContext are editable through the shared
+ * ClientConfigEditor.
  *
  * `setSuiteConfig` mirrors `{ modelId, systemPrompt, temperature }`
  * back to `suite.defaultConfig` for legacy readers (run snapshot,
@@ -51,7 +51,7 @@ export function SuiteExecutionConfigEditor({
 
   const dto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
-    { suiteId: suite._id } as any,
+    { suiteId: suite._id } as any
   ) as HostConfigDtoV2 | null | undefined;
 
   // Phase 4: project default snapshot used by the "Reset to project
@@ -59,11 +59,11 @@ export function SuiteExecutionConfigEditor({
   // (e.g. unscoped guest suites).
   const projectDefaultDto = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    projectId ? ({ projectId } as any) : "skip",
+    projectId ? ({ projectId } as any) : "skip"
   ) as HostConfigDtoV2 | null | undefined;
 
   const setSuiteConfig = useMutation(
-    "hostConfigsV2:setSuiteConfig" as any,
+    "hostConfigsV2:setSuiteConfig" as any
   ) as unknown as (args: {
     suiteId: string;
     input: HostConfigInputV2;
@@ -128,7 +128,7 @@ export function SuiteExecutionConfigEditor({
   const isDirty = useMemo(
     () =>
       value && baseline ? !hostConfigInputsEqual(value, baseline) : !!value,
-    [value, baseline],
+    [value, baseline]
   );
 
   if (!value) {
@@ -147,15 +147,6 @@ export function SuiteExecutionConfigEditor({
     );
   }
 
-  // setSuiteConfig refuses non-empty serverIds; if a stale v2 row
-  // somehow carried any, force them empty before saving so the
-  // backend's validator doesn't reject the otherwise-valid edit.
-  // Server selection lives on `suite.environment`.
-  const stripped: HostConfigInputV2 = {
-    ...value,
-    serverIds: [],
-    optionalServerIds: [],
-  };
   const canSave = isDirty && !hasJsonError && !isSaving && !isResetting;
 
   const handleReset = () => {
@@ -166,9 +157,9 @@ export function SuiteExecutionConfigEditor({
     if (!canSave) return;
     setIsSaving(true);
     try {
-      await setSuiteConfig({ suiteId: suite._id, input: stripped });
-      setBaseline(stripped);
-      setValue(stripped);
+      await setSuiteConfig({ suiteId: suite._id, input: value });
+      setBaseline(value);
+      setValue(value);
       toast.success("Suite execution config updated");
     } catch (err) {
       // Surface the failure to the user; do NOT rethrow. The button's
@@ -177,10 +168,7 @@ export function SuiteExecutionConfigEditor({
       // feedback. Mirrors the parent-provided onSave handler the
       // pre-Phase-3 component used.
       toast.error(
-        getBillingErrorMessage(
-          err,
-          "Failed to update suite execution config",
-        ),
+        getBillingErrorMessage(err, "Failed to update suite execution config")
       );
       console.error("Failed to update suite execution config:", err);
     } finally {
@@ -192,16 +180,16 @@ export function SuiteExecutionConfigEditor({
     if (!projectDefaultDto) return;
     setIsResetting(true);
     try {
-      // Phase 4: copy the project default into the suite-owned
-      // hostConfigId via setSuiteConfig. Server lists are forced empty
-      // since suite server selection lives on `suite.environment`. The
-      // mutation mints a new v2 row when the project-default content
-      // differs from the suite's existing row, or no-ops via dedupe
-      // when they already match.
+      // Phase 4: copy the project default execution fields into the
+      // suite-owned hostConfigId via setSuiteConfig while preserving the
+      // suite's frozen server snapshot. The mutation mints a new v2 row
+      // when the project-default content differs from the suite's
+      // existing row, or no-ops via dedupe when they already match.
       const projectDefaultInput: HostConfigInputV2 = {
         ...hostConfigDtoToInput(projectDefaultDto),
-        serverIds: [],
-        optionalServerIds: [],
+        serverIds: value.serverIds,
+        optionalServerIds: value.optionalServerIds,
+        serverConnectionOverrides: value.serverConnectionOverrides,
       };
       await setSuiteConfig({
         suiteId: suite._id,
@@ -212,10 +200,7 @@ export function SuiteExecutionConfigEditor({
       toast.success("Suite reset to project default");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(
-          err,
-          "Failed to reset suite to project default",
-        ),
+        getBillingErrorMessage(err, "Failed to reset suite to project default")
       );
       console.error("Failed to reset suite to project default:", err);
     } finally {
@@ -230,7 +215,8 @@ export function SuiteExecutionConfigEditor({
           Default Execution Config
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          The model and parameters all iterations in this suite inherit. Per-case{" "}
+          The model and parameters all iterations in this suite inherit.
+          Per-case{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
             advancedConfig
           </code>{" "}

@@ -113,12 +113,12 @@ describe("startSuiteRunWithRecorder", () => {
         suiteId: "suite-1",
         toolSnapshot: sanitizedToolSnapshot,
         toolSnapshotDebug: sanitizedToolSnapshotDebug,
-      }),
+      })
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       2,
       "testSuites:precreateIterationsForRun",
-      { runId: "run-1" },
+      { runId: "run-1" }
     );
     expect(result).toEqual(
       expect.objectContaining({
@@ -149,7 +149,42 @@ describe("startSuiteRunWithRecorder", () => {
             servers: ["alpha"],
           },
         },
-      }),
+      })
     );
+  });
+
+  it("runs against the environment Convex snapshotted for the suite run", async () => {
+    const mutationMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        runId: "run-1",
+        configSnapshot: {
+          environment: {
+            servers: ["snapshotted-server"],
+          },
+        },
+        testCases: [
+          {
+            _id: "tc-1",
+            title: "Snapshot server",
+            query: "Use the pinned server",
+            model: "gpt-5",
+            provider: "openai",
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ],
+      })
+      .mockResolvedValueOnce(undefined);
+
+    const result = await startSuiteRunWithRecorder({
+      convexClient: { mutation: mutationMock } as any,
+      suiteId: "suite-1",
+      serverIds: ["request-server"],
+    });
+
+    expect(result.config.environment).toEqual({
+      servers: ["snapshotted-server"],
+    });
   });
 });
