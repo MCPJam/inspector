@@ -11,6 +11,15 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
+type SuiteRunEnvironmentSnapshot = {
+  servers: string[];
+  serverBindings?: Array<{
+    serverName: string;
+    projectServerId?: string;
+    workspaceServerId?: string;
+  }>;
+};
+
 export type SuiteRunRecorder = {
   runId: string;
   suiteId: string;
@@ -66,6 +75,19 @@ export type SuiteRunRecorder = {
 };
 
 const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
+
+function isSuiteRunEnvironmentSnapshot(
+  value: unknown,
+): value is SuiteRunEnvironmentSnapshot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const environment = value as SuiteRunEnvironmentSnapshot;
+  return (
+    Array.isArray(environment.servers) &&
+    environment.servers.every((server) => typeof server === "string")
+  );
+}
 
 export const createSuiteRunRecorder = ({
   convexClient,
@@ -374,15 +396,18 @@ export const startSuiteRunWithRecorder = async ({
     runId,
   });
 
-  // Use the server list Convex snapshotted into the run (derived from
-  // suite.hostConfigId.serverIds when available, else suite.environment).
-  // Falling back to the raw request serverIds would diverge from the
-  // DB snapshot when the backend's hostConfig-based path picks different
-  // servers than the caller requested.
-  const snapshotServers =
-    (response?.configSnapshot as any)?.environment?.servers ??
-    serverIds ??
-    [];
+  // Use the full environment Convex snapshotted into the run (derived
+  // from suite.hostConfigId.serverIds when available, else the legacy
+  // suite environment). `environment.servers` is a display/compat list;
+  // serverBindings carries the stable id mapping resolveConfiguredServerIds
+  // needs before calling getToolsForAiSdk. Falling back to the raw request
+  // refs is only for older backend responses without configSnapshot.
+  const snapshotEnvironment = isSuiteRunEnvironmentSnapshot(
+    (response?.configSnapshot as any)?.environment,
+  )
+    ? ((response?.configSnapshot as any)
+        .environment as SuiteRunEnvironmentSnapshot)
+    : { servers: serverIds ?? [] };
 
   // Build config from test cases for backward compatibility
   const config = {
@@ -425,7 +450,7 @@ export const startSuiteRunWithRecorder = async ({
 
       return [];
     }),
-    environment: { servers: snapshotServers },
+    environment: snapshotEnvironment,
   };
 
   return {

@@ -113,12 +113,12 @@ describe("startSuiteRunWithRecorder", () => {
         suiteId: "suite-1",
         toolSnapshot: sanitizedToolSnapshot,
         toolSnapshotDebug: sanitizedToolSnapshotDebug,
-      })
+      }),
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       2,
       "testSuites:precreateIterationsForRun",
-      { runId: "run-1" }
+      { runId: "run-1" },
     );
     expect(result).toEqual(
       expect.objectContaining({
@@ -149,19 +149,26 @@ describe("startSuiteRunWithRecorder", () => {
             servers: ["alpha"],
           },
         },
-      })
+      }),
     );
   });
 
   it("runs against the environment Convex snapshotted for the suite run", async () => {
+    const snapshotEnvironment = {
+      servers: ["friendly-server-name"],
+      serverBindings: [
+        {
+          serverName: "friendly-server-name",
+          projectServerId: "project-server-id",
+        },
+      ],
+    };
     const mutationMock = vi
       .fn()
       .mockResolvedValueOnce({
         runId: "run-1",
         configSnapshot: {
-          environment: {
-            servers: ["snapshotted-server"],
-          },
+          environment: snapshotEnvironment,
         },
         testCases: [
           {
@@ -183,8 +190,6 @@ describe("startSuiteRunWithRecorder", () => {
       serverIds: ["request-server"],
     });
 
-    expect(result.config.environment).toEqual({
-      servers: ["snapshotted-server"],
-    });
+    expect(result.config.environment).toEqual(snapshotEnvironment);
   });
 });

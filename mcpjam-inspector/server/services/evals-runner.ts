@@ -128,6 +128,11 @@ export type RunEvalSuiteOptions = {
   config: {
     tests: EvalTestCase[];
     environment: {
+      /**
+       * Legacy display/compat refs. These may be friendly names, not
+       * connected server identities; preserve serverBindings with any
+       * snapshotted environment before resolving tools for execution.
+       */
       servers: string[];
       serverBindings?: Array<{
         serverName: string;
