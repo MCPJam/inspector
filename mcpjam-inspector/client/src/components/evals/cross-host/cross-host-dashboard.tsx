@@ -1,4 +1,7 @@
+import { useEffect, useRef } from "react";
 import { Network } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 import { CrossHostMatrix } from "./cross-host-matrix";
 import { useCrossHostData } from "./use-cross-host-data";
@@ -20,6 +23,31 @@ export function CrossHostDashboard({
   onConfigureHosts,
 }: CrossHostDashboardProps) {
   const data = useCrossHostData(suite, cases, runs, allIterations);
+  const posthog = usePostHog();
+  // Fire the viewed event once per suite mount, not per render. The
+  // ref-keyed-by-suite-id guard means navigating between suites re-fires;
+  // re-renders within the same suite (e.g. when iterations stream in) do
+  // not. Wrapped in try/catch because analytics throwing must not block
+  // the dashboard from rendering — same convention as
+  // CreateClientDialog's `client_created` capture.
+  const lastFiredSuiteId = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastFiredSuiteId.current === suite._id) return;
+    lastFiredSuiteId.current = suite._id;
+    try {
+      posthog.capture("evals_cross_host_viewed", {
+        ...standardEventProps("cross_host_dashboard"),
+        suite_id: suite._id,
+        host_count: data.hostColumns.length,
+        case_count: data.caseRows.length,
+        has_historical_host: data.hostColumns.some((c) => c.isHistorical),
+        has_data: data.hasAnyData,
+        has_host_attachments: data.hasHostAttachments,
+      });
+    } catch {
+      // swallow — analytics must not block the dashboard render path
+    }
+  }, [suite._id, posthog, data]);
 
   if (!data.hasHostAttachments && !data.hasAnyData) {
     return (
