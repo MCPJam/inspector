@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "../../utils/logger.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -363,12 +364,15 @@ audioTranscriptions.post("/transcriptions", async (c) => {
         payload,
         `OpenRouter transcription failed with status ${upstreamResponse.status}`
       );
+      const responseStatus = (
+        projectId ? upstreamResponse.status : 502
+      ) as ContentfulStatusCode;
       return c.json(
         {
           ...errorBody,
           status: upstreamResponse.status,
         },
-        projectId ? upstreamResponse.status : 502
+        responseStatus
       );
     }
 
