@@ -6,8 +6,20 @@ interface CrossHostMatrixProps {
   data: CrossHostData;
 }
 
+/**
+ * Render a host's display name when present, otherwise fall back to a
+ * monospaced short suffix of the hostId. Slicing the prefix produced
+ * truncated slugs like `claude_d`; the last 6 chars of an opaque ID
+ * read more honestly as "this is an id we don't have a name for" while
+ * still being distinct enough between hosts in the column header.
+ */
+function formatHostFallback(hostId: string): string {
+  const tail = hostId.slice(-6);
+  return `…${tail}`;
+}
+
 function HostHeader({ col }: { col: HostColumn }) {
-  const label = col.hostName ?? col.hostId.slice(0, 8);
+  const hasName = col.hostName !== null && col.hostName !== undefined;
   return (
     <div
       className={cn(
@@ -15,8 +27,14 @@ function HostHeader({ col }: { col: HostColumn }) {
         col.isHistorical && "opacity-60",
       )}
     >
-      <span className="truncate text-xs font-medium max-w-[120px]" title={col.hostName ?? col.hostId}>
-        {label}
+      <span
+        className={cn(
+          "truncate text-xs font-medium max-w-[120px]",
+          !hasName && "font-mono text-muted-foreground",
+        )}
+        title={col.hostName ?? col.hostId}
+      >
+        {hasName ? col.hostName : formatHostFallback(col.hostId)}
       </span>
       {col.isHistorical && (
         <span className="text-[9px] text-muted-foreground uppercase tracking-wide">

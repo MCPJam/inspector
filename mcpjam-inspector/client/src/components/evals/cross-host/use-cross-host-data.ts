@@ -31,7 +31,15 @@ export type CellData = {
   pendingCount: number;
   totalCount: number;
   passRate: number | null;
-  avgLatencyMs: number | null;
+  /**
+   * Median (p50) latency across completed iterations in this cell, in ms.
+   * Median over mean because at small iteration counts (1-10) a single
+   * tail-latency host quirk skews the mean dramatically; the median
+   * surfaces typical-case behavior, which is what the cell wants to
+   * communicate at a glance. Full p95 takes ~20+ samples to be meaningful
+   * and is deferred to a later pass.
+   */
+  medianLatencyMs: number | null;
   totalTokens: number;
   chips: CellChips;
 };
@@ -59,13 +67,26 @@ function readMetaBool(
   return meta?.[key] === true;
 }
 
+/**
+ * Median of a numeric array. Returns null on empty input. Sorts a copy —
+ * does not mutate the caller's array. Even-length lists use the mean of
+ * the two middle samples, which is the standard p50 convention.
+ */
+export function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
 function buildCellData(iterations: EvalIteration[]): CellData {
   let passCount = 0;
   let failCount = 0;
   let pendingCount = 0;
   let totalTokens = 0;
-  let totalLatency = 0;
-  let latencyCount = 0;
+  const latencySamples: number[] = [];
 
   // Chip aggregates — use first stamped value for counts, OR across iterations for booleans
   let toolsTotalBefore: number | null = null;
@@ -86,8 +107,7 @@ function buildCellData(iterations: EvalIteration[]): CellData {
     if (iter.startedAt && iter.updatedAt && iter.status === "completed") {
       const latency = iter.updatedAt - iter.startedAt;
       if (latency > 0) {
-        totalLatency += latency;
-        latencyCount++;
+        latencySamples.push(latency);
       }
     }
 
@@ -109,7 +129,7 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   const totalCount = iterations.length;
   const completed = passCount + failCount;
   const passRate = completed > 0 ? (passCount / completed) * 100 : null;
-  const avgLatencyMs = latencyCount > 0 ? totalLatency / latencyCount : null;
+  const medianLatencyMs = median(latencySamples);
 
   return {
     iterations,
@@ -118,7 +138,7 @@ function buildCellData(iterations: EvalIteration[]): CellData {
     pendingCount,
     totalCount,
     passRate,
-    avgLatencyMs,
+    medianLatencyMs,
     totalTokens,
     chips: {
       toolsTotalBefore,

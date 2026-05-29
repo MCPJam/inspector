@@ -132,9 +132,12 @@ export function HostCell({ data }: HostCellProps) {
             {passRateStr}
           </span>
         )}
-        {data.avgLatencyMs !== null && (
-          <span className="text-[10px] text-muted-foreground tabular-nums">
-            {formatMs(data.avgLatencyMs)}
+        {data.medianLatencyMs !== null && (
+          <span
+            className="text-[10px] text-muted-foreground tabular-nums"
+            title="Median (p50) latency across completed iterations"
+          >
+            {formatMs(data.medianLatencyMs)}
           </span>
         )}
         {data.totalTokens > 0 && (
