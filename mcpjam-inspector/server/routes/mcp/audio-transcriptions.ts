@@ -8,6 +8,11 @@ const OPENROUTER_STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions";
 const DEFAULT_STT_MODEL = "openai/whisper-1";
 const STT_TIMEOUT_MS = 55_000;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
+const MCPJAM_VOICE_BUDGET_CODE = "user_rate_limit";
+const MCPJAM_VOICE_BUDGET_MESSAGE = "You've used today's voice budget.";
+const MCPJAM_VOICE_IN_PROGRESS_CODE = "voice_transcription_in_progress";
+const MCPJAM_VOICE_IN_PROGRESS_MESSAGE =
+  "Another voice message is still processing. Try again in a moment.";
 const SUPPORTED_AUDIO_FORMATS = new Set([
   "wav",
   "mp3",
@@ -46,6 +51,37 @@ function readErrorMessage(payload: unknown, fallback: string): string {
   }
   if (typeof record.message === "string") return record.message;
   return fallback;
+}
+
+function readUpstreamError(
+  payload: unknown,
+  fallback: string
+): Record<string, unknown> {
+  const message = readErrorMessage(payload, fallback);
+  if (!payload || typeof payload !== "object") {
+    return { error: message };
+  }
+
+  const record = payload as Record<string, unknown>;
+  const code = typeof record.code === "string" ? record.code : undefined;
+  const isVoiceBudgetError = code === MCPJAM_VOICE_BUDGET_CODE;
+  const isVoiceInProgressError = code === MCPJAM_VOICE_IN_PROGRESS_CODE;
+
+  return {
+    error: isVoiceBudgetError
+      ? MCPJAM_VOICE_BUDGET_MESSAGE
+      : isVoiceInProgressError
+      ? MCPJAM_VOICE_IN_PROGRESS_MESSAGE
+      : message,
+    ...(code ? { code } : {}),
+    ...(typeof record.isRetryable === "boolean"
+      ? { isRetryable: record.isRetryable }
+      : {}),
+    ...(typeof record.retryAfter === "number"
+      ? { retryAfter: record.retryAfter }
+      : {}),
+    ...(typeof record.details === "string" ? { details: record.details } : {}),
+  };
 }
 
 function validateRequest(body: TranscriptionRequestBody):
@@ -158,9 +194,7 @@ function validateRequest(body: TranscriptionRequestBody):
       ...(language ? { language } : {}),
       ...(temperature !== undefined ? { temperature } : {}),
       ...(body.provider !== undefined ? { provider: body.provider } : {}),
-      ...(audioDurationSeconds !== undefined
-        ? { audioDurationSeconds }
-        : {}),
+      ...(audioDurationSeconds !== undefined ? { audioDurationSeconds } : {}),
     },
   };
 }
@@ -227,10 +261,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
   // of this route serves only local users with their own OpenRouter key —
   // accepting a projectId there would proxy a billed call without the auth
   // checks that /api/web enforces.
-  if (
-    validation.value.projectId &&
-    !c.req.path.startsWith("/api/web/")
-  ) {
+  if (validation.value.projectId && !c.req.path.startsWith("/api/web/")) {
     return c.json(
       {
         error:
@@ -272,9 +303,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
         : {}),
       ...(chatboxId ? { chatboxId } : {}),
       ...(accessVersion !== undefined ? { accessVersion } : {}),
-      ...(audioDurationSeconds !== undefined
-        ? { audioDurationSeconds }
-        : {}),
+      ...(audioDurationSeconds !== undefined ? { audioDurationSeconds } : {}),
     };
     let authHeader = c.req.header("authorization");
     if (projectId && !authHeader) {
@@ -330,16 +359,16 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     }
 
     if (!upstreamResponse.ok) {
-      const message = readErrorMessage(
+      const errorBody = readUpstreamError(
         payload,
         `OpenRouter transcription failed with status ${upstreamResponse.status}`
       );
       return c.json(
         {
-          error: message,
+          ...errorBody,
           status: upstreamResponse.status,
         },
-        502
+        projectId ? upstreamResponse.status : 502
       );
     }
 

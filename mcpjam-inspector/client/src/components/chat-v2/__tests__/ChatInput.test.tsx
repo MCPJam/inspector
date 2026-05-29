@@ -879,6 +879,44 @@ describe("ChatInput", () => {
       ).toBeInTheDocument();
       expect(onChange).not.toHaveBeenCalled();
     });
+
+    it("shows wallet voice concurrency errors with friendly copy", async () => {
+      providerKeyState.openrouterToken = "sk-or-test";
+      installAudioRecordingMocks();
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(
+          JSON.stringify({ code: "voice_transcription_in_progress" }),
+          {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      );
+      const onChange = vi.fn();
+
+      render(<ChatInput {...defaultProps} value="" onChange={onChange} />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Start voice input" })
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Stop recording voice input" })
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Stop recording voice input" })
+      );
+
+      expect(
+        await screen.findByText(
+          "Another voice message is still processing. Try again in a moment."
+        )
+      ).toBeInTheDocument();
+      expect(onChange).not.toHaveBeenCalled();
+    });
   });
 
   describe("model selection", () => {
