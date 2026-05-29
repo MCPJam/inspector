@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Host config comparison — caniuse-style, categorized by hostcanvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --background: oklch(0.9818 0.0054 95.0986);
+        --foreground: oklch(0.3438 0.0269 95.7226);
+        --card: oklch(0.9818 0.0054 95.0986);
+        --card-foreground: oklch(0.1908 0.002 106.5859);
+        --popover: oklch(1 0 0);
+        --primary: oklch(0.6832 0.1382 38.744);
+        --secondary: oklch(0.9245 0.0138 92.9892);
+        --muted: oklch(0.9341 0.0153 90.239);
+        --muted-foreground: oklch(0.6059 0.0075 97.4233);
+        --accent: oklch(0.9245 0.0138 92.9892);
+        --border: oklch(0.8847 0.0069 97.3627);
+
+        --success: oklch(0.696 0.17 152.5);
+        --success-soft: oklch(0.94 0.06 152.5);
+        --warning: oklch(0.769 0.188 85.3);
+        --warning-soft: oklch(0.95 0.07 85.3);
+        --destructive: oklch(0.627 0.208 25.331);
+        --destructive-soft: oklch(0.94 0.05 25.3);
+        --info: oklch(0.623 0.214 259);
+        --info-soft: oklch(0.93 0.04 259);
+
+        --diverge: oklch(0.78 0.13 38.744);
+
+        --font-sans:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        --font-serif: "Fraunces", ui-serif, Georgia, serif;
+        --font-mono: "JetBrains Mono", ui-monospace, Menlo, Monaco, monospace;
+      }
+      html, body {
+        background: var(--background);
+        color: var(--foreground);
+        font-family: var(--font-sans);
+      }
+      .font-serif { font-family: var(--font-serif); font-feature-settings: "ss01", "ss02"; }
+      .font-mono  { font-family: var(--font-mono); }
+      .tnum { font-variant-numeric: tabular-nums; }
+
+      .bg-card { background: var(--card); }
+      .bg-muted { background: var(--muted); }
+      .bg-secondary { background: var(--secondary); }
+      .bg-success-soft { background: var(--success-soft); }
+      .bg-warning-soft { background: var(--warning-soft); }
+      .bg-destructive-soft { background: var(--destructive-soft); }
+      .bg-info-soft { background: var(--info-soft); }
+      .text-fg { color: var(--foreground); }
+      .text-muted-fg { color: var(--muted-foreground); }
+      .text-primary { color: var(--primary); }
+      .text-success { color: oklch(0.45 0.14 152.5); }
+      .text-warning { color: oklch(0.48 0.16 70); }
+      .text-destructive { color: oklch(0.5 0.2 25.3); }
+      .text-info { color: oklch(0.5 0.2 259); }
+      .border-default { border-color: var(--border); }
+      .border-diverge { border-color: var(--diverge); }
+
+      .paper {
+        background-image:
+          linear-gradient(to right, rgba(0, 0, 0, 0.022) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(0, 0, 0, 0.022) 1px, transparent 1px);
+        background-size: 32px 32px;
+      }
+
+      /* sticky scaffolding */
+      .grid-wrap {
+        max-height: calc(100vh - 220px);
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--card);
+      }
+      .grid-wrap thead th { position: sticky; top: 0; z-index: 20; background: var(--card); }
+      .grid-wrap tbody .section-th { position: sticky; top: 76px; z-index: 15; }
+      .grid-wrap .sticky-left { position: sticky; left: 0; z-index: 10; background: inherit; }
+      .grid-wrap thead .sticky-left { z-index: 30; }
+
+      /* cell value chips */
+      .v-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        line-height: 1.4;
+        font-weight: 500;
+      }
+      .v-on { background: var(--success-soft); color: oklch(0.4 0.14 152.5); }
+      .v-off { background: var(--muted); color: var(--muted-foreground); }
+      .v-auto { background: transparent; color: var(--muted-foreground); font-style: italic; }
+      .v-warn { background: var(--warning-soft); color: oklch(0.45 0.16 70); }
+      .v-info { background: var(--info-soft); color: oklch(0.42 0.2 259); }
+      .v-bad { background: var(--destructive-soft); color: oklch(0.5 0.2 25.3); }
+      .v-absent { color: var(--muted-foreground); opacity: 0.55; }
+
+      .dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+
+      details > summary { list-style: none; cursor: pointer; }
+      details > summary::-webkit-details-marker { display: none; }
+      details[open] > summary .chev { transform: rotate(90deg); }
+      .chev { transition: transform 120ms ease; display: inline-block; }
+
+      /* diverge gutter — the thin coloured strip on a row whose values
+         disagree across hosts. We want the eye to find these without
+         them shouting; --diverge is a desaturated tint of --primary. */
+      .row-diverge .gutter { background: var(--diverge); }
+      .gutter {
+        position: absolute;
+        left: 0; top: 0; bottom: 0;
+        width: 3px;
+        background: transparent;
+      }
+      td.cell-rel { position: relative; }
+
+      /* header column accent dots */
+      .host-dot-claude    { background: oklch(0.6832 0.1382 38.744); }
+      .host-dot-cursor    { background: oklch(0.62 0.16 230); }
+      .host-dot-windsurf  { background: oklch(0.65 0.16 195); }
+      .host-dot-cline     { background: oklch(0.6 0.06 95); }
+
+      /* tab-style filter chips */
+      .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 11px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--foreground);
+        cursor: pointer;
+      }
+      .tab[aria-pressed="true"] {
+        background: var(--foreground);
+        color: var(--card);
+        border-color: var(--foreground);
+      }
+
+      kbd {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--muted-foreground);
+      }
+    </style>
+  </head>
+  <body class="min-h-screen">
+    <div class="paper min-h-screen">
+
+      <!-- ============================================================ -->
+      <!-- HEADER                                                       -->
+      <!-- ============================================================ -->
+      <header class="max-w-[1440px] mx-auto px-8 pt-14 pb-8">
+        <p class="text-[11px] uppercase tracking-[0.18em] text-muted-fg mb-3">
+          Design exploration · hosts · cross-host config
+        </p>
+        <div class="flex items-end justify-between gap-8 flex-wrap">
+          <div class="max-w-[760px]">
+            <h1 class="font-serif text-[44px] leading-[1.05] tracking-tight">
+              Host config comparison
+            </h1>
+            <p class="mt-3 text-sm text-muted-fg leading-relaxed">
+              Side-by-side <span class="font-mono text-[12px]">hostConfig</span> across every saved host —
+              what each one advertises, opts into, and overrides.
+              Categorised by the same three groups as the host focus
+              dialog (<span class="font-serif italic">Agent · MCP Protocol · Apps</span>) so the
+              left column is structurally identical to <span class="font-mono text-[12px]">ClientFocusPanel</span>.
+              No eval data here — that lives in <span class="font-mono text-[12px]">cross-host-matrix.tsx</span>.
+            </p>
+          </div>
+          <div class="flex items-center gap-4 text-[11px] text-muted-fg">
+            <div class="flex items-center gap-2">
+              <span class="inline-block w-[3px] h-3 bg-[color:var(--diverge)] rounded-sm"></span>
+              <span>= row diverges across hosts</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <kbd>F</kbd> <span>filter only diverging</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- toolbar -->
+        <div class="mt-7 flex items-center justify-between gap-6 flex-wrap">
+          <div class="flex items-center gap-2">
+            <button class="tab" aria-pressed="true">All</button>
+            <button class="tab" aria-pressed="false">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-[color:var(--diverge)]"></span>
+              Only diverging <span class="font-mono text-muted-fg">·7</span>
+            </button>
+            <button class="tab" aria-pressed="false">Editable only</button>
+            <span class="ml-2 text-[11px] text-muted-fg">
+              4 hosts · 18 fields · <span class="text-fg font-medium">7 diverge</span>
+            </span>
+          </div>
+          <div class="flex items-center gap-2 text-[11px] text-muted-fg">
+            <span>Density</span>
+            <button class="tab" aria-pressed="false">Compact</button>
+            <button class="tab" aria-pressed="true">Comfortable</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- ============================================================ -->
+      <!-- MATRIX                                                       -->
+      <!-- ============================================================ -->
+      <section class="max-w-[1440px] mx-auto px-8 pb-16">
+        <div class="grid-wrap">
+          <table class="w-full border-collapse text-[13px]">
+            <colgroup>
+              <col style="width: 300px" />
+              <col style="width: 220px" />
+              <col style="width: 220px" />
+              <col style="width: 220px" />
+              <col style="width: 220px" />
+            </colgroup>
+
+            <thead>
+              <tr>
+                <th class="sticky-left text-left px-5 py-4 border-b border-default">
+                  <div class="flex items-baseline justify-between">
+                    <span class="text-[11px] uppercase tracking-[0.16em] text-muted-fg">Field</span>
+                    <span class="text-[10px] text-muted-fg">grouped · agent / protocol / apps</span>
+                  </div>
+                </th>
+
+                <th class="text-left px-4 py-4 border-b border-l border-default">
+                  <div class="flex items-start gap-2.5">
+                    <span class="mt-1 dot host-dot-claude"></span>
+                    <div class="leading-tight">
+                      <div class="font-serif text-[16px] tracking-tight">Claude Code</div>
+                      <div class="text-[11px] text-muted-fg mt-0.5">
+                        <span class="font-mono">hostStyle: claude</span>
+                      </div>
+                      <div class="text-[11px] text-muted-fg mt-0.5 font-mono">·a3f9d2</div>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="text-left px-4 py-4 border-b border-l border-default">
+                  <div class="flex items-start gap-2.5">
+                    <span class="mt-1 dot host-dot-cursor"></span>
+                    <div class="leading-tight">
+                      <div class="font-serif text-[16px] tracking-tight">Cursor</div>
+                      <div class="text-[11px] text-muted-fg mt-0.5">
+                        <span class="font-mono">hostStyle: cursor</span>
+                      </div>
+                      <div class="text-[11px] text-muted-fg mt-0.5 font-mono">·1b8e44</div>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="text-left px-4 py-4 border-b border-l border-default">
+                  <div class="flex items-start gap-2.5">
+                    <span class="mt-1 dot host-dot-windsurf"></span>
+                    <div class="leading-tight">
+                      <div class="font-serif text-[16px] tracking-tight">Windsurf</div>
+                      <div class="text-[11px] text-muted-fg mt-0.5">
+                        <span class="font-mono">hostStyle: windsurf</span>
+                      </div>
+                      <div class="text-[11px] text-muted-fg mt-0.5 font-mono">·7c2a1e</div>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="text-left px-4 py-4 border-b border-l border-default">
+                  <div class="flex items-start gap-2.5">
+                    <span class="mt-1 dot host-dot-cline"></span>
+                    <div class="leading-tight">
+                      <div class="font-serif text-[16px] tracking-tight">MCPJam (custom)</div>
+                      <div class="text-[11px] text-muted-fg mt-0.5">
+                        <span class="font-mono">hostStyle: mcpjam</span>
+                      </div>
+                      <div class="text-[11px] text-muted-fg mt-0.5 font-mono">·d4f902</div>
+                    </div>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+
+              <!-- ========================================== -->
+              <!-- SECTION: AGENT                             -->
+              <!-- ========================================== -->
+              <tr>
+                <th
+                  colspan="5"
+                  class="section-th text-left bg-secondary border-y border-default px-5 py-2"
+                >
+                  <div class="flex items-baseline gap-3">
+                    <span class="font-serif text-[18px] tracking-tight">Agent</span>
+                    <span class="text-[10px] uppercase tracking-[0.16em] text-muted-fg">
+                      model, sampling, system prompt
+                    </span>
+                    <span class="ml-auto text-[10.5px] text-muted-fg">3 diverging fields</span>
+                  </div>
+                </th>
+              </tr>
+
+              <!-- subsection: model & sampling -->
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">Model &amp; sampling</span>
+                </td>
+              </tr>
+
+              <!-- modelId — diverge -->
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">modelId</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">LLM the host runs the agent on.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-info">claude-sonnet-4-6</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-info">claude-opus-4-7</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-info">gpt-5</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-info">claude-sonnet-4-6</span>
+                </td>
+              </tr>
+
+              <!-- temperature — diverge -->
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">temperature</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">0–1 sampling temp.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">0.20</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">0.00</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">0.70</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">0.20</td>
+              </tr>
+
+              <!-- requireToolApproval — diverge -->
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">requireToolApproval</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Prompts the user before each tool call.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-on">on</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-off">off</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-off">off</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-on">on</span>
+                </td>
+              </tr>
+
+              <!-- respectToolVisibility — uniform -->
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">respectToolVisibility</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">SEP-1865 <code class="font-mono">_meta.ui.visibility</code> filter.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">on</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">on</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">on</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">on</span></td>
+              </tr>
+
+              <!-- progressiveToolDiscovery — diverge (tri-state) -->
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">progressiveToolDiscovery</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">
+                    <code class="font-mono">search_mcp_tools</code> meta-tool above context thresholds.
+                  </div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-auto">auto</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-off">off</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-auto">auto</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">on</span></td>
+              </tr>
+
+              <!-- subsection: system prompt -->
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">System prompt</span>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">systemPrompt</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Truncated to first line · click to expand.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="text-[12px] truncate max-w-[200px]">You are Claude Code, Anthropic's…</div>
+                  <button class="text-[10.5px] text-muted-fg hover:text-fg mt-0.5">view 2,148 chars ›</button>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="text-[12px] truncate max-w-[200px]">You are an AI programming assist…</div>
+                  <button class="text-[10.5px] text-muted-fg hover:text-fg mt-0.5">view 1,902 chars ›</button>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="text-[12px] truncate max-w-[200px]">You are Cascade, a powerful agen…</div>
+                  <button class="text-[10.5px] text-muted-fg hover:text-fg mt-0.5">view 2,667 chars ›</button>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="text-[12px] truncate max-w-[200px]">You are a helpful assistant…</div>
+                  <button class="text-[10.5px] text-muted-fg hover:text-fg mt-0.5">view 42 chars ›</button>
+                </td>
+              </tr>
+
+
+              <!-- ========================================== -->
+              <!-- SECTION: MCP PROTOCOL                      -->
+              <!-- ========================================== -->
+              <tr>
+                <th
+                  colspan="5"
+                  class="section-th text-left bg-secondary border-y border-default px-5 py-2"
+                >
+                  <div class="flex items-baseline gap-3">
+                    <span class="font-serif text-[18px] tracking-tight">MCP Protocol</span>
+                    <span class="text-[10px] uppercase tracking-[0.16em] text-muted-fg">
+                      version, clientInfo, capabilities, connection
+                    </span>
+                    <span class="ml-auto text-[10.5px] text-muted-fg">3 diverging fields</span>
+                  </div>
+                </th>
+              </tr>
+
+              <!-- subsection: version -->
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">Version</span>
+                </td>
+              </tr>
+
+              <!-- mcpProtocolVersion — diverge -->
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">mcpProtocolVersion</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Host default pin · per-server overrides win.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-info">2025-11-25</span>
+                  <div class="text-[10px] text-muted-fg mt-1">latest stable</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-info">2025-06-18</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-info">2025-11-25</span>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-warn">2026-07-28</span>
+                  <div class="text-[10px] text-warning mt-1">RC · stateless</div>
+                </td>
+              </tr>
+
+              <!-- supportedProtocolVersions -->
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">supportedProtocolVersions</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Versions advertised in initialize.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-info">2025-11-25</span>
+                    <span class="v-pill v-info">2025-06-18</span>
+                  </div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-info">2025-11-25</span>
+                    <span class="v-pill v-info">2025-06-18</span>
+                  </div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-info">2025-11-25</span>
+                    <span class="v-pill v-info">2025-06-18</span>
+                  </div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-info">2025-11-25</span>
+                    <span class="v-pill v-info">2025-06-18</span>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- subsection: clientInfo -->
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">clientInfo</span>
+                </td>
+              </tr>
+
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">clientInfo.name</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">claude-code</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">cursor</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">windsurf</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">mcpjam-inspector</td>
+              </tr>
+
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">clientInfo.version</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">1.0.122</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">0.45.0</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">1.5.4</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono text-[12px]">0.5.0</td>
+              </tr>
+
+              <!-- subsection: clientCapabilities -->
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">Client capabilities advertised</span>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">capabilities.roots</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Filesystem roots exposed to server.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">listChanged</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">listChanged</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">listChanged</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">listChanged</span></td>
+              </tr>
+
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">capabilities.sampling</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Server-initiated LLM calls.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— not advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— not advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">advertised</span></td>
+              </tr>
+
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">capabilities.elicitation</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Mid-call structured prompts to user.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— not advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— not advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">advertised</span></td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">capabilities.experimental</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">—</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">—</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">—</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">—</span></td>
+              </tr>
+
+              <!-- subsection: connection defaults -->
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">Connection defaults</span>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">connectionDefaults.requestTimeout</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">ms per outbound MCP request.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">60,000</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">60,000</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">60,000</td>
+                <td class="px-4 py-2.5 border-b border-l border-default font-mono tnum text-[12.5px]">60,000</td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">connectionDefaults.headers</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Default outbound headers.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <button class="text-[11px] text-muted-fg hover:text-fg font-mono">{} empty</button>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <button class="text-[11px] text-muted-fg hover:text-fg font-mono">{} empty</button>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <button class="text-[11px] text-muted-fg hover:text-fg font-mono">{} empty</button>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <button class="text-[11px] text-fg font-mono">2 headers ›</button>
+                </td>
+              </tr>
+
+
+              <!-- ========================================== -->
+              <!-- SECTION: APPS                              -->
+              <!-- ========================================== -->
+              <tr>
+                <th
+                  colspan="5"
+                  class="section-th text-left bg-secondary border-y border-default px-5 py-2"
+                >
+                  <div class="flex items-baseline gap-3">
+                    <span class="font-serif text-[18px] tracking-tight">Apps</span>
+                    <span class="text-[10px] uppercase tracking-[0.16em] text-muted-fg">
+                      SEP-1865 · window.openai compat · sandbox
+                    </span>
+                    <span class="ml-auto text-[10.5px] text-muted-fg">1 diverging field</span>
+                  </div>
+                </th>
+              </tr>
+
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">Advertise &amp; capability</span>
+                </td>
+              </tr>
+
+              <tr class="row-diverge">
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="gutter"></div>
+                  <div class="font-mono text-[12.5px]">hostCapabilitiesOverride.apps</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">SEP-1865 MCP Apps advertise toggle.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-on">advertised</span>
+                  <div class="text-[10px] text-muted-fg mt-1">override · preset would be off</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— preset · not advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— preset · not advertised</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <span class="v-pill v-on">advertised</span>
+                  <div class="text-[10px] text-muted-fg mt-1">preset</div>
+                </td>
+              </tr>
+
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">window.openai compat shim</span>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">mcpProfile.openaiCompat.inject</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Inject <code class="font-mono">window.openai</code> bridge.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">on</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-off">off</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-off">off</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">on</span></td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">mcpProfile.openaiCompat.methods</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Shim matrix · per-method coverage.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <button class="text-[11px] text-fg font-mono">12 / 14 methods ›</button>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— shim off</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-absent">— shim off</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <button class="text-[11px] text-fg font-mono">14 / 14 methods ›</button>
+                </td>
+              </tr>
+
+              <tr>
+                <td colspan="5" class="px-5 pt-3 pb-1">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">Sandbox policy</span>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">mcpProfile.sandbox.cspMode</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">Content Security Policy for app iframes.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">strict</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">strict</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-on">strict</span></td>
+                <td class="px-4 py-2.5 border-b border-l border-default"><span class="v-pill v-warn">permissive</span></td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-2.5 border-b border-default">
+                  <div class="font-mono text-[12.5px]">mcpProfile.sandbox.dimensions</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">allow-scripts, allow-forms, allow-popups, allow-same-origin.</div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-on">scripts</span>
+                    <span class="v-pill v-on">forms</span>
+                    <span class="v-pill v-off">popups</span>
+                    <span class="v-pill v-off">same-origin</span>
+                  </div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-on">scripts</span>
+                    <span class="v-pill v-on">forms</span>
+                    <span class="v-pill v-off">popups</span>
+                    <span class="v-pill v-off">same-origin</span>
+                  </div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-on">scripts</span>
+                    <span class="v-pill v-on">forms</span>
+                    <span class="v-pill v-off">popups</span>
+                    <span class="v-pill v-off">same-origin</span>
+                  </div>
+                </td>
+                <td class="px-4 py-2.5 border-b border-l border-default">
+                  <div class="flex flex-wrap gap-1">
+                    <span class="v-pill v-on">scripts</span>
+                    <span class="v-pill v-on">forms</span>
+                    <span class="v-pill v-on">popups</span>
+                    <span class="v-pill v-on">same-origin</span>
+                  </div>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left cell-rel px-5 py-3 border-b border-default">
+                  <div class="font-mono text-[12.5px]">mcpProfile.sandbox.cachedSourcePolicy</div>
+                  <div class="text-[11px] text-muted-fg mt-0.5">When to reuse cached app source.</div>
+                </td>
+                <td class="px-4 py-3 border-b border-l border-default"><span class="v-pill v-on">on-revision</span></td>
+                <td class="px-4 py-3 border-b border-l border-default"><span class="v-pill v-on">on-revision</span></td>
+                <td class="px-4 py-3 border-b border-l border-default"><span class="v-pill v-on">on-revision</span></td>
+                <td class="px-4 py-3 border-b border-l border-default"><span class="v-pill v-warn">never</span></td>
+              </tr>
+
+            </tbody>
+          </table>
+        </div>
+
+        <!-- legend / notes -->
+        <div class="mt-6 grid grid-cols-3 gap-6 text-[12px] text-muted-fg">
+          <div>
+            <p class="text-fg font-medium mb-1">Value pills, not scores</p>
+            <p class="leading-relaxed">
+              Each cell shows the actual <span class="font-mono">hostConfig</span> value.
+              Booleans render as <span class="v-pill v-on">on</span>/<span class="v-pill v-off">off</span>;
+              tri-states keep <span class="v-pill v-auto">auto</span> italic to mark "host decides";
+              absent fields are <span class="v-absent">— with explanation</span>.
+            </p>
+          </div>
+          <div>
+            <p class="text-fg font-medium mb-1">Diverge gutter</p>
+            <p class="leading-relaxed">
+              A 3px coloured strip on the row's left edge marks rows where hosts disagree.
+              Scanning the gutter is faster than reading every cell — it's the same trick git diff
+              uses on the line gutter.
+            </p>
+          </div>
+          <div>
+            <p class="text-fg font-medium mb-1">Override marker</p>
+            <p class="leading-relaxed">
+              When a host's value comes from <span class="font-mono">hostCapabilitiesOverride</span>
+              rather than the <span class="font-mono">hostStyle</span> preset,
+              we annotate beneath: <em>"override · preset would be off"</em>.
+              That preserves the [[advertise_equals_enforce]] distinction without an extra column.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <footer class="max-w-[1440px] mx-auto px-8 py-8 text-[11px] text-muted-fg border-t border-default">
+        Sketches use <span class="font-mono">@mcpjam/design-system</span> tokens. Section structure mirrors
+        <span class="font-mono">client-focus-tab-defs.tsx</span> (Agent · MCP Protocol · Apps);
+        adding a hostConfig field to the focus tab automatically gets it a row here.
+      </footer>
+    </div>
+  </body>
+</html>

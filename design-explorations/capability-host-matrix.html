@@ -1,0 +1,937 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capability × Host Matrix — design sketches</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="preconnect"
+      href="https://fonts.googleapis.com"
+    />
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* Mirror @mcpjam/design-system tokens.css (light theme).
+         Keeping just what the sketches need so colors stay
+         truthful to the production app instead of inventing a new palette. */
+      :root {
+        --background: oklch(0.9818 0.0054 95.0986);
+        --foreground: oklch(0.3438 0.0269 95.7226);
+        --card: oklch(0.9818 0.0054 95.0986);
+        --card-foreground: oklch(0.1908 0.002 106.5859);
+        --popover: oklch(1 0 0);
+        --primary: oklch(0.6832 0.1382 38.744);
+        --primary-foreground: oklch(1 0 0);
+        --secondary: oklch(0.9245 0.0138 92.9892);
+        --muted: oklch(0.9341 0.0153 90.239);
+        --muted-foreground: oklch(0.6059 0.0075 97.4233);
+        --accent: oklch(0.9245 0.0138 92.9892);
+        --border: oklch(0.8847 0.0069 97.3627);
+        --ring: oklch(0.6171 0.1375 39.0427);
+
+        --success: oklch(0.696 0.17 152.5);
+        --success-soft: oklch(0.92 0.07 152.5);
+        --warning: oklch(0.769 0.188 85.3);
+        --warning-soft: oklch(0.94 0.08 85.3);
+        --destructive: oklch(0.627 0.208 25.331);
+        --destructive-soft: oklch(0.93 0.06 25.3);
+        --info: oklch(0.623 0.214 259);
+        --info-soft: oklch(0.92 0.05 259);
+
+        --font-sans:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        --font-serif: "Fraunces", ui-serif, Georgia, serif;
+        --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      html,
+      body {
+        background: var(--background);
+        color: var(--foreground);
+        font-family: var(--font-sans);
+        font-feature-settings: "cv11", "ss01";
+      }
+
+      .font-serif {
+        font-family: var(--font-serif);
+        font-feature-settings: "ss01", "ss02";
+      }
+      .font-mono {
+        font-family: var(--font-mono);
+      }
+      .tnum {
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* utility colour classes wired to tokens — keeps the sketch
+         readable without pulling in the full DS index.css */
+      .bg-card { background: var(--card); }
+      .bg-popover { background: var(--popover); }
+      .bg-muted { background: var(--muted); }
+      .bg-secondary { background: var(--secondary); }
+      .bg-success { background: var(--success); }
+      .bg-success-soft { background: var(--success-soft); }
+      .bg-warning { background: var(--warning); }
+      .bg-warning-soft { background: var(--warning-soft); }
+      .bg-destructive { background: var(--destructive); }
+      .bg-destructive-soft { background: var(--destructive-soft); }
+      .bg-info-soft { background: var(--info-soft); }
+      .text-fg { color: var(--foreground); }
+      .text-muted-fg { color: var(--muted-foreground); }
+      .text-card-fg { color: var(--card-foreground); }
+      .text-primary { color: var(--primary); }
+      .text-success { color: oklch(0.45 0.14 152.5); }
+      .text-warning { color: oklch(0.5 0.16 70); }
+      .text-destructive { color: oklch(0.5 0.2 25.3); }
+      .text-info { color: oklch(0.5 0.2 259); }
+      .border-default { border-color: var(--border); }
+      .ring-primary { box-shadow: 0 0 0 1px var(--ring); }
+
+      /* tiny ascii ruler / grid feel — pure CSS, not an image */
+      .paper {
+        background-image:
+          linear-gradient(to right, rgba(0, 0, 0, 0.025) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(0, 0, 0, 0.025) 1px, transparent 1px);
+        background-size: 32px 32px;
+      }
+
+      /* heatmap saturation scale — driven by --rate (0..100) */
+      .heat {
+        background: oklch(
+          calc(0.96 - (var(--rate) / 100) * 0.18)
+            calc((var(--rate) / 100) * 0.18)
+            calc(25 + (var(--rate) / 100) * 130)
+        );
+      }
+
+      details > summary {
+        list-style: none;
+        cursor: pointer;
+      }
+      details > summary::-webkit-details-marker { display: none; }
+      details[open] > summary .chev { transform: rotate(90deg); }
+      .chev { transition: transform 120ms ease; }
+
+      /* stripe rows for v1 — matches existing cross-host-matrix */
+      .row-stripe:nth-child(even) td { background: color-mix(in oklab, var(--muted) 35%, transparent); }
+
+      /* sticky scaffolding */
+      .grid-wrap { max-height: 640px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+      .grid-wrap thead th { position: sticky; top: 0; z-index: 20; background: var(--card); }
+      .grid-wrap .sticky-left { position: sticky; left: 0; z-index: 10; background: inherit; }
+      .grid-wrap thead .sticky-left { z-index: 30; }
+
+      /* tiny meter for v3 */
+      .meter {
+        position: relative;
+        height: 4px;
+        background: color-mix(in oklab, var(--muted) 60%, transparent);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .meter > i {
+        position: absolute;
+        inset: 0;
+        right: auto;
+        width: var(--w, 0%);
+        background: var(--meter-color, var(--success));
+        border-radius: 999px;
+      }
+
+      /* donut for v3 column header */
+      .donut {
+        --rate: 0;
+        --donut-color: var(--success);
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background:
+          conic-gradient(var(--donut-color) calc(var(--rate) * 1%), color-mix(in oklab, var(--muted) 70%, transparent) 0);
+        display: grid;
+        place-items: center;
+      }
+      .donut::after {
+        content: "";
+        width: 18px;
+        height: 18px;
+        background: var(--card);
+        border-radius: 50%;
+      }
+
+      /* hairline divider used in column headers */
+      .hr-dot::before {
+        content: "·";
+        margin: 0 0.4em;
+        color: var(--muted-foreground);
+      }
+    </style>
+  </head>
+  <body class="min-h-screen">
+    <div class="paper min-h-screen">
+      <header class="max-w-[1320px] mx-auto px-8 pt-14 pb-10">
+        <div class="flex items-baseline justify-between gap-8 flex-wrap">
+          <div>
+            <p class="text-[11px] uppercase tracking-[0.18em] text-muted-fg mb-3">
+              Design exploration <span class="hr-dot"></span> evals · cross-host
+            </p>
+            <h1 class="font-serif text-5xl leading-[1.05] tracking-tight">
+              Capability <span class="text-primary italic">×</span> Host
+              <br />
+              conformance matrix
+            </h1>
+            <p class="mt-4 max-w-[640px] text-sm text-muted-fg leading-relaxed">
+              Three takes on the WPT-style rollup. Same data, same design system
+              tokens — different answers to <em>what does a cell mean at a
+              glance?</em> Rows are MCP capability paths; columns are host
+              attachments pinned to a <span class="font-mono text-[12px]">hostConfig</span> snapshot.
+            </p>
+          </div>
+          <nav class="flex items-center gap-1 text-[12px]">
+            <a href="#v1" class="px-3 py-1.5 rounded-full border border-default hover:bg-muted">V1 · Ledger</a>
+            <a href="#v2" class="px-3 py-1.5 rounded-full border border-default hover:bg-muted">V2 · Heatmap</a>
+            <a href="#v3" class="px-3 py-1.5 rounded-full border border-default hover:bg-muted">V3 · Scorecard</a>
+          </nav>
+        </div>
+      </header>
+
+      <!-- ============================================================ -->
+      <!-- V1 · LEDGER                                                  -->
+      <!-- ============================================================ -->
+      <section id="v1" class="max-w-[1320px] mx-auto px-8 pb-20">
+        <div class="flex items-baseline justify-between mb-5">
+          <div class="flex items-baseline gap-4">
+            <span class="font-serif text-[28px] tracking-tight">V1</span>
+            <span class="font-serif italic text-2xl text-muted-fg">Ledger.</span>
+            <span class="text-[12px] text-muted-fg max-w-md">
+              Faithful to wpt.fyi — raw <span class="font-mono">pass&nbsp;/&nbsp;total</span> per cell,
+              tree expand on folders, tint only when it earns its place.
+            </span>
+          </div>
+          <div class="flex items-center gap-2 text-[11px] text-muted-fg">
+            <span class="inline-block w-2 h-2 rounded-sm bg-success-soft"></span> ≥95%
+            <span class="inline-block w-2 h-2 rounded-sm bg-warning-soft ml-2"></span> ≥70%
+            <span class="inline-block w-2 h-2 rounded-sm bg-destructive-soft ml-2"></span> &lt;70%
+          </div>
+        </div>
+
+        <div class="grid-wrap">
+          <table class="w-full border-collapse text-[13px]">
+            <thead>
+              <tr>
+                <th class="sticky-left text-left px-4 py-3 border-b border-default min-w-[280px]">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[11px] uppercase tracking-wider text-muted-fg">Capability path</span>
+                    <span class="text-[10px] text-muted-fg">36 cases · 4 hosts</span>
+                  </div>
+                </th>
+
+                <!-- column header template -->
+                <th class="px-3 py-3 border-b border-default min-w-[160px] text-left align-top">
+                  <div class="flex items-start gap-2">
+                    <span class="mt-0.5 inline-block w-1.5 h-1.5 rounded-full bg-primary"></span>
+                    <div class="leading-tight">
+                      <div class="font-medium tracking-tight">Claude Code</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg">·a3f9d2</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 28, 2026</div>
+                    </div>
+                    <button class="ml-auto text-muted-fg hover:text-fg" title="Sort">
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M5 1l3 4H2zM5 9l-3-4h6z" opacity=".5"/></svg>
+                    </button>
+                  </div>
+                </th>
+
+                <th class="px-3 py-3 border-b border-default min-w-[160px] text-left align-top">
+                  <div class="flex items-start gap-2">
+                    <span class="mt-0.5 inline-block w-1.5 h-1.5 rounded-full" style="background:oklch(0.7 0.14 230)"></span>
+                    <div class="leading-tight">
+                      <div class="font-medium tracking-tight">Cursor</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg">·1b8e44</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 27, 2026</div>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="px-3 py-3 border-b border-default min-w-[160px] text-left align-top">
+                  <div class="flex items-start gap-2">
+                    <span class="mt-0.5 inline-block w-1.5 h-1.5 rounded-full" style="background:oklch(0.68 0.16 145)"></span>
+                    <div class="leading-tight">
+                      <div class="font-medium tracking-tight">Windsurf</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg">·7c2a1e</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 26, 2026</div>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="px-3 py-3 border-b border-default min-w-[160px] text-left align-top opacity-55">
+                  <div class="flex items-start gap-2">
+                    <span class="mt-0.5 inline-block w-1.5 h-1.5 rounded-full bg-muted"></span>
+                    <div class="leading-tight">
+                      <div class="font-medium tracking-tight">Cline</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg">·d4f902</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 20, 2026</div>
+                      <div class="mt-1 inline-block text-[9px] uppercase tracking-wide text-muted-fg border border-default rounded-sm px-1 py-px">historical</div>
+                    </div>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              <!-- tools/ -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <details open>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-mono text-[12.5px]">tools/</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">8 cases</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="px-3 py-2.5 border-b border-default text-fg tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">8&nbsp;/&nbsp;8</span></td>
+                <td class="px-3 py-2.5 border-b border-default text-fg tnum"><span class="bg-warning-soft px-1.5 py-0.5 rounded">6&nbsp;/&nbsp;8</span></td>
+                <td class="px-3 py-2.5 border-b border-default text-fg tnum"><span class="bg-warning-soft px-1.5 py-0.5 rounded">7&nbsp;/&nbsp;8</span></td>
+                <td class="px-3 py-2.5 border-b border-default text-muted-fg tnum opacity-60">5&nbsp;/&nbsp;8</td>
+              </tr>
+              <tr class="row-stripe">
+                <td class="sticky-left pl-12 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">tools/list</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default tnum">2&nbsp;/&nbsp;2</td>
+                <td class="px-3 py-2 border-b border-default tnum">2&nbsp;/&nbsp;2</td>
+                <td class="px-3 py-2 border-b border-default tnum">2&nbsp;/&nbsp;2</td>
+                <td class="px-3 py-2 border-b border-default tnum text-muted-fg opacity-60">2&nbsp;/&nbsp;2</td>
+              </tr>
+              <tr class="row-stripe">
+                <td class="sticky-left pl-12 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">tools/call</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default tnum">6&nbsp;/&nbsp;6</td>
+                <td class="px-3 py-2 border-b border-default tnum"><span class="text-warning">4&nbsp;/&nbsp;6</span></td>
+                <td class="px-3 py-2 border-b border-default tnum"><span class="text-warning">5&nbsp;/&nbsp;6</span></td>
+                <td class="px-3 py-2 border-b border-default tnum text-muted-fg opacity-60">3&nbsp;/&nbsp;6</td>
+              </tr>
+
+              <!-- prompts/ -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <details>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-mono text-[12.5px]">prompts/</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">4 cases</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">4&nbsp;/&nbsp;4</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">4&nbsp;/&nbsp;4</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">1&nbsp;/&nbsp;4</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum text-muted-fg opacity-60">3&nbsp;/&nbsp;4</td>
+              </tr>
+
+              <!-- resources/ -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <details>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-mono text-[12.5px]">resources/</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">7 cases</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">7&nbsp;/&nbsp;7</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-warning-soft px-1.5 py-0.5 rounded">5&nbsp;/&nbsp;7</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">7&nbsp;/&nbsp;7</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum text-muted-fg opacity-60">4&nbsp;/&nbsp;7</td>
+              </tr>
+
+              <!-- sampling -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <span class="font-mono text-[12.5px] ml-5">sampling/createMessage</span>
+                </td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-warning-soft px-1.5 py-0.5 rounded">2&nbsp;/&nbsp;3</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;3</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;3</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum text-muted-fg opacity-60">—</td>
+              </tr>
+
+              <!-- elicitation -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <span class="font-mono text-[12.5px] ml-5">elicitation/create</span>
+                </td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">2&nbsp;/&nbsp;2</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;2</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;2</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum text-muted-fg opacity-60">—</td>
+              </tr>
+
+              <!-- apps/ -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <details open>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-mono text-[12.5px]">apps/</span>
+                      <span class="text-[10.5px] uppercase tracking-wider text-info ml-1 border border-default rounded px-1">SEP-1865</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">6 cases</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">6&nbsp;/&nbsp;6</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;6</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;6</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum text-muted-fg opacity-60">—</td>
+              </tr>
+              <tr class="row-stripe">
+                <td class="sticky-left pl-12 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">apps/openWindow</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default tnum">3&nbsp;/&nbsp;3</td>
+                <td class="px-3 py-2 border-b border-default tnum text-destructive">0&nbsp;/&nbsp;3</td>
+                <td class="px-3 py-2 border-b border-default tnum text-destructive">0&nbsp;/&nbsp;3</td>
+                <td class="px-3 py-2 border-b border-default tnum text-muted-fg opacity-60">—</td>
+              </tr>
+              <tr class="row-stripe">
+                <td class="sticky-left pl-12 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">apps/sendMessage</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default tnum">3&nbsp;/&nbsp;3</td>
+                <td class="px-3 py-2 border-b border-default tnum text-destructive">0&nbsp;/&nbsp;3</td>
+                <td class="px-3 py-2 border-b border-default tnum text-destructive">0&nbsp;/&nbsp;3</td>
+                <td class="px-3 py-2 border-b border-default tnum text-muted-fg opacity-60">—</td>
+              </tr>
+
+              <!-- progressive-discovery -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <span class="font-mono text-[12.5px] ml-5">progressive-discovery</span>
+                </td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">2&nbsp;/&nbsp;2</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;2</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum"><span class="bg-destructive-soft px-1.5 py-0.5 rounded">0&nbsp;/&nbsp;2</span></td>
+                <td class="px-3 py-2.5 border-b border-default tnum text-muted-fg opacity-60">—</td>
+              </tr>
+
+              <!-- oauth -->
+              <tr class="row-stripe">
+                <td class="sticky-left px-4 py-2.5">
+                  <span class="font-mono text-[12.5px] ml-5">oauth</span>
+                </td>
+                <td class="px-3 py-2.5 tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">4&nbsp;/&nbsp;4</span></td>
+                <td class="px-3 py-2.5 tnum"><span class="bg-success-soft px-1.5 py-0.5 rounded">4&nbsp;/&nbsp;4</span></td>
+                <td class="px-3 py-2.5 tnum"><span class="bg-warning-soft px-1.5 py-0.5 rounded">3&nbsp;/&nbsp;4</span></td>
+                <td class="px-3 py-2.5 tnum text-muted-fg opacity-60">2&nbsp;/&nbsp;4</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-4 grid grid-cols-2 gap-6 text-[12px] text-muted-fg">
+          <p><span class="font-medium text-fg">What it's good at:</span> reading a single capability across hosts (eye runs across the row). Numbers stay first-class. Tint is light enough that 100% rows don't shout louder than they need to.</p>
+          <p><span class="font-medium text-fg">Where it gives up ground:</span> hard to scan an entire <em>host</em> in one glance — every column looks similar at a distance. Folder rows compete visually with leaf rows.</p>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- V2 · HEATMAP                                                 -->
+      <!-- ============================================================ -->
+      <section id="v2" class="max-w-[1320px] mx-auto px-8 pb-20">
+        <div class="flex items-baseline justify-between mb-5">
+          <div class="flex items-baseline gap-4">
+            <span class="font-serif text-[28px] tracking-tight">V2</span>
+            <span class="font-serif italic text-2xl text-muted-fg">Heatmap.</span>
+            <span class="text-[12px] text-muted-fg max-w-md">
+              Cells saturate with pass rate. Numbers shrink to a corner.
+              Reading the matrix becomes shape-recognition, not arithmetic.
+            </span>
+          </div>
+          <div class="flex items-center gap-1 text-[10.5px] text-muted-fg">
+            <span class="font-mono">0%</span>
+            <div class="h-3 w-32 rounded-sm" style="background:linear-gradient(to right, oklch(0.96 0 25), oklch(0.85 0.1 70), oklch(0.78 0.18 152))"></div>
+            <span class="font-mono">100%</span>
+          </div>
+        </div>
+
+        <div class="grid-wrap">
+          <table class="w-full border-collapse text-[13px]">
+            <thead>
+              <tr>
+                <th class="sticky-left text-left px-4 py-3 border-b border-default min-w-[260px]">
+                  <span class="text-[11px] uppercase tracking-wider text-muted-fg">Capability</span>
+                </th>
+
+                <th class="px-2 py-3 border-b border-default min-w-[150px] text-left">
+                  <div class="leading-tight">
+                    <div class="font-medium">Claude Code</div>
+                    <div class="flex items-center gap-1.5 mt-0.5">
+                      <span class="font-mono text-[10.5px] text-muted-fg">·a3f9d2</span>
+                      <span class="text-muted-fg">·</span>
+                      <span class="font-serif italic text-[11px] text-muted-fg">May 28</span>
+                    </div>
+                    <!-- sparkline of pass rate per recent run -->
+                    <svg viewBox="0 0 80 16" class="mt-1 w-[110px] h-3" preserveAspectRatio="none">
+                      <polyline points="0,12 10,10 20,8 30,9 40,6 50,4 60,3 70,2 80,1" fill="none" stroke="oklch(0.5 0.15 152)" stroke-width="1.2"/>
+                    </svg>
+                  </div>
+                </th>
+
+                <th class="px-2 py-3 border-b border-default min-w-[150px] text-left">
+                  <div class="leading-tight">
+                    <div class="font-medium">Cursor</div>
+                    <div class="flex items-center gap-1.5 mt-0.5">
+                      <span class="font-mono text-[10.5px] text-muted-fg">·1b8e44</span>
+                      <span class="text-muted-fg">·</span>
+                      <span class="font-serif italic text-[11px] text-muted-fg">May 27</span>
+                    </div>
+                    <svg viewBox="0 0 80 16" class="mt-1 w-[110px] h-3" preserveAspectRatio="none">
+                      <polyline points="0,10 10,11 20,9 30,12 40,10 50,11 60,9 70,10 80,9" fill="none" stroke="oklch(0.55 0.18 70)" stroke-width="1.2"/>
+                    </svg>
+                  </div>
+                </th>
+
+                <th class="px-2 py-3 border-b border-default min-w-[150px] text-left">
+                  <div class="leading-tight">
+                    <div class="font-medium">Windsurf</div>
+                    <div class="flex items-center gap-1.5 mt-0.5">
+                      <span class="font-mono text-[10.5px] text-muted-fg">·7c2a1e</span>
+                      <span class="text-muted-fg">·</span>
+                      <span class="font-serif italic text-[11px] text-muted-fg">May 26</span>
+                    </div>
+                    <svg viewBox="0 0 80 16" class="mt-1 w-[110px] h-3" preserveAspectRatio="none">
+                      <polyline points="0,8 10,8 20,9 30,11 40,10 50,9 60,8 70,8 80,8" fill="none" stroke="oklch(0.55 0.18 70)" stroke-width="1.2"/>
+                    </svg>
+                  </div>
+                </th>
+
+                <th class="px-2 py-3 border-b border-default min-w-[150px] text-left opacity-55">
+                  <div class="leading-tight">
+                    <div class="font-medium">Cline</div>
+                    <div class="flex items-center gap-1.5 mt-0.5">
+                      <span class="font-mono text-[10.5px] text-muted-fg">·d4f902</span>
+                      <span class="text-muted-fg">·</span>
+                      <span class="font-serif italic text-[11px] text-muted-fg">May 20</span>
+                    </div>
+                    <div class="mt-1 text-[9px] uppercase tracking-wide text-muted-fg">historical</div>
+                  </div>
+                </th>
+
+                <!-- spread column: how divisive is this row across hosts -->
+                <th class="px-2 py-3 border-b border-default min-w-[80px] text-left">
+                  <span class="text-[10px] uppercase tracking-wider text-muted-fg">spread</span>
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              <!-- helper macro inline: cell with --rate -->
+              <tr>
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <details open>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-mono text-[12.5px]">tools/</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">8</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="border-b border-default heat" style="--rate:100">
+                  <div class="px-3 py-3 flex items-center justify-between">
+                    <span class="text-[18px] tnum font-serif text-white">100<span class="text-[11px] opacity-80">%</span></span>
+                    <span class="font-mono text-[10.5px] text-white/85">8/8</span>
+                  </div>
+                </td>
+                <td class="border-b border-default heat" style="--rate:75">
+                  <div class="px-3 py-3 flex items-center justify-between">
+                    <span class="text-[18px] tnum font-serif text-card-fg">75<span class="text-[11px] opacity-70">%</span></span>
+                    <span class="font-mono text-[10.5px] text-card-fg/80">6/8</span>
+                  </div>
+                </td>
+                <td class="border-b border-default heat" style="--rate:88">
+                  <div class="px-3 py-3 flex items-center justify-between">
+                    <span class="text-[18px] tnum font-serif text-white">88<span class="text-[11px] opacity-80">%</span></span>
+                    <span class="font-mono text-[10.5px] text-white/85">7/8</span>
+                  </div>
+                </td>
+                <td class="border-b border-default heat opacity-50" style="--rate:62">
+                  <div class="px-3 py-3 flex items-center justify-between">
+                    <span class="text-[18px] tnum font-serif">62<span class="text-[11px] opacity-70">%</span></span>
+                    <span class="font-mono text-[10.5px]">5/8</span>
+                  </div>
+                </td>
+                <td class="border-b border-default px-2">
+                  <!-- spread ticks for 100/75/88/(62) -->
+                  <svg viewBox="0 0 80 18" class="w-16 h-4">
+                    <line x1="0" y1="9" x2="80" y2="9" stroke="oklch(0.85 0 0)" stroke-width="1"/>
+                    <circle cx="80" cy="9" r="2.5" fill="oklch(0.5 0.15 152)"/>
+                    <circle cx="60" cy="9" r="2.5" fill="oklch(0.55 0.18 70)"/>
+                    <circle cx="70" cy="9" r="2.5" fill="oklch(0.55 0.18 70)"/>
+                  </svg>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <details>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-mono text-[12.5px]">prompts/</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">4</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="border-b border-default heat" style="--rate:100"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-white">100<span class="text-[11px] opacity-80">%</span></span><span class="font-mono text-[10.5px] text-white/85">4/4</span></div></td>
+                <td class="border-b border-default heat" style="--rate:100"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-white">100<span class="text-[11px] opacity-80">%</span></span><span class="font-mono text-[10.5px] text-white/85">4/4</span></div></td>
+                <td class="border-b border-default heat" style="--rate:25"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-destructive">25<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-destructive/80">1/4</span></div></td>
+                <td class="border-b border-default heat opacity-50" style="--rate:75"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif">75<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px]">3/4</span></div></td>
+                <td class="border-b border-default px-2">
+                  <svg viewBox="0 0 80 18" class="w-16 h-4">
+                    <line x1="0" y1="9" x2="80" y2="9" stroke="oklch(0.85 0 0)" stroke-width="1"/>
+                    <circle cx="20" cy="9" r="2.5" fill="oklch(0.5 0.2 25.3)"/>
+                    <circle cx="80" cy="9" r="2.5" fill="oklch(0.5 0.15 152)"/>
+                  </svg>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <span class="font-mono text-[12.5px] ml-5">sampling/createMessage</span>
+                </td>
+                <td class="border-b border-default heat" style="--rate:66"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-card-fg">66<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-card-fg/80">2/3</span></div></td>
+                <td class="border-b border-default heat" style="--rate:0"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-destructive">0<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-destructive/80">0/3</span></div></td>
+                <td class="border-b border-default heat" style="--rate:0"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-destructive">0<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-destructive/80">0/3</span></div></td>
+                <td class="border-b border-default bg-muted opacity-50">
+                  <div class="px-3 py-3 text-[11px] text-muted-fg italic">no run</div>
+                </td>
+                <td class="border-b border-default px-2">
+                  <svg viewBox="0 0 80 18" class="w-16 h-4">
+                    <line x1="0" y1="9" x2="80" y2="9" stroke="oklch(0.85 0 0)" stroke-width="1"/>
+                    <circle cx="0" cy="9" r="2.5" fill="oklch(0.5 0.2 25.3)"/>
+                    <circle cx="55" cy="9" r="2.5" fill="oklch(0.55 0.18 70)"/>
+                  </svg>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <span class="font-mono text-[12.5px] ml-5">elicitation/create</span>
+                </td>
+                <td class="border-b border-default heat" style="--rate:100"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-white">100<span class="text-[11px] opacity-80">%</span></span><span class="font-mono text-[10.5px] text-white/85">2/2</span></div></td>
+                <td class="border-b border-default heat" style="--rate:0"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-destructive">0<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-destructive/80">0/2</span></div></td>
+                <td class="border-b border-default heat" style="--rate:0"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-destructive">0<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-destructive/80">0/2</span></div></td>
+                <td class="border-b border-default bg-muted opacity-50"><div class="px-3 py-3 text-[11px] text-muted-fg italic">no run</div></td>
+                <td class="border-b border-default px-2">
+                  <svg viewBox="0 0 80 18" class="w-16 h-4">
+                    <line x1="0" y1="9" x2="80" y2="9" stroke="oklch(0.85 0 0)" stroke-width="1"/>
+                    <circle cx="0" cy="9" r="3" fill="oklch(0.5 0.2 25.3)"/>
+                    <circle cx="80" cy="9" r="3" fill="oklch(0.5 0.15 152)"/>
+                  </svg>
+                  <span class="block text-[9px] uppercase tracking-wide text-destructive mt-0.5">divisive</span>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-2.5 border-b border-default">
+                  <details open>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-mono text-[12.5px]">apps/</span>
+                      <span class="text-[9px] uppercase tracking-wide text-info border border-default rounded px-1 ml-1">SEP-1865</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">6</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="border-b border-default heat" style="--rate:100"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-white">100<span class="text-[11px] opacity-80">%</span></span><span class="font-mono text-[10.5px] text-white/85">6/6</span></div></td>
+                <td class="border-b border-default heat" style="--rate:0"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-destructive">0<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-destructive/80">0/6</span></div></td>
+                <td class="border-b border-default heat" style="--rate:0"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-destructive">0<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-destructive/80">0/6</span></div></td>
+                <td class="border-b border-default bg-muted opacity-50"><div class="px-3 py-3 text-[11px] text-muted-fg italic">no run</div></td>
+                <td class="border-b border-default px-2">
+                  <svg viewBox="0 0 80 18" class="w-16 h-4">
+                    <line x1="0" y1="9" x2="80" y2="9" stroke="oklch(0.85 0 0)" stroke-width="1"/>
+                    <circle cx="0" cy="9" r="3" fill="oklch(0.5 0.2 25.3)"/>
+                    <circle cx="80" cy="9" r="3" fill="oklch(0.5 0.15 152)"/>
+                  </svg>
+                  <span class="block text-[9px] uppercase tracking-wide text-destructive mt-0.5">divisive</span>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-2.5">
+                  <span class="font-mono text-[12.5px] ml-5">oauth</span>
+                </td>
+                <td class="heat" style="--rate:100"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-white">100<span class="text-[11px] opacity-80">%</span></span><span class="font-mono text-[10.5px] text-white/85">4/4</span></div></td>
+                <td class="heat" style="--rate:100"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-white">100<span class="text-[11px] opacity-80">%</span></span><span class="font-mono text-[10.5px] text-white/85">4/4</span></div></td>
+                <td class="heat" style="--rate:75"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif text-card-fg">75<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px] text-card-fg/80">3/4</span></div></td>
+                <td class="heat opacity-50" style="--rate:50"><div class="px-3 py-3 flex justify-between"><span class="text-[18px] tnum font-serif">50<span class="text-[11px] opacity-70">%</span></span><span class="font-mono text-[10.5px]">2/4</span></div></td>
+                <td class="px-2">
+                  <svg viewBox="0 0 80 18" class="w-16 h-4">
+                    <line x1="0" y1="9" x2="80" y2="9" stroke="oklch(0.85 0 0)" stroke-width="1"/>
+                    <circle cx="60" cy="9" r="2.5" fill="oklch(0.55 0.18 70)"/>
+                    <circle cx="80" cy="9" r="2.5" fill="oklch(0.5 0.15 152)"/>
+                  </svg>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-4 grid grid-cols-2 gap-6 text-[12px] text-muted-fg">
+          <p><span class="font-medium text-fg">What it's good at:</span> spotting a host's weakness in &lt;2 seconds. Block of red in a column = host has a gap. The "spread" column flags rows where hosts disagree — the most interesting rows for a spec author.</p>
+          <p><span class="font-medium text-fg">Where it gives up ground:</span> raw pass/total takes a second look. Heavy colour can feel scoreboard-y in a tool that's mostly for diagnosis. Doesn't survive print/screenshots as gracefully.</p>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- V3 · SCORECARD                                               -->
+      <!-- ============================================================ -->
+      <section id="v3" class="max-w-[1320px] mx-auto px-8 pb-24">
+        <div class="flex items-baseline justify-between mb-5">
+          <div class="flex items-baseline gap-4">
+            <span class="font-serif text-[28px] tracking-tight">V3</span>
+            <span class="font-serif italic text-2xl text-muted-fg">Scorecard.</span>
+            <span class="text-[12px] text-muted-fg max-w-md">
+              Each cell is a tiny meter. Folder rows aggregate as a
+              stacked bar. Per-host overall as a donut in the header.
+              Editorial, opinionated.
+            </span>
+          </div>
+        </div>
+
+        <div class="grid-wrap">
+          <table class="w-full border-collapse text-[13px]">
+            <thead>
+              <tr>
+                <th class="sticky-left text-left px-4 py-4 border-b border-default min-w-[300px]">
+                  <div class="flex items-baseline justify-between">
+                    <span class="font-serif text-[15px]">Capability</span>
+                    <span class="text-[10px] uppercase tracking-wider text-muted-fg">36 cases</span>
+                  </div>
+                </th>
+
+                <th class="px-3 py-4 border-b border-default min-w-[180px] text-left align-top">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="leading-tight">
+                      <div class="font-serif text-[15px] tracking-tight">Claude Code</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg mt-0.5">·a3f9d2</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 28, 2026</div>
+                    </div>
+                    <div class="donut text-[10px] tnum font-mono text-fg" style="--rate:92; --donut-color: var(--success);">
+                      <span class="absolute">92</span>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="px-3 py-4 border-b border-default min-w-[180px] text-left align-top">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="leading-tight">
+                      <div class="font-serif text-[15px] tracking-tight">Cursor</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg mt-0.5">·1b8e44</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 27, 2026</div>
+                    </div>
+                    <div class="donut text-[10px] tnum font-mono text-fg" style="--rate:53; --donut-color: var(--warning);">
+                      <span class="absolute">53</span>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="px-3 py-4 border-b border-default min-w-[180px] text-left align-top">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="leading-tight">
+                      <div class="font-serif text-[15px] tracking-tight">Windsurf</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg mt-0.5">·7c2a1e</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 26, 2026</div>
+                    </div>
+                    <div class="donut text-[10px] tnum font-mono text-fg" style="--rate:47; --donut-color: var(--warning);">
+                      <span class="absolute">47</span>
+                    </div>
+                  </div>
+                </th>
+
+                <th class="px-3 py-4 border-b border-default min-w-[180px] text-left align-top opacity-55">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="leading-tight">
+                      <div class="font-serif text-[15px] tracking-tight">Cline</div>
+                      <div class="font-mono text-[10.5px] text-muted-fg mt-0.5">·d4f902</div>
+                      <div class="font-serif italic text-[11px] text-muted-fg mt-0.5">May 20, 2026</div>
+                      <div class="text-[9px] uppercase tracking-wide text-muted-fg mt-1">historical</div>
+                    </div>
+                    <div class="donut text-[10px] tnum font-mono text-fg" style="--rate:64; --donut-color: var(--muted-foreground);">
+                      <span class="absolute">64</span>
+                    </div>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              <!-- tools/ folder -->
+              <tr>
+                <td class="sticky-left px-4 py-3 border-b border-default">
+                  <details open>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-serif text-[15px]">tools</span>
+                      <span class="font-mono text-[11px] text-muted-fg">/</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">8 cases</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="px-3 py-3 border-b border-default">
+                  <div class="flex items-center gap-2">
+                    <div class="meter flex-1" style="--w:100%; --meter-color: var(--success);"><i></i></div>
+                    <span class="font-mono tnum text-[11.5px] w-12 text-right">8 / 8</span>
+                  </div>
+                </td>
+                <td class="px-3 py-3 border-b border-default">
+                  <div class="flex items-center gap-2">
+                    <div class="meter flex-1" style="--w:75%; --meter-color: var(--warning);"><i></i></div>
+                    <span class="font-mono tnum text-[11.5px] w-12 text-right">6 / 8</span>
+                  </div>
+                </td>
+                <td class="px-3 py-3 border-b border-default">
+                  <div class="flex items-center gap-2">
+                    <div class="meter flex-1" style="--w:88%; --meter-color: var(--warning);"><i></i></div>
+                    <span class="font-mono tnum text-[11.5px] w-12 text-right">7 / 8</span>
+                  </div>
+                </td>
+                <td class="px-3 py-3 border-b border-default opacity-55">
+                  <div class="flex items-center gap-2">
+                    <div class="meter flex-1" style="--w:62%; --meter-color: var(--muted-foreground);"><i></i></div>
+                    <span class="font-mono tnum text-[11.5px] w-12 text-right">5 / 8</span>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td class="sticky-left pl-10 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">tools/list</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">2 / 2</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">2 / 2</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">2 / 2</span></div></td>
+                <td class="px-3 py-2 border-b border-default opacity-55"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%; --meter-color: var(--muted-foreground);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">2 / 2</span></div></td>
+              </tr>
+              <tr>
+                <td class="sticky-left pl-10 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">tools/call</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">6 / 6</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:67%; --meter-color: var(--warning);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">4 / 6</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:83%; --meter-color: var(--warning);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">5 / 6</span></div></td>
+                <td class="px-3 py-2 border-b border-default opacity-55"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:50%; --meter-color: var(--muted-foreground);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">3 / 6</span></div></td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-3 border-b border-default">
+                  <span class="font-serif text-[15px] ml-5">sampling</span>
+                  <span class="font-mono text-[11px] text-muted-fg">/createMessage</span>
+                </td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:66%; --meter-color: var(--warning);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">2 / 3</span></div></td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">0 / 3</span></div></td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">0 / 3</span></div></td>
+                <td class="px-3 py-3 border-b border-default opacity-55"><span class="text-[11px] italic text-muted-fg">no run</span></td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-3 border-b border-default">
+                  <span class="font-serif text-[15px] ml-5">elicitation</span>
+                  <span class="font-mono text-[11px] text-muted-fg">/create</span>
+                </td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">2 / 2</span></div></td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">0 / 2</span></div></td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">0 / 2</span></div></td>
+                <td class="px-3 py-3 border-b border-default opacity-55"><span class="text-[11px] italic text-muted-fg">no run</span></td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-3 border-b border-default">
+                  <details open>
+                    <summary class="flex items-center gap-2">
+                      <span class="chev text-muted-fg">▸</span>
+                      <span class="font-serif text-[15px]">apps</span>
+                      <span class="font-mono text-[11px] text-muted-fg">/</span>
+                      <span class="text-[9px] uppercase tracking-wide text-info border border-default rounded px-1 ml-1">SEP-1865</span>
+                      <span class="text-[10.5px] text-muted-fg tnum ml-auto">6 cases</span>
+                    </summary>
+                  </details>
+                </td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">6 / 6</span></div></td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">0 / 6</span></div></td>
+                <td class="px-3 py-3 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">0 / 6</span></div></td>
+                <td class="px-3 py-3 border-b border-default opacity-55"><span class="text-[11px] italic text-muted-fg">no run</span></td>
+              </tr>
+              <tr>
+                <td class="sticky-left pl-10 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">apps/openWindow</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">3 / 3</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">0 / 3</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">0 / 3</span></div></td>
+                <td class="px-3 py-2 border-b border-default opacity-55"><span class="text-[10.5px] italic text-muted-fg">—</span></td>
+              </tr>
+              <tr>
+                <td class="sticky-left pl-10 py-2 border-b border-default">
+                  <span class="font-mono text-[12.5px] text-muted-fg">apps/sendMessage</span>
+                </td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">3 / 3</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">0 / 3</span></div></td>
+                <td class="px-3 py-2 border-b border-default"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:0%; --meter-color: var(--destructive);"><i></i></div><span class="font-mono tnum text-[11px] w-12 text-right text-muted-fg">0 / 3</span></div></td>
+                <td class="px-3 py-2 border-b border-default opacity-55"><span class="text-[10.5px] italic text-muted-fg">—</span></td>
+              </tr>
+
+              <tr>
+                <td class="sticky-left px-4 py-3">
+                  <span class="font-serif text-[15px] ml-5">oauth</span>
+                </td>
+                <td class="px-3 py-3"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">4 / 4</span></div></td>
+                <td class="px-3 py-3"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:100%;"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">4 / 4</span></div></td>
+                <td class="px-3 py-3"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:75%; --meter-color: var(--warning);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">3 / 4</span></div></td>
+                <td class="px-3 py-3 opacity-55"><div class="flex items-center gap-2"><div class="meter flex-1" style="--w:50%; --meter-color: var(--muted-foreground);"><i></i></div><span class="font-mono tnum text-[11.5px] w-12 text-right">2 / 4</span></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-4 grid grid-cols-2 gap-6 text-[12px] text-muted-fg">
+          <p><span class="font-medium text-fg">What it's good at:</span> easy to read a partial pass (4/6 looks meaningfully different from 0/6 at a glance, where a heatmap can blur "0%" and "low %"). Donuts in headers give an instant per-host verdict.</p>
+          <p><span class="font-medium text-fg">Where it gives up ground:</span> taller rows — fewer capabilities visible per scroll. Meters can read as progress bars rather than test outcomes, which is a slight semantic mismatch.</p>
+        </div>
+
+        <hr class="border-default my-12" />
+
+        <!-- compare summary -->
+        <div class="grid grid-cols-3 gap-6">
+          <div class="rounded-xl border border-default p-5 bg-card">
+            <p class="text-[10px] uppercase tracking-[0.18em] text-muted-fg">V1</p>
+            <p class="font-serif text-xl mt-1">Ledger</p>
+            <p class="text-[12px] text-muted-fg mt-2 leading-relaxed">Closest to today's <span class="font-mono">cross-host-matrix.tsx</span>. Lowest engineering lift — same table primitives, add tree expand + capability rollups.</p>
+            <p class="text-[11px] text-success mt-3 font-medium">Recommended starting point.</p>
+          </div>
+          <div class="rounded-xl border border-default p-5 bg-card">
+            <p class="text-[10px] uppercase tracking-[0.18em] text-muted-fg">V2</p>
+            <p class="font-serif text-xl mt-1">Heatmap</p>
+            <p class="text-[12px] text-muted-fg mt-2 leading-relaxed">Best for the "scoreboard" framing — if this is going to be a marketing surface or public conformance page, lean here. The "spread" column is genuinely novel.</p>
+          </div>
+          <div class="rounded-xl border border-default p-5 bg-card">
+            <p class="text-[10px] uppercase tracking-[0.18em] text-muted-fg">V3</p>
+            <p class="font-serif text-xl mt-1">Scorecard</p>
+            <p class="text-[12px] text-muted-fg mt-2 leading-relaxed">Best when partial passes matter (4/6 vs 0/6). Donut headers give per-host verdicts free. Slightly heavier; consider for the dedicated "Conformance" tab rather than the in-suite view.</p>
+          </div>
+        </div>
+      </section>
+
+      <footer class="max-w-[1320px] mx-auto px-8 py-10 text-[11px] text-muted-fg border-t border-default">
+        Sketches use design-system tokens (background, primary, success/warning/destructive, muted, JetBrains Mono). Fraunces is loaded from Google Fonts for the editorial serif accents; production swap to the DS font stack is one variable change.
+      </footer>
+    </div>
+  </body>
+</html>

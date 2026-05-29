@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suite Attachment — Host Matrix</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #111110;
+    --surface: #18181700;
+    --card: #1c1c1b;
+    --card-hover: #222221;
+    --border: #2a2a28;
+    --border-subtle: #222221;
+    --text: #e8e6e1;
+    --text-muted: #7a7870;
+    --text-dim: #4a4946;
+    --accent: #e67e22;
+    --accent-dim: #e67e2222;
+    --accent-border: #e67e2244;
+    --green: #4ade80;
+    --green-dim: #4ade8022;
+    --radius: 8px;
+    --radius-sm: 5px;
+  }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: #0c0c0b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .modal {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: 780px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04) inset;
+  }
+
+  /* Header */
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-shrink: 0;
+  }
+
+  .modal-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .modal-title h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+
+  .modal-title span {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    font-family: inherit;
+    transition: all 0.12s;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border-color: var(--border);
+  }
+  .btn-ghost:hover { color: var(--text); border-color: #3a3a38; background: var(--card); }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: #d4721e; }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    line-height: 1;
+    transition: color 0.1s;
+  }
+  .close-btn:hover { color: var(--text-muted); }
+
+  /* Body */
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-body::-webkit-scrollbar { width: 4px; }
+  .modal-body::-webkit-scrollbar-track { background: transparent; }
+  .modal-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Section label */
+  .section-label {
+    padding: 12px 18px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .section-label .count {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* Host cards row */
+  .host-row {
+    padding: 0 18px 12px;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    flex-shrink: 0;
+  }
+
+  .host-row::-webkit-scrollbar { height: 0; }
+
+  .host-card {
+    flex-shrink: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 140px;
+    transition: all 0.15s;
+    position: relative;
+  }
+
+  .host-card:hover {
+    border-color: #3a3a38;
+    background: var(--card-hover);
+  }
+
+  .host-card.active {
+    border-color: var(--accent-border);
+    background: #1f1b17;
+  }
+
+  .host-card.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 24px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 1px 1px 0 0;
+  }
+
+  .host-card-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: -0.5px;
+    margin-bottom: 2px;
+  }
+
+  .host-card.active .host-card-icon {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .host-card-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .host-card-model {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .host-card-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 9px;
+    color: var(--text-dim);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    margin-top: 2px;
+  }
+
+  .host-card-badge.eval-only {
+    color: #7a5c3a;
+  }
+
+  .add-host-card {
+    flex-shrink: 0;
+    width: 100px;
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 500;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .add-host-card:hover { border-color: #3a3a38; color: var(--text-muted); }
+
+  /* Canvas preview */
+  .canvas-preview {
+    margin: 0 18px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    background: #0f0f0e;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: none;
+  }
+
+  .canvas-preview.visible {
+    display: block;
+    animation: slideIn 0.18s ease-out;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .canvas-preview-inner {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    position: relative;
+    min-height: 120px;
+  }
+
+  .canvas-node {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .canvas-node.host-node {
+    border-color: var(--accent-border);
+    background: #1a1713;
+    padding: 10px 16px;
+    gap: 10px;
+  }
+
+  .canvas-node-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: var(--accent-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .canvas-node-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .canvas-node-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .canvas-node-sub {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .canvas-node-caps {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+
+  .cap-pill {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--border);
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 500;
+  }
+
+  .cap-pill.green { background: var(--green-dim); color: var(--green); }
+
+  .canvas-connector {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+    position: relative;
+    z-index: 0;
+  }
+
+  .canvas-server-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .canvas-server-node {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .canvas-server-node .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+  }
+
+  .canvas-server-node.checked {
+    border-color: var(--green-dim);
+    color: var(--green);
+    background: var(--green-dim);
+  }
+
+  /* Servers section */
+  .divider {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 0 18px;
+  }
+
+  .server-list {
+    padding: 8px 12px;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .server-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .server-item:hover { background: var(--card); }
+
+  .checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1.5px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.12s;
+    background: transparent;
+  }
+
+  .checkbox.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .checkbox.checked::after {
+    content: '';
+    width: 8px; height: 5px;
+    border-left: 1.5px solid #fff;
+    border-bottom: 1.5px solid #fff;
+    transform: translateY(-1px) rotate(-45deg);
+    display: block;
+  }
+
+  .server-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .server-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .server-url {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .server-status {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+    box-shadow: 0 0 4px var(--green);
+  }
+
+  .server-status.offline { background: var(--text-dim); box-shadow: none; }
+
+  /* Mode toggle */
+  .mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 18px 8px;
+    flex-shrink: 0;
+  }
+
+  .mode-btn {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    transition: all 0.1s;
+  }
+
+  .mode-btn.active {
+    color: var(--text);
+    background: var(--card);
+  }
+
+  .mode-sep {
+    width: 1px;
+    height: 12px;
+    background: var(--border);
+  }
+
+  /* Footer */
+  .modal-footer {
+    padding: 10px 18px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .footer-note {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+
+<div class="modal-backdrop">
+  <div class="modal">
+
+    <div class="modal-header">
+      <div class="modal-title">
+        <h2>Suite attachment</h2>
+        <span>eval-suite-01</span>
+      </div>
+      <div class="modal-actions">
+        <button class="close-btn" onclick="this.closest('.modal-backdrop').style.display='none'">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- Hosts -->
+      <div class="section-label">
+        Hosts
+        <span class="count">pick which to run against</span>
+      </div>
+
+      <div class="host-row" id="hostRow">
+        <div class="host-card active" onclick="selectHost(this, 'claude')">
+          <div class="host-card-icon">Cl</div>
+          <div class="host-card-name">Claude</div>
+          <div class="host-card-model">claude-opus-4-7</div>
+          <div class="host-card-badge">
+            <svg width="7" height="7" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+            active
+          </div>
+        </div>
+        <div class="host-card" onclick="selectHost(this, 'gpt')">
+          <div class="host-card-icon">GP</div>
+          <div class="host-card-name">GPT-4o</div>
+          <div class="host-card-model">gpt-4o-2024</div>
+          <div class="host-card-badge">
+            <svg width="7" height="7" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+            active
+          </div>
+        </div>
+        <div class="host-card" onclick="selectHost(this, 'gemini')">
+          <div class="host-card-icon">Ge</div>
+          <div class="host-card-name">Gemini</div>
+          <div class="host-card-model">gemini-1.5-pro</div>
+          <div class="host-card-badge eval-only">
+            <svg width="7" height="7" fill="currentColor" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            eval-only
+          </div>
+        </div>
+        <button class="add-host-card">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          Add host
+        </button>
+      </div>
+
+      <!-- Canvas preview -->
+      <div class="canvas-preview visible" id="canvasPreview">
+        <div class="canvas-preview-inner">
+          <div class="canvas-node host-node">
+            <div class="canvas-node-icon">Cl</div>
+            <div class="canvas-node-info">
+              <div class="canvas-node-name">Claude</div>
+              <div class="canvas-node-sub">claude-opus-4-7 · timeout 10s</div>
+              <div class="canvas-node-caps">
+                <span class="cap-pill green">serverTools</span>
+                <span class="cap-pill green">serverResources</span>
+                <span class="cap-pill green">logging</span>
+                <span class="cap-pill">openLinks</span>
+                <span class="cap-pill">message</span>
+              </div>
+            </div>
+          </div>
+          <div class="canvas-connector"></div>
+          <div class="canvas-server-row" id="serverNodes">
+            <div class="canvas-server-node checked">
+              <span class="dot"></span>excalidraw
+            </div>
+            <div class="canvas-server-node">
+              <span class="dot" style="background:var(--text-dim);box-shadow:none"></span>bart
+            </div>
+            <div class="canvas-server-node">
+              <span class="dot" style="background:var(--text-dim);box-shadow:none"></span>chess
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Server list mode toggle -->
+      <div class="mode-toggle">
+        <span style="font-size:10px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;letter-spacing:.06em;text-transform:uppercase">Servers</span>
+        <div class="mode-sep"></div>
+        <button class="mode-btn active">Shared across hosts</button>
+        <button class="mode-btn">Per-host</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Server list -->
+      <div class="server-list">
+        <div class="server-item" onclick="toggleCheck(this)">
+          <div class="checkbox"></div>
+          <div class="server-info">
+            <div class="server-name">Excalidraw</div>
+            <div class="server-url">https://mcp.excalidraw.com</div>
+          </div>
+          <div class="server-status offline"></div>
+        </div>
+        <div class="server-item" onclick="toggleCheck(this)">
+          <div class="checkbox"></div>
+          <div class="server-info">
+            <div class="server-name">bart</div>
+            <div class="server-url">https://bart.vanshaj.dev/mcp</div>
+          </div>
+          <div class="server-status"></div>
+        </div>
+        <div class="server-item" onclick="toggleCheck(this)">
+          <div class="checkbox"></div>
+          <div class="server-info">
+            <div class="server-name">staging</div>
+            <div class="server-url">https://mcp-staging.mcpjam.com</div>
+          </div>
+          <div class="server-status"></div>
+        </div>
+        <div class="server-item" onclick="toggleCheck(this)">
+          <div class="checkbox"></div>
+          <div class="server-info">
+            <div class="server-name">apptools</div>
+            <div class="server-url">https://apptools.mcpjam.com/mcp</div>
+          </div>
+          <div class="server-status"></div>
+        </div>
+        <div class="server-item" onclick="toggleCheck(this)">
+          <div class="checkbox"></div>
+          <div class="server-info">
+            <div class="server-name">chess</div>
+            <div class="server-url">https://chess.mcpjam.com/mcp</div>
+          </div>
+          <div class="server-status"></div>
+        </div>
+        <div class="server-item" onclick="toggleCheck(this)">
+          <div class="checkbox checked"></div>
+          <div class="server-info">
+            <div class="server-name">excalidraw</div>
+            <div class="server-url">https://mcp.excalidraw.com</div>
+          </div>
+          <div class="server-status"></div>
+        </div>
+        <div class="server-item" onclick="toggleCheck(this)">
+          <div class="checkbox"></div>
+          <div class="server-info">
+            <div class="server-name">stateless</div>
+            <div class="server-url">https://stateless.mcpjam.com/mcp</div>
+          </div>
+          <div class="server-status"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="modal-footer">
+      <span class="footer-note">3 hosts · 1 server selected</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost">Cancel</button>
+        <button class="btn btn-primary">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+          Save attachment
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const canvasData = {
+    claude: {
+      icon: 'Cl', name: 'Claude', model: 'claude-opus-4-7',
+      caps: ['serverTools','serverResources','logging','openLinks','message']
+    },
+    gpt: {
+      icon: 'GP', name: 'GPT-4o', model: 'gpt-4o-2024',
+      caps: ['serverTools','serverResources','codeInterpreter','imageGeneration']
+    },
+    gemini: {
+      icon: 'Ge', name: 'Gemini', model: 'gemini-1.5-pro',
+      caps: ['serverTools','serverResources','multimodal']
+    }
+  };
+
+  function selectHost(card, hostKey) {
+    document.querySelectorAll('.host-card').forEach(c => c.classList.remove('active'));
+    card.classList.add('active');
+    const d = canvasData[hostKey];
+    if (!d) return;
+    const preview = document.getElementById('canvasPreview');
+    preview.classList.remove('visible');
+    setTimeout(() => {
+      preview.querySelector('.canvas-node-icon').textContent = d.icon;
+      preview.querySelector('.canvas-node-name').textContent = d.name;
+      preview.querySelector('.canvas-node-sub').textContent = d.model + ' · timeout 10s';
+      const caps = preview.querySelector('.canvas-node-caps');
+      caps.innerHTML = d.caps.map((c,i) =>
+        `<span class="cap-pill ${i<3?'green':''}">${c}</span>`
+      ).join('');
+      preview.classList.add('visible');
+    }, 80);
+  }
+
+  function toggleCheck(item) {
+    const cb = item.querySelector('.checkbox');
+    cb.classList.toggle('checked');
+  }
+</script>
+</body>
+</html>

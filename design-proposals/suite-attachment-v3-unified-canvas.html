@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suite Attachment — Unified Canvas</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d0c;
+    --canvas-bg: #0b0b0a;
+    --surface: #151513;
+    --node: #1a1a18;
+    --node-hover: #1f1f1d;
+    --border: #262624;
+    --border-mid: #1e1e1c;
+    --text: #e0ddd7;
+    --text-muted: #6e6c65;
+    --text-dim: #3d3c39;
+    --accent: #f08c30;
+    --accent-glow: rgba(240,140,48,0.15);
+    --accent-border: rgba(240,140,48,0.35);
+    --accent-dim: rgba(240,140,48,0.1);
+    --green: #4fd87e;
+    --green-glow: rgba(79,216,126,0.15);
+    --green-border: rgba(79,216,126,0.3);
+    --green-dim: rgba(79,216,126,0.1);
+    --blue: #60a5fa;
+    --blue-dim: rgba(96,165,250,0.1);
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: #070706;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  .modal {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    width: 860px;
+    height: 600px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 50px 120px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.03) inset;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-mid);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 10;
+  }
+
+  .header-title {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.02em;
+  }
+
+  .header-sub {
+    font-size: 11px; color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    margin-left: 8px;
+  }
+
+  .header-controls { display: flex; align-items: center; gap: 8px; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 11px; border-radius: 6px;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent; font-family: inherit; transition: all .12s;
+  }
+  .btn-ghost { background: transparent; color: var(--text-muted); border-color: var(--border); }
+  .btn-ghost:hover { color: var(--text); background: var(--surface); }
+  .btn-accent {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+    box-shadow: 0 2px 12px rgba(240,140,48,0.35);
+  }
+  .btn-accent:hover { background: #d97c24; }
+
+  .close {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-dim); padding: 4px; border-radius: 4px;
+    line-height: 1; transition: color .12s;
+  }
+  .close:hover { color: var(--text-muted); }
+
+  /* CANVAS */
+  .canvas {
+    flex: 1;
+    overflow: auto;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(240,140,48,0.03) 0%, transparent 50%),
+      radial-gradient(circle at 70% 80%, rgba(79,216,126,0.02) 0%, transparent 50%),
+      var(--canvas-bg);
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 32px 40px 20px;
+    gap: 0;
+  }
+
+  /* dot grid */
+  .canvas::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image: radial-gradient(circle, var(--border-mid) 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
+  }
+
+  .canvas-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 680px;
+  }
+
+  /* Row of host nodes */
+  .hosts-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .host-node {
+    background: var(--node);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: all .15s;
+    min-width: 180px;
+    max-width: 220px;
+    position: relative;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  }
+
+  .host-node:hover {
+    border-color: #3a3a38;
+    background: var(--node-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .host-node.active {
+    border-color: var(--accent-border);
+    background: #1a1714;
+    box-shadow: 0 0 0 1px var(--accent-border), 0 8px 32px rgba(240,140,48,0.12);
+  }
+
+  .host-node.inactive {
+    opacity: 0.5;
+  }
+
+  .host-node-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .host-icon {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    background: var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+  }
+
+  .host-node.active .host-icon {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+  }
+
+  .host-name { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
+  .host-model { font-size: 9.5px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
+
+  .host-caps {
+    display: flex; gap: 3px; flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
+  .cap {
+    font-size: 8.5px; padding: 1px 5px; border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace; font-weight: 500;
+  }
+  .cap-g { background: var(--green-dim); color: var(--green); }
+  .cap-o { background: var(--accent-dim); color: var(--accent); }
+  .cap-b { background: var(--blue-dim); color: var(--blue); }
+  .cap-n { background: var(--border); color: var(--text-dim); }
+
+  .host-toggle {
+    width: 100%; padding: 5px 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 5px; cursor: pointer; font-family: inherit;
+    font-size: 11px; font-weight: 500; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: space-between;
+    transition: all .12s;
+  }
+  .host-toggle:hover { border-color: #3a3a38; color: var(--text); }
+  .host-toggle.on {
+    background: var(--accent-dim); border-color: var(--accent-border);
+    color: var(--accent);
+  }
+
+  .host-toggle-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; opacity: 0.6;
+  }
+
+  .eval-badge {
+    position: absolute; top: 8px; right: 8px;
+    font-size: 8px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--accent-dim); border: 1px solid var(--accent-border);
+    padding: 1px 5px; border-radius: 3px;
+  }
+
+  .add-host-node {
+    min-width: 120px;
+    background: transparent;
+    border: 1.5px dashed var(--border);
+    border-radius: 10px;
+    padding: 28px 14px;
+    cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px;
+    color: var(--text-dim); font-size: 11px; font-weight: 500;
+    font-family: 'DM Sans', sans-serif;
+    transition: all .15s;
+    align-self: center;
+  }
+  .add-host-node:hover { border-color: #3a3a38; color: var(--text-muted); }
+
+  /* Connectors */
+  .connectors {
+    display: flex;
+    justify-content: center;
+    position: relative;
+    height: 40px;
+    width: 100%;
+  }
+
+  .connectors svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+  }
+
+  /* Server nodes */
+  .servers-row {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .server-node {
+    background: var(--node);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    cursor: pointer;
+    transition: all .15s;
+    display: flex; align-items: center; gap: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    position: relative;
+  }
+
+  .server-node:hover { border-color: #3a3a38; background: var(--node-hover); }
+
+  .server-node.checked {
+    border-color: var(--green-border);
+    background: #141a16;
+    box-shadow: 0 0 0 1px var(--green-border), 0 4px 16px rgba(79,216,126,0.08);
+  }
+
+  .server-check {
+    width: 16px; height: 16px; border-radius: 4px;
+    border: 1.5px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: all .12s;
+  }
+  .server-node.checked .server-check {
+    background: var(--green); border-color: var(--green);
+  }
+  .server-node.checked .server-check::after {
+    content: ''; width: 7px; height: 4px;
+    border-left: 1.5px solid var(--bg); border-bottom: 1.5px solid var(--bg);
+    transform: translateY(-1px) rotate(-45deg); display: block;
+  }
+
+  .server-node-info { }
+  .server-node-name { font-size: 12px; font-weight: 500; color: var(--text); }
+  .server-node-url {
+    font-size: 9.5px; color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .server-status {
+    width: 5px; height: 5px; border-radius: 50%;
+    position: absolute; top: 8px; right: 8px;
+  }
+  .server-status.live { background: var(--green); box-shadow: 0 0 4px var(--green); }
+  .server-status.off { background: var(--text-dim); }
+
+  .add-server-node {
+    background: transparent; border: 1.5px dashed var(--border);
+    border-radius: 8px; padding: 9px 14px; cursor: pointer;
+    display: flex; align-items: center; gap: 5px;
+    color: var(--text-dim); font-size: 11px; font-weight: 500;
+    font-family: 'DM Sans', sans-serif; transition: all .15s;
+    align-self: center;
+  }
+  .add-server-node:hover { border-color: #3a3a38; color: var(--text-muted); }
+
+  /* Footer */
+  .footer {
+    padding: 9px 18px;
+    border-top: 1px solid var(--border-mid);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0; background: var(--bg);
+  }
+
+  .footer-stats {
+    display: flex; gap: 16px; align-items: center;
+  }
+
+  .stat {
+    font-size: 11px; color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .stat strong { color: var(--text-muted); font-weight: 600; }
+
+  .zoom-controls {
+    display: flex; gap: 1px;
+  }
+  .zoom-btn {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-muted); cursor: pointer; padding: 4px 8px;
+    font-size: 14px; font-family: inherit; transition: all .1s;
+    line-height: 1;
+  }
+  .zoom-btn:first-child { border-radius: 4px 0 0 4px; }
+  .zoom-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+  .zoom-btn:hover { background: var(--node-hover); color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="modal">
+
+  <div class="header">
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="close">
+        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+      <span class="header-title">Suite attachment</span>
+      <span class="header-sub">eval-suite-01</span>
+    </div>
+    <div class="header-controls">
+      <div class="zoom-controls">
+        <button class="zoom-btn">−</button>
+        <button class="zoom-btn" style="font-size:10px;padding:4px 9px;border-left:none;border-right:none">100%</button>
+        <button class="zoom-btn">+</button>
+      </div>
+      <button class="btn btn-ghost">Cancel</button>
+      <button class="btn btn-accent">
+        <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+        Save attachment
+      </button>
+    </div>
+  </div>
+
+  <div class="canvas">
+    <div class="canvas-inner">
+
+      <!-- Host nodes -->
+      <div class="hosts-row" id="hostsRow">
+
+        <div class="host-node active" onclick="toggleHost(this)">
+          <div class="host-node-header">
+            <div class="host-icon">Cl</div>
+            <div>
+              <div class="host-name">Claude</div>
+              <div class="host-model">claude-opus-4-7</div>
+            </div>
+          </div>
+          <div class="host-caps">
+            <span class="cap cap-g">serverTools</span>
+            <span class="cap cap-g">serverResources</span>
+            <span class="cap cap-g">logging</span>
+            <span class="cap cap-n">openLinks</span>
+            <span class="cap cap-n">message</span>
+          </div>
+          <button class="host-toggle on" onclick="event.stopPropagation(); this.classList.toggle('on'); this.textContent=this.classList.contains('on')?'✓ In suite':'+ Add to suite'">
+            <span>✓ In suite</span>
+            <div class="host-toggle-dot"></div>
+          </button>
+        </div>
+
+        <div class="host-node active" onclick="toggleHost(this)">
+          <div class="host-node-header">
+            <div class="host-icon">GP</div>
+            <div>
+              <div class="host-name">GPT-4o</div>
+              <div class="host-model">gpt-4o-2024</div>
+            </div>
+          </div>
+          <div class="host-caps">
+            <span class="cap cap-g">serverTools</span>
+            <span class="cap cap-g">serverResources</span>
+            <span class="cap cap-b">codeInterp</span>
+          </div>
+          <button class="host-toggle on" onclick="event.stopPropagation(); this.classList.toggle('on'); updateToggleText(this)">
+            <span>✓ In suite</span>
+            <div class="host-toggle-dot"></div>
+          </button>
+        </div>
+
+        <div class="host-node" onclick="toggleHost(this)">
+          <div class="eval-badge">eval-only</div>
+          <div class="host-node-header">
+            <div class="host-icon">Ge</div>
+            <div>
+              <div class="host-name">Gemini</div>
+              <div class="host-model">gemini-1.5-pro</div>
+            </div>
+          </div>
+          <div class="host-caps">
+            <span class="cap cap-g">serverTools</span>
+            <span class="cap cap-b">multimodal</span>
+          </div>
+          <button class="host-toggle" onclick="event.stopPropagation(); this.classList.toggle('on'); updateToggleText(this)">
+            <span>+ Add to suite</span>
+            <div class="host-toggle-dot"></div>
+          </button>
+        </div>
+
+        <button class="add-host-node">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          Add host
+        </button>
+
+      </div>
+
+      <!-- Connectors -->
+      <div style="height:32px;position:relative;width:100%;display:flex;align-items:center;justify-content:center">
+        <svg width="100%" height="100%" viewBox="0 0 680 32" preserveAspectRatio="none" style="position:absolute;top:0;left:0;overflow:visible">
+          <!-- central vertical -->
+          <line x1="340" y1="0" x2="340" y2="32" stroke="#262624" stroke-width="1"/>
+          <!-- horizontal spread -->
+          <line x1="160" y1="32" x2="520" y2="32" stroke="#262624" stroke-width="1"/>
+          <!-- drops to servers -->
+          <line x1="180" y1="32" x2="180" y2="32" stroke="#262624" stroke-width="1"/>
+        </svg>
+      </div>
+
+      <!-- Server nodes -->
+      <div class="servers-row">
+
+        <div class="server-node" onclick="this.classList.toggle('checked')">
+          <div class="server-check"></div>
+          <div class="server-node-info">
+            <div class="server-node-name">Excalidraw</div>
+            <div class="server-node-url">mcp.excalidraw.com</div>
+          </div>
+          <div class="server-status off"></div>
+        </div>
+
+        <div class="server-node" onclick="this.classList.toggle('checked')">
+          <div class="server-check"></div>
+          <div class="server-node-info">
+            <div class="server-node-name">bart</div>
+            <div class="server-node-url">bart.vanshaj.dev/mcp</div>
+          </div>
+          <div class="server-status live"></div>
+        </div>
+
+        <div class="server-node" onclick="this.classList.toggle('checked')">
+          <div class="server-check"></div>
+          <div class="server-node-info">
+            <div class="server-node-name">staging</div>
+            <div class="server-node-url">mcp-staging.mcpjam.com</div>
+          </div>
+          <div class="server-status live"></div>
+        </div>
+
+        <div class="server-node checked" onclick="this.classList.toggle('checked')">
+          <div class="server-check"></div>
+          <div class="server-node-info">
+            <div class="server-node-name">excalidraw</div>
+            <div class="server-node-url">mcp.excalidraw.com</div>
+          </div>
+          <div class="server-status live"></div>
+        </div>
+
+        <div class="server-node" onclick="this.classList.toggle('checked')">
+          <div class="server-check"></div>
+          <div class="server-node-info">
+            <div class="server-node-name">chess</div>
+            <div class="server-node-url">chess.mcpjam.com/mcp</div>
+          </div>
+          <div class="server-status off"></div>
+        </div>
+
+        <div class="server-node" onclick="this.classList.toggle('checked')">
+          <div class="server-check"></div>
+          <div class="server-node-info">
+            <div class="server-node-name">stateless</div>
+            <div class="server-node-url">stateless.mcpjam.com</div>
+          </div>
+          <div class="server-status live"></div>
+        </div>
+
+        <button class="add-server-node">
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          Add server
+        </button>
+
+      </div>
+
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-stats">
+      <span class="stat"><strong>2</strong> hosts in suite</span>
+      <span style="color:var(--border);font-size:14px">·</span>
+      <span class="stat"><strong>1</strong> server selected</span>
+      <span style="color:var(--border);font-size:14px">·</span>
+      <span class="stat" style="color:var(--accent)">1 eval-only host</span>
+    </div>
+    <span style="font-size:11px;color:var(--text-dim);font-family:'JetBrains Mono',monospace">drag to reposition · scroll to zoom</span>
+  </div>
+
+</div>
+
+<script>
+  function toggleHost(node) {
+    // Only toggle the highlight state on click, not the in-suite toggle
+    // (that's handled by the inner button)
+  }
+
+  function updateToggleText(btn) {
+    const on = btn.classList.contains('on');
+    btn.querySelector('span').textContent = on ? '✓ In suite' : '+ Add to suite';
+  }
+</script>
+</body>
+</html>

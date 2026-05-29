@@ -48,6 +48,7 @@ import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
+import { HostConfigCompareView } from "./components/clients/comparison/HostConfigCompareView";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -617,6 +618,16 @@ export function ClientsRoute() {
       selectedHostId={urlHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
+    />
+  );
+}
+
+export function ClientsCompareRoute() {
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  return (
+    <HostConfigCompareView
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
     />
   );
 }

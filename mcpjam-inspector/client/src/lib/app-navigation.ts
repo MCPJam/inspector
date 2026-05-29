@@ -28,6 +28,7 @@ export const routePaths = {
   home: "/home",
   servers: "/servers",
   clients: "/clients",
+  hostCompare: "/host-compare",
   registry: "/registry",
   tools: "/tools",
   resources: "/resources",
@@ -214,6 +215,10 @@ const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
   ...HOSTED_HASH_BLOCKED_TABS,
   "chat",
   "home",
+  // Top-level cross-host config comparison surface. Distinct first segment
+  // from "clients" so the sidebar's first-segment isActive resolution
+  // doesn't light up Connect when this is the active route.
+  "host-compare",
 ]);
 
 function isSpecialEntryPathname(pathname: string): boolean {
