@@ -131,6 +131,13 @@ export const RunEvalsRequestSchema = z.object({
    * multiple host attachments, the client makes one request per host.
    */
   namedHostId: z.string().optional(),
+  /**
+   * When true on a suiteRerun, explicitly re-derives suite.hostConfigId
+   * from the request's server list and persists it. Without this flag,
+   * plain reruns leave suite.hostConfigId (and suite.environment) frozen
+   * so connecting new servers cannot silently contaminate existing suites.
+   */
+  refreshSnapshot: z.boolean().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -439,6 +446,7 @@ export async function runEvalsWithManager(
     iterationOverride,
     matchOptionsOverride,
     namedHostId,
+    refreshSnapshot,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -522,11 +530,19 @@ export async function runEvalsWithManager(
   }
 
   if (resolvedSuiteId) {
+    // On a plain rerun do NOT overwrite the suite's persisted environment or
+    // hostConfigId — new connected servers would silently contaminate the
+    // frozen execution snapshot. Only update when explicitly refreshing or
+    // on first-run (non-rerun) writes.
+    const shouldUpdateSnapshot = !suiteRerun || refreshSnapshot === true;
     await convexClient.mutation("testSuites:updateTestSuite" as any, {
       suiteId: resolvedSuiteId,
       name: suiteName,
       description: suiteDescription,
-      environment: persistedEnvironment,
+      ...(shouldUpdateSnapshot ? { environment: persistedEnvironment } : {}),
+      ...(shouldUpdateSnapshot && refreshSnapshot === true
+        ? { refreshHostConfigFromEnvironment: true }
+        : {}),
     });
 
     // On a suite rerun, do NOT upsert per-case fields. The wire payload

@@ -374,6 +374,16 @@ export const startSuiteRunWithRecorder = async ({
     runId,
   });
 
+  // Use the server list Convex snapshotted into the run (derived from
+  // suite.hostConfigId.serverIds when available, else suite.environment).
+  // Falling back to the raw request serverIds would diverge from the
+  // DB snapshot when the backend's hostConfig-based path picks different
+  // servers than the caller requested.
+  const snapshotServers =
+    (response?.configSnapshot as any)?.environment?.servers ??
+    serverIds ??
+    [];
+
   // Build config from test cases for backward compatibility
   const config = {
     tests: testCases.flatMap((tc: any) => {
@@ -415,7 +425,7 @@ export const startSuiteRunWithRecorder = async ({
 
       return [];
     }),
-    environment: { servers: serverIds || [] },
+    environment: { servers: snapshotServers },
   };
 
   return {
