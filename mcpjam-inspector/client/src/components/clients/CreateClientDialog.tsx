@@ -12,7 +12,6 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
@@ -26,40 +25,12 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 
-export type CreateClientCallbackOptions = {
-  /**
-   * When the caller provided `prefillServersOption` and the user checked
-   * the prefill box, these are the server IDs that were seeded into the
-   * new client's `optionalServerIds`. Callers can use them to pre-enable
-   * the corresponding optional toggles on whatever attachment they
-   * create from the new host.
-   */
-  prefilledOptionalServerIds?: string[];
-};
-
-export type CreateClientPrefillOption = {
-  /** Visible label, e.g. `"Pre-attach the suite's servers (3)"`. */
-  label: string;
-  /** Initial checked state of the prefill checkbox. Default `false`. */
-  defaultChecked: boolean;
-  /** Server IDs to seed as optionals when the checkbox is checked at submit time. */
-  serverIds: string[];
-};
-
 interface CreateHostDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
-  onCreated: (hostId: string, opts?: CreateClientCallbackOptions) => void;
+  onCreated: (hostId: string) => void;
   initialTemplateId?: HostTemplateId;
-  /**
-   * When supplied, the dialog renders an opt-in checkbox between the Name
-   * input and the footer. If checked at submit time, the server IDs are
-   * seeded into the new client's `optionalServerIds` (not `serverIds`).
-   * When undefined, the dialog behaves exactly as before — no checkbox,
-   * `serverIds: []`, `optionalServerIds: []`.
-   */
-  prefillServersOption?: CreateClientPrefillOption;
 }
 
 export function CreateClientDialog({
@@ -68,7 +39,6 @@ export function CreateClientDialog({
   projectId,
   onCreated,
   initialTemplateId,
-  prefillServersOption,
 }: CreateHostDialogProps) {
   const posthog = usePostHog();
   const { createHost } = useHostMutations();
@@ -80,13 +50,11 @@ export function CreateClientDialog({
     initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID,
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [prefillChecked, setPrefillChecked] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
-    setPrefillChecked(prefillServersOption?.defaultChecked ?? false);
-  }, [isOpen, initialTemplateId, prefillServersOption?.defaultChecked]);
+  }, [isOpen, initialTemplateId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -97,7 +65,6 @@ export function CreateClientDialog({
   const handleClose = () => {
     setName("");
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
-    setPrefillChecked(false);
     onClose();
   };
 
@@ -106,15 +73,12 @@ export function CreateClientDialog({
     if (!trimmed) return;
     setIsSaving(true);
     try {
-      // Default to no seeded servers: keeps creation deliberate. Callers
-      // that have a clear server scope (e.g. the suite-attachment editor)
-      // can pass `prefillServersOption`; when checked at submit time we
-      // seed those IDs as optionals — not required — so the user can
-      // toggle them off in place wherever they land.
+      // New hosts start with no seeded servers: keeps creation deliberate.
+      // Users opt servers in afterward via the Servers tab on the host.
       //
-      // Historically this guarded against an auto-connect storm; the
-      // current auto-connect toggle is project-scoped (see
-      // preferences-store.ts:40) so the original storm risk is gone,
+      // Historical context: this used to guard against an auto-connect
+      // storm. The current auto-connect toggle is project-scoped (see
+      // preferences-store.ts:40), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
       //
       // Thread MCPJam's current global theme into the seed so the new
@@ -124,26 +88,18 @@ export function CreateClientDialog({
       const seed = seedFromHostTemplate(selectedTemplateId, {
         theme: themeMode,
       });
-      const prefilledOptionalServerIds =
-        prefillServersOption && prefillChecked
-          ? [...prefillServersOption.serverIds]
-          : [];
-      // Capture available-server count for analytics (independent of
-      // whether we prefilled — knowing project size at creation time is
-      // useful onboarding signal).
+      // Capture available-server count for analytics (we don't attach
+      // them — see above — but knowing the count at creation time is
+      // useful signal for onboarding funnels).
       const projectServerIds = servers?.map((s) => s._id) ?? [];
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: trimmed,
-        input: {
-          ...seed,
-          serverIds: [],
-          optionalServerIds: prefilledOptionalServerIds,
-        },
+        input: { ...seed, serverIds: [] },
       });
       toast.success(`Client "${trimmed}" created`);
       handleClose();
-      onCreated(hostId, { prefilledOptionalServerIds });
+      onCreated(hostId);
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface a "creation failed" toast after we've
       // already shown success and notified the caller.
@@ -154,7 +110,6 @@ export function CreateClientDialog({
           client_config_id: hostConfigId,
           template_id: selectedTemplateId,
           server_count: projectServerIds.length,
-          prefilled_server_count: prefilledOptionalServerIds.length,
         });
       } catch {
         // swallow — analytics must not block the success path
@@ -215,24 +170,6 @@ export function CreateClientDialog({
               autoFocus
             />
           </div>
-          {prefillServersOption ? (
-            <label className="flex cursor-pointer items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-              <Checkbox
-                checked={prefillChecked}
-                onCheckedChange={(checked) =>
-                  setPrefillChecked(checked === true)
-                }
-                disabled={isSaving}
-                className="mt-0.5"
-              />
-              <span className="leading-snug">
-                {prefillServersOption.label}
-                <span className="ml-1 text-xs text-muted-foreground">
-                  — added as optional, you can untoggle any later.
-                </span>
-              </span>
-            </label>
-          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>

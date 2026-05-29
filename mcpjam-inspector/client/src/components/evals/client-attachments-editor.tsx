@@ -19,13 +19,6 @@ type HostAttachmentsEditorProps = {
   value: HostAttachmentDraft[];
   onChange: (next: HostAttachmentDraft[]) => void;
   disabled?: boolean;
-  /**
-   * Server IDs in scope for the surrounding context (e.g. the suite being
-   * created/edited). When non-empty and the user clicks `+ Create new`,
-   * the new-client dialog surfaces an opt-in checkbox to pre-attach these
-   * servers as optionals on the new client.
-   */
-  suiteServers?: string[];
 };
 
 export function ClientAttachmentsEditor({
@@ -33,7 +26,6 @@ export function ClientAttachmentsEditor({
   value,
   onChange,
   disabled = false,
-  suiteServers,
 }: HostAttachmentsEditorProps) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts } = useHostList({ isAuthenticated, projectId });
@@ -50,28 +42,13 @@ export function ClientAttachmentsEditor({
     return map;
   }, [hosts]);
 
-  /**
-   * Attach a host. `prefilledOptionalServerIds` lets the caller pre-enable
-   * specific optional servers (used right after inline client creation so
-   * the freshly-prefilled servers appear checked from the first render
-   * without forcing the user to re-toggle them).
-   */
-  const handleAddHost = (
-    hostId: string | null,
-    prefilledOptionalServerIds: string[] = [],
-  ) => {
+  const handleAddHost = (hostId: string | null) => {
     if (!hostId || attachedIds.has(hostId)) return;
     onChange([
       ...value,
-      {
-        namedHostId: hostId,
-        enabledOptionalServerIds: [...prefilledOptionalServerIds],
-      },
+      { namedHostId: hostId, enabledOptionalServerIds: [] },
     ]);
   };
-
-  const prefillServerIds = suiteServers ?? [];
-  const canPrefill = prefillServerIds.length > 0;
 
   const handleRemoveAttachment = (index: number) => {
     onChange(value.filter((_, i) => i !== index));
@@ -130,7 +107,7 @@ export function ClientAttachmentsEditor({
             <ClientPicker
               projectId={projectId}
               value={null}
-              onChange={(hostId) => handleAddHost(hostId)}
+              onChange={handleAddHost}
               location="eval_runner"
               placeholder={
                 attachedIds.size === hosts.length && hosts.length > 0
@@ -162,21 +139,7 @@ export function ClientAttachmentsEditor({
         isOpen={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         projectId={projectId}
-        onCreated={(hostId, opts) => {
-          handleAddHost(
-            hostId,
-            opts?.prefilledOptionalServerIds ?? [],
-          );
-        }}
-        prefillServersOption={
-          canPrefill
-            ? {
-                label: `Pre-attach the suite's servers (${prefillServerIds.length})`,
-                defaultChecked: false,
-                serverIds: prefillServerIds,
-              }
-            : undefined
-        }
+        onCreated={handleAddHost}
       />
     </div>
   );
