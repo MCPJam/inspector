@@ -213,6 +213,14 @@ flowchart TD
 - `resolveServerIdsOrThrow()`: Case-insensitive server ID matching
 - `runEvalSuiteWithAiSdk()`: Executes eval suite in background using AI SDK
 
+#### **Execution snapshot freezing**
+
+When a suite is first run, the server list is persisted as a frozen execution snapshot (`suite.environment` / `suite.hostConfigId`). On subsequent reruns the snapshot is **not** overwritten, so newly connected servers cannot silently contaminate an existing suite's configuration.
+
+The `RunEvalsRequest` schema includes an optional `refreshSnapshot` flag. When `true` on a suite rerun, the server route calls `updateTestSuite` with `refreshHostConfigFromEnvironment: true`, which re-derives `hostConfigId` from the current server list and persists it before starting the run.
+
+`recorder.ts` builds the run config from `configSnapshot.environment` returned by Convex (which reflects the snapshotted server list including `serverBindings`) rather than the raw request `serverIds`. This ensures the runner always agrees with what the database recorded.
+
 ##### **Endpoint: POST `/api/mcp/evals/generate-tests`**
 
 **Request Schema:**
