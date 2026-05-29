@@ -81,6 +81,16 @@ You can run tests in two ways:
   Running tests requires connected MCP servers. If the Run button is disabled, check that your servers are connected in the Servers tab.
 </Note>
 
+### Frozen execution snapshots
+
+When you first run a suite, the set of MCP servers used is saved as a frozen execution snapshot. Subsequent reruns always use that same snapshot, so connecting new servers to your workspace cannot silently change which servers a suite runs against.
+
+To intentionally update the snapshot to reflect your current server list, click **Update snapshot** in the suite header. This re-saves the current servers as the frozen snapshot and immediately starts a new run.
+
+<Tip>
+  Use **Update snapshot** when you've added or replaced servers and want future reruns to use the new set. Plain reruns leave the snapshot untouched to keep results reproducible.
+</Tip>
+
 ## Analyzing Results
 
 ### Results & Runs View
