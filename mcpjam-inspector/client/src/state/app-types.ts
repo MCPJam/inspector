@@ -50,6 +50,8 @@ export interface ServerWithName {
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
   hasClientSecret?: boolean;
+  hasEnv?: boolean;
+  hasHeaders?: boolean;
 }
 
 export interface Project {
@@ -182,7 +184,7 @@ export function createLocalProjectId(): string {
 }
 
 export function createLocalDefaultProject(
-  overrides: Partial<Project> = {},
+  overrides: Partial<Project> = {}
 ): Project {
   const now = new Date();
   const id = overrides.id ?? createLocalProjectId();

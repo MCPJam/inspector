@@ -43,7 +43,7 @@ describe("useServerForm", () => {
 
   it("still enforces HTTPS when explicitly required", () => {
     const { result } = renderHook(() =>
-      useServerForm(undefined, { requireHttps: true }),
+      useServerForm(undefined, { requireHttps: true })
     );
 
     act(() => {
@@ -98,13 +98,65 @@ describe("useServerForm", () => {
     });
   });
 
+  it("marks prefilled stdio env vars as a secret patch", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Prefilled stdio");
+      result.current.setType("stdio");
+      result.current.setCommandInput("node server.js");
+      result.current.setEnvVars([{ key: "API_TOKEN", value: "secret" }]);
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      env: { API_TOKEN: "secret" },
+      secretPatch: {
+        env: { API_TOKEN: "secret" },
+      },
+    });
+  });
+
+  it("sends a replacement header patch when editing hidden stored headers", async () => {
+    const server = {
+      name: "Hidden header server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredHeaders).toBe(true);
+    });
+
+    act(() => {
+      result.current.setAuthType("bearer");
+      result.current.setBearerToken("new-token");
+    });
+
+    expect(result.current.buildFormData()).toMatchObject({
+      headers: { Authorization: "Bearer new-token" },
+      secretPatch: {
+        headers: { Authorization: "Bearer new-token" },
+      },
+    });
+  });
+
   it("includes an exact client capabilities override when enabled", () => {
     const { result } = renderHook(() => useServerForm());
 
     act(() => {
       result.current.setName("Capabilities test");
       result.current.setType("stdio");
-      result.current.setCommandInput("npx -y @modelcontextprotocol/server-test");
+      result.current.setCommandInput(
+        "npx -y @modelcontextprotocol/server-test"
+      );
       result.current.setClientCapabilitiesOverrideEnabled(true);
       result.current.setClientCapabilitiesOverrideText(
         JSON.stringify(
@@ -112,8 +164,8 @@ describe("useServerForm", () => {
             roots: { listChanged: true },
           },
           null,
-          2,
-        ),
+          2
+        )
       );
     });
 
@@ -167,7 +219,7 @@ describe("useServerForm", () => {
       "mcp-oauth-config-Existing OAuth server",
       JSON.stringify({
         protocolMode: "auto",
-      }),
+      })
     );
 
     const { result } = renderHook(() => useServerForm(server));

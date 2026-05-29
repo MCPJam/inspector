@@ -25,6 +25,8 @@ interface InitialFormValues {
   clientSecret: string;
   hasStoredClientSecret: boolean;
   clearClientSecret: boolean;
+  hasStoredEnv: boolean;
+  hasStoredHeaders: boolean;
   envVars: Array<{ key: string; value: string }>;
   customHeaders: Array<{ key: string; value: string }>;
   requestTimeout: string;
@@ -42,7 +44,7 @@ interface HeaderEntry {
 }
 
 function normalizeOauthProtocolMode(
-  value?: string,
+  value?: string
 ): ServerFormOAuthProtocolMode {
   return value === "2025-03-26" ||
     value === "2025-06-18" ||
@@ -52,7 +54,7 @@ function normalizeOauthProtocolMode(
 }
 
 function normalizeOauthRegistrationMode(
-  value?: string,
+  value?: string
 ): ServerFormOAuthRegistrationMode | undefined {
   return value === "auto" ||
     value === "cimd" ||
@@ -78,7 +80,7 @@ function isAuthorizationHeader(key: string): boolean {
 }
 
 function getAuthorizationHeaderValue(
-  headers?: Record<string, unknown>,
+  headers?: Record<string, unknown>
 ): string | undefined {
   if (!headers) {
     return undefined;
@@ -94,7 +96,7 @@ function getAuthorizationHeaderValue(
 }
 
 function toComparableHeaders(
-  headers: Array<{ key: string; value: string }>,
+  headers: Array<{ key: string; value: string }>
 ): Array<{ key: string; value: string }> {
   return headers.map(({ key, value }) => ({ key, value }));
 }
@@ -104,7 +106,7 @@ export function useServerForm(
   options?: {
     requireHttps?: boolean;
     projectClientConfig?: ProjectClientConfig;
-  },
+  }
 ) {
   const [name, setName] = useState("");
   const [type, setType] = useState<"stdio" | "http">("http");
@@ -126,16 +128,24 @@ export function useServerForm(
 
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
-    null,
+    null
   );
 
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
-    [],
+    []
   );
   const [customHeaders, setCustomHeaders] = useState<HeaderEntry[]>([]);
+  const [hasStoredEnv, setHasStoredEnv] = useState(false);
+  const [hasStoredHeaders, setHasStoredHeaders] = useState(false);
+  const [envDirty, setEnvDirty] = useState(false);
+  const [headersDirty, setHeadersDirty] = useState(false);
+  const [envRevealed, setEnvRevealed] = useState(false);
+  const [headersRevealed, setHeadersRevealed] = useState(false);
   const [requestTimeout, setRequestTimeout] = useState<string>("");
-  const [clientCapabilitiesOverrideEnabled, setClientCapabilitiesOverrideEnabled] =
-    useState(false);
+  const [
+    clientCapabilitiesOverrideEnabled,
+    setClientCapabilitiesOverrideEnabled,
+  ] = useState(false);
   const [clientCapabilitiesOverrideText, setClientCapabilitiesOverrideText] =
     useState("{}");
   const [clientCapabilitiesOverrideError, setClientCapabilitiesOverrideError] =
@@ -147,11 +157,11 @@ export function useServerForm(
 
   const initialValues = useRef<InitialFormValues | null>(null);
   const projectConnectionDefaults = getEffectiveProjectConnectionDefaults(
-    options?.projectClientConfig,
+    options?.projectClientConfig
   );
 
   const parseCapabilitiesOverride = (
-    value: string,
+    value: string
   ): Record<string, unknown> => {
     const parsed = JSON.parse(value) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -192,10 +202,10 @@ export function useServerForm(
           server.oauthFlowProfile != null;
 
         const storedOAuthConfig = localStorage.getItem(
-          `mcp-oauth-config-${server.name}`,
+          `mcp-oauth-config-${server.name}`
         );
         const storedClientInfo = localStorage.getItem(
-          `mcp-client-${server.name}`,
+          `mcp-client-${server.name}`
         );
         const storedTokens = getStoredTokens(server.name);
 
@@ -240,25 +250,27 @@ export function useServerForm(
           typeof oauthConfig.protocolMode === "string"
             ? oauthConfig.protocolMode
             : typeof server.oauthFlowProfile?.protocolVersion === "string"
-              ? server.oauthFlowProfile.protocolVersion
-              : typeof oauthConfig.protocolVersion === "string"
-                ? oauthConfig.protocolVersion
-                : undefined,
+            ? server.oauthFlowProfile.protocolVersion
+            : typeof oauthConfig.protocolVersion === "string"
+            ? oauthConfig.protocolVersion
+            : undefined
         );
 
         registrationModeValue =
           normalizeOauthRegistrationMode(oauthConfig.registrationMode) ??
           normalizeOauthRegistrationMode(
-            server.oauthFlowProfile?.registrationStrategy,
+            server.oauthFlowProfile?.registrationStrategy
           ) ??
           normalizeOauthRegistrationMode(oauthConfig.registrationStrategy) ??
-          ((savedClientId || savedClientSecret || hasStoredClientSecretValue)
+          (savedClientId || savedClientSecret || hasStoredClientSecretValue
             ? "preregistered"
             : DEFAULT_OAUTH_REGISTRATION_MODE);
 
         shouldShowClientCredentials =
           registrationModeValue === "preregistered" ||
-          Boolean(savedClientId || savedClientSecret || hasStoredClientSecretValue);
+          Boolean(
+            savedClientId || savedClientSecret || hasStoredClientSecretValue
+          );
       }
 
       // Derive local values used for both state initialization and snapshot
@@ -273,7 +285,7 @@ export function useServerForm(
         : "";
       const authorizationHeader = isHttpServer
         ? getAuthorizationHeaderValue(
-            config.requestInit?.headers as Record<string, unknown> | undefined,
+            config.requestInit?.headers as Record<string, unknown> | undefined
           )
         : undefined;
       const hasBearer =
@@ -285,8 +297,8 @@ export function useServerForm(
       const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
         ? "oauth"
         : hasBearer
-          ? "bearer"
-          : "none";
+        ? "bearer"
+        : "none";
       const timeoutValue =
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
           ? String(config.timeout)
@@ -309,10 +321,10 @@ export function useServerForm(
       setClearClientSecret(false);
       setRequestTimeout(timeoutValue);
       setClientCapabilitiesOverrideEnabled(
-        clientCapabilitiesOverrideValue != null,
+        clientCapabilitiesOverrideValue != null
       );
       setClientCapabilitiesOverrideText(
-        JSON.stringify(clientCapabilitiesOverrideValue ?? {}, null, 2),
+        JSON.stringify(clientCapabilitiesOverrideValue ?? {}, null, 2)
       );
       setClientCapabilitiesOverrideError(null);
 
@@ -349,6 +361,11 @@ export function useServerForm(
         }));
       }
       setEnvVars(envArray);
+      const hasStoredEnvValue =
+        !isHttpServer && server.hasEnv === true && envArray.length === 0;
+      setHasStoredEnv(hasStoredEnvValue);
+      setEnvRevealed(envArray.length > 0);
+      setEnvDirty(false);
 
       // Initialize custom headers for HTTP servers (excluding Authorization)
       let headersArray: HeaderEntry[] = [];
@@ -362,10 +379,15 @@ export function useServerForm(
           .map(([key, value]) => createHeaderEntry(key, String(value)));
       }
       setCustomHeaders(headersArray);
+      const hasStoredHeadersValue =
+        isHttpServer && server.hasHeaders === true && headersArray.length === 0;
+      setHasStoredHeaders(hasStoredHeadersValue);
+      setHeadersRevealed(headersArray.length > 0);
+      setHeadersDirty(false);
       setShowConfiguration(
         headersArray.length > 0 ||
           timeoutValue.trim() !== "" ||
-          clientCapabilitiesOverrideValue != null,
+          clientCapabilitiesOverrideValue != null
       );
 
       // Capture initial values for change detection (deep copy arrays to avoid aliasing)
@@ -384,6 +406,8 @@ export function useServerForm(
         clientSecret: clientSecretValue,
         hasStoredClientSecret: hasStoredClientSecretValue,
         clearClientSecret: false,
+        hasStoredEnv: hasStoredEnvValue,
+        hasStoredHeaders: hasStoredHeadersValue,
         envVars: envArray.map(({ key, value }) => ({ key, value })),
         customHeaders: headersArray.map(({ key, value }) => ({ key, value })),
         requestTimeout: timeoutValue,
@@ -392,7 +416,7 @@ export function useServerForm(
         clientCapabilitiesOverrideText: JSON.stringify(
           clientCapabilitiesOverrideValue ?? {},
           null,
-          2,
+          2
         ),
       };
     }
@@ -458,43 +482,120 @@ export function useServerForm(
 
   // Helper functions
   const addEnvVar = () => {
+    setEnvDirty(true);
     setEnvVars([...envVars, { key: "", value: "" }]);
     setShowEnvVars(true);
   };
 
   const removeEnvVar = (index: number) => {
+    setEnvDirty(true);
     setEnvVars(envVars.filter((_, i) => i !== index));
   };
 
   const updateEnvVar = (
     index: number,
     field: "key" | "value",
-    value: string,
+    value: string
   ) => {
+    setEnvDirty(true);
     const updated = [...envVars];
     updated[index][field] = value;
     setEnvVars(updated);
   };
 
   const addCustomHeader = () => {
+    setHeadersDirty(true);
     setCustomHeaders([...customHeaders, createHeaderEntry()]);
   };
 
   const removeCustomHeader = (index: number) => {
+    setHeadersDirty(true);
     setCustomHeaders(customHeaders.filter((_, i) => i !== index));
   };
 
   const updateCustomHeader = (
     index: number,
     field: "key" | "value",
-    value: string,
+    value: string
   ) => {
+    setHeadersDirty(true);
     const updated = [...customHeaders];
     updated[index] = {
       ...updated[index],
       [field]: value,
     };
     setCustomHeaders(updated);
+  };
+
+  const revealStoredEnv = (env: Record<string, string> | null | undefined) => {
+    const nextEnvVars = Object.entries(env ?? {}).map(([key, value]) => ({
+      key,
+      value: String(value),
+    }));
+    setEnvVars(nextEnvVars);
+    setHasStoredEnv(false);
+    setEnvRevealed(true);
+    setEnvDirty(false);
+    setShowEnvVars(true);
+    if (initialValues.current) {
+      initialValues.current = {
+        ...initialValues.current,
+        hasStoredEnv: false,
+        envVars: nextEnvVars.map(({ key, value }) => ({ key, value })),
+      };
+    }
+  };
+
+  const revealStoredHeaders = (
+    headers: Record<string, string> | null | undefined
+  ) => {
+    const nextHeaders = headers ?? {};
+    const authorization = getAuthorizationHeaderValue(nextHeaders);
+    const nextCustomHeaders = Object.entries(nextHeaders)
+      .filter(([key]) => !isAuthorizationHeader(key))
+      .map(([key, value]) => createHeaderEntry(key, String(value)));
+    if (authorization?.toLowerCase().startsWith("bearer ")) {
+      setAuthType("bearer");
+      setBearerToken(authorization.slice("bearer ".length));
+      setShowAuthSettings(true);
+    }
+    setCustomHeaders(nextCustomHeaders);
+    setHasStoredHeaders(false);
+    setHeadersRevealed(true);
+    setHeadersDirty(false);
+    setShowConfiguration(true);
+    if (initialValues.current) {
+      initialValues.current = {
+        ...initialValues.current,
+        authType: authorization?.toLowerCase().startsWith("bearer ")
+          ? "bearer"
+          : initialValues.current.authType,
+        bearerToken: authorization?.toLowerCase().startsWith("bearer ")
+          ? authorization.slice("bearer ".length)
+          : initialValues.current.bearerToken,
+        hasStoredHeaders: false,
+        customHeaders: nextCustomHeaders.map(({ key, value }) => ({
+          key,
+          value,
+        })),
+      };
+    }
+  };
+
+  const replaceEnvVars = (
+    nextEnvVars: Array<{ key: string; value: string }>
+  ) => {
+    setEnvVars(nextEnvVars);
+    setHasStoredEnv(false);
+    setEnvRevealed(nextEnvVars.length > 0);
+    setEnvDirty(true);
+  };
+
+  const replaceCustomHeaders = (nextHeaders: HeaderEntry[]) => {
+    setCustomHeaders(nextHeaders);
+    setHasStoredHeaders(false);
+    setHeadersRevealed(nextHeaders.length > 0);
+    setHeadersDirty(true);
   };
 
   const updateClientCapabilitiesOverride = (value: string) => {
@@ -504,14 +605,16 @@ export function useServerForm(
       setClientCapabilitiesOverrideError(null);
     } catch (error) {
       setClientCapabilitiesOverrideError(
-        error instanceof Error ? error.message : "Invalid JSON",
+        error instanceof Error ? error.message : "Invalid JSON"
       );
     }
   };
 
   const buildFormData = (): ServerFormData => {
     const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
-    const reqTimeout = Number.isFinite(parsedTimeout) ? parsedTimeout : undefined;
+    const reqTimeout = Number.isFinite(parsedTimeout)
+      ? parsedTimeout
+      : undefined;
     const clientCapabilities =
       clientCapabilitiesOverrideEnabled &&
       clientCapabilitiesOverrideError == null
@@ -536,12 +639,16 @@ export function useServerForm(
         }
       });
 
+      const secretPatch = envDirty ? { env } : undefined;
+      const includeEnv = !hasStoredEnv || envDirty || envRevealed;
+
       return {
         name: name.trim(),
         type: "stdio",
         command: command.trim(),
         args,
-        env,
+        ...(includeEnv ? { env } : {}),
+        ...(secretPatch ? { secretPatch } : {}),
         requestTimeout: reqTimeout,
         clientCapabilities,
       };
@@ -585,12 +692,14 @@ export function useServerForm(
     }
     const explicitHeaders =
       Object.keys(headers).length > 0 ? headers : undefined;
+    const secretPatch = headersDirty ? { headers } : undefined;
 
     return {
       name: name.trim(),
       type: "http",
       url: url.trim(),
       headers: explicitHeaders,
+      ...(secretPatch ? { secretPatch } : {}),
       clientCapabilities,
       useOAuth,
       oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
@@ -631,6 +740,12 @@ export function useServerForm(
     setClientSecretError(null);
     setEnvVars([]);
     setCustomHeaders([]);
+    setHasStoredEnv(false);
+    setHasStoredHeaders(false);
+    setEnvDirty(false);
+    setHeadersDirty(false);
+    setEnvRevealed(false);
+    setHeadersRevealed(false);
     setRequestTimeout("");
     setClientCapabilitiesOverrideEnabled(false);
     setClientCapabilitiesOverrideText("{}");
@@ -659,6 +774,8 @@ export function useServerForm(
       clientSecret !== iv.clientSecret ||
       hasStoredClientSecret !== iv.hasStoredClientSecret ||
       clearClientSecret !== iv.clearClientSecret ||
+      hasStoredEnv !== iv.hasStoredEnv ||
+      hasStoredHeaders !== iv.hasStoredHeaders ||
       requestTimeout !== iv.requestTimeout ||
       clientCapabilitiesOverrideEnabled !==
         iv.clientCapabilitiesOverrideEnabled ||
@@ -712,9 +829,15 @@ export function useServerForm(
     clearClientSecret,
     setClearClientSecret,
     bearerToken,
-    setBearerToken,
+    setBearerToken: (value: string) => {
+      setHeadersDirty(true);
+      setBearerToken(value);
+    },
     authType,
-    setAuthType,
+    setAuthType: (value: "oauth" | "bearer" | "none") => {
+      setHeadersDirty(true);
+      setAuthType(value);
+    },
     useCustomClientId,
     setUseCustomClientId,
     requestTimeout,
@@ -735,9 +858,15 @@ export function useServerForm(
 
     // Arrays
     envVars,
-    setEnvVars,
+    setEnvVars: replaceEnvVars,
     customHeaders,
-    setCustomHeaders,
+    setCustomHeaders: replaceCustomHeaders,
+    hasStoredEnv,
+    hasStoredHeaders,
+    envDirty,
+    headersDirty,
+    envRevealed,
+    headersRevealed,
 
     // Toggle states
     showConfiguration,
@@ -755,9 +884,11 @@ export function useServerForm(
     addEnvVar,
     removeEnvVar,
     updateEnvVar,
+    revealStoredEnv,
     addCustomHeader,
     removeCustomHeader,
     updateCustomHeader,
+    revealStoredHeaders,
     updateClientCapabilitiesOverride,
     buildFormData,
     resetForm,

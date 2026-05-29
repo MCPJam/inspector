@@ -181,12 +181,12 @@ const gatedGuestModelIds = new Set<string>(MCPJAM_GUEST_GATED_MODEL_IDS);
 
 const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
   MCPJAM_PROVIDED_MODEL_IDS.filter(
-    (modelId) => !gatedGuestModelIds.has(modelId),
+    (modelId) => !gatedGuestModelIds.has(modelId)
   );
 
 export const getCanonicalModelId = (
   modelId: string,
-  provider?: string,
+  provider?: string
 ): string => {
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId) {
@@ -200,14 +200,14 @@ export const getCanonicalModelId = (
   // counterparts (e.g. "openai/gpt-4o-mini" — MCPJam-provided).
   if (normalizedProvider) {
     const providerModels = SUPPORTED_MODELS.filter(
-      (model) => model.provider.toLowerCase() === normalizedProvider,
+      (model) => model.provider.toLowerCase() === normalizedProvider
     );
 
     // If the caller didn't already pass a prefixed id, look for a prefixed
     // (hosted) match first within this provider — bare ids must not win here.
     const prefixedMatch = !normalizedModelId.includes("/")
       ? providerModels.find((model) =>
-          String(model.id).endsWith(`/${normalizedModelId}`),
+          String(model.id).endsWith(`/${normalizedModelId}`)
         )
       : undefined;
 
@@ -221,7 +221,7 @@ export const getCanonicalModelId = (
   }
 
   const exactMatch = SUPPORTED_MODELS.find(
-    (model) => String(model.id) === normalizedModelId,
+    (model) => String(model.id) === normalizedModelId
   );
   if (exactMatch) {
     return String(exactMatch.id);
@@ -232,19 +232,19 @@ export const getCanonicalModelId = (
 
 export const isMCPJamProvidedModel = (
   modelId: string,
-  provider?: string,
+  provider?: string
 ): boolean => {
   return MCPJAM_PROVIDED_MODEL_IDS.includes(
-    getCanonicalModelId(modelId, provider),
+    getCanonicalModelId(modelId, provider)
   );
 };
 
 export const isMCPJamGuestAllowedModel = (
   modelId: string,
-  provider?: string,
+  provider?: string
 ): boolean => {
   return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(
-    getCanonicalModelId(modelId, provider),
+    getCanonicalModelId(modelId, provider)
   );
 };
 
@@ -328,7 +328,7 @@ const freeModel = (
   id: string,
   name: string,
   provider: ModelProvider,
-  contextLength?: number,
+  contextLength?: number
 ): ModelDefinition => ({
   id,
   name: `${name} (Free)`,
@@ -519,7 +519,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   freeModel(
     "anthropic/claude-opus-4.6-fast",
     "Claude Opus 4.6 Fast",
-    "anthropic",
+    "anthropic"
   ),
   freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
@@ -566,12 +566,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   freeModel(
     "google/gemini-3.1-flash-lite-preview",
     "Gemini 3.1 Flash Lite Preview",
-    "google",
+    "google"
   ),
   freeModel(
     "google/gemini-3.1-pro-preview",
     "Gemini 3.1 Pro Preview",
-    "google",
+    "google"
   ),
   freeModel("google/gemma-4-31b-it", "Gemma 4 31B Instruct", "google"),
   {
@@ -759,6 +759,10 @@ export interface ServerFormData {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
+  secretPatch?: {
+    env?: Record<string, string>;
+    headers?: Record<string, string>;
+  };
   clientCapabilities?: Record<string, unknown>;
   useOAuth?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;

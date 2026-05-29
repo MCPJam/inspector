@@ -1,4 +1,5 @@
 import { Input } from "@mcpjam/design-system/input";
+import { useCallback, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -14,6 +15,7 @@ import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeContro
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
+import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
@@ -43,6 +45,52 @@ export function EditServerFormContent({
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  const [revealingEnv, setRevealingEnv] = useState(false);
+  const [revealingHeaders, setRevealingHeaders] = useState(false);
+  const [envRevealError, setEnvRevealError] = useState<string | null>(null);
+  const [headersRevealError, setHeadersRevealError] = useState<string | null>(
+    null
+  );
+
+  const revealSecrets = useCallback(
+    async (kind: "env" | "headers") => {
+      if (!projectId || !hostedServerId) {
+        const message = "Server secrets can only be revealed after saving.";
+        if (kind === "env") setEnvRevealError(message);
+        else setHeadersRevealError(message);
+        return;
+      }
+
+      if (kind === "env") {
+        setRevealingEnv(true);
+        setEnvRevealError(null);
+      } else {
+        setRevealingHeaders(true);
+        setHeadersRevealError(null);
+      }
+
+      try {
+        const result = await fetchServerSecrets({
+          projectId,
+          serverId: hostedServerId,
+        });
+        if (kind === "env") {
+          formState.revealStoredEnv(result.env);
+        } else {
+          formState.revealStoredHeaders(result.headers);
+        }
+      } catch {
+        const message =
+          "Couldn't reveal saved secrets. Try again, or re-save this server's env vars/headers.";
+        if (kind === "env") setEnvRevealError(message);
+        else setHeadersRevealError(message);
+      } finally {
+        if (kind === "env") setRevealingEnv(false);
+        else setRevealingHeaders(false);
+      }
+    },
+    [formState, hostedServerId, projectId]
+  );
 
   return (
     <div className="space-y-6">
@@ -217,6 +265,10 @@ export function EditServerFormContent({
           onAdd={formState.addEnvVar}
           onRemove={formState.removeEnvVar}
           onUpdate={formState.updateEnvVar}
+          hasStoredEnv={formState.hasStoredEnv}
+          isRevealing={revealingEnv}
+          revealError={envRevealError}
+          onReveal={() => revealSecrets("env")}
         />
       )}
 
@@ -260,6 +312,10 @@ export function EditServerFormContent({
               onAddHeader: formState.addCustomHeader,
               onRemoveHeader: formState.removeCustomHeader,
               onUpdateHeader: formState.updateCustomHeader,
+              hasStoredHeaders: formState.hasStoredHeaders,
+              isRevealingHeaders: revealingHeaders,
+              headersRevealError,
+              onRevealHeaders: () => revealSecrets("headers"),
               headersWarning: formState.oauthAuthorizationHeaderWarning,
             }
           : {})}
