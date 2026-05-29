@@ -41,8 +41,8 @@ const MCPJAM_LIGHT_DARK_VARS: Record<
     "oklch(0.2679 0.0036 106.6427)",
   ],
   "--color-background-secondary": [
-    "oklch(0.9245 0.0138 92.9892)",
-    "oklch(0.9818 0.0054 95.0986)",
+    "oklch(0.9341 0.0153 90.239)",
+    "oklch(0.2213 0.0038 106.707)",
   ],
   "--color-background-tertiary": [
     "oklch(0.9245 0.0138 92.9892)",
