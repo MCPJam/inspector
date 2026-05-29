@@ -15,6 +15,12 @@ import {
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
 import {
+  applyVisibilityPolicyAndCountSignals,
+  buildHostIterationMetadata,
+  type HostExecutionPolicy,
+  type ToolExposureSignals,
+} from "./evals/host-execution-policy.js";
+import {
   finalizePassedForEval,
   isMcpAppTool,
   type MCPClientManager,
@@ -159,6 +165,13 @@ export type RunEvalSuiteOptions = {
    * preset. Absent/undefined preserves SEP-1865 honest behavior.
    */
   suiteInjectOpenAiCompat?: boolean;
+  /**
+   * Host execution policy extracted from the run's hostConfig snapshot.
+   * When present, the runner applies visibility filtering, computes tool
+   * exposure signals, and stamps scalar metadata on each iteration for the
+   * cross-host dashboard.
+   */
+  hostExecutionPolicy?: HostExecutionPolicy;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1076,6 +1089,10 @@ type RunIterationBaseParams = {
    * (absent/undefined or false) leaves snapshots un-shimmed.
    */
   injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy from the run's hostConfig snapshot. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
+  toolSignals?: ToolExposureSignals;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1277,6 +1294,8 @@ const runIterationWithAiSdk = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1601,6 +1620,14 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1704,6 +1731,14 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1737,6 +1772,8 @@ const runIterationViaBackend = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -2246,6 +2283,14 @@ const runIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -2279,6 +2324,10 @@ const runTestCase = async (params: {
   compareRunId?: string;
   /** Suite-level compat-runtime flag; forwarded to each iteration. */
   injectOpenAiCompat?: boolean;
+  /** Host execution policy for metadata stamping. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for metadata stamping. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -2297,6 +2346,8 @@ const runTestCase = async (params: {
     abortSignal,
     compareRunId,
     injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2393,6 +2444,8 @@ const runTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2424,6 +2477,8 @@ const runTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2450,6 +2505,8 @@ const runTestCase = async (params: {
       compareRunId,
       precreatedIterationId,
       injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2472,6 +2529,7 @@ export const runEvalSuiteWithAiSdk = async ({
   testCaseId,
   compareRunId,
   suiteInjectOpenAiCompat,
+  hostExecutionPolicy,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2496,6 +2554,17 @@ export const runEvalSuiteWithAiSdk = async ({
         }));
 
   const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+
+  // Compute tool exposure signals and apply visibility filtering when a host
+  // policy is present. The filter mutates `tools` in place (same as
+  // prepareChatV2) so downstream iteration runners see the post-filter set.
+  const resolvedToolSignals = hostExecutionPolicy
+    ? applyVisibilityPolicyAndCountSignals(
+        tools as Record<string, unknown>,
+        mcpClientManager,
+        hostExecutionPolicy,
+      )
+    : undefined;
 
   // Note: Iterations are now pre-created in startSuiteRunWithRecorder
   // This code is no longer needed as precreateIterationsForRun is called there
@@ -2549,6 +2618,8 @@ export const runEvalSuiteWithAiSdk = async ({
         runId,
         abortSignal: abortController.signal,
         injectOpenAiCompat,
+        hostPolicy: hostExecutionPolicy,
+        toolSignals: resolvedToolSignals,
       }),
     );
 

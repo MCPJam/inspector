@@ -129,7 +129,9 @@ export function useCiEvalsRouteFromUrl(): EvalRoute {
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {
-  return value === "test-cases" || value === "executions" ? value : "runs";
+  return value === "test-cases" || value === "executions" || value === "cross-host"
+    ? value
+    : "runs";
 }
 
 function parseTruthyParam(value: string | null): boolean {

@@ -53,6 +53,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { HostListItem } from "@/hooks/useClients";
+import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -74,7 +75,7 @@ interface SuiteHeaderProps {
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;
   cancellingRunId: string | null;
-  runsViewMode?: "runs" | "test-cases";
+  runsViewMode?: SuiteOverviewView;
   runs?: EvalSuiteRun[];
   allIterations?: EvalIteration[];
   aggregate?: SuiteAggregate | null;

@@ -29,7 +29,8 @@ import type {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
-import type { EvalRoute } from "@/lib/eval-route-types";
+import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
+import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useSharedAppState } from "@/state/app-state-context";
 import { isMCPJamProvidedModel } from "@/shared/types";
@@ -51,7 +52,7 @@ import {
 } from "@/lib/evals/eval-export";
 
 export interface SuiteNavigation {
-  toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
+  toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
   toRunDetail: (
     suiteId: string,
     runId: string,
@@ -207,10 +208,12 @@ export function SuiteIterationsView({
           : route.type === "test-edit"
             ? "test-detail"
             : "overview";
-  const runsViewMode =
+  const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
-      : "runs";
+      : route.type === "suite-overview" && route.view === "cross-host"
+        ? "cross-host"
+        : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -670,7 +673,9 @@ export function SuiteIterationsView({
                 );
               })()
             ) : viewMode === "overview" ? (
-              hideRunActions && !caseListInSidebar ? (
+              hideRunActions &&
+              !caseListInSidebar &&
+              runsViewMode !== "cross-host" ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}
@@ -681,6 +686,31 @@ export function SuiteIterationsView({
                   }
                   className="min-h-0 flex-1 overflow-y-auto p-0.5"
                 >
+                  <div className="mb-3 flex items-center justify-end px-2">
+                    <div className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5">
+                      {(
+                        [
+                          { value: "runs", label: "Dashboard" },
+                          { value: "cross-host", label: "Cross-host" },
+                        ] as { value: SuiteOverviewView; label: string }[]
+                      ).map(({ value, label }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() =>
+                            navigation.toSuiteOverview(suite._id, value)
+                          }
+                          className={
+                            value !== "cross-host"
+                              ? "px-2 py-0.5 text-xs rounded bg-background text-foreground shadow-sm font-medium transition-colors"
+                              : "px-2 py-0.5 text-xs rounded text-muted-foreground hover:text-foreground transition-colors"
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <SuiteDashboard
                     suite={suite}
                     cases={cases}
@@ -708,6 +738,63 @@ export function SuiteIterationsView({
                     onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                     testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
                     userMap={userMap}
+                  />
+                </motion.div>
+              ) : runsViewMode === "cross-host" ? (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="min-h-0 flex-1 overflow-y-auto p-4"
+                >
+                  <div className="mb-3 flex items-center justify-end">
+                    <div className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5">
+                      {(hideRunActions && !caseListInSidebar
+                        ? ([
+                            { value: "runs", label: "Dashboard" },
+                            { value: "cross-host", label: "Cross-host" },
+                          ] as {
+                            value: SuiteOverviewView;
+                            label: string;
+                          }[])
+                        : ([
+                            { value: "runs", label: "Runs" },
+                            { value: "test-cases", label: "Cases" },
+                            { value: "cross-host", label: "Cross-host" },
+                          ] as {
+                            value: SuiteOverviewView;
+                            label: string;
+                          }[])
+                      ).map(({ value, label }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() =>
+                            navigation.toSuiteOverview(suite._id, value)
+                          }
+                          className={
+                            runsViewMode === value
+                              ? "px-2 py-0.5 text-xs rounded bg-background text-foreground shadow-sm font-medium transition-colors"
+                              : "px-2 py-0.5 text-xs rounded text-muted-foreground hover:text-foreground transition-colors"
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <CrossHostDashboard
+                    suite={suite}
+                    cases={cases}
+                    runs={runs}
+                    allIterations={allIterations}
+                    onConfigureHosts={() =>
+                      navigation.toSuiteOverview(suite._id, "runs")
+                    }
                   />
                 </motion.div>
               ) : runsViewMode === "runs" ? (

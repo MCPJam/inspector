@@ -40,6 +40,13 @@ describe("eval-route-url", () => {
       view: "test-cases",
       fromCommit: "abc123",
     });
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=cross-host"),
+    ).toEqual({
+      type: "suite-overview",
+      suiteId: "s_123",
+      view: "cross-host",
+    });
   });
 
   it("builds eval suite overview routes", () => {

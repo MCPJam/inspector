@@ -15,6 +15,7 @@ import {
   loadSuiteHostConfig,
   resolveOpenAiCompatForHostConfig,
 } from "../../services/evals/compat-runtime";
+import { extractHostExecutionPolicy } from "../../services/evals/host-execution-policy.js";
 import {
   runEvalSuiteWithAiSdk,
   streamTestCase,
@@ -726,6 +727,7 @@ export async function runEvalsWithManager(
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
   const suiteInjectOpenAiCompat =
     resolveOpenAiCompatForHostConfig(suiteHostConfig);
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig, namedHostId);
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
@@ -805,6 +807,7 @@ export async function runEvalsWithManager(
     mcpClientManager: clientManager,
     recorder,
     suiteInjectOpenAiCompat,
+    hostExecutionPolicy: suiteHostPolicy,
   });
 
   return {

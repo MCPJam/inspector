@@ -25,6 +25,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration } from "./types";
+import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
   CaseListColumnHeaders,
@@ -42,8 +43,8 @@ interface TestCasesOverviewProps {
   };
   cases: EvalCase[];
   allIterations: EvalIteration[];
-  runsViewMode: "runs" | "test-cases";
-  onViewModeChange: (value: "runs" | "test-cases") => void;
+  runsViewMode: SuiteOverviewView;
+  onViewModeChange: (value: SuiteOverviewView) => void;
   onTestCaseClick: (testCaseId: string) => void;
   clickHint?: string;
   runTrendData: Array<{
@@ -373,16 +374,29 @@ export function TestCasesOverview({
             </div>
             <div className="flex items-center gap-2">
               {!hideViewModeSelect ? (
-                <select
-                  value={runsViewMode}
-                  onChange={(e) =>
-                    onViewModeChange(e.target.value as "runs" | "test-cases")
-                  }
-                  className="text-xs border rounded px-2 py-1 bg-background"
-                >
-                  <option value="runs">Runs</option>
-                  <option value="test-cases">Cases</option>
-                </select>
+                <div className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5">
+                  {(
+                    [
+                      { value: "runs", label: "Runs" },
+                      { value: "test-cases", label: "Cases" },
+                      { value: "cross-host", label: "Cross-host" },
+                    ] as { value: SuiteOverviewView; label: string }[]
+                  ).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => onViewModeChange(value)}
+                      className={cn(
+                        "px-2 py-0.5 text-xs rounded transition-colors",
+                        runsViewMode === value
+                          ? "bg-background text-foreground shadow-sm font-medium"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               ) : null}
             </div>
           </div>
