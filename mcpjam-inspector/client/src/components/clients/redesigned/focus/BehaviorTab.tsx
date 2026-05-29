@@ -50,12 +50,20 @@ interface BehaviorTabProps {
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
+  /**
+   * When true, all controls render disabled. Used by the attachment
+   * editor when surfacing the client's profile in a context where the
+   * user shouldn't be editing it inline (edits flow through the owning
+   * Client surface instead).
+   */
+  readOnly?: boolean;
 }
 
 export function BehaviorTab({
   draft,
   onDraftChange,
   attention,
+  readOnly = false,
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
   const reactId = useId();
@@ -85,8 +93,9 @@ export function BehaviorTab({
               id={`${reactId}-model`}
               value={draft.modelId}
               onChange={(e) => update({ modelId: e.target.value })}
+              disabled={readOnly}
               className={
-                "h-8 w-[260px] rounded-md border border-input bg-background px-2 text-[12px] " +
+                "h-8 w-[260px] rounded-md border border-input bg-background px-2 text-[12px] disabled:cursor-not-allowed disabled:opacity-60 " +
                 (issues.has("modelId") ? "border-amber-500" : "")
               }
             >
@@ -122,6 +131,7 @@ export function BehaviorTab({
               })
             }
             aria-label="Temperature"
+            disabled={readOnly}
           />
         </div>
 
@@ -134,6 +144,7 @@ export function BehaviorTab({
                 update({ requireToolApproval: checked })
               }
               aria-label="Require tool approval"
+              disabled={readOnly}
             />
           }
         />
@@ -147,6 +158,7 @@ export function BehaviorTab({
                 update({ respectToolVisibility: checked })
               }
               aria-label="Respect tool visibility"
+              disabled={readOnly}
             />
           }
         />
@@ -203,6 +215,7 @@ export function BehaviorTab({
                 });
               }}
               aria-label="Progressive MCP tool discovery"
+              disabled={readOnly}
             >
               <ToggleGroupItem value="auto" aria-label="Auto (default)">
                 Auto
@@ -226,6 +239,7 @@ export function BehaviorTab({
                 update({ respectToolVisibility: checked })
               }
               aria-label="Respect tool visibility"
+              disabled={readOnly}
             />
           }
         />
@@ -237,6 +251,7 @@ export function BehaviorTab({
           value={draft.systemPrompt}
           onChange={(e) => update({ systemPrompt: e.target.value })}
           placeholder="You are a helpful assistant…"
+          readOnly={readOnly}
           className={
             issues.has("systemPrompt") ? "border-amber-500/60" : undefined
           }
