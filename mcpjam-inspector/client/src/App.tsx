@@ -167,6 +167,10 @@ import {
   writeChatboxSignInReturnPath,
 } from "./lib/chatbox-session";
 import {
+  clearCliSignInReturnPath,
+  readCliSignInReturnPath,
+} from "./lib/cli-signin-return-path";
+import {
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
@@ -1413,12 +1417,14 @@ export default function App() {
       const billingReturnPath = persistedCheckoutIntent
         ? readBillingSignInReturnPath()
         : null;
+      const cliReturnPath = readCliSignInReturnPath();
       clearChatboxSignInReturnPath();
       clearBillingSignInReturnPath();
+      clearCliSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ?? billingReturnPath ?? "/"
+        chatboxReturnPath ?? billingReturnPath ?? cliReturnPath ?? "/"
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -1505,6 +1511,9 @@ export default function App() {
     validOrganizations: effectiveOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
     hostsHubFlagEnabled,
+    requestSignIn: () => {
+      void signIn();
+    },
   });
   // Keep this explicit sign-out cleanup even though useAppState also cleans up
   // on auth-scope changes: WorkOS navigation can redirect before that effect

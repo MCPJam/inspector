@@ -488,6 +488,13 @@ export function useEvalHandlers({
          * test in the run. Does NOT mutate persisted suite/case records.
          */
         matchOptionsOverride?: import("@/shared/eval-matching").EvalMatchOptions;
+        /**
+         * When true, re-derives suite.hostConfigId from the current server
+         * list and persists it. Without this flag, reruns leave the frozen
+         * snapshot untouched so newly connected servers cannot contaminate
+         * existing suites.
+         */
+        refreshSnapshot?: boolean;
       },
     ) => {
       if (rerunningSuiteId) return;
@@ -636,6 +643,7 @@ export function useEvalHandlers({
               suiteRerun: true,
               iterationOverride: options?.iterationOverride,
               matchOptionsOverride: options?.matchOptionsOverride,
+              refreshSnapshot: options?.refreshSnapshot,
               ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
             }),
           ),
