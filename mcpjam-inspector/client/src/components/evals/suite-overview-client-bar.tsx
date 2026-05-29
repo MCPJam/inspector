@@ -6,10 +6,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { Globe, MoreHorizontal, Plus, X } from "lucide-react";
+import { AlertCircle, Globe, MoreHorizontal, Plus, X } from "lucide-react";
+import { useConvexAuth } from "convex/react";
 import { type HostListItem } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
+import { AttachmentEditor } from "@/components/clients/attachment-editor";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { EvalSuite } from "./types";
 
@@ -52,6 +54,13 @@ export function SuiteOverviewClientBar({
   const [attachments, setAttachments] =
     useState<HostAttachmentDraft[]>(initialAttachments);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  // Per-host AttachmentEditor open-state. Keyed by namedHostId so we
+  // can pop the editor for the just-attached host (or any pill the
+  // user clicks).
+  const [editorOpenHostId, setEditorOpenHostId] = useState<string | null>(
+    null,
+  );
+  const { isAuthenticated } = useConvexAuth();
 
   // Keep optimistic local state in sync with server-resolved suite data.
   useEffect(() => {
@@ -100,7 +109,23 @@ export function SuiteOverviewClientBar({
       { namedHostId: host.hostId, enabledOptionalServerIds: [] },
     ]);
     setAddMenuOpen(false);
+    // PR B: a freshly-attached host has an empty selection — the eval
+    // can't run until the user picks servers. Pop the editor so the
+    // picker is the obvious next step.
+    setEditorOpenHostId(host.hostId);
   };
+
+  const handleSaveSelection = useCallback(
+    async (namedHostId: string, selectedServerIds: string[]) => {
+      const next = attachments.map((a) =>
+        a.namedHostId === namedHostId
+          ? { ...a, enabledOptionalServerIds: selectedServerIds }
+          : a,
+      );
+      await persist(next);
+    },
+    [attachments, persist],
+  );
 
   const handleRemove = async (namedHostId: string) => {
     if (readOnly || !onUpdate) return;
@@ -215,15 +240,58 @@ export function SuiteOverviewClientBar({
                 projectHosts.find((h) => h.hostId === attachment.namedHostId)
                   ?.name ??
                 attachment.namedHostId;
+              const hasNoServers =
+                attachment.enabledOptionalServerIds.length === 0;
               return (
                 <div
                   key={attachment.namedHostId}
-                  className="flex h-8 max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-foreground"
+                  className={cn(
+                    "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+                    hasNoServers
+                      ? "border-amber-500/50 bg-amber-500/10"
+                      : "border-border/60 bg-muted/40",
+                  )}
                 >
-                  <Globe className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-                    {label}
-                  </span>
+                  {editable ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditorOpenHostId(attachment.namedHostId)
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-1 rounded-full px-0.5 text-xs font-medium text-foreground outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label={`Edit servers for ${label}`}
+                      title={
+                        hasNoServers
+                          ? "No servers picked — click to choose from project pool"
+                          : "Edit attached servers"
+                      }
+                    >
+                      {hasNoServers ? (
+                        <AlertCircle className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      ) : (
+                        <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-left">
+                        {label}
+                        {hasNoServers ? (
+                          <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">
+                            · pick servers
+                          </span>
+                        ) : (
+                          <span className="ml-1 text-[10px] text-muted-foreground">
+                            · {attachment.enabledOptionalServerIds.length}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  ) : (
+                    <>
+                      <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                        {label}
+                      </span>
+                    </>
+                  )}
                   {editable ? (
                     <>
                       <DropdownMenu>
@@ -240,6 +308,13 @@ export function SuiteOverviewClientBar({
                           align="start"
                           className="w-52"
                         >
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              setEditorOpenHostId(attachment.namedHostId)
+                            }
+                          >
+                            Edit servers
+                          </DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={() => openHostsPage()}
                           >
@@ -276,6 +351,36 @@ export function SuiteOverviewClientBar({
           </div>
         </div>
       </div>
+
+      {/* PR B: AttachmentEditor mount. Opens for the host whose pill the
+          user clicked (or for the freshly-attached host). One Dialog per
+          host so the per-modal local draft doesn't bleed between hosts;
+          only one renders at a time. */}
+      {editable && suite.projectId
+        ? (() => {
+            const projectId = suite.projectId;
+            return attachments.map((attachment) => (
+              <AttachmentEditor
+                key={attachment.namedHostId}
+                open={editorOpenHostId === attachment.namedHostId}
+                onOpenChange={(next) =>
+                  setEditorOpenHostId(next ? attachment.namedHostId : null)
+                }
+                scope="suite"
+                hostId={attachment.namedHostId}
+                projectId={projectId}
+                isAuthenticated={isAuthenticated}
+                selectedServerIds={attachment.enabledOptionalServerIds}
+                onSave={({ selectedServerIds }) =>
+                  handleSaveSelection(
+                    attachment.namedHostId,
+                    selectedServerIds,
+                  )
+                }
+              />
+            ));
+          })()
+        : null}
     </div>
   );
 }
