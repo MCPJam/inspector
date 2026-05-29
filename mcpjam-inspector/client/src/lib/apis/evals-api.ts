@@ -88,6 +88,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * the UI makes one parallel request per host.
    */
   namedHostId?: string;
+  /**
+   * When true on a suiteRerun, explicitly re-derives suite.hostConfigId
+   * from the request's server list. Without this flag, plain reruns leave
+   * the frozen snapshot untouched so newly connected servers can't
+   * silently contaminate existing suites.
+   */
+  refreshSnapshot?: boolean;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {

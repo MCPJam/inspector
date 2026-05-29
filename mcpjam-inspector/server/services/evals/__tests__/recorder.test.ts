@@ -152,4 +152,44 @@ describe("startSuiteRunWithRecorder", () => {
       }),
     );
   });
+
+  it("runs against the environment Convex snapshotted for the suite run", async () => {
+    const snapshotEnvironment = {
+      servers: ["friendly-server-name"],
+      serverBindings: [
+        {
+          serverName: "friendly-server-name",
+          projectServerId: "project-server-id",
+        },
+      ],
+    };
+    const mutationMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        runId: "run-1",
+        configSnapshot: {
+          environment: snapshotEnvironment,
+        },
+        testCases: [
+          {
+            _id: "tc-1",
+            title: "Snapshot server",
+            query: "Use the pinned server",
+            model: "gpt-5",
+            provider: "openai",
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ],
+      })
+      .mockResolvedValueOnce(undefined);
+
+    const result = await startSuiteRunWithRecorder({
+      convexClient: { mutation: mutationMock } as any,
+      suiteId: "suite-1",
+      serverIds: ["request-server"],
+    });
+
+    expect(result.config.environment).toEqual(snapshotEnvironment);
+  });
 });
