@@ -70,6 +70,7 @@ describe("useCreditBalance", () => {
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: 1_777_777_777_000,
+      voiceSecondsRemaining: 0,
     });
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isAuthenticated).toBe(true);

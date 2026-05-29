@@ -294,6 +294,7 @@ export function ChatTabV2({
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const organizationId = activeProject?.organizationId ?? null;
   const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
   const modelConfigOrganizationId = hostedContext?.projectId
@@ -350,6 +351,7 @@ export function ChatTabV2({
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    authHeaders,
     isAuthLoading,
     isSessionBootstrapComplete,
     systemPrompt,
@@ -454,11 +456,11 @@ export function ChatTabV2({
   });
   const senderProfileByUserId = useMemo(
     () => buildProjectOwnerProfileByUserId(senderActiveMembers),
-    [senderActiveMembers],
+    [senderActiveMembers]
   );
   const currentUserForSender = useQuery(
     "users:getCurrentUser" as any,
-    isConvexAuthenticated ? ({} as any) : "skip",
+    isConvexAuthenticated ? ({} as any) : "skip"
   ) as { _id?: string } | undefined;
   const senderFallbackUserId =
     reactiveHistorySession?.userId ??
@@ -472,7 +474,7 @@ export function ChatTabV2({
         profileByUserId: senderProfileByUserId,
         fallbackOwnerUserId: senderFallbackUserId,
       }),
-    [senderProfileByUserId, senderFallbackUserId],
+    [senderProfileByUserId, senderFallbackUserId]
   );
   // Stamp the current user onto live outgoing prompts in shared sessions so
   // the transcript can attribute them immediately, before persistence
@@ -2041,6 +2043,19 @@ export function ChatTabV2({
     onServerToggle,
     onReconnectServer,
     onAddServer,
+    voiceInputContext: effectiveHostedProjectId
+      ? {
+          projectId: effectiveHostedProjectId,
+          ...(effectiveHostedSelectedServerIds.length > 0
+            ? { selectedServerIds: effectiveHostedSelectedServerIds }
+            : {}),
+          ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+          ...(hostedAccessVersion !== undefined
+            ? { accessVersion: hostedAccessVersion }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
     chatboxAttachableServers:
       chatboxOptionalInventory && chatboxOptionalInventory.length > 0
         ? chatboxOptionalInventory

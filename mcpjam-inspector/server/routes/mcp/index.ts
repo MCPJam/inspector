@@ -22,6 +22,7 @@ import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
 import subscribe from "./subscribe";
+import audioTranscriptions from "./audio-transcriptions";
 
 const mcp = new Hono();
 
@@ -36,6 +37,9 @@ mcp.get("/health", (c) => {
 
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);
+
+// Speech-to-text endpoint
+mcp.route("/audio", audioTranscriptions);
 
 // Elicitation endpoints
 mcp.route("/elicitation", elicitation);

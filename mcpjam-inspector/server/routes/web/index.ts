@@ -7,6 +7,7 @@ import tools from "./tools.js";
 import resources from "./resources.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
+import audioTranscriptions from "../mcp/audio-transcriptions.js";
 import chatboxes from "./chatboxes.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
@@ -27,13 +28,14 @@ web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/audio/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
-  guestRateLimitMiddleware,
+  guestRateLimitMiddleware
 );
 
 web.route("/servers", servers);
@@ -43,6 +45,7 @@ web.route("/prompts", prompts);
 web.route("/chatboxes", chatboxes);
 web.route("/evals", evals);
 web.route("/export", exporter);
+web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
 web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
