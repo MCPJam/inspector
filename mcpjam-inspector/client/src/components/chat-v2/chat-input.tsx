@@ -93,7 +93,6 @@ import {
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { authFetch } from "@/lib/session-token";
-import { HOSTED_MODE } from "@/lib/config";
 
 const OPENROUTER_STT_MODEL = "openai/whisper-1";
 const VOICE_TRANSCRIPTION_TIMEOUT_MS = 25_000;
