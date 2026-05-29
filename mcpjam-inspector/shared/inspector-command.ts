@@ -17,7 +17,7 @@ export type InspectorCommandErrorCode =
 export type InspectorCommandType =
   | "navigate"
   | "selectServer"
-  | "openAppBuilder"
+  | "openPlayground"
   | "setAppContext"
   | "selectTool"
   | "executeTool"
@@ -27,7 +27,7 @@ export type InspectorCommandType =
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
   "selectServer",
-  "openAppBuilder",
+  "openPlayground",
   "setAppContext",
   "selectTool",
   "executeTool",
@@ -55,9 +55,9 @@ export interface SelectServerInspectorCommand {
   timeoutMs?: number;
 }
 
-export interface OpenAppBuilderInspectorCommand {
+export interface OpenPlaygroundInspectorCommand {
   id: string;
-  type: "openAppBuilder";
+  type: "openPlayground";
   payload: { serverName?: string };
   timeoutMs?: number;
 }
@@ -76,7 +76,7 @@ export interface SetAppContextInspectorCommand {
 }
 
 export interface ToolInvocationPayload {
-  surface: "tools" | "app-builder" | "playground";
+  surface: "tools" | "playground";
   serverName?: string;
   toolName: string;
   parameters?: Record<string, unknown>;
@@ -100,7 +100,7 @@ export interface RenderToolResultInspectorCommand {
   id: string;
   type: "renderToolResult";
   payload: {
-    surface: "tools" | "app-builder" | "playground";
+    surface: "tools" | "playground";
     serverName?: string;
     toolName: string;
     parameters?: Record<string, unknown>;
@@ -112,14 +112,14 @@ export interface RenderToolResultInspectorCommand {
 export interface SnapshotAppInspectorCommand {
   id: string;
   type: "snapshotApp";
-  payload: { surface?: "app-builder" | "playground" };
+  payload: { surface?: "playground" };
   timeoutMs?: number;
 }
 
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
-  | OpenAppBuilderInspectorCommand
+  | OpenPlaygroundInspectorCommand
   | SetAppContextInspectorCommand
   | SelectToolInspectorCommand
   | ExecuteToolInspectorCommand

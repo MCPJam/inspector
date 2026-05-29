@@ -111,6 +111,7 @@ describe("JsonEditor", () => {
           rawContent='{"text":"long long long long long long"}'
           mode="edit"
           showToolbar={false}
+          editSurface="legacy"
           wrapLongLinesInEdit={true}
         />,
       );
@@ -126,11 +127,28 @@ describe("JsonEditor", () => {
           rawContent='{"text":"long long long long long long"}'
           mode="edit"
           showToolbar={false}
+          editSurface="legacy"
         />,
       );
 
       const textarea = screen.getByRole("textbox");
       expect(textarea.getAttribute("wrap")).toBe("off");
+    });
+
+    it("uses the CodeMirror edit surface by default", () => {
+      const { container } = render(
+        <JsonEditor
+          height="100%"
+          rawContent='{"text":"long long long long long long"}'
+          mode="edit"
+          showToolbar={false}
+          wrapLongLinesInEdit={true}
+        />,
+      );
+
+      expect(container.querySelector(".cm-editor")).toBeTruthy();
+      expect(container.querySelector(".cm-lineWrapping")).toBeTruthy();
+      expect(container.querySelector("textarea")).toBeNull();
     });
   });
 

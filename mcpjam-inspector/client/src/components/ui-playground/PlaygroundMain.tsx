@@ -116,7 +116,7 @@ import {
   extractHostTheme,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
-import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
+import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
@@ -261,8 +261,7 @@ interface PlaygroundMainProps {
    * When set, Playground consumes the handoff once `isSessionBootstrapComplete`
    * flips true: applies executionConfig (model, system prompt, temperature,
    * tool-approval), seeds the thread, and calls `onEvalChatHandoffConsumed`.
-   * Mirrors the ChatTabV2 behavior so eval "Continue in chat" lands here when
-   * `playground-tab-enabled` is on.
+   * Mirrors the ChatTabV2 behavior so eval "Continue in chat" lands here.
    */
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
@@ -492,17 +491,13 @@ export function PlaygroundMain({
   const appState = useSharedAppState();
   const servers = appState.servers;
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  // Multi-server: when the host has flipped `isMultiSelectEnabled` on (today
-  // only the Playground does), `playgroundServerSelectorProps.selectedMultipleServers`
-  // is the source of truth for which servers the chat session sees. Otherwise
-  // fall back to the single `serverName` prop (App Builder / hosted flows).
+  // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
+  // the source of truth for which servers the chat session sees in the
+  // Playground tab. Views and other read-only surfaces don't pass this and
+  // fall through to the single `serverName` prop below.
   const multiSelectedServerNames = useMemo(() => {
     const propsMulti = playgroundServerSelectorProps?.selectedMultipleServers;
-    if (
-      playgroundServerSelectorProps?.isMultiSelectEnabled &&
-      Array.isArray(propsMulti) &&
-      propsMulti.length > 0
-    ) {
+    if (Array.isArray(propsMulti) && propsMulti.length > 0) {
       return propsMulti.filter(
         (name) => servers[name]?.connectionStatus === "connected",
       );
@@ -525,25 +520,12 @@ export function PlaygroundMain({
 
   const handlePlaygroundServerToggle = useCallback(
     (name: string) => {
-      // Multi-server: toggle membership in the multi-server set so users can
-      // have several servers active at once (LLM sees the union of tools,
-      // docked tools pane aggregates across them).
-      if (
-        playgroundServerSelectorProps?.isMultiSelectEnabled &&
-        playgroundServerSelectorProps?.onMultiServerToggle
-      ) {
-        playgroundServerSelectorProps.onMultiServerToggle(name);
-        return;
-      }
-      // Single-server (App Builder, hosted): toggle clears if already selected,
-      // else switches to the clicked server.
-      if (name === serverName) {
-        playgroundServerSelectorProps?.onServerChange("none");
-      } else {
-        playgroundServerSelectorProps?.onServerChange(name);
-      }
+      // Playground is always multi-server: toggle membership in the set so
+      // users can have several servers active at once. The LLM sees the union
+      // of tools, and the docked tools pane aggregates across them.
+      playgroundServerSelectorProps?.onMultiServerToggle?.(name);
     },
-    [serverName, playgroundServerSelectorProps]
+    [playgroundServerSelectorProps]
   );
 
   // Hosted mode context (projectId, serverIds, OAuth tokens)
@@ -689,12 +671,42 @@ export function PlaygroundMain({
   const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
     null
   );
+  // Declared early so the previewed-host reseed effect can early-return
+  // while an eval-chat handoff is still pending. The handoff-consume
+  // effect that flips this ref runs later in the file.
+  const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!previewedHostId || !previewedHost) {
       // Clear the dedupe ref so a later return to the same (hostId, configId)
       // — after a transient host-unavailable phase or project switch — still
       // reseeds the composer instead of short-circuiting on a stale ref.
       lastSeededHostRef.current = null;
+      return;
+    }
+    // Don't reseed `selectedMultipleServers` from the previewed host while
+    // an eval-chat handoff is pending: `handleContinueEvalInChat` has
+    // already written `handoff.serverNames` into the multi-set, and the
+    // handoff-consume effect (below) doesn't touch the server selection.
+    // Without this guard the eval thread opens with the previewed host's
+    // server set instead of the eval's.
+    //
+    // We ALSO mark `lastSeededHostRef` as committed for this (hostId,
+    // configId) — otherwise after the handoff is consumed and the parent
+    // clears `evalChatHandoff`, this effect re-runs (deps like
+    // `serversById` can hydrate later) and the reseed block fires,
+    // overwriting `handoff.serverNames` on the previewed host's required
+    // set. The eval's selection conceptually IS the seed for the
+    // current host this mount; if the user later switches hosts, the
+    // (hostId, configId) tuple changes and the reseed fires normally
+    // for the new host.
+    if (
+      evalChatHandoff &&
+      appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id
+    ) {
+      lastSeededHostRef.current = {
+        hostId: previewedHostId,
+        configId: previewedHost.config.id,
+      };
       return;
     }
     const configId = previewedHost.config.id;
@@ -1236,10 +1248,10 @@ export function PlaygroundMain({
     setSelectedModelIds,
   ]);
 
-  // Eval "Continue in chat" handoff. Mirrors ChatTabV2:1283-1340 so that when
-  // `playground-tab-enabled` is on (and `#chat-v2` redirects to `#playground`)
-  // the handoff still seeds a chat with the eval's model + messages.
-  const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  // Eval "Continue in chat" handoff. Mirrors ChatTabV2:1283-1340 so that the
+  // handoff seeds a chat in Playground with the eval's model + messages.
+  // `appliedEvalChatHandoffIdRef` is declared earlier so the previewed-host
+  // reseed effect can gate on the handoff being pending.
   useEffect(() => {
     if (!evalChatHandoff) return;
     if (!isSessionBootstrapComplete) return;

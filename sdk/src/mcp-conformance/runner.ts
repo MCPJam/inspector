@@ -188,7 +188,7 @@ async function runClientChecks(
           // follow-up.
           const managed = manager.getManagedClient(serverId);
           const reason = managed
-            ? "Client-side conformance checks are not yet wired through the DRAFT-2026-v1 stateless preview adapter."
+            ? "Client-side conformance checks are not yet wired through the 2026-07-28 stateless preview adapter."
             : "Underlying MCP client is unavailable after connect";
           if (managed) {
             return selectedClientChecks.map((check) =>

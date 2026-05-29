@@ -392,7 +392,7 @@ test("normalizeInspectorBaseUrl preserves explicit localhost hosts", () => {
 
 test("normalizeInspectorFrontendUrl accepts absolute frontend URLs only", () => {
   assert.equal(
-    normalizeInspectorFrontendUrl("http://localhost:5173/?debug=1#app-builder"),
+    normalizeInspectorFrontendUrl("http://localhost:5173/?debug=1#playground"),
     "http://localhost:5173",
   );
   assert.equal(normalizeInspectorFrontendUrl("not a url"), undefined);
@@ -404,21 +404,21 @@ test("buildInspectorBrowserUrl prefers health frontend URL for UI tabs", () => {
     buildInspectorBrowserUrl(
       "http://127.0.0.1:6274",
       "http://localhost:5173/",
-      "app-builder",
+      "playground",
     ),
-    "http://localhost:5173/#app-builder",
+    "http://localhost:5173/#playground",
   );
   assert.equal(
     buildInspectorBrowserUrl(
       "http://127.0.0.1:6274",
       "http://localhost:6274/",
-      "app-builder",
+      "playground",
     ),
-    "http://127.0.0.1:6274/#app-builder",
+    "http://127.0.0.1:6274/#playground",
   );
   assert.equal(
-    buildInspectorBrowserUrl("http://127.0.0.1:6274", undefined, "app-builder"),
-    "http://127.0.0.1:6274/#app-builder",
+    buildInspectorBrowserUrl("http://127.0.0.1:6274", undefined, "playground"),
+    "http://127.0.0.1:6274/#playground",
   );
 });
 
@@ -456,14 +456,14 @@ test("ensureInspector reports the frontend URL from Inspector health", async () 
           const result = await ensureInspector({
             baseUrl,
             openBrowser: true,
-            tab: "app-builder",
+            tab: "playground",
           });
 
           assert.deepEqual(result, {
             baseUrl,
             frontendUrl,
             hasActiveClient: true,
-            url: `${frontendUrl}/#app-builder`,
+            url: `${frontendUrl}/#playground`,
             started: false,
           });
         },
@@ -510,7 +510,7 @@ test("ensureInspector with explicit frontendUrl skips advertised frontend probes
             baseUrl,
             frontendUrl: "http://localhost:9/inspector/?debug=1#old",
             openBrowser: false,
-            tab: "app-builder",
+            tab: "playground",
           });
 
           assert.equal(advertisedRootRequests, 0);
@@ -518,7 +518,7 @@ test("ensureInspector with explicit frontendUrl skips advertised frontend probes
             baseUrl,
             frontendUrl: "http://localhost:9/inspector",
             hasActiveClient: true,
-            url: "http://localhost:9/inspector/#app-builder",
+            url: "http://localhost:9/inspector/#playground",
             started: false,
           });
         },
@@ -558,12 +558,12 @@ test("ensureInspector allows active attach when health frontend is stale", async
         baseUrl,
         openBrowser: false,
         startIfNeeded: false,
-        tab: "app-builder",
+        tab: "playground",
       });
 
       assert.equal(result.hasActiveClient, true);
       assert.equal(result.frontendUrl, staleFrontendUrl);
-      assert.equal(result.url, `${staleFrontendUrl}/#app-builder`);
+      assert.equal(result.url, `${staleFrontendUrl}/#playground`);
       assert.equal(result.started, false);
     },
   );
@@ -620,12 +620,12 @@ test("ensureInspector with skipDiscovery avoids nearby frontend port scans", asy
             baseUrl,
             openBrowser: false,
             skipDiscovery: true,
-            tab: "app-builder",
+            tab: "playground",
           });
 
           assert.equal(nearbyRootRequests, 0);
           assert.equal(result.frontendUrl, staleFrontendUrl);
-          assert.equal(result.url, `${staleFrontendUrl}/#app-builder`);
+          assert.equal(result.url, `${staleFrontendUrl}/#playground`);
           assert.equal(result.started, false);
         },
       );
@@ -945,7 +945,7 @@ test("InspectorApiClient returns structured command bus errors from non-2xx resp
       const client = new InspectorApiClient({ baseUrl });
       const result = await client.executeCommand({
         id: "cmd-1",
-        type: "openAppBuilder",
+        type: "openPlayground",
         payload: {},
       });
 
@@ -962,7 +962,7 @@ test("InspectorApiClient returns structured command bus errors from non-2xx resp
           auth: `Bearer ${token}`,
           body: {
             id: "cmd-1",
-            type: "openAppBuilder",
+            type: "openPlayground",
             payload: {},
           },
         },
@@ -1013,7 +1013,7 @@ test("InspectorApiClient reports persistent auth failure instead of command enve
         () =>
           client.executeCommand({
             id: "cmd-auth",
-            type: "openAppBuilder",
+            type: "openPlayground",
             payload: {},
           }),
         /Inspector command request failed authentication with 403/,

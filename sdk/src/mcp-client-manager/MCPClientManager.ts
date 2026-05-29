@@ -379,7 +379,7 @@ export class MCPClientManager {
 
   /**
    * Gets the `ManagedMcpClient` for a server — works for both the legacy
-   * adapter and the DRAFT-2026-v1 stateless preview. Use this in new
+   * adapter and the 2026-07-28 stateless preview. Use this in new
    * code instead of `getClient()`.
    */
   getManagedClient(
@@ -634,6 +634,13 @@ export class MCPClientManager {
     options: {
       schemas?: ToolSchemaOverrides | "automatic";
       needsApproval?: boolean;
+      /**
+       * When true, include SEP-1865 app-only tools (`_meta.ui.visibility = ["app"]`)
+       * in the returned tool set. Defaults to `false` (spec-compliant: app-only
+       * tools are hidden from the model). Use this only when intentionally
+       * mirroring a host that does not implement visibility filtering.
+       */
+      includeAppOnly?: boolean;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -650,6 +657,7 @@ export class MCPClientManager {
           const tools = await convertMCPToolsToVercelTools(listToolsResult, {
             schemas: options.schemas,
             needsApproval: options.needsApproval,
+            includeAppOnly: options.includeAppOnly,
             callTool: async ({ name, args, options: callOptions }) => {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }
@@ -1396,7 +1404,7 @@ export class MCPClientManager {
       this.liveClientStates.set(serverId, state);
 
       // Auto-`setLoggingLevel("debug")` — gated on the server actually
-      // advertising the logging capability. The DRAFT-2026-v1 stateless
+      // advertising the logging capability. The 2026-07-28 stateless
       // preview synthesizes capabilities that omit `logging` (it can't
       // honor the call without an `initialize` round-trip), so firing
       // blindly would either no-op + warn or RPC-error. The adapter

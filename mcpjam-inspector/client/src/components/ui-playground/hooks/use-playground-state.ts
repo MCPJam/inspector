@@ -1,16 +1,16 @@
 /**
- * useAppBuilderState
+ * usePlaygroundState
  *
- * Owns the orchestration that previously lived inline in `AppBuilderTab`:
- * tool fetching, form-field sync, saved-requests bridge, execution + result
- * injection waiters, onboarding integration, and the inspector command
- * handlers (`selectTool` / `executeTool` / `renderToolResult` / `setAppContext`
- * / `snapshotApp`).
+ * Owns the Playground tab's orchestration: tool fetching, form-field sync,
+ * saved-requests bridge, execution + result injection waiters, onboarding
+ * integration, and the inspector command handlers (`selectTool` /
+ * `executeTool` / `renderToolResult` / `setAppContext` / `snapshotApp`).
  *
- * Both `AppBuilderTab` (legacy route) and `PlaygroundTab` (new IDE shell) can
- * call this hook and compose their own JSX around the returned values. Keeps
- * the two surfaces in lockstep so an inspector command sent at one is
- * indistinguishable from one sent at the other.
+ * `PlaygroundTab` is the only consumer; the returned values are exposed to
+ * both the left rail's Tools pane and the center pane via
+ * `PlaygroundStateProvider` so the hook is called exactly once per surface
+ * (it owns React state, refs, and inspector command registrations — calling
+ * it twice would double-register handlers).
  */
 import {
   createContext,
@@ -69,7 +69,7 @@ import { PANEL_SIZES } from "../constants";
 const SERVER_SYNC_TIMEOUT_MS = 10000;
 const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 
-export const APP_BUILDER_FIRST_RUN_PROMPT =
+export const PLAYGROUND_FIRST_RUN_PROMPT =
   "Draw me an MCP architecture diagram";
 
 type ExecutionInjectionWaiter = {
@@ -79,7 +79,7 @@ type ExecutionInjectionWaiter = {
   timeoutId: ReturnType<typeof setTimeout>;
 };
 
-export interface UseAppBuilderStateOptions {
+export interface UsePlaygroundStateOptions {
   activeProjectId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
@@ -106,26 +106,21 @@ export interface UseAppBuilderStateOptions {
    * Empty / undefined falls back to single-server mode driven by `serverName`.
    */
   selectedServerNames?: string[];
-  /**
-   * Which surface is hosting this hook. Tagged onto the view-event for
-   * PostHog so we can split Playground vs App Builder usage. The event name
-   * itself stays `app_builder_tab_viewed` for continuity.
-   */
-  surface?: "app-builder" | "playground";
 }
 
 /**
  * Render-phase signal so consumers can switch on a discriminated union
  * instead of chaining if-elses. `ready` is the steady state; the others are
- * the early-return branches AppBuilderTab used to handle inline.
+ * the early-return branches the Playground handles before mounting the
+ * full IDE shell.
  */
-export type AppBuilderLoadingState =
+export type PlaygroundLoadingState =
   | { kind: "ready" }
   | { kind: "skeleton" }
   | { kind: "sync-timed-out" }
   | { kind: "no-server" };
 
-export type UseAppBuilderStateReturn = ReturnType<typeof useAppBuilderState>;
+export type UsePlaygroundStateReturn = ReturnType<typeof usePlaygroundState>;
 
 /**
  * Pick the servers whose tools should appear in the Playground tools pane
@@ -134,9 +129,9 @@ export type UseAppBuilderStateReturn = ReturnType<typeof useAppBuilderState>;
  * already use, so all three surfaces agree on what "in-use" means and the
  * pane stays in sync with the user's connection toggle.
  *
- * Multi-server (Playground) passes `selectedServerNames`; single-server
- * (App Builder) passes `serverName`. Either way the filter rejects anything
- * not currently in `connectionStatus === "connected"`.
+ * Multi-server mode passes `selectedServerNames`; single-server mode passes
+ * `serverName`. Either way the filter rejects anything not currently in
+ * `connectionStatus === "connected"`.
  */
 export function selectConnectedActiveServerNames(input: {
   selectedServerNames: ReadonlyArray<string> | undefined;
@@ -152,7 +147,7 @@ export function selectConnectedActiveServerNames(input: {
   return serverName && isConnected(serverName) ? [serverName] : [];
 }
 
-export function useAppBuilderState(options: UseAppBuilderStateOptions) {
+export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   const {
     serverConfig,
     serverName,
@@ -166,7 +161,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     onConnect,
     onOnboardingChange,
     selectedServerNames,
-    surface = "app-builder",
   } = options;
 
   const activeServerNames = useMemo(
@@ -254,14 +248,11 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     };
   }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
 
-  // Log when the app-builder surface is viewed. The event name stays
-  // `app_builder_tab_viewed` even for the Playground surface — telemetry
-  // continuity is more valuable than a name swap here. `surface` lets PostHog
-  // split Playground vs App Builder usage.
+  // Event name `app_builder_tab_viewed` is kept for analytics continuity
+  // (the only surface that still mounts this hook is the Playground tab).
   useEffect(() => {
     posthog.capture("app_builder_tab_viewed", {
       location: "app_builder_tab",
-      surface,
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
@@ -318,7 +309,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
           reject(
             createInspectorCommandClientError(
               "timeout",
-              `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`
+              `Tool result was not rendered in Playground within ${effectiveTimeoutMs}ms.`
             )
           );
         }, effectiveTimeoutMs);
@@ -379,7 +370,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         waiter.reject(
           createInspectorCommandClientError(
             "unsupported_in_mode",
-            "App Builder unmounted before the tool result rendered."
+            "Playground unmounted before the tool result rendered."
           )
         );
       }
@@ -424,7 +415,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       if (!serverName) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "No server is selected in the App Builder."
+          "No server is selected in the Playground."
         );
       }
 
@@ -491,7 +482,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     [serverName, setExecutionError, setTools, tools, toolsMetadata]
   );
 
-  const buildAppBuilderSnapshot = useCallback(() => {
+  const buildPlaygroundSnapshot = useCallback(() => {
     const playgroundState = useUIPlaygroundStore.getState();
 
     return {
@@ -582,16 +573,12 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         | ExecuteToolInspectorCommand
         | RenderToolResultInspectorCommand
     ) => {
-      // Accept both `app-builder` (legacy) and `playground` (transition). The
-      // `playground-tab-enabled` flag controls which surface actually mounts,
-      // so at most one consumer is alive at a time — no double-handler race.
-      if (
-        command.payload.surface !== "app-builder" &&
-        command.payload.surface !== "playground"
-      ) {
+      // Only the Playground surface mounts this hook, so the inspector
+      // command must target `"playground"`.
+      if (command.payload.surface !== "playground") {
         throw createInspectorCommandClientError(
           "unsupported_in_mode",
-          `AppBuilderTab cannot handle ${command.type} for ${command.payload.surface}.`
+          `Playground cannot handle ${command.type} for ${command.payload.surface}.`
         );
       }
 
@@ -602,7 +589,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "disconnected_server",
-          "The App Builder requires a connected server before tools can be selected."
+          "The Playground requires a connected server before tools can be selected."
         );
       }
 
@@ -612,7 +599,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       ) {
         throw createInspectorCommandClientError(
           "unknown_server",
-          `App Builder is focused on "${serverName}", not "${command.payload.serverName}".`
+          `Playground is focused on "${serverName}", not "${command.payload.serverName}".`
         );
       }
 
@@ -675,7 +662,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         const command = rawCommand as SelectToolInspectorCommand;
         const selection = await selectToolForCommand(command);
         return {
-          ...buildAppBuilderSnapshot(),
+          ...buildPlaygroundSnapshot(),
           serverName: selection.serverName,
           toolName: command.payload.toolName,
           parameterKeys: Object.keys(selection.parameters),
@@ -703,7 +690,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         }
 
         return {
-          ...buildAppBuilderSnapshot(),
+          ...buildPlaygroundSnapshot(),
           serverName: selection.serverName,
           toolName: outcome.toolName,
           parameters: outcome.parameters,
@@ -736,7 +723,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         await waitForUiCommit();
 
         return {
-          ...buildAppBuilderSnapshot(),
+          ...buildPlaygroundSnapshot(),
           serverName: selection.serverName,
           toolName: outcome.toolName,
           parameters: outcome.parameters,
@@ -767,7 +754,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         }
 
         await waitForUiCommit();
-        return buildAppBuilderSnapshot();
+        return buildPlaygroundSnapshot();
       }
     );
 
@@ -777,16 +764,15 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         const command = rawCommand as SnapshotAppInspectorCommand;
         if (
           command.payload.surface &&
-          command.payload.surface !== "app-builder" &&
           command.payload.surface !== "playground"
         ) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            `AppBuilderTab cannot snapshot ${command.payload.surface}.`
+            `Playground cannot snapshot ${command.payload.surface}.`
           );
         }
 
-        return buildAppBuilderSnapshot();
+        return buildPlaygroundSnapshot();
       }
     );
 
@@ -798,7 +784,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       unregisterSnapshotApp();
     };
   }, [
-    buildAppBuilderSnapshot,
+    buildPlaygroundSnapshot,
     executeTool,
     injectToolResult,
     selectToolForCommand,
@@ -845,7 +831,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     }
   }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
 
-  const loadingState: AppBuilderLoadingState =
+  const loadingState: PlaygroundLoadingState =
     isResolvingRemoteCompletion ||
     isBootstrappingFirstRunConnection ||
     isWaitingForServerSync
@@ -904,29 +890,29 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
 
 /**
  * Context bridge so the docked Playground tools pane and the playground center
- * pane can share a single `useAppBuilderState()` call (the hook owns React
+ * pane can share a single `usePlaygroundState()` call (the hook owns React
  * state, refs, and inspector command registrations — calling it twice would
  * double-register handlers).
  */
-const AppBuilderStateContext = createContext<UseAppBuilderStateReturn | null>(
+const PlaygroundStateContext = createContext<UsePlaygroundStateReturn | null>(
   null
 );
 
-export function AppBuilderStateProvider({
+export function PlaygroundStateProvider({
   value,
   children,
 }: {
-  value: UseAppBuilderStateReturn;
+  value: UsePlaygroundStateReturn;
   children: ReactNode;
 }) {
-  return createElement(AppBuilderStateContext.Provider, { value }, children);
+  return createElement(PlaygroundStateContext.Provider, { value }, children);
 }
 
-export function useAppBuilderStateContext(): UseAppBuilderStateReturn {
-  const ctx = useContext(AppBuilderStateContext);
+export function usePlaygroundStateContext(): UsePlaygroundStateReturn {
+  const ctx = useContext(PlaygroundStateContext);
   if (!ctx) {
     throw new Error(
-      "useAppBuilderStateContext must be used inside an AppBuilderStateProvider"
+      "usePlaygroundStateContext must be used inside a PlaygroundStateProvider"
     );
   }
   return ctx;

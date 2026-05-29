@@ -391,8 +391,8 @@ describe("resolveEffectiveCompatRuntime — per-method capability matrix", () =>
 describe("resolveEffectiveMcpProtocolVersion — per-server override precedence", () => {
   test("server override wins over host default", () => {
     expect(
-      resolveEffectiveMcpProtocolVersion("DRAFT-2026-v1", "2025-11-25"),
-    ).toBe("DRAFT-2026-v1");
+      resolveEffectiveMcpProtocolVersion("2026-07-28", "2025-11-25"),
+    ).toBe("2026-07-28");
   });
 
   test("host default applies when no server override", () => {
@@ -408,12 +408,12 @@ describe("resolveEffectiveMcpProtocolVersion — per-server override precedence"
   });
 
   test("stateful server override wins over stateless host default", () => {
-    // Symmetric scenario: host pinned to DRAFT-2026-v1 globally for a
+    // Symmetric scenario: host pinned to 2026-07-28 globally for a
     // migration test, one legacy server overridden back to 2025-11-25.
     // The override must reach the connect path or the legacy server
     // will fail with -32004.
     expect(
-      resolveEffectiveMcpProtocolVersion("2025-11-25", "DRAFT-2026-v1"),
+      resolveEffectiveMcpProtocolVersion("2025-11-25", "2026-07-28"),
     ).toBe("2025-11-25");
   });
 });

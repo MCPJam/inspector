@@ -64,6 +64,7 @@ interface SuiteHeaderProps {
     opts?: {
       matchOptionsOverride?: EvalMatchOptions;
       iterationOverride?: number;
+      refreshSnapshot?: boolean;
     },
   ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
@@ -695,6 +696,33 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 Setup SDK
               </Button>
+            ) : null}
+
+            {!hideRunActions && !readOnlyConfig && hasServersConfigured ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 text-muted-foreground"
+                      disabled={isRerunning}
+                      onClick={() =>
+                        onRerun(suite, { refreshSnapshot: true })
+                      }
+                    >
+                      <RotateCw
+                        className={`h-3.5 w-3.5 shrink-0 ${isRerunning ? "animate-spin" : ""}`}
+                        aria-hidden
+                      />
+                      Update snapshot
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent variant="muted" side="bottom" className="max-w-[16rem]">
+                  Re-saves the suite&apos;s current server list as the frozen execution snapshot and starts a run.
+                </TooltipContent>
+              </Tooltip>
             ) : null}
 
             {!hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (

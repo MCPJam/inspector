@@ -35,8 +35,8 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "Connect MCP servers to your project, authorize with OAuth when a server requires it, and inspect each connection: status, tools, and configuration at a glance.",
     docsUrl: "https://docs.mcpjam.com/inspector/connecting-servers",
   },
-  "app-builder": {
-    title: "App Builder",
+  playground: {
+    title: "Playground",
     videoUrl: "https://www.youtube.com/embed/kaCL0WdeNy0",
     videoThumbnail:
       "https://outstanding-fennec-304.convex.cloud/api/storage/a3676a4d-7262-4560-830b-60a620266f01",
@@ -45,7 +45,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "Build and test ChatGPT apps and MCP apps locally.",
     expandedDescription:
       "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and host styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
-    docsUrl: "https://docs.mcpjam.com/inspector/app-builder",
+    docsUrl: "https://docs.mcpjam.com/inspector/playground",
   },
   skills: {
     title: "Skills",
@@ -56,7 +56,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "https://outstanding-fennec-304.convex.cloud/api/storage/673acc12-a14d-4ea7-878c-855185264e70",
     description: "View, add, and manage your skills.",
     expandedDescription:
-      "View your installed skills, upload new ones, and manage them all in one place. MCPJam discovers skills from your .claude/, .mcpjam/, and .agents/ directories automatically. Use them in the App Builder or Chat — skills load based on your prompt, or inject one directly with the / command.",
+      "View your installed skills, upload new ones, and manage them all in one place. MCPJam discovers skills from your .claude/, .mcpjam/, and .agents/ directories automatically. Use them in the Playground or Chat — skills load based on your prompt, or inject one directly with the / command.",
     docsUrl: "https://docs.mcpjam.com/inspector/skills",
   },
   "oauth-flow": {

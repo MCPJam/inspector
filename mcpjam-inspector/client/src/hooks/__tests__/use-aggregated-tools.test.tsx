@@ -46,7 +46,7 @@ describe("useAggregatedTools", () => {
         },
         mcpProtocolVersionsByServerId: {
           "server-stateful": "2025-11-25",
-          "server-stateless": "DRAFT-2026-v1",
+          "server-stateless": "2026-07-28",
         },
         getAccessToken: async () => null,
       });

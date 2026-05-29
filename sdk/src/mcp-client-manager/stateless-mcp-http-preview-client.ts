@@ -1,7 +1,9 @@
 /**
  * `StatelessMcpHttpPreviewClient` — own-fetch implementation of
- * `ManagedMcpClient` for the experimental DRAFT-2026-v1 stateless MCP
- * transport. Does NOT extend upstream `Client` / `Protocol` /
+ * `ManagedMcpClient` for the 2026-07-28 RC stateless MCP transport
+ * (canonical wire literal post-`a11b1550` upstream pin; the pre-RC
+ * placeholder `DRAFT-2026-v1` is retired and rejects at the trust
+ * boundary). Does NOT extend upstream `Client` / `Protocol` /
  * `Transport`; upstream's private fields and missing per-send header
  * hooks make subclassing untenable (see `upstream_v2alpha_extension_points`
  * memory entry).
@@ -36,7 +38,7 @@
  *   - `subscriptions/listen` (throws `NotYetSupportedInStateless`)
  *   - Resumption tokens (`resumptionToken` / `onresumptiontoken` throw
  *     a labeled error)
- *   - Backward-compat probes against pre-DRAFT-2026-v1 servers
+ *   - Backward-compat probes against pre-2026-07-28 servers
  */
 
 import type {
@@ -77,10 +79,12 @@ import type { McpProtocolVersion } from "./mcp-protocol-version.js";
  * Default wire literal emitted in `_meta` and the `MCP-Protocol-Version`
  * header when the constructor's `protocolVersion` option is omitted. The
  * actual literal at request time always comes from `this.protocolVersion`
- * so a server pinned to a future stateless version (e.g. the post-RC
- * finalized `2026-07-28` date) routes through the same class.
+ * so a server pinned to a future stateless version routes through the
+ * same class — the factory passes `mcpProtocolVersion` verbatim, so this
+ * default only fires for direct-instantiation callers (tests, ad-hoc
+ * clients) and tracks the current RC canonical literal.
  */
-export const STATELESS_DRAFT_2026_V1 = "DRAFT-2026-v1" as const;
+export const LATEST_STATELESS_PROTOCOL_VERSION = "2026-07-28" as const;
 
 /**
  * Capabilities the preview commits to honoring. Locked per
@@ -133,9 +137,9 @@ export interface StatelessMcpHttpPreviewClientOptions {
   /**
    * Wire literal to emit in `_meta.io.modelcontextprotocol/protocolVersion`
    * and the `MCP-Protocol-Version` header. Defaults to
-   * `STATELESS_DRAFT_2026_V1`. Parameterized so the same class serves
-   * future stateless drafts without a subclass; the factory passes the
-   * resolved `mcpProtocolVersion` here.
+   * `LATEST_STATELESS_PROTOCOL_VERSION`. Parameterized so the same class
+   * serves future stateless drafts without a subclass; the factory passes
+   * the resolved `mcpProtocolVersion` here.
    */
   protocolVersion?: McpProtocolVersion;
   /** Static headers (e.g. project-level overrides). Bearer is set via authProvider. */
@@ -186,20 +190,31 @@ export interface StatelessMcpHttpPreviewClientOptions {
 }
 
 /**
- * Result of `server/discover` per SEP-2575 / draft `DiscoverResult` schema.
- * Carries the negotiated `protocolVersion`, the server's `serverInfo` +
- * `capabilities` + optional `instructions`, and the full
- * `supportedVersions` list so a client can retry against a mutually
- * supported version on its own. The field name is `capabilities` (NOT
- * `serverCapabilities` — that's the pre-2026 negotiation-flow naming;
- * SEP-2575 deliberately uses `capabilities` to match the rest of the
- * draft's result shapes).
+ * Result of `server/discover` per upstream `schema.ts:585` (SEP-2575).
+ * Extends the base `Result` shape — `resultType` is required for
+ * new-spec servers; an absent field is treated as `"complete"` per
+ * `schema.ts:182-185`. Carries the server's `serverInfo` + `capabilities`
+ * + optional `instructions`, and the `supportedVersions` list (plural)
+ * so a client can retry against a mutually supported version on its
+ * own. The field name is `capabilities` (NOT `serverCapabilities` —
+ * that's the pre-2026 negotiation-flow naming; the RC deliberately uses
+ * `capabilities` to match the rest of the result shapes).
+ *
+ * Note: upstream `DiscoverResult` has NO `protocolVersion` field — the
+ * value lives in `_meta.io.modelcontextprotocol/protocolVersion` on
+ * every request body, not in the discover response. Earlier drafts of
+ * this interface fabricated one; it's been removed to align with spec.
  */
 export interface DiscoverResult {
-  protocolVersion: string;
+  /**
+   * Result envelope discriminator. Optional in the type for backward
+   * compatibility with servers that omit it (treated as `"complete"`);
+   * new-spec servers MUST emit it.
+   */
+  resultType?: "complete" | "input_required";
   serverInfo: Implementation;
   capabilities: ServerCapabilities;
-  supportedVersions?: string[];
+  supportedVersions: string[];
   instructions?: string;
 }
 
@@ -249,7 +264,10 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private readonly clientInfo: Implementation;
   private readonly protocolVersion: McpProtocolVersion;
   private readonly staticHeaders: Record<string, string>;
-  private readonly getAccessToken?: () => string | undefined | Promise<string | undefined>;
+  private readonly getAccessToken?: () =>
+    | string
+    | undefined
+    | Promise<string | undefined>;
   private readonly on401?: (response: Response) => Promise<string | undefined>;
   private readonly rpcLogger?: RpcLogger;
   private readonly serverId: string;
@@ -290,7 +308,8 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   constructor(opts: StatelessMcpHttpPreviewClientOptions) {
     this.url = typeof opts.url === "string" ? new URL(opts.url) : opts.url;
     this.clientInfo = opts.clientInfo;
-    this.protocolVersion = opts.protocolVersion ?? STATELESS_DRAFT_2026_V1;
+    this.protocolVersion =
+      opts.protocolVersion ?? LATEST_STATELESS_PROTOCOL_VERSION;
     this.staticHeaders = { ...(opts.staticHeaders ?? {}) };
     this.getAccessToken = opts.getAccessToken;
     this.on401 = opts.on401;
@@ -303,7 +322,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   // ---- Lifecycle ----
   async connect(
     _transport: Transport,
-    _options?: ManagedMcpClientConnectOptions,
+    _options?: ManagedMcpClientConnectOptions
   ): Promise<void> {
     // Stateless: no initialize round-trip, no transport.start(). The
     // upstream `Transport` argument is accepted for interface parity
@@ -313,7 +332,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     // our `protocolVersion`. A `-32004 UnsupportedProtocolVersionError`
     // from discover propagates as a connect failure with the error
     // envelope intact — that's how the inspector surfaces "this server
-    // doesn't speak DRAFT-2026-v1" instead of a misleading "Connected".
+    // doesn't speak 2026-07-28" instead of a misleading "Connected".
     if (this.closed) {
       throw new Error("StatelessMcpHttpPreviewClient: connect() after close()");
     }
@@ -323,7 +342,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     ) {
       throw new NotYetSupportedInStateless(
         "connect.resumption",
-        "TransportSendOptions resumption is not implemented in the preview",
+        "TransportSendOptions resumption is not implemented in the preview"
       );
     }
     // Mark `connected` BEFORE the discover send so the send() guard
@@ -346,7 +365,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       const result = await this.send<DiscoverResult>(
         "server/discover",
         undefined,
-        discoverOpts,
+        discoverOpts
       );
       this.discoveredServerInfo = result.serverInfo;
       this.discoveredCapabilities = result.capabilities;
@@ -423,7 +442,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   // ---- Tool calls ----
   async listTools(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListToolsResult> {
     const result = await this.send<ListToolsResult>("tools/list", params, {
       ...(options ?? {}),
@@ -432,9 +451,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     // itself (callers can paginate), but for our header-discovery
     // shortcut (lazy refresh inside `callTool`) we fail if the server
     // paginates. The plain `listTools` call still returns the page.
-    const parsed = parseToolsForHeaderMap(
-      (result.tools as ParsedTool[]) ?? [],
-    );
+    const parsed = parseToolsForHeaderMap((result.tools as ParsedTool[]) ?? []);
     for (const w of parsed.warnings) this.warn(w);
     // Pagination + caching: only treat a non-paginated full page as the
     // canonical cache. A partial page (cursor in / out) would clobber
@@ -466,7 +483,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       return {
         ...result,
         tools: (result.tools as { name: string }[] | undefined)?.filter(
-          (t) => !excluded.has(t.name),
+          (t) => !excluded.has(t.name)
         ) as ListToolsResult["tools"],
       };
     }
@@ -475,7 +492,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
 
   async callTool(
     params: { name: string; arguments?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<CallToolResult> {
     // Header derivation (Mcp-Name + Mcp-Param-* + tool-header-map lazy
     // refresh) lives in `send()` so the typed callTool AND the generic
@@ -490,35 +507,35 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       params.arguments !== undefined
         ? { name: params.name, arguments: params.arguments }
         : { name: params.name },
-      options ?? {},
+      options ?? {}
     );
   }
 
   async request<T = unknown>(
     req: Request,
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<T> {
     return (await this.send<T>(
       req.method,
       req.params as Record<string, unknown> | undefined,
-      options ?? {},
+      options ?? {}
     )) as T;
   }
 
   async listResources(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListResourcesResult> {
     return await this.send<ListResourcesResult>(
       "resources/list",
       params,
-      options ?? {},
+      options ?? {}
     );
   }
 
   async readResource(
     params: { uri: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ReadResourceResult> {
     return await this.send<ReadResourceResult>("resources/read", params, {
       ...(options ?? {}),
@@ -528,29 +545,29 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
 
   async listResourceTemplates(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListResourceTemplatesResult> {
     return await this.send<ListResourceTemplatesResult>(
       "resources/templates/list",
       params,
-      options ?? {},
+      options ?? {}
     );
   }
 
   async listPrompts(
     params?: { cursor?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<ListPromptsResult> {
     return await this.send<ListPromptsResult>(
       "prompts/list",
       params,
-      options ?? {},
+      options ?? {}
     );
   }
 
   async getPrompt(
     params: { name: string; arguments?: Record<string, string> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<GetPromptResult> {
     return await this.send<GetPromptResult>("prompts/get", params, {
       ...(options ?? {}),
@@ -559,43 +576,51 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   }
 
   async ping(options?: RequestOptions): Promise<EmptyResult> {
-    return await this.send<EmptyResult>("ping", undefined, options ?? {});
+    // `ping` was removed from the 2026-07-28 protocol. Keep the
+    // ManagedMcpClient utility method usable by probing the mandatory
+    // `server/discover` RPC instead of emitting a removed wire method.
+    await this.send<DiscoverResult>(
+      "server/discover",
+      undefined,
+      options ?? {}
+    );
+    return {};
   }
 
   // ---- Subscriptions: throw, don't silently no-op ----
   async subscribeResource(): Promise<EmptyResult> {
     throw new NotYetSupportedInStateless(
       "resources/subscribe",
-      "long-lived subscriptions require subscriptions/listen which is out of scope",
+      "long-lived subscriptions require subscriptions/listen which is out of scope"
     );
   }
   async unsubscribeResource(): Promise<EmptyResult> {
     throw new NotYetSupportedInStateless(
       "resources/unsubscribe",
-      "long-lived subscriptions require subscriptions/listen which is out of scope",
+      "long-lived subscriptions require subscriptions/listen which is out of scope"
     );
   }
 
   // ---- Logging: no-op + warn (capabilities don't advertise logging) ----
   async setLoggingLevel(
     _level: LoggingLevel,
-    _options?: RequestOptions,
+    _options?: RequestOptions
   ): Promise<void> {
     this.warn(
-      "setLoggingLevel is a no-op in the DRAFT-2026-v1 stateless preview (clientCapabilities omits logging).",
+      "setLoggingLevel is a no-op in the 2026-07-28 stateless preview (clientCapabilities omits logging)."
     );
   }
 
   // ---- Handlers ----
   setNotificationHandler(
     method: ManagedMcpClientNotificationMethod,
-    handler: ManagedMcpClientNotificationHandler,
+    handler: ManagedMcpClientNotificationHandler
   ): void {
     this.notificationHandlers.set(method, handler);
   }
   setRequestHandler(
     method: ManagedMcpClientRequestMethod,
-    handler: ManagedMcpClientRequestHandler,
+    handler: ManagedMcpClientRequestHandler
   ): void {
     this.requestHandlers.set(method, handler);
   }
@@ -607,12 +632,10 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private async send<T>(
     method: string,
     params: Record<string, unknown> | undefined,
-    opts: RequestOptions & SendOptions,
+    opts: RequestOptions & SendOptions
   ): Promise<T> {
     if (this.closed) {
-      throw new Error(
-        "StatelessMcpHttpPreviewClient: send() after close()",
-      );
+      throw new Error("StatelessMcpHttpPreviewClient: send() after close()");
     }
 
     // MRTR / task-augmented requests are intentionally out of scope for
@@ -625,14 +648,14 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     if (taskOpt !== undefined) {
       throw new NotYetSupportedInStateless(
         `${method} (RequestOptions.task)`,
-        "task-augmented requests require MRTR / InputRequiredResult, which is out of scope for the DRAFT-2026-v1 preview",
+        "task-augmented requests require MRTR / InputRequiredResult, which is out of scope for the 2026-07-28 preview"
       );
     }
     const relatedTaskOpt = (opts as RequestOptions).relatedTask;
     if (relatedTaskOpt !== undefined) {
       throw new NotYetSupportedInStateless(
         `${method} (RequestOptions.relatedTask)`,
-        "related-task requests require MRTR / InputRequiredResult, which is out of scope for the DRAFT-2026-v1 preview",
+        "related-task requests require MRTR / InputRequiredResult, which is out of scope for the 2026-07-28 preview"
       );
     }
 
@@ -642,7 +665,8 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     // the locked io.modelcontextprotocol/* keys. progressToken /
     // traceparent / tracestate / baggage / related-task IDs come in
     // via params._meta on the caller side and MUST survive.
-    const callerMeta = (params?._meta as Record<string, unknown> | undefined) ?? {};
+    const callerMeta =
+      (params?._meta as Record<string, unknown> | undefined) ?? {};
     const onProgress = (opts as RequestOptions).onprogress;
     let effectiveCallerMeta: Record<string, unknown> = { ...callerMeta };
     if (onProgress !== undefined && callerMeta.progressToken === undefined) {
@@ -680,12 +704,12 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     const derivedNameHeader = this.resolveNameHeaderFromBody(
       method,
       params,
-      opts.nameHeader,
+      opts.nameHeader
     );
     const derivedExtraHeaders = await this.resolveExtraHeadersForToolsCall(
       method,
       params,
-      opts,
+      opts
     );
     const effectiveOpts: SendOptions & RequestOptions = {
       ...opts,
@@ -706,7 +730,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         callerSignal.addEventListener(
           "abort",
           () => abortController.abort(callerSignal.reason),
-          { once: true },
+          { once: true }
         );
     }
     const timeoutMs = (opts as RequestOptions).timeout;
@@ -715,13 +739,17 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       timeoutHandle = setTimeout(
         () =>
           abortController.abort(
-            new Error(`Request timed out after ${timeoutMs}ms`),
+            new Error(`Request timed out after ${timeoutMs}ms`)
           ),
-        timeoutMs,
+        timeoutMs
       );
     }
 
-    this.rpcLogger?.({ direction: "send", message: body, serverId: this.serverId });
+    this.rpcLogger?.({
+      direction: "send",
+      message: body,
+      serverId: this.serverId,
+    });
     let response: Response;
     let envelope: JsonRpcMessage;
     try {
@@ -750,9 +778,13 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
           const retryHeaders = await this.buildHeaders(
             method,
             effectiveOpts,
-            refreshed,
+            refreshed
           );
-          this.rpcLogger?.({ direction: "send", message: body, serverId: this.serverId });
+          this.rpcLogger?.({
+            direction: "send",
+            message: body,
+            serverId: this.serverId,
+          });
           response = await fetch(this.url, {
             method: "POST",
             body: JSON.stringify(body),
@@ -769,7 +801,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       if (seenSessionId) {
         this.nonConformingSessionIdSeen = true;
         this.warn(
-          `Server returned mcp-session-id: "${seenSessionId}" on a stateless request. Discarded. Server is non-conforming under DRAFT-2026-v1.`,
+          `Server returned mcp-session-id: "${seenSessionId}" on a stateless request. Discarded. Server is non-conforming under 2026-07-28.`
         );
         this.onSessionIdResponse?.(seenSessionId);
       }
@@ -825,7 +857,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       if (!response.ok && !isJsonRpcResponseEnvelope(envelope, id)) {
         throw this.buildHttpTransportErrorFromBody(
           response,
-          JSON.stringify(envelope).slice(0, 512),
+          JSON.stringify(envelope).slice(0, 512)
         );
       }
     } finally {
@@ -865,11 +897,11 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private async consumeSseResponse(
     response: Response,
     requestId: number | string,
-    opts: SendOptions,
+    opts: SendOptions
   ): Promise<JsonRpcMessage> {
     if (!response.body) {
       throw new Error(
-        "StatelessMcpHttpPreviewClient: SSE response has no body",
+        "StatelessMcpHttpPreviewClient: SSE response has no body"
       );
     }
     const reader = response.body
@@ -901,7 +933,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
           // attempt to dispatch.
           if ("method" in message && "id" in message) {
             throw new Error(
-              "StatelessMcpHttpPreviewClient: server-initiated JSON-RPC request received on response stream — MRTR is not supported.",
+              "StatelessMcpHttpPreviewClient: server-initiated JSON-RPC request received on response stream — MRTR is not supported."
             );
           }
           if ("method" in message) {
@@ -919,7 +951,9 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
           // Other-id response on a per-request stream is a protocol
           // error; surface it.
           throw new Error(
-            `StatelessMcpHttpPreviewClient: unexpected response id on per-request SSE stream (got ${(message as { id?: unknown }).id}, expected ${requestId})`,
+            `StatelessMcpHttpPreviewClient: unexpected response id on per-request SSE stream (got ${
+              (message as { id?: unknown }).id
+            }, expected ${requestId})`
           );
         }
       }
@@ -931,13 +965,13 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       }
     }
     throw new Error(
-      "StatelessMcpHttpPreviewClient: SSE stream ended without a final response",
+      "StatelessMcpHttpPreviewClient: SSE stream ended without a final response"
     );
   }
 
   private handleStreamingNotification(
     msg: JsonRpcNotification,
-    opts: SendOptions,
+    opts: SendOptions
   ): void {
     // Accept both shapes: SendOptions uses `onProgress` (camelCase), but
     // upstream `RequestOptions` from `@modelcontextprotocol/client` uses
@@ -959,17 +993,21 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       return;
     }
     const handler = this.notificationHandlers.get(
-      msg.method as ManagedMcpClientNotificationMethod,
+      msg.method as ManagedMcpClientNotificationMethod
     );
     if (handler) {
       try {
         // Notification handler is async-or-sync, return value ignored.
         Promise.resolve(handler(msg as never)).catch((err) =>
-          this.warn(`notification handler for ${msg.method} threw: ${formatErr(err)}`),
+          this.warn(
+            `notification handler for ${msg.method} threw: ${formatErr(err)}`
+          )
         );
       } catch (err) {
         this.warn(
-          `notification handler for ${msg.method} threw synchronously: ${formatErr(err)}`,
+          `notification handler for ${
+            msg.method
+          } threw synchronously: ${formatErr(err)}`
         );
       }
     }
@@ -983,7 +1021,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
    * bounds the read so a hung body can't leak the connection.
    */
   private async buildHttpTransportError(
-    response: Response,
+    response: Response
   ): Promise<Error & { status?: number }> {
     let bodyPreview = "";
     try {
@@ -1004,13 +1042,14 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
    */
   private buildHttpTransportErrorFromBody(
     response: Response,
-    bodyPreview: string,
+    bodyPreview: string
   ): Error & { status?: number } {
-    const trimmed = bodyPreview.length > 512
-      ? bodyPreview.slice(0, 512)
-      : bodyPreview;
+    const trimmed =
+      bodyPreview.length > 512 ? bodyPreview.slice(0, 512) : bodyPreview;
     const err = new Error(
-      `StatelessMcpHttpPreviewClient: HTTP ${response.status} ${response.statusText} from ${this.url.toString()}${trimmed ? ` — ${trimmed}` : ""}`,
+      `StatelessMcpHttpPreviewClient: HTTP ${response.status} ${
+        response.statusText
+      } from ${this.url.toString()}${trimmed ? ` — ${trimmed}` : ""}`
     ) as Error & { status?: number };
     err.status = response.status;
     return err;
@@ -1018,12 +1057,12 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
 
   private unwrapJsonRpcResult<T>(
     msg: JsonRpcMessage,
-    expectedId: number | string,
+    expectedId: number | string
   ): T {
     if ("error" in msg) {
       const err = msg.error;
       const error: Error & { code?: number; data?: unknown } = new Error(
-        err.message ?? "JSON-RPC error",
+        err.message ?? "JSON-RPC error"
       );
       error.code = err.code;
       error.data = err.data;
@@ -1031,12 +1070,14 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     }
     if (!("result" in msg)) {
       throw new Error(
-        "StatelessMcpHttpPreviewClient: response is neither result nor error",
+        "StatelessMcpHttpPreviewClient: response is neither result nor error"
       );
     }
     if ((msg as { id?: unknown }).id !== expectedId) {
       throw new Error(
-        `StatelessMcpHttpPreviewClient: response id mismatch (got ${(msg as { id?: unknown }).id}, expected ${expectedId})`,
+        `StatelessMcpHttpPreviewClient: response id mismatch (got ${
+          (msg as { id?: unknown }).id
+        }, expected ${expectedId})`
       );
     }
     return msg.result as T;
@@ -1045,7 +1086,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private async buildHeaders(
     method: string,
     opts: SendOptions,
-    overrideAccessToken?: string,
+    overrideAccessToken?: string
   ): Promise<Record<string, string>> {
     // Resolve our outbound token first so the canonical-strip set knows
     // whether we'll actually be writing `Authorization` ourselves. When
@@ -1110,7 +1151,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private resolveNameHeaderFromBody(
     method: string,
     params: Record<string, unknown> | undefined,
-    fromOpts: string | undefined,
+    fromOpts: string | undefined
   ): string | undefined {
     if (fromOpts !== undefined) return fromOpts;
     if (!METHODS_REQUIRING_NAME_HEADER.has(method)) return undefined;
@@ -1135,7 +1176,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private async resolveExtraHeadersForToolsCall(
     method: string,
     params: Record<string, unknown> | undefined,
-    opts: SendOptions & RequestOptions,
+    opts: SendOptions & RequestOptions
   ): Promise<Record<string, string> | undefined> {
     if (opts.extraHeaders !== undefined) return opts.extraHeaders;
     if (method !== "tools/call") return undefined;
@@ -1160,11 +1201,11 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       const discovery = await this.send<ListToolsResult>(
         "tools/list",
         undefined,
-        discoveryOpts,
+        discoveryOpts
       );
       assertNotPaginated(discovery as { nextCursor?: string | null });
       const parsed = parseToolsForHeaderMap(
-        (discovery.tools as ParsedTool[]) ?? [],
+        (discovery.tools as ParsedTool[]) ?? []
       );
       for (const w of parsed.warnings) this.warn(w);
       // `update()` clears the excluded-tools set so a server that fixed
@@ -1179,7 +1220,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     }
     const derived = this.toolHeaderMap.deriveHeaders(
       params.name as string,
-      params.arguments as Record<string, unknown> | undefined,
+      params.arguments as Record<string, unknown> | undefined
     );
     return derived.headers;
   }
@@ -1215,7 +1256,7 @@ function parseSingleMessage(text: string): JsonRpcMessage {
   const parsed = JSON.parse(text);
   if (parsed && typeof parsed === "object") return parsed as JsonRpcMessage;
   throw new Error(
-    `StatelessMcpHttpPreviewClient: expected JSON-RPC object, got ${typeof parsed}`,
+    `StatelessMcpHttpPreviewClient: expected JSON-RPC object, got ${typeof parsed}`
   );
 }
 
@@ -1230,7 +1271,7 @@ function parseSingleMessage(text: string): JsonRpcMessage {
  */
 function isJsonRpcResponseEnvelope(
   msg: unknown,
-  expectedId: number | string,
+  expectedId: number | string
 ): boolean {
   if (!msg || typeof msg !== "object") return false;
   const m = msg as Record<string, unknown>;
@@ -1239,7 +1280,11 @@ function isJsonRpcResponseEnvelope(
   if ("result" in m) return true;
   if ("error" in m) {
     const e = m.error;
-    if (e && typeof e === "object" && typeof (e as { code?: unknown }).code === "number") {
+    if (
+      e &&
+      typeof e === "object" &&
+      typeof (e as { code?: unknown }).code === "number"
+    ) {
       return true;
     }
   }
@@ -1273,7 +1318,7 @@ function extractSseDataPayload(frame: string): string | undefined {
  * no complete frame is yet buffered.
  */
 function nextFrameBoundary(
-  buffer: string,
+  buffer: string
 ): { start: number; end: number } | undefined {
   let best: { start: number; end: number } | undefined;
   for (const delim of ["\r\n\r\n", "\n\n", "\r\r"] as const) {

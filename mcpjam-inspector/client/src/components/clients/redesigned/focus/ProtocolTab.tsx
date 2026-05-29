@@ -17,20 +17,20 @@ import {
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
-type HostProtocolDropdownValue = "latest" | "draft";
+type HostProtocolDropdownValue = "latest" | "rc";
 
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
 }> = [
-  { value: "latest", label: "Latest" },
-  { value: "draft", label: "Draft" },
+  { value: "latest", label: "Latest (2025-11-25)" },
+  { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
 
 interface ProtocolTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
 }
@@ -68,7 +68,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function findAuthorizationKey(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): string | undefined {
   return Object.keys(headers).find((k) => k.toLowerCase() === "authorization");
 }
@@ -115,7 +115,7 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
 
   const headers = draft.connectionDefaults.headers ?? {};
   const visibleEntries = Object.entries(headers).filter(
-    ([k]) => k.trim() !== "" && k.toLowerCase() !== "authorization",
+    ([k]) => k.trim() !== "" && k.toLowerCase() !== "authorization"
   );
   if (visibleEntries.length > 0) {
     doc.connectionDefaults.headers = Object.fromEntries(visibleEntries);
@@ -126,14 +126,14 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
 
 function patchProfile(
   prev: HostConfigMcpProfileV1 | undefined,
-  patch: (base: HostConfigMcpProfileV1) => HostConfigMcpProfileV1 | undefined,
+  patch: (base: HostConfigMcpProfileV1) => HostConfigMcpProfileV1 | undefined
 ): HostConfigMcpProfileV1 | undefined {
   return patch(prev ?? { profileVersion: 1 });
 }
 
 function applyJsonToDraft(
   parsed: unknown,
-  prev: HostConfigInputV2,
+  prev: HostConfigInputV2
 ): HostConfigInputV2 | null {
   if (!isPlainObject(parsed)) return null;
 
@@ -195,7 +195,9 @@ function applyJsonToDraft(
     : {};
   const rawTimeout = cd.requestTimeout;
   const requestTimeout =
-    typeof rawTimeout === "number" && Number.isFinite(rawTimeout) && rawTimeout > 0
+    typeof rawTimeout === "number" &&
+    Number.isFinite(rawTimeout) &&
+    rawTimeout > 0
       ? rawTimeout
       : prev.connectionDefaults.requestTimeout;
 
@@ -264,9 +266,7 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
   // since they route to the same code path; saving normalizes back to
   // undefined.
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion === "DRAFT-2026-v1"
-      ? "draft"
-      : "latest";
+    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28" ? "rc" : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
@@ -275,8 +275,9 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
   // upgrade its default version without churning every stored host config.
   const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
     onDraftChange((prev) => {
-      const base: HostConfigMcpProfileV1 =
-        prev.mcpProfile ?? { profileVersion: 1 };
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
       const updated: HostConfigMcpProfileV1 = {
         ...base,
         mcpProtocolVersion: next,
@@ -300,16 +301,14 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
           <div className="flex items-center gap-3">
             <span
               className="text-[12px] font-medium"
-              title="Latest: current stable MCP wire version (whatever the SDK ships). Draft: experimental DRAFT-2026-v1 stateless transport."
+              title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
             >
               Protocol version
             </span>
             <Select
               value={selectedDropdownValue}
               onValueChange={(next) => {
-                setProtocolVersion(
-                  next === "draft" ? "DRAFT-2026-v1" : undefined,
-                );
+                setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
               }}
             >
               <SelectTrigger className="h-9 text-xs">

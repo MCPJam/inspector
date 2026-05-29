@@ -986,12 +986,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(hostContext).not.toHaveProperty("toolInfo");
   });
 
-  it("advertises matrix-clamped HostContext.availableDisplayModes (Copilot: ['fullscreen'] only)", async () => {
-    // Copilot's published Component-bridge table says
-    // requestDisplayMode is fullscreen-only. The matrix's
-    // availableDisplayModes is ["fullscreen"]; the host must
-    // advertise exactly that, not the inspector's permissive
-    // default of all three.
+  it("advertises matrix-clamped HostContext.availableDisplayModes (Copilot: inline + fullscreen, no pip)", async () => {
+    // Copilot's published Component-bridge table says requestDisplayMode
+    // is supported "fullscreen only" — fullscreen is the only expansion a
+    // widget may request, not that inline is unavailable. Copilot renders
+    // widgets inline by default, so the host advertises
+    // ["inline", "fullscreen"] (dropping the inspector's permissive pip).
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer {...baseProps} />
@@ -1003,7 +1003,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const hostContext = appBridgeArgsRef.current?.options?.hostContext as
       | Record<string, unknown>
       | undefined;
-    expect(hostContext?.availableDisplayModes).toEqual(["fullscreen"]);
+    expect(hostContext?.availableDisplayModes).toEqual([
+      "inline",
+      "fullscreen",
+    ]);
   });
 
   it("advertises all three modes on Claude (full surface matrix)", async () => {
@@ -1025,16 +1028,17 @@ describe("MCPAppsRenderer tool input streaming", () => {
     ]);
   });
 
-  it("clamps HostContext.displayMode to the matrix allowlist (Copilot in pip parent state coerces to fullscreen)", async () => {
+  it("clamps HostContext.displayMode to the matrix allowlist (Copilot in pip parent state coerces to inline)", async () => {
     // Regression: previously the matrix-clamped allowlist was only
     // written into `HostContext.availableDisplayModes`, but
     // `effectiveDisplayMode` was still computed against the
     // playground/configured allowlist alone. A Copilot host could
     // initialize or remain in `pip` if the parent's display state
-    // was sticky `"pip"` from a previous widget, while advertising
-    // `availableDisplayModes: ["fullscreen"]` — an inconsistent
-    // HostContext. Fix clamps the displayMode against the matrix
-    // too.
+    // was sticky `"pip"` from a previous widget, while advertising a
+    // narrower allowlist — an inconsistent HostContext. Fix clamps the
+    // displayMode against the matrix too. Copilot's matrix is
+    // ["inline", "fullscreen"], so an unsupported pip coerces to the
+    // first allowed mode (inline), not fullscreen.
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer
@@ -1050,9 +1054,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const hostContext = appBridgeArgsRef.current?.options?.hostContext as
       | Record<string, unknown>
       | undefined;
-    // Matrix-clamped: only fullscreen is allowed, so pip coerces.
-    expect(hostContext?.availableDisplayModes).toEqual(["fullscreen"]);
-    expect(hostContext?.displayMode).toBe("fullscreen");
+    // Matrix-clamped: pip isn't allowed, so it coerces to inline (matrix[0]).
+    expect(hostContext?.availableDisplayModes).toEqual([
+      "inline",
+      "fullscreen",
+    ]);
+    expect(hostContext?.displayMode).toBe("inline");
   });
 
   it("keeps HostContext.displayMode inside the advertised intersection for custom display-mode overrides", async () => {

@@ -230,7 +230,7 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
   it("does not re-test a connected server on initial mount", async () => {
     const dispatch = vi.fn();
     renderRevalidationHook(dispatch, {
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
+      profile: { mcpProtocolVersion: "2026-07-28" },
       hostConfig: buildHostConfig(),
     });
 
@@ -260,7 +260,7 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     expect(reconnectServerMock).not.toHaveBeenCalled();
 
     rerender({
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
+      profile: { mcpProtocolVersion: "2026-07-28" },
       hostConfig: buildHostConfig(),
     });
 
@@ -294,7 +294,7 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     await flushAsyncWork(5);
 
     rerender({
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
+      profile: { mcpProtocolVersion: "2026-07-28" },
       hostConfig: buildHostConfig(),
     });
 
@@ -333,7 +333,7 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     rerender({
       profile: undefined,
       hostConfig: buildHostConfig({
-        srv_demo: { mcpProtocolVersionOverride: "DRAFT-2026-v1" },
+        srv_demo: { mcpProtocolVersionOverride: "2026-07-28" },
       }),
     });
 
@@ -345,14 +345,14 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
   it("skips re-test when the resolved version did not change", async () => {
     const dispatch = vi.fn();
     const { rerender } = renderRevalidationHook(dispatch, {
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
+      profile: { mcpProtocolVersion: "2026-07-28" },
       hostConfig: buildHostConfig(),
     });
 
     await flushAsyncWork(5);
 
     rerender({
-      profile: { mcpProtocolVersion: "DRAFT-2026-v1" },
+      profile: { mcpProtocolVersion: "2026-07-28" },
       hostConfig: buildHostConfig(),
     });
 

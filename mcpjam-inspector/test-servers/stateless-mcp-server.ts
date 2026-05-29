@@ -1,5 +1,5 @@
 /**
- * Fixture HTTP server for the DRAFT-2026-v1 stateless transport preview.
+ * Fixture HTTP server for the 2026-07-28 stateless transport (RC).
  * Stands up a minimal "spec-conforming enough" target so unit + integration
  * tests can exercise `StatelessMcpHttpPreviewClient` without an
  * external dependency.
@@ -7,8 +7,9 @@
  * What it implements (per `peppy-popping-flask.md` PR2 prerequisite):
  *   - Accepts POSTs without `initialize` / `Mcp-Session-Id`.
  *   - Validates body `_meta.io.modelcontextprotocol/protocolVersion ===
- *     "DRAFT-2026-v1"` — rejects with `-32004` + `data.supported:
- *     ["DRAFT-2026-v1"]`.
+ *     "2026-07-28"` — rejects with `-32004` + `data.supported:
+ *     ["2026-07-28"]` and `data.requested: <client's value>` per
+ *     upstream `schema.ts` (`UnsupportedProtocolVersionError`).
  *   - Validates required headers match body case-insensitively
  *     (RFC 9110) — rejects with `-32001 HeaderMismatch`.
  *   - Surfaces one plain tool and one annotated tool (`x-mcp-header:
@@ -16,7 +17,7 @@
  *   - Test-only mode (constructor flag) returns `mcp-session-id: foo` on
  *     every response — for asserting preview warn + discard + non-conf.
  *   - Responds to `tools/list`, `tools/call`, `resources/list`,
- *     `resources/read`, `prompts/list`, `prompts/get`, `ping`.
+ *     `resources/read`, `prompts/list`, `prompts/get`.
  *
  * What it intentionally does NOT implement (out of scope per plan):
  *   - SSE `tools/list_changed` long-lived stream.
@@ -28,9 +29,13 @@
  *   npx tsx test-servers/stateless-mcp-server.ts
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 
-const DRAFT_2026_V1 = "DRAFT-2026-v1";
+const RC_2026_07_28 = "2026-07-28";
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
 
 export interface StatelessMcpFixtureOptions {
@@ -43,7 +48,7 @@ export interface StatelessMcpFixtureOptions {
   /**
    * Reject `server/discover` requests with `-32004 Unsupported protocol
    * version` (carrying `data.supported: ["2025-11-25"]`). Simulates a
-   * 2025-only server rejecting a DRAFT-2026-v1 client. Only the discover
+   * 2025-only server rejecting a 2026-07-28 client. Only the discover
    * request is affected; other methods still validate normally so tests
    * can exercise the negative-path probe in isolation.
    */
@@ -77,7 +82,7 @@ interface JsonRpcResult {
 
 export function startStatelessMcpFixture(
   port = 0,
-  opts: StatelessMcpFixtureOptions = {},
+  opts: StatelessMcpFixtureOptions = {}
 ): Promise<{ port: number; close: () => Promise<void> }> {
   const ttlMs = opts.toolsListTtlMs ?? 60_000;
   const host = opts.host ?? "127.0.0.1";
@@ -90,20 +95,36 @@ export function startStatelessMcpFixture(
 
     const body = await readJsonBody(req);
     if (!isJsonRpcRequest(body)) {
-      respondJsonRpcError(res, null, -32600, "Invalid Request", undefined, opts);
+      respondJsonRpcError(
+        res,
+        null,
+        -32600,
+        "Invalid Request",
+        undefined,
+        opts
+      );
       return;
     }
 
     // 1. Validate _meta protocolVersion.
     const meta = (body.params?._meta ?? {}) as Record<string, unknown>;
-    if (meta[PROTOCOL_VERSION_META_KEY] !== DRAFT_2026_V1) {
+    if (meta[PROTOCOL_VERSION_META_KEY] !== RC_2026_07_28) {
+      // UnsupportedProtocolVersionError carries `{ supported, requested }`
+      // in `error.data` per upstream `schema.ts` — NOT `supportedVersions`
+      // (that field belongs to DiscoverResult).
       respondJsonRpcError(
         res,
         body.id,
         -32004,
         "Unsupported protocol version",
-        { supported: [DRAFT_2026_V1] },
-        opts,
+        {
+          supported: [RC_2026_07_28],
+          requested:
+            typeof meta[PROTOCOL_VERSION_META_KEY] === "string"
+              ? (meta[PROTOCOL_VERSION_META_KEY] as string)
+              : null,
+        },
+        opts
       );
       return;
     }
@@ -122,15 +143,15 @@ export function startStatelessMcpFixture(
         body.id,
         -32004,
         "Unsupported protocol version",
-        { supported: ["2025-11-25"], requested: DRAFT_2026_V1 },
-        opts,
+        { supported: ["2025-11-25"], requested: RC_2026_07_28 },
+        opts
       );
       return;
     }
 
     // 2. Validate MCP-Protocol-Version header matches.
     const headerVersion = headerLookup(req, "mcp-protocol-version");
-    if (headerVersion !== DRAFT_2026_V1) {
+    if (headerVersion !== RC_2026_07_28) {
       respondJsonRpcError(
         res,
         body.id,
@@ -138,10 +159,10 @@ export function startStatelessMcpFixture(
         "HeaderMismatch",
         {
           field: "MCP-Protocol-Version",
-          expected: DRAFT_2026_V1,
+          expected: RC_2026_07_28,
           got: headerVersion ?? null,
         },
-        opts,
+        opts
       );
       return;
     }
@@ -154,8 +175,12 @@ export function startStatelessMcpFixture(
         body.id,
         -32001,
         "HeaderMismatch",
-        { field: "Mcp-Method", expected: body.method, got: headerMethod ?? null },
-        opts,
+        {
+          field: "Mcp-Method",
+          expected: body.method,
+          got: headerMethod ?? null,
+        },
+        opts
       );
       return;
     }
@@ -167,9 +192,7 @@ export function startStatelessMcpFixture(
       body.method === "prompts/get"
     ) {
       const expected =
-        body.method === "resources/read"
-          ? body.params?.uri
-          : body.params?.name;
+        body.method === "resources/read" ? body.params?.uri : body.params?.name;
       const headerName = headerLookup(req, "mcp-name");
       if (expected !== undefined && headerName !== expected) {
         respondJsonRpcError(
@@ -178,7 +201,7 @@ export function startStatelessMcpFixture(
           -32001,
           "HeaderMismatch",
           { field: "Mcp-Name", expected, got: headerName ?? null },
-          opts,
+          opts
         );
         return;
       }
@@ -196,7 +219,7 @@ export function startStatelessMcpFixture(
           -32001,
           "HeaderMismatch",
           { detail: err.message },
-          opts,
+          opts
         );
         return;
       }
@@ -215,7 +238,7 @@ export function startStatelessMcpFixture(
         port: boundPort,
         close: () =>
           new Promise<void>((resolveClose) =>
-            server.close(() => resolveClose()),
+            server.close(() => resolveClose())
           ),
       });
     });
@@ -225,7 +248,7 @@ export function startStatelessMcpFixture(
 async function dispatch(
   req: JsonRpcRequest,
   httpReq: IncomingMessage,
-  ttlMs: number,
+  ttlMs: number
 ): Promise<unknown> {
   switch (req.method) {
     case "server/discover":
@@ -236,18 +259,23 @@ async function dispatch(
       // `discoverThrowsUnsupportedVersion`) is handled before dispatch
       // by the outer version-validation block, so the success body here
       // is what a conforming server returns.
+      // DiscoverResult per SEP-2575 + upstream `schema.ts:585`:
+      // `supportedVersions` is plural (distinct from the `supported`
+      // singular on UnsupportedProtocolVersionError.error.data). The
+      // base Result also carries `resultType` — clients treat an absent
+      // field as "complete" but emitting it explicitly is the canonical
+      // shape the fixture should model. Upstream has NO `protocolVersion`
+      // field on DiscoverResult — that value lives in request `_meta`.
       return {
-        protocolVersion: DRAFT_2026_V1,
+        resultType: "complete",
         serverInfo: { name: "stateless-mcp-fixture", version: "0.1.0" },
         capabilities: {
           tools: {},
           resources: {},
           prompts: {},
         },
-        supportedVersions: [DRAFT_2026_V1],
+        supportedVersions: [RC_2026_07_28],
       };
-    case "ping":
-      return {};
     case "tools/list":
       return {
         tools: [
@@ -282,9 +310,7 @@ async function dispatch(
       const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
       if (name === "echo") {
         return {
-          content: [
-            { type: "text", text: String(args.value ?? "") },
-          ],
+          content: [{ type: "text", text: String(args.value ?? "") }],
         };
       }
       if (name === "regional-echo") {
@@ -300,22 +326,35 @@ async function dispatch(
           // Both absent: param wasn't supplied at all. Allowed —
           // schema's `required` field controls strictness.
           return {
-            content: [{ type: "text", text: JSON.stringify({ value: args.value ?? null, region: null }) }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  value: args.value ?? null,
+                  region: null,
+                }),
+              },
+            ],
           };
         }
         // Mirror semantics: decoded header value must equal the body
         // value when both are present. We only test ASCII primitives
         // in the fixture, so a string-equality check is exact.
         const decoded = decodeHeaderValue(region);
-        if (decoded === undefined || bodyRegion === undefined ||
-            String(bodyRegion) !== decoded) {
+        if (
+          decoded === undefined ||
+          bodyRegion === undefined ||
+          String(bodyRegion) !== decoded
+        ) {
           // Surface as a JSON-RPC error so tests see the contract
           // violation directly. Mirrors how a draft-conforming server
           // would respond with -32001 when headers don't match body.
           throw new HeaderMismatchError(
-            `Mcp-Param-Region (${region ?? "<absent>"}) must mirror params.arguments.region (${
+            `Mcp-Param-Region (${
+              region ?? "<absent>"
+            }) must mirror params.arguments.region (${
               bodyRegion === undefined ? "<absent>" : JSON.stringify(bodyRegion)
-            })`,
+            })`
           );
         }
         return {
@@ -372,7 +411,7 @@ function respondJsonRpcResult(
   res: ServerResponse,
   id: number | string,
   result: unknown,
-  opts: StatelessMcpFixtureOptions,
+  opts: StatelessMcpFixtureOptions
 ): void {
   const payload: JsonRpcResult = { jsonrpc: "2.0", id, result };
   const headers: Record<string, string> = {
@@ -389,7 +428,7 @@ function respondJsonRpcError(
   code: number,
   message: string,
   data: unknown,
-  opts: StatelessMcpFixtureOptions,
+  opts: StatelessMcpFixtureOptions
 ): void {
   const payload: JsonRpcError = {
     jsonrpc: "2.0",
@@ -409,7 +448,7 @@ function respondJsonRpcError(
 function respondHttpError(
   res: ServerResponse,
   status: number,
-  message: string,
+  message: string
 ): void {
   res.writeHead(status, { "Content-Type": "text/plain" });
   res.end(message);
@@ -441,7 +480,7 @@ function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
 
 function headerLookup(
   req: IncomingMessage,
-  nameLower: string,
+  nameLower: string
 ): string | undefined {
   const v = req.headers[nameLower];
   if (Array.isArray(v)) return v[0];
@@ -487,6 +526,6 @@ if (
   const port = Number(process.env.PORT ?? 4040);
   startStatelessMcpFixture(port).then(({ port: bound }) => {
     // eslint-disable-next-line no-console
-    console.log(`stateless-mcp fixture (DRAFT-2026-v1) listening on ${bound}`);
+    console.log(`stateless-mcp fixture (2026-07-28) listening on ${bound}`);
   });
 }

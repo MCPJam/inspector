@@ -1,14 +1,13 @@
 import { createBrowserRouter, RouterProvider } from "react-router";
 import App, {
-  AppBuilderRoute,
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
-  ChatV2Route,
   CiEvalsRoute,
   ConformanceRoute,
   EvalsRoute,
   ClientsRoute,
+  HomeRoute,
   LearningRoute,
   OAuthFlowRoute,
   OrganizationsRoute,
@@ -47,7 +46,8 @@ export function createAppRouter(): AppRouter {
     {
       element: <App />,
       children: [
-        { index: true, element: <ServersRoute /> },
+        { index: true, element: <HomeRoute /> },
+        { path: "home", element: <HomeRoute /> },
         { path: "servers", element: <ServersRoute /> },
         { path: "clients", element: <ClientsRoute /> },
         { path: "clients/:hostId", element: <ClientsRoute /> },
@@ -66,14 +66,17 @@ export function createAppRouter(): AppRouter {
         { path: "xaa-flow", element: <XAAFlowRoute /> },
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
-        { path: "chat-v2", element: <ChatV2Route /> },
+        // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
+        // Playground instead of the router's `*` catch-all (which would
+        // render ServersRoute while `pathnameToActiveTab` still resolves
+        // "chat" → "playground" — sidebar/content mismatch).
+        { path: "chat/*", element: <ChatAliasRoute /> },
         // `/chatboxes` — publish-surface tab (Publish / Sessions / Clusters)
         // for the chatbox bound 1:1 to the currently-selected host. The
         // Hosts hub at `/hosts` is the primary navigation entry; tests
         // exercise the hosted-OAuth callback path via `/hosts` rather
         // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
-        { path: "app-builder", element: <AppBuilderRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
         { path: "views", element: <ViewsRoute /> },
         { path: "support", element: <SupportRoute /> },

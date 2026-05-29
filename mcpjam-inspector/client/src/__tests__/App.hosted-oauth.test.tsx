@@ -44,8 +44,8 @@ const existingConvexUser = {
 
 const {
   createAppStateMock,
-  mockAppBuilderTabMounts,
-  mockAppBuilderTabProps,
+  mockPlaygroundTabMounts,
+  mockPlaygroundTabProps,
   mockConvexAuthState,
   mockCompleteHostedOAuthCallback,
   mockHandleOAuthCallback,
@@ -108,8 +108,8 @@ const {
 
   return {
     createAppStateMock,
-    mockAppBuilderTabMounts: vi.fn(),
-    mockAppBuilderTabProps: vi.fn(),
+    mockPlaygroundTabMounts: vi.fn(),
+    mockPlaygroundTabProps: vi.fn(),
     mockConvexAuthState: {
       isAuthenticated: true,
       isLoading: false,
@@ -268,6 +268,10 @@ vi.mock("../hooks/usePostHogIdentify", () => ({
   usePostHogIdentify: vi.fn(),
 }));
 
+vi.mock("../hooks/usePostHogOrgContext", () => ({
+  usePostHogOrgContext: vi.fn(),
+}));
+
 vi.mock("../lib/config", () => ({
   HOSTED_MODE: true,
   NON_PROD_LOCKDOWN: false,
@@ -356,25 +360,25 @@ vi.mock("../components/OAuthFlowTab", () => ({
 vi.mock("../components/xaa/XAAFlowTab", () => ({
   XAAFlowTab: () => <div data-testid="xaa-flow-tab">XAA Debugger Tab</div>,
 }));
-vi.mock("../components/ui-playground/AppBuilderTab", () => ({
-  AppBuilderTab: (props: {
+vi.mock("../components/playground/PlaygroundTab", () => ({
+  PlaygroundTab: (props: {
     onOnboardingChange?: (value: boolean) => void;
     isSignedInWithWorkOs?: boolean;
     isWorkOsAuthLoading?: boolean;
     isConvexAuthenticated?: boolean;
     hasSeenFirstRunOnboarding?: boolean;
   }) => {
-    mockAppBuilderTabProps(props);
+    mockPlaygroundTabProps(props);
     const { onOnboardingChange } = props;
 
     useLayoutEffect(() => {
-      mockAppBuilderTabMounts();
+      mockPlaygroundTabMounts();
       onOnboardingChange?.(true);
       return () => onOnboardingChange?.(false);
     }, [onOnboardingChange]);
 
     return (
-      <div data-testid="app-builder-tab">
+      <div data-testid="playground-tab">
         <button type="button" onClick={() => onOnboardingChange?.(false)}>
           Finish onboarding
         </button>
@@ -505,8 +509,8 @@ describe("App hosted OAuth callback handling", () => {
     mockOAuthFlowTabState.shouldThrow = false;
     mockOAuthFlowTabState.error = new Error("OAuth debugger failed");
     mockPosthogCapture.mockReset();
-    mockAppBuilderTabMounts.mockReset();
-    mockAppBuilderTabProps.mockReset();
+    mockPlaygroundTabMounts.mockReset();
+    mockPlaygroundTabProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
       () => new Promise<never>(() => {})
     );
@@ -2249,10 +2253,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
-  it("keeps App Builder mounted when onboarding chrome is restored", async () => {
+  it("keeps Playground mounted when onboarding chrome is restored", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/app-builder");
+    window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "playground-enabled"
@@ -2261,13 +2265,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
 
     expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
     expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
 
-    expect(mockAppBuilderTabMounts).toHaveBeenCalledTimes(1);
+    expect(mockPlaygroundTabMounts).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
 
@@ -2276,13 +2280,13 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("app-header")).toBeInTheDocument();
     });
 
-    expect(mockAppBuilderTabMounts).toHaveBeenCalledTimes(1);
+    expect(mockPlaygroundTabMounts).toHaveBeenCalledTimes(1);
   });
 
-  it("restores chrome after leaving App Builder mid-onboarding", async () => {
+  it("restores chrome after leaving Playground mid-onboarding", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/app-builder");
+    window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "playground-enabled"
@@ -2291,7 +2295,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
 
     expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
@@ -2306,10 +2310,10 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("app-header")).toBeInTheDocument();
     });
 
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("auto-routes a Convex-authenticated hosted guest into App Builder onboarding once startup is ready", async () => {
+  it("auto-routes a Convex-authenticated hosted guest into Playground onboarding once startup is ready", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2323,12 +2327,12 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/app-builder");
+    expect(window.location.pathname).toBe("/playground");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-    expect(mockAppBuilderTabProps).toHaveBeenLastCalledWith(
+    expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
@@ -2356,7 +2360,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("auto-routes an unseen guest when the only saved server is the incomplete first-run Excalidraw row", async () => {
@@ -2389,13 +2393,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/app-builder");
+    expect(window.location.pathname).toBe("/playground");
   });
 
-  it("does not auto-route to App Builder when any saved server already exists", async () => {
+  it("does not auto-route to Playground when any saved server already exists", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2426,10 +2430,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not auto-route to App Builder while the guest project is still provisioning", async () => {
+  it("does not auto-route to Playground while the guest project is still provisioning", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2449,10 +2453,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not auto-route to App Builder before hosted guest Convex auth is ready", async () => {
+  it("does not auto-route to Playground before hosted guest Convex auth is ready", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2471,10 +2475,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("does not auto-route to App Builder while the hosted shell is still auth-loading", async () => {
+  it("does not auto-route to Playground while the hosted shell is still auth-loading", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     mockUnseenOnboardingState();
@@ -2489,7 +2493,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
@@ -2509,7 +2513,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(window.location.pathname).toBe("/tools");
     });
 
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("does not let localStorage hide NUX for a fresh guest user row", async () => {
@@ -2528,14 +2532,14 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/app-builder");
+    expect(window.location.pathname).toBe("/playground");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
-  it("does not auto-route signed-in users into App Builder once startup is ready", async () => {
+  it("does not auto-route signed-in users into Playground once startup is ready", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/servers");
@@ -2549,7 +2553,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.pathname).toBe("/servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("keeps Playground available when evaluate-runs is disabled", async () => {
@@ -2607,7 +2611,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
   });
 
-  it("redirects ci-evals to Playground when evaluate-runs is disabled", async () => {
+  it("redirects ci-evals to evals when evaluate-runs is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2635,7 +2639,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("redirects nested ci-evals routes to Playground when evaluate-runs is disabled", async () => {
+  it("redirects nested ci-evals routes to evals when evaluate-runs is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals/suite/s_123?view=runs");

@@ -35,8 +35,7 @@ export interface ActiveServerSelectorProps {
    * Bulk-replace the multi-server selection. Wired in for the Playground
    * tab's host snapshot — picking a named host should toggle on the host's
    * required + optional servers in one shot, not per-server. Optional on
-   * the shared interface so the AppBuilder (single-select) doesn't need
-   * it.
+   * the shared interface so single-select callers don't need it.
    */
   onSelectMultipleServers?: (serverNames: string[]) => void;
   onConnect: (formData: ServerFormData) => void;

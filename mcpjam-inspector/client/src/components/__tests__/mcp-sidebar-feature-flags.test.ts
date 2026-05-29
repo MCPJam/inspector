@@ -120,7 +120,7 @@ describe("filterByFeatureFlags", () => {
         {
           id: "mcp-apps",
           items: [
-            { title: "App Builder", url: "#app-builder", icon: FakeIcon },
+            { title: "Views", url: "#views", icon: FakeIcon },
             {
               title: "Evaluate",
               url: "#evals",
@@ -134,7 +134,7 @@ describe("filterByFeatureFlags", () => {
       { "evaluate-runs": false },
     );
     const titles = result[0].items.map((i) => i.title);
-    expect(titles).toEqual(["App Builder", "Evaluate"]);
+    expect(titles).toEqual(["Views", "Evaluate"]);
   });
 
   it("keeps Playground visible when evaluate-runs is off", () => {

@@ -590,8 +590,8 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("auto-redirect to App Builder", () => {
-    it("navigates to app-builder when a pending server becomes connected", async () => {
+  describe("auto-redirect to Playground", () => {
+    it("navigates to playground when a pending server becomes connected", async () => {
       const server = createMockServer({ displayName: "Asana" });
       mockHookReturn = {
         catalogCards: [toCatalogCard([server])],
@@ -636,7 +636,7 @@ describe("RegistryTab", () => {
       );
 
       await waitFor(() => {
-        expect(onNavigate).toHaveBeenCalledWith("app-builder");
+        expect(onNavigate).toHaveBeenCalledWith("playground");
       });
       // localStorage should be cleaned up
       expect(readPendingQuickConnect()).toBeNull();
@@ -676,7 +676,7 @@ describe("RegistryTab", () => {
       );
 
       await waitFor(() => {
-        expect(onNavigate).toHaveBeenCalledWith("app-builder");
+        expect(onNavigate).toHaveBeenCalledWith("playground");
       });
       expect(readPendingQuickConnect()).toBeNull();
     });
@@ -716,7 +716,7 @@ describe("RegistryTab", () => {
       );
 
       await waitFor(() => {
-        expect(onNavigate).toHaveBeenCalledWith("app-builder");
+        expect(onNavigate).toHaveBeenCalledWith("playground");
       });
       expect(readPendingQuickConnect()).toBeNull();
     });

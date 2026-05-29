@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -21,7 +22,6 @@ import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
-import { ClientStyledChatTabV2 } from "./components/ClientStyledChatTabV2";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
@@ -38,7 +38,6 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
-import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
@@ -49,7 +48,6 @@ import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
-import { ClientPicker } from "./components/clients/ClientPicker";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -78,6 +76,7 @@ import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -213,7 +212,7 @@ import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import type {
   NavigateInspectorCommand,
-  OpenAppBuilderInspectorCommand,
+  OpenPlaygroundInspectorCommand,
   SelectServerInspectorCommand,
 } from "@/shared/inspector-command.js";
 
@@ -436,12 +435,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <TracingRoute />;
     case "clients":
       return <ClientsRoute />;
-    case "chat-v2":
-      return <ChatV2Route />;
     case "chatboxes":
       return <ChatboxesRoute />;
-    case "app-builder":
-      return <AppBuilderRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "views":
@@ -460,6 +455,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <EvalsRoute />;
     case "ci-evals":
       return <CiEvalsRoute />;
+    case "home":
+      return <HomeRoute />;
     case "servers":
     default:
       return <ServersRoute />;
@@ -926,119 +923,8 @@ export function XAAFlowRoute() {
   );
 }
 
-export function ChatV2Route() {
-  const {
-    connectedOrConnectingServerConfigs,
-    appState,
-    activeHost,
-    activeHostId,
-    convexProjectId,
-    evalChatHandoff,
-    handleConnect,
-    handleReconnect,
-    hostsHubFlagEnabled,
-    isAuthenticated,
-    projectServers,
-    setActiveHostId,
-    setEvalChatHandoff,
-    setSelectedMCPConfigs,
-    toggleServerSelection,
-  } = useAppRouteContext();
-
-  return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      {hostsHubFlagEnabled && isAuthenticated && convexProjectId && (
-        <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
-          <span className="text-xs text-muted-foreground">Client:</span>
-          <div className="w-48">
-            <ClientPicker
-              projectId={convexProjectId}
-              value={activeHostId}
-              onChange={setActiveHostId}
-              location="chat_tab"
-              placeholder="Project default"
-              noneLabel="Project default"
-            />
-          </div>
-        </div>
-      )}
-      <ClientStyledChatTabV2
-        connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
-        selectedServerNames={appState.selectedMultipleServers}
-        allServerConfigs={projectServers}
-        onServerToggle={toggleServerSelection}
-        onReconnectServer={handleReconnect}
-        onAddServer={handleConnect}
-        onSelectedServerNamesChange={setSelectedMCPConfigs}
-        enableMultiModelChat
-        showHostStyleSelector
-        executionConfig={
-          activeHost
-            ? {
-                modelId: activeHost.modelId,
-                systemPrompt: activeHost.systemPrompt,
-                temperature: activeHost.temperature,
-                requireToolApproval: activeHost.requireToolApproval,
-                progressiveToolDiscovery: activeHost.progressiveToolDiscovery,
-                respectToolVisibility: activeHost.respectToolVisibility,
-              }
-            : undefined
-        }
-        activeHost={activeHost}
-        evalChatHandoff={evalChatHandoff}
-        onEvalChatHandoffConsumed={(id) =>
-          setEvalChatHandoff((current: EvalChatHandoff | null) =>
-            current?.id === id ? null : current
-          )
-        }
-      />
-    </div>
-  );
-}
-
 export function TracingRoute() {
   return <TracingTab />;
-}
-
-export function AppBuilderRoute() {
-  const {
-    selectedMCPConfig,
-    appState,
-    projectServers,
-    activeProjectId,
-    workOsUser,
-    isWorkOsLoading,
-    isAuthenticated,
-    activeProject,
-    remoteFirstRunOnboardingShown,
-    isSelectedServerSyncing,
-    handleConnect,
-    handleUpdateHostContext,
-    ensureServersReady,
-    setAppBuilderOnboarding,
-    playgroundServerSelectorProps,
-  } = useAppRouteContext();
-
-  return (
-    <AppBuilderTab
-      serverConfig={selectedMCPConfig}
-      serverName={appState.selectedServer}
-      servers={projectServers}
-      activeProjectId={activeProjectId}
-      isSignedInWithWorkOs={!!workOsUser}
-      isWorkOsAuthLoading={isWorkOsLoading}
-      isConvexAuthenticated={isAuthenticated}
-      isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
-      hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
-      isServerSyncing={isSelectedServerSyncing}
-      onConnect={handleConnect}
-      onSaveHostContext={handleUpdateHostContext}
-      ensureServersReady={ensureServersReady}
-      onOnboardingChange={setAppBuilderOnboarding}
-      playgroundServerSelectorProps={playgroundServerSelectorProps}
-      enableMultiModelChat
-    />
-  );
 }
 
 export function PlaygroundRoute() {
@@ -1058,7 +944,7 @@ export function PlaygroundRoute() {
     projectServers,
     remoteFirstRunOnboardingShown,
     selectedMCPConfig,
-    setAppBuilderOnboarding,
+    setPlaygroundOnboarding,
     setEvalChatHandoff,
     workOsUser,
   } = useAppRouteContext();
@@ -1079,7 +965,7 @@ export function PlaygroundRoute() {
       onConnect={handleConnect}
       onSaveHostContext={handleUpdateHostContext}
       ensureServersReady={ensureServersReady}
-      onOnboardingChange={setAppBuilderOnboarding}
+      onOnboardingChange={setPlaygroundOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
       activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
@@ -1162,11 +1048,23 @@ export function OrganizationsRoute() {
 }
 
 export function ChatAliasRoute() {
-  return <Navigate to={routePaths.chatV2} replace />;
+  return <Navigate to={routePaths.playground} replace />;
 }
 
 export function ServersRedirectRoute() {
   return <Navigate to={routePaths.servers} replace />;
+}
+
+export function HomeRoute() {
+  const { activeOrganizationId, activeProjectId } = useAppRouteContext();
+  const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
+  if (!homeEnabled) return <ServersRoute />;
+  return (
+    <HomeTab
+      organizationId={activeOrganizationId ?? null}
+      projectId={activeProjectId ?? null}
+    />
+  );
 }
 
 export default function App() {
@@ -1186,7 +1084,7 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
-  const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
+  const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const billingDeepLinkNavRef = useRef(false);
@@ -1207,7 +1105,6 @@ export default function App() {
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
-  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
@@ -1577,7 +1474,6 @@ export default function App() {
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleServerSelection,
-    setSelectedMultipleServersToAllServers,
     projects,
     activeProjectId,
     handleSwitchProject,
@@ -1645,6 +1541,7 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
+  usePostHogOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
@@ -1778,7 +1675,7 @@ export default function App() {
   // Auto-select a connected server when navigating to tabs that need one
   useEffect(() => {
     const needsServer =
-      activeTab === "app-builder" ||
+      activeTab === "playground" ||
       activeTab === "tools" ||
       activeTab === "resources" ||
       activeTab === "prompts" ||
@@ -1792,8 +1689,26 @@ export default function App() {
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);
+      // Playground reads `selectedMultipleServers` as the authoritative
+      // selection; if we only seed `selectedServer`, the first toggle in
+      // the composer popover flips the auto-selected server off because
+      // the multi-set goes from `[]` → `[toggled]` and the single-server
+      // fallback drops out.
+      if (
+        activeTab === "playground" &&
+        appState.selectedMultipleServers.length === 0
+      ) {
+        setSelectedMCPConfigs([firstConnected[0]]);
+      }
     }
-  }, [activeTab, selectedMCPConfig, projectServers, setSelectedServer]);
+  }, [
+    activeTab,
+    selectedMCPConfig,
+    projectServers,
+    setSelectedServer,
+    setSelectedMCPConfigs,
+    appState.selectedMultipleServers,
+  ]);
 
   // Create effective app state that uses the correct projects (Convex when authenticated)
   const effectiveAppState = useMemo(
@@ -2127,15 +2042,6 @@ export default function App() {
     [navigateToTarget]
   );
 
-  const previousActiveTabRef = useRef(activeTab);
-  useEffect(() => {
-    const previousActiveTab = previousActiveTabRef.current;
-    if (activeTab === "chat-v2" && previousActiveTab !== "chat-v2") {
-      setSelectedMultipleServersToAllServers();
-    }
-    previousActiveTabRef.current = activeTab;
-  }, [activeTab, setSelectedMultipleServersToAllServers]);
-
   useEffect(() => {
     if (!routeOrganizationId || !hasRouteOrganization) {
       return;
@@ -2218,10 +2124,10 @@ export default function App() {
       }
     );
 
-    const unregisterOpenAppBuilder = registerInspectorCommandHandler(
-      "openAppBuilder",
+    const unregisterOpenPlayground = registerInspectorCommandHandler(
+      "openPlayground",
       async (rawCommand) => {
-        const command = rawCommand as OpenAppBuilderInspectorCommand;
+        const command = rawCommand as OpenPlaygroundInspectorCommand;
 
         if (command.payload.serverName) {
           let serverState = getInspectorServerState(command.payload.serverName);
@@ -2239,6 +2145,17 @@ export default function App() {
           }
 
           setSelectedServer(command.payload.serverName);
+          // Playground reads `selectedMultipleServers` as the authoritative
+          // selection whenever it is non-empty (see PlaygroundMain /
+          // PlaygroundTab). If we only set `selectedServer`, an external
+          // `openPlayground` command targeting server C while the user
+          // already has `[A, B]` selected lands on Playground with the
+          // header focused on C but tools/LLM still scoped to A+B; and
+          // the `needsServer` auto-select effect can't rescue it because
+          // `selectedMCPConfig` is now set, so it early-returns. The
+          // command's intent is "focus Playground on this server", so
+          // replace the multi-set rather than merging.
+          setSelectedMCPConfigs([command.payload.serverName]);
           const runtimeForPersist = serverState.runtimeServer;
           if (runtimeForPersist?.connectionStatus === "connected") {
             void persistRuntimeServerToProjectRef.current(
@@ -2248,11 +2165,11 @@ export default function App() {
           }
         }
 
-        navigateApp(routePaths.appBuilder);
+        navigateApp(routePaths.playground);
         await waitForUiCommit();
 
         return {
-          activeTab: "app-builder",
+          activeTab: "playground",
           selectedServer:
             command.payload.serverName || selectedServerRef.current || "none",
         };
@@ -2262,9 +2179,14 @@ export default function App() {
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
-      unregisterOpenAppBuilder();
+      unregisterOpenPlayground();
     };
-  }, [getInspectorServerState, setSelectedServer, syncAgentStatus]);
+  }, [
+    getInspectorServerState,
+    setSelectedServer,
+    setSelectedMCPConfigs,
+    syncAgentStatus,
+  ]);
 
   useLayoutEffect(() => {
     if (isHostedChatRoute) {
@@ -2287,8 +2209,8 @@ export default function App() {
       return;
     }
 
-    // Hosted guests need Convex auth and their actor-owned project before App
-    // Builder can auto-connect Excalidraw against the right project.
+    // Hosted guests need Convex auth and their actor-owned project before
+    // Playground can auto-connect Excalidraw against the right project.
     if (
       HOSTED_MODE &&
       (!isAuthenticated ||
@@ -2307,7 +2229,7 @@ export default function App() {
         remoteFirstRunOnboardingShown
       )
     ) {
-      navigateApp(routePaths.appBuilder);
+      navigateApp(routePaths.playground);
     }
   }, [
     activeProjectId,
@@ -2527,13 +2449,6 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "playground" && playgroundTabEnabled !== true) {
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (
-      (activeTab === "chat-v2" || activeTab === "app-builder") &&
-      playgroundTabEnabled === true
-    ) {
-      navigateApp(routePaths.playground, { replace: true });
     }
   }, [
     conformanceEnabled,
@@ -2544,7 +2459,6 @@ export default function App() {
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
     xaaEnabled,
-    playgroundTabEnabled,
     isAuthenticated,
     activeTab,
     navigateToTarget,
@@ -2588,7 +2502,7 @@ export default function App() {
         ...handoff,
         id: `eval-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       });
-      navigateApp(routePaths.chatV2);
+      navigateApp(routePaths.playground);
     },
     [setSelectedMCPConfigs]
   );
@@ -2739,8 +2653,7 @@ export default function App() {
   const playgroundServerSelectorProps = useMemo(():
     | PlaygroundServerSelectorProps
     | undefined => {
-    if (activeTab !== "app-builder" && activeTab !== "playground")
-      return undefined;
+    if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
@@ -2748,8 +2661,7 @@ export default function App() {
       // Playground supports multi-server selection — the user can toggle
       // several servers on simultaneously, the chat session sees their union,
       // and the docked tools pane aggregates tools across all of them.
-      // App Builder stays single-server.
-      isMultiSelectEnabled: activeTab === "playground",
+      isMultiSelectEnabled: true,
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
       onSelectMultipleServers: setSelectedMCPConfigs,
@@ -2972,7 +2884,6 @@ export default function App() {
     navigateToTarget,
     pendingDashboardOAuth,
     playgroundEnabled,
-    playgroundTabEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,
@@ -2984,7 +2895,7 @@ export default function App() {
     saveServerConfigWithoutConnecting,
     selectedMCPConfig,
     selectedServerEntry,
-    setAppBuilderOnboarding,
+    setPlaygroundOnboarding,
     setActiveHostId,
     setEvalChatHandoff,
     setHostsTabSelectedHostId,
@@ -3000,7 +2911,7 @@ export default function App() {
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
-        hidden={appBuilderOnboarding}
+        hidden={playgroundOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
         projects={projects}
@@ -3023,7 +2934,7 @@ export default function App() {
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
-          hidden={appBuilderOnboarding}
+          hidden={playgroundOnboarding}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
