@@ -179,6 +179,90 @@ describe("audio transcriptions route", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("passes through MCPJam voice budget errors with friendly copy", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          error:
+            "Daily MCPJam voice limit reached. Try again tomorrow or top up your credits.",
+          isRetryable: true,
+          retryAfter: 86_400_000,
+          details: "Try again tomorrow.",
+        }),
+        { status: 429, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    const response = await app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-voice",
+        input_audio: {
+          data: "UklGRiQA",
+          format: "webm",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error: "You've used today's voice budget.",
+      code: "user_rate_limit",
+      isRetryable: true,
+      retryAfter: 86_400_000,
+      details: "Try again tomorrow.",
+      status: 429,
+    });
+  });
+
+  it("passes through MCPJam voice in-progress errors with friendly copy", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "voice_transcription_in_progress",
+          error: "Busy",
+          isRetryable: true,
+          retryAfter: 10_000,
+        }),
+        { status: 429, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    const response = await app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-voice",
+        input_audio: {
+          data: "UklGRiQA",
+          format: "webm",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Another voice message is still processing. Try again in a moment.",
+      code: "voice_transcription_in_progress",
+      isRetryable: true,
+      retryAfter: 10_000,
+      status: 429,
+    });
+  });
+
   it("uses the same guest bearer fallback as free models for local project transcriptions", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
     vi.mocked(fetch).mockImplementation(async (url, init) => {

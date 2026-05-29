@@ -100,6 +100,9 @@ const VOICE_TRANSCRIPTION_TIMEOUT_MS = 25_000;
 const VOICE_TRANSCRIPTION_GUARD_MS = VOICE_TRANSCRIPTION_TIMEOUT_MS + 2_000;
 const VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE =
   "Voice transcription timed out. Try a shorter recording.";
+const VOICE_TRANSCRIPTION_IN_PROGRESS_CODE = "voice_transcription_in_progress";
+const VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE =
+  "Another voice message is still processing. Try again in a moment.";
 const VOICE_GLOBAL_MAX_SECONDS = 180;
 const VOICE_WARNING_THRESHOLD_SECONDS = 300;
 
@@ -469,7 +472,9 @@ export function ChatInput({
     voiceSecondsRemaining != null &&
     voiceSecondsRemaining > 0 &&
     voiceSecondsRemaining < VOICE_WARNING_THRESHOLD_SECONDS
-      ? `You have about ${formatVoiceSeconds(voiceSecondsRemaining)} of voice left today — recording will stop automatically.`
+      ? `You have about ${formatVoiceSeconds(
+          voiceSecondsRemaining
+        )} of voice left today — recording will stop automatically.`
       : null;
   const voiceBudgetExhausted =
     voiceSecondsRemaining != null && voiceSecondsRemaining <= 0;
@@ -807,11 +812,14 @@ export function ChatInput({
         const result = (await response.json().catch(() => null)) as {
           text?: unknown;
           error?: unknown;
+          code?: unknown;
         } | null;
 
         if (!response.ok) {
           const message =
-            typeof result?.error === "string"
+            result?.code === VOICE_TRANSCRIPTION_IN_PROGRESS_CODE
+              ? VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE
+              : typeof result?.error === "string"
               ? result.error
               : "OpenRouter transcription failed";
           throw new Error(message);
@@ -950,9 +958,7 @@ export function ChatInput({
     }
 
     if (voiceBudgetExhausted) {
-      setVoiceInputError(
-        "You've used your voice budget for today. It resets at the next daily cycle."
-      );
+      setVoiceInputError("You've used today's voice budget.");
       return;
     }
 
@@ -1102,7 +1108,12 @@ export function ChatInput({
       "chat_voice_input_recording_canceled",
       standardEventProps("chat_input")
     );
-  }, [clearRecordingCapTimer, clearStopFallbackTimer, posthog, stopAudioStream]);
+  }, [
+    clearRecordingCapTimer,
+    clearStopFallbackTimer,
+    posthog,
+    stopAudioStream,
+  ]);
 
   useEffect(() => {
     if (voiceInputState !== "transcribing") return;
@@ -1842,7 +1853,8 @@ export function ChatInput({
                   </TooltipTrigger>
                   <TooltipContent>Transcribing recording…</TooltipContent>
                 </Tooltip>
-              ) : voiceInputState !== "recording" &&
+              ) : (
+                voiceInputState !== "recording" &&
                 (isLoading ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1886,7 +1898,8 @@ export function ChatInput({
                     </TooltipTrigger>
                     <TooltipContent>Send message</TooltipContent>
                   </Tooltip>
-                ))}
+                ))
+              )}
             </div>
           </div>
         </div>
