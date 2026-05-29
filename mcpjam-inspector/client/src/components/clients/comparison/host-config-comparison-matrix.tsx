@@ -235,11 +235,14 @@ function FieldRow({
             data-testid={`diverge-gutter-${field.id}`}
           />
         )}
-        <div className="font-mono text-[12.5px] text-foreground">
+        <div className="text-[13px] font-medium text-foreground leading-tight">
+          {field.label}
+        </div>
+        <div className="font-mono text-[11px] text-muted-foreground/80 mt-0.5">
           {field.path}
         </div>
         {field.description && (
-          <div className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+          <div className="text-[11px] text-muted-foreground mt-1 leading-snug">
             {field.description}
           </div>
         )}

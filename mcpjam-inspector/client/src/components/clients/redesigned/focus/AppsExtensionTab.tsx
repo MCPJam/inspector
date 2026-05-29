@@ -25,6 +25,7 @@ import {
   MCP_UI_RESOURCE_MIME_TYPE,
 } from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
+import { hostConfigField } from "@/lib/host-config-field-schema";
 import { clientAdvertisesMcpApps, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
@@ -1007,6 +1008,9 @@ function OpenaiAppsCapabilityMatrix({
     });
   };
 
+  // Shared with the cross-host comparison matrix via the field schema.
+  const fInjectShim = hostConfigField("compatRuntime.openaiApps");
+
   return (
     <div className="rounded-[10px] border border-border bg-background">
       <div className="flex items-stretch border-b border-border">
@@ -1019,7 +1023,7 @@ function OpenaiAppsCapabilityMatrix({
         >
           <div className="flex flex-col gap-0.5">
             <span className="text-[12px] font-medium">
-              Inject <span className="font-mono">window.openai</span>
+              {fInjectShim.label}
             </span>
           </div>
           <ChevronDown
@@ -1033,7 +1037,7 @@ function OpenaiAppsCapabilityMatrix({
             id="apps-extension-openai-toggle"
             checked={injected}
             onCheckedChange={setInjected}
-            aria-label="Inject window.openai"
+            aria-label={fInjectShim.label}
           />
         </div>
       </div>

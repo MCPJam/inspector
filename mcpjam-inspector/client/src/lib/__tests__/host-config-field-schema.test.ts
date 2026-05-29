@@ -3,6 +3,7 @@ import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import {
   fieldDiverges,
   groupHostConfigFields,
+  hostConfigField,
   HOST_CONFIG_FIELDS,
   HOST_CONFIG_SECTIONS,
   type HostConfigFieldDef,
@@ -40,6 +41,37 @@ describe("HOST_CONFIG_SECTIONS", () => {
       "protocol",
       "apps",
     ]);
+  });
+});
+
+describe("HOST_CONFIG_FIELDS labels", () => {
+  it("every registered field has a non-empty user-friendly label", () => {
+    // Regression guard: focus tabs and the matrix both read `field.label`
+    // — a blank entry would render as an empty row label in both surfaces.
+    for (const f of HOST_CONFIG_FIELDS) {
+      expect(f.label, `field ${f.id} missing label`).toBeTruthy();
+      expect(f.label.length, `field ${f.id} label is empty`).toBeGreaterThan(0);
+    }
+  });
+
+  it("field ids are unique (lookup by id is unambiguous)", () => {
+    const ids = HOST_CONFIG_FIELDS.map((f) => f.id);
+    const dupes = ids.filter((id, idx) => ids.indexOf(id) !== idx);
+    expect(dupes).toEqual([]);
+  });
+});
+
+describe("hostConfigField()", () => {
+  it("returns the registered definition by id", () => {
+    const f = hostConfigField("temperature");
+    expect(f.id).toBe("temperature");
+    expect(f.label).toBe("Temperature");
+  });
+
+  it("throws on an unknown id so renames fail loudly at the call site", () => {
+    expect(() => hostConfigField("does-not-exist")).toThrow(
+      /unknown field id/i,
+    );
   });
 });
 

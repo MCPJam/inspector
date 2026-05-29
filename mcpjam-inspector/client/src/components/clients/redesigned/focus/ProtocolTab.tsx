@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
+import { hostConfigField } from "@/lib/host-config-field-schema";
 import {
   Select,
   SelectContent,
@@ -304,6 +305,9 @@ export function ProtocolTab({
     });
   };
 
+  // Shared with the cross-host comparison matrix via the field schema.
+  const fProtocolVersion = hostConfigField("mcpProtocolVersion");
+
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
       {statelessMcpEnabled ? (
@@ -313,7 +317,7 @@ export function ProtocolTab({
               className="text-[12px] font-medium"
               title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
             >
-              Protocol version
+              {fProtocolVersion.label}
             </span>
             <Select
               value={selectedDropdownValue}

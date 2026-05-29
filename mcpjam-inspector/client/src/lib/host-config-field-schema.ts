@@ -71,7 +71,15 @@ export interface HostConfigFieldDef {
   section: HostConfigSectionId;
   /** Within-section grouping label shown as a thin row above its fields. */
   subsection: string;
-  /** Dotted path against `HostConfigDtoV2` — shown as the row label. */
+  /**
+   * User-friendly label. This is the primary label both the matrix and the
+   * focus tabs display to users — keep it short ("Model", "Temperature",
+   * "Require tool approval"). Source of truth: editing here updates both
+   * surfaces. The dotted technical path is captured separately on
+   * {@link path}.
+   */
+  label: string;
+  /** Dotted path against `HostConfigDtoV2` — shown as a mono subtitle in the matrix. */
   path: string;
   /** User-friendly description; one short sentence. Optional. */
   description?: string;
@@ -93,6 +101,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "modelId",
     section: "agent",
     subsection: "Model & sampling",
+    label: "Model",
     path: "modelId",
     description: "LLM the host runs the agent on.",
     kind: { kind: "string" },
@@ -102,6 +111,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "temperature",
     section: "agent",
     subsection: "Model & sampling",
+    label: "Temperature",
     path: "temperature",
     description: "0–1 sampling temperature.",
     kind: { kind: "number" },
@@ -111,6 +121,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "requireToolApproval",
     section: "agent",
     subsection: "Model & sampling",
+    label: "Require tool approval",
     path: "requireToolApproval",
     description: "Prompts the user before each tool call.",
     kind: { kind: "boolean" },
@@ -120,6 +131,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "respectToolVisibility",
     section: "agent",
     subsection: "Model & sampling",
+    label: "Respect tool visibility",
     path: "respectToolVisibility",
     description: "SEP-1865 `_meta.ui.visibility` filter.",
     kind: { kind: "boolean" },
@@ -132,6 +144,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "progressiveToolDiscovery",
     section: "agent",
     subsection: "Model & sampling",
+    label: "Progressive tools",
     path: "progressiveToolDiscovery",
     description:
       "search_mcp_tools / load_mcp_tools meta-tools above context thresholds. Undefined = host decides.",
@@ -146,6 +159,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "systemPrompt",
     section: "agent",
     subsection: "System prompt",
+    label: "System prompt",
     path: "systemPrompt",
     description: "Verbatim system prompt sent on every turn.",
     kind: { kind: "string-long" },
@@ -159,6 +173,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "mcpProtocolVersion",
     section: "protocol",
     subsection: "Version",
+    label: "Protocol version",
     path: "mcpProfile.mcpProtocolVersion",
     description:
       "Host default pin. Per-server overrides win. Undefined = SDK chooses at request time.",
@@ -177,6 +192,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "supportedProtocolVersions",
     section: "protocol",
     subsection: "Version",
+    label: "Supported protocol versions",
     path: "mcpProfile.initialize.supportedProtocolVersions",
     description: "Accept-list advertised in the initialize handshake.",
     kind: { kind: "string-array" },
@@ -190,6 +206,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "clientInfo.name",
     section: "protocol",
     subsection: "clientInfo",
+    label: "Client name",
     path: "mcpProfile.initialize.clientInfo.name",
     description: "`initialize.clientInfo.name` sent to the server.",
     kind: { kind: "string" },
@@ -202,6 +219,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "clientInfo.version",
     section: "protocol",
     subsection: "clientInfo",
+    label: "Client version",
     path: "mcpProfile.initialize.clientInfo.version",
     description: "`initialize.clientInfo.version` sent to the server.",
     kind: { kind: "string" },
@@ -218,6 +236,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "capabilities.roots",
     section: "protocol",
     subsection: "Client capabilities advertised",
+    label: "Roots",
     path: "clientCapabilities.roots",
     description: "Filesystem roots exposed to the server.",
     kind: { kind: "object", itemNoun: "key" },
@@ -227,6 +246,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "capabilities.sampling",
     section: "protocol",
     subsection: "Client capabilities advertised",
+    label: "Sampling",
     path: "clientCapabilities.sampling",
     description: "Server-initiated LLM calls.",
     kind: { kind: "object", itemNoun: "key" },
@@ -236,6 +256,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "capabilities.elicitation",
     section: "protocol",
     subsection: "Client capabilities advertised",
+    label: "Elicitation",
     path: "clientCapabilities.elicitation",
     description: "Mid-call structured prompts back to the user.",
     kind: { kind: "object", itemNoun: "key" },
@@ -245,6 +266,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "capabilities.experimental",
     section: "protocol",
     subsection: "Client capabilities advertised",
+    label: "Experimental",
     path: "clientCapabilities.experimental",
     description: "Vendor-extension capabilities.",
     kind: { kind: "object", itemNoun: "key" },
@@ -258,6 +280,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "connectionDefaults.requestTimeout",
     section: "protocol",
     subsection: "Connection defaults",
+    label: "Request timeout",
     path: "connectionDefaults.requestTimeout",
     description: "Outbound MCP request timeout.",
     kind: { kind: "duration-ms" },
@@ -267,6 +290,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "connectionDefaults.headers",
     section: "protocol",
     subsection: "Connection defaults",
+    label: "Default headers",
     path: "connectionDefaults.headers",
     description: "Default outbound headers (Authorization, etc.).",
     kind: { kind: "object", itemNoun: "header" },
@@ -280,6 +304,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "hostCapabilitiesOverride",
     section: "apps",
     subsection: "Advertise & capability",
+    label: "Host capabilities override",
     path: "hostCapabilitiesOverride",
     description:
       "User override on SEP-1865 hostCapabilities. Absent = use the hostStyle preset.",
@@ -294,6 +319,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "compatRuntime.openaiApps",
     section: "apps",
     subsection: "OpenAI compat shim",
+    label: "Inject window.openai",
     path: "mcpProfile.apps.compatRuntime.openaiApps",
     description:
       "Inject the `window.openai` Apps-SDK shim. Undefined = use hostStyle preset.",
@@ -304,6 +330,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "compatRuntime.openaiAppsOverrides",
     section: "apps",
     subsection: "OpenAI compat shim",
+    label: "Shim method overrides",
     path: "mcpProfile.apps.compatRuntime.openaiAppsOverrides",
     description: "Sparse per-method overrides on the shim surface.",
     kind: { kind: "object", itemNoun: "method" },
@@ -317,6 +344,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "mcpAppsOverrides",
     section: "apps",
     subsection: "MCP Apps spec bridge",
+    label: "Spec-bridge overrides",
     path: "mcpProfile.apps.mcpAppsOverrides",
     description: "Sparse per-dimension overrides on the SEP-1865 capability matrix.",
     kind: { kind: "object", itemNoun: "dimension" },
@@ -326,6 +354,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "uiInitialize.hostInfo",
     section: "apps",
     subsection: "MCP Apps spec bridge",
+    label: "ui/initialize hostInfo",
     path: "mcpProfile.apps.uiInitialize.hostInfo",
     description: "Override the `hostInfo` advertised in `ui/initialize`.",
     kind: { kind: "object", itemNoun: "field" },
@@ -339,6 +368,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "sandbox.csp.mode",
     section: "apps",
     subsection: "Sandbox",
+    label: "CSP mode",
     path: "mcpProfile.apps.sandbox.csp.mode",
     description: "Starting CSP baseline for app iframes.",
     kind: {
@@ -351,6 +381,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "sandbox.permissions.mode",
     section: "apps",
     subsection: "Sandbox",
+    label: "Permissions mode",
     path: "mcpProfile.apps.sandbox.permissions.mode",
     description: "How spec permissions resolve in the iframe sandbox.",
     kind: {
@@ -363,6 +394,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "sandbox.permissions.allow",
     section: "apps",
     subsection: "Sandbox",
+    label: "Permissions allow-list",
     path: "mcpProfile.apps.sandbox.permissions.allow",
     description: "Per-permission allow flags (camera, microphone, etc.).",
     kind: { kind: "object", itemNoun: "permission" },
@@ -372,6 +404,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "sandbox.sandboxAttrs",
     section: "apps",
     subsection: "Sandbox",
+    label: "Sandbox attrs",
     path: "mcpProfile.apps.sandbox.sandboxAttrs",
     description:
       "Extra iframe `sandbox=` tokens unioned with `allow-scripts allow-same-origin`.",
@@ -382,12 +415,40 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "sandbox.allowFeatures",
     section: "apps",
     subsection: "Sandbox",
+    label: "Permissions Policy features",
     path: "mcpProfile.apps.sandbox.allowFeatures",
     description: "Permissions Policy entries appended to the outer iframe.",
     kind: { kind: "object", itemNoun: "feature" },
     read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.allowFeatures,
   },
 ];
+
+// ============================================================
+// Field-id lookup (for focus tabs to consume labels/descriptions)
+// ============================================================
+
+/**
+ * Map of field id → field def for O(1) lookup. Built lazily so the array
+ * stays the canonical declaration order; the map is purely a convenience
+ * for the focus tab consumers.
+ */
+const fieldById = new Map(HOST_CONFIG_FIELDS.map((f) => [f.id, f]));
+
+/**
+ * Look up a field by id. Throws if the id isn't registered — focus tabs
+ * pass static literal ids, so a typo should fail loudly at the first
+ * render in dev rather than silently miss the rename.
+ */
+export function hostConfigField(id: string): HostConfigFieldDef {
+  const f = fieldById.get(id);
+  if (!f) {
+    throw new Error(
+      `hostConfigField: unknown field id "${id}". ` +
+        `Did you rename it in host-config-field-schema.ts without updating callers?`,
+    );
+  }
+  return f;
+}
 
 // ============================================================
 // Comparison helpers
