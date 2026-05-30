@@ -4,6 +4,7 @@ import {
   Clock,
   CircleAlert,
   ExternalLink,
+  Undo2,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -121,7 +122,7 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
                   {formatUsd(entry.paidAmountCents)}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge status={entry.status} />
+                  <StatusBadge entry={entry} />
                 </TableCell>
                 <TableCell className="text-right">
                   <ReceiptCell entry={entry} />
@@ -151,14 +152,15 @@ function MobileRow({ entry }: { entry: PaymentHistoryEntry }) {
         </span>
       </div>
       <div className="flex items-center justify-between">
-        <StatusBadge status={entry.status} />
+        <StatusBadge entry={entry} />
         <ReceiptCell entry={entry} />
       </div>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: PaymentHistoryEntry["status"] }) {
+function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
+  const { status } = entry;
   if (status === "succeeded") {
     return (
       <Badge
@@ -178,6 +180,35 @@ function StatusBadge({ status }: { status: PaymentHistoryEntry["status"] }) {
       >
         <Clock aria-hidden="true" />
         Pending
+      </Badge>
+    );
+  }
+  if (status === "refunded" || status === "partially_refunded") {
+    const isPartial = status === "partially_refunded";
+    // Hover detail like "$3 of $5 refunded" when we know the reversed amount.
+    const detail =
+      typeof entry.reversedAmountCents === "number"
+        ? `${formatUsd(entry.reversedAmountCents)} of ${formatUsd(
+            entry.paidAmountCents,
+          )} refunded`
+        : undefined;
+    return (
+      <Badge
+        variant="outline"
+        className="border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200"
+      >
+        <Undo2 aria-hidden="true" />
+        <span title={detail}>
+          {isPartial ? "Partially refunded" : "Refunded"}
+        </span>
+      </Badge>
+    );
+  }
+  if (status === "disputed") {
+    return (
+      <Badge variant="destructive">
+        <CircleAlert aria-hidden="true" />
+        Disputed
       </Badge>
     );
   }
@@ -204,7 +235,9 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
         rel="noopener noreferrer"
         referrerPolicy="no-referrer"
         data-ph-no-capture
-        aria-label={`View receipt for ${formatDate(entry.occurredAt)} payment (opens in new tab)`}
+        aria-label={`View receipt for ${formatDate(
+          entry.occurredAt,
+        )} payment (opens in new tab)`}
         className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
         onClick={() => {
           posthog?.capture("credit_topup_receipt_opened", {
