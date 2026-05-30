@@ -170,6 +170,13 @@ interface PersistChatSessionOptions {
   hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
+  /**
+   * Multi-server MCP tool snapshot present when this ingestion fired. The
+   * backend fans it out to per-server `serverInspections` rows for cross-run
+   * diffing. Optional: if absent, the backend skips inspection bookkeeping
+   * for this session/turn.
+   */
+  toolSnapshot?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -351,6 +358,9 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
         ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
+        ...(options.toolSnapshot
+          ? { toolSnapshot: options.toolSnapshot }
+          : {}),
       }),
     });
 

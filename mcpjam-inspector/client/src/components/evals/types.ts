@@ -69,13 +69,20 @@ export type EvalSuite = {
     hostName: string | null;
     resolvedServerNames: string[];
   }>;
-  /** Server Sets MVP: shared named server collection for all hosts in this suite. */
-  serverSetId?: string;
-  /** Hydrated by the backend resolver when serverSetId is set. */
-  serverSet?: EvalServerSet;
+  /**
+   * Snapshot pointer to a `serverAttachment` row of scope 'standalone'
+   * — a named, project-scoped, frozen server selection. When present,
+   * the suite's run-time resolver uses the row's `selectedServerIds`
+   * for ALL attached hosts (bypassing per-attachment server picks).
+   * Editing the project pool does NOT propagate; to change the
+   * selection, create a new attachment and re-point the suite.
+   */
+  serverAttachmentId?: string;
+  /** Hydrated by the backend resolver when serverAttachmentId is set. */
+  serverAttachment?: EvalServerAttachment;
 };
 
-export type EvalServerSet = {
+export type EvalServerAttachment = {
   _id: string;
   name: string;
   serverIds: string[];

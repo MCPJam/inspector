@@ -14,12 +14,19 @@ import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 /**
- * Union of the suite's flat `environment.servers` and every attached
- * host's resolved server names. This is what "what servers can this suite
+ * Union of the suite's flat `environment.servers`, every attached host's
+ * resolved server names, AND the suite-level standalone server
+ * attachment (when present). This is what "what servers can this suite
  * see?" means in a host-aware world — generate, rerun-eligibility, and
- * any other "does this suite have any servers?" gates should consult this
- * instead of `environment.servers` alone, otherwise host-only suites
- * (created via `hostAttachments` with no flat list) read as empty.
+ * any other "does this suite have any servers?" gates should consult
+ * this instead of `environment.servers` alone, otherwise host-only or
+ * attachment-only suites read as empty.
+ *
+ * Standalone-attachment-only case: when the suite has a `serverAttachment`
+ * the per-host attachments carry empty `resolvedServerNames` because the
+ * standalone overrides per-host server picks at run-start. We must
+ * include the standalone's names here so eligibility doesn't gate "Run
+ * all" on a falsely-empty server list.
  */
 export function getEffectiveSuiteServers(
   // Accept a structurally narrower suite than the full `EvalSuite`: some
@@ -31,15 +38,21 @@ export function getEffectiveSuiteServers(
   suite: {
     environment?: { servers?: string[] } | undefined;
     hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
   },
 ): string[] {
   const flatServers = suite.environment?.servers ?? [];
-  const attachmentServers =
+  const hostAttachmentServers =
     suite.hostAttachments?.flatMap(
       (attachment) => attachment.resolvedServerNames ?? [],
     ) ?? [];
-  if (attachmentServers.length === 0) return flatServers;
-  return Array.from(new Set([...flatServers, ...attachmentServers]));
+  const standaloneServers = suite.serverAttachment?.resolvedServerNames ?? [];
+  if (hostAttachmentServers.length === 0 && standaloneServers.length === 0) {
+    return flatServers;
+  }
+  return Array.from(
+    new Set([...flatServers, ...hostAttachmentServers, ...standaloneServers]),
+  );
 }
 
 export function formatTime(ts?: number) {

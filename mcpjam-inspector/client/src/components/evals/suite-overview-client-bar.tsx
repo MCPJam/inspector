@@ -12,7 +12,7 @@ import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { EvalSuite } from "./types";
-import { ServerSetPicker } from "./server-set-picker";
+import { ServerAttachmentPicker } from "./server-attachment-picker";
 
 export interface SuiteOverviewHostBarProps {
   suite: EvalSuite;
@@ -24,7 +24,7 @@ export interface SuiteOverviewHostBarProps {
   projectHosts: HostListItem[];
   readOnly?: boolean;
   onUpdate?: (attachments: HostAttachmentDraft[]) => Promise<void>;
-  onUpdateServerSet?: (serverSetId: string) => Promise<void>;
+  onUpdateServerAttachment?: (serverAttachmentId: string) => Promise<void>;
   /** Merged with the outer bar container (e.g. tighter padding in {@link SuiteHeader}). */
   className?: string;
   /**
@@ -39,7 +39,7 @@ export function SuiteOverviewClientBar({
   projectHosts,
   readOnly = false,
   onUpdate,
-  onUpdateServerSet,
+  onUpdateServerAttachment,
   className,
   containerVariant = "panel",
 }: SuiteOverviewHostBarProps) {
@@ -184,8 +184,8 @@ export function SuiteOverviewClientBar({
         className,
       )}
     >
-      {/* Servers row — suite-level shared server set */}
-      {(suite.projectId && (editable || suite.serverSet)) ? (
+      {/* Servers row — suite-level standalone server attachment */}
+      {(suite.projectId && (editable || suite.serverAttachment)) ? (
         <div
           className={cn(
             "flex items-center gap-2 px-1 py-0.5 sm:px-2",
@@ -195,19 +195,19 @@ export function SuiteOverviewClientBar({
           <span className="shrink-0 text-[11px] text-muted-foreground w-12">
             Servers
           </span>
-          {editable && suite.projectId && onUpdateServerSet ? (
-            <ServerSetPicker
+          {editable && suite.projectId && onUpdateServerAttachment ? (
+            <ServerAttachmentPicker
               projectId={suite.projectId}
-              value={suite.serverSetId ?? null}
-              onChange={onUpdateServerSet}
+              value={suite.serverAttachmentId ?? null}
+              onChange={onUpdateServerAttachment}
             />
-          ) : suite.serverSet ? (
+          ) : suite.serverAttachment ? (
             <span className="flex h-8 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-xs font-medium text-foreground">
               <Globe className="size-3.5 shrink-0 text-muted-foreground" />
-              {suite.serverSet.name}
+              {suite.serverAttachment.name}
               <span className="text-[10px] text-muted-foreground">
-                · {suite.serverSet.serverIds.length} server
-                {suite.serverSet.serverIds.length === 1 ? "" : "s"}
+                · {suite.serverAttachment.serverIds.length} server
+                {suite.serverAttachment.serverIds.length === 1 ? "" : "s"}
               </span>
             </span>
           ) : null}
@@ -222,7 +222,7 @@ export function SuiteOverviewClientBar({
             "w-full min-w-0 max-w-full overflow-hidden",
         )}
       >
-        {(suite.projectId && (editable || suite.serverSet)) ? (
+        {(suite.projectId && (editable || suite.serverAttachment)) ? (
           <span className="shrink-0 text-[11px] text-muted-foreground w-12">
             Hosts
           </span>

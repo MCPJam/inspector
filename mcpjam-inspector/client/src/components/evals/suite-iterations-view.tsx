@@ -438,13 +438,17 @@ export function SuiteIterationsView({
     }
   };
 
-  const handleUpdateServerSet = async (serverSetId: string) => {
+  const handleUpdateServerAttachment = async (
+    serverAttachmentId: string,
+  ) => {
     try {
-      await updateSuite({ suiteId: suite._id, serverSetId });
-      toast.success("Server set updated");
+      await updateSuite({ suiteId: suite._id, serverAttachmentId });
+      toast.success("Server attachment updated");
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update server set"));
-      console.error("Failed to update server set:", error);
+      toast.error(
+        getBillingErrorMessage(error, "Failed to update server attachment"),
+      );
+      console.error("Failed to update server attachment:", error);
       throw error;
     }
   };
@@ -571,8 +575,8 @@ export function SuiteIterationsView({
             onSuiteHostAttachmentsUpdate={
               readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
-            onSuiteServerSetUpdate={
-              readOnlyConfig ? undefined : handleUpdateServerSet
+            onSuiteServerAttachmentUpdate={
+              readOnlyConfig ? undefined : handleUpdateServerAttachment
             }
             projectHosts={projectHosts}
             runDetailKpiStrip={

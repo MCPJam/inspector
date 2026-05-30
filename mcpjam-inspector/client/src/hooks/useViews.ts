@@ -229,7 +229,7 @@ export function useProjectServers({
   };
 }
 
-export function useProjectServerSets({
+export function useProjectServerAttachments({
   isAuthenticated,
   projectId,
 }: {
@@ -241,8 +241,8 @@ export function useProjectServerSets({
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const queryProjectId = projectId?.trim() ?? "";
 
-  const serverSets = useQuery(
-    "serverSets:listServerSets" as any,
+  const serverAttachments = useQuery(
+    "serverAttachments:listServerAttachments" as any,
     enableQuery ? ({ projectId: queryProjectId } as any) : "skip",
   ) as Array<{
     _id: string;
@@ -253,9 +253,9 @@ export function useProjectServerSets({
     updatedAt: number;
   }> | undefined;
 
-  const isLoading = enableQuery && serverSets === undefined;
+  const isLoading = enableQuery && serverAttachments === undefined;
 
-  return { serverSets: serverSets ?? [], isLoading };
+  return { serverAttachments: serverAttachments ?? [], isLoading };
 }
 
 // Server mutation for creating servers

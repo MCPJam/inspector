@@ -11,26 +11,26 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { cn } from "@/lib/utils";
-import { useProjectServerSets } from "@/hooks/useViews";
+import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useProjectServers } from "@/hooks/useViews";
 import { ServerSelectionList } from "@/components/clients/server-selection-list";
-import type { EvalServerSet } from "./types";
+import type { EvalServerAttachment } from "./types";
 
-type ServerSetPickerProps = {
+type ServerAttachmentPickerProps = {
   projectId: string;
   value: string | null;
-  onChange: (serverSetId: string) => void;
+  onChange: (serverAttachmentId: string) => void;
   disabled?: boolean;
 };
 
-export function ServerSetPicker({
+export function ServerAttachmentPicker({
   projectId,
   value,
   onChange,
   disabled = false,
-}: ServerSetPickerProps) {
+}: ServerAttachmentPickerProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { serverSets, isLoading } = useProjectServerSets({
+  const { serverAttachments, isLoading } = useProjectServerAttachments({
     isAuthenticated,
     projectId,
   });
@@ -47,16 +47,18 @@ export function ServerSetPicker({
   );
   const [isCreating, setIsCreating] = useState(false);
 
-  const createServerSet = useMutation("serverSets:createServerSet" as any);
+  const createServerAttachment = useMutation(
+    "serverAttachments:createServerAttachment" as any
+  );
 
-  const selectedSet = useMemo(
-    () => (value ? serverSets.find((s) => s._id === value) : null),
-    [value, serverSets]
+  const selectedAttachment = useMemo(
+    () => (value ? serverAttachments.find((s) => s._id === value) : null),
+    [value, serverAttachments]
   );
 
   const handleSelect = useCallback(
-    (set: EvalServerSet) => {
-      onChange(set._id);
+    (attachment: EvalServerAttachment) => {
+      onChange(attachment._id);
       setOpen(false);
     },
     [onChange]
@@ -79,7 +81,7 @@ export function ServerSetPicker({
     if (!name) return;
     setIsCreating(true);
     try {
-      const result = (await createServerSet({
+      const result = (await createServerAttachment({
         projectId,
         name,
         serverIds: Array.from(createServerIds),
@@ -90,20 +92,26 @@ export function ServerSetPicker({
       setCreateName("");
       setCreateServerIds(new Set());
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to create server set";
+      const msg =
+        err instanceof Error ? err.message : "Failed to create server attachment";
       toast.error(msg);
     } finally {
       setIsCreating(false);
     }
-  }, [createName, createServerIds, createServerSet, onChange, projectId]);
+  }, [
+    createName,
+    createServerIds,
+    createServerAttachment,
+    onChange,
+    projectId,
+  ]);
 
-  const triggerLabel = selectedSet
-    ? selectedSet.name
-    : "No server set · pick one";
-  const triggerCount =
-    selectedSet
-      ? `${selectedSet.serverIds.length} server${selectedSet.serverIds.length === 1 ? "" : "s"}`
-      : null;
+  const triggerLabel = selectedAttachment
+    ? selectedAttachment.name
+    : "No server attachment · pick one";
+  const triggerCount = selectedAttachment
+    ? `${selectedAttachment.serverIds.length} server${selectedAttachment.serverIds.length === 1 ? "" : "s"}`
+    : null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -114,7 +122,7 @@ export function ServerSetPicker({
           className={cn(
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",
-            !selectedSet
+            !selectedAttachment
               ? "border-amber-500/50 bg-amber-500/10 hover:bg-amber-500/20"
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             disabled && "cursor-not-allowed opacity-50"
@@ -147,33 +155,35 @@ export function ServerSetPicker({
       >
         {!showCreate ? (
           <div className="space-y-0.5">
-            {serverSets.length === 0 && !isLoading ? (
+            {serverAttachments.length === 0 && !isLoading ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                No server sets yet — create one below.
+                No server attachments yet — create one below.
               </p>
             ) : null}
-            {serverSets.map((set) => (
+            {serverAttachments.map((attachment) => (
               <button
-                key={set._id}
+                key={attachment._id}
                 type="button"
-                onClick={() => handleSelect(set as EvalServerSet)}
+                onClick={() =>
+                  handleSelect(attachment as EvalServerAttachment)
+                }
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
                   "hover:bg-accent hover:text-accent-foreground",
-                  set._id === value && "bg-accent/50"
+                  attachment._id === value && "bg-accent/50"
                 )}
               >
                 <Check
                   className={cn(
                     "size-3.5 shrink-0",
-                    set._id === value ? "opacity-100" : "opacity-0"
+                    attachment._id === value ? "opacity-100" : "opacity-0"
                   )}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{set.name}</div>
+                  <div className="truncate font-medium">{attachment.name}</div>
                   <div className="text-[11px] text-muted-foreground">
-                    {set.serverIds.length} server
-                    {set.serverIds.length === 1 ? "" : "s"}
+                    {attachment.serverIds.length} server
+                    {attachment.serverIds.length === 1 ? "" : "s"}
                   </div>
                 </div>
               </button>
@@ -185,14 +195,14 @@ export function ServerSetPicker({
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
               >
                 <Plus className="size-3.5 shrink-0 text-muted-foreground" />
-                <span>Create new set…</span>
+                <span>Create new attachment…</span>
               </button>
             </div>
           </div>
         ) : (
           <div className="space-y-3 p-1">
             <div className="space-y-1">
-              <Label className="text-[11px]">Set name</Label>
+              <Label className="text-[11px]">Attachment name</Label>
               <Input
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
@@ -225,7 +235,7 @@ export function ServerSetPicker({
                     No servers in the project pool yet.
                   </p>
                 }
-                ariaLabel="Pick servers for this set"
+                ariaLabel="Pick servers for this attachment"
               />
             </div>
             <div className="flex gap-2">

@@ -14,11 +14,23 @@ export type ServerToolSnapshotTool = {
   description?: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
+  metadata?: Record<string, unknown>;
+};
+
+// The server's response to MCP `initialize`. Captured alongside the tool
+// catalog so the backend's diff engine can surface protocol/capability drift
+// across reconnects.
+export type ServerToolSnapshotInitialize = {
+  protocolVersion?: string;
+  serverInfo?: { name?: string; version?: string };
+  capabilities?: Record<string, unknown>;
+  instructions?: string;
 };
 
 export type ServerToolSnapshotServer = {
   serverId: string;
   tools: ServerToolSnapshotTool[];
+  initialize?: ServerToolSnapshotInitialize;
   captureError?: string;
 };
 
@@ -259,6 +271,85 @@ export function flattenServerToolSnapshotTools(
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function transformToolForSnapshot(tool: any): ServerToolSnapshotTool {
+  const meta =
+    tool._meta &&
+    typeof tool._meta === "object" &&
+    !Array.isArray(tool._meta)
+      ? (tool._meta as Record<string, unknown>)
+      : undefined;
+  return {
+    name: tool.name,
+    ...(normalizeTrimmedString(tool.description)
+      ? { description: normalizeTrimmedString(tool.description) }
+      : {}),
+    ...(tool.inputSchema !== undefined
+      ? { inputSchema: tool.inputSchema }
+      : {}),
+    ...(tool.outputSchema !== undefined
+      ? { outputSchema: tool.outputSchema }
+      : {}),
+    ...(meta && Object.keys(meta).length > 0 ? { metadata: meta } : {}),
+  };
+}
+
+function readInitializeFromManager(
+  manager: Manager,
+  serverId: string,
+): ServerToolSnapshotInitialize | undefined {
+  let info: unknown;
+  try {
+    info = (manager as { getInitializationInfo?: (id: string) => unknown })
+      .getInitializationInfo?.(serverId);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(info)) {
+    return undefined;
+  }
+
+  const result: ServerToolSnapshotInitialize = {};
+
+  const protocolVersion =
+    typeof info.protocolVersion === "string"
+      ? info.protocolVersion.trim()
+      : undefined;
+  if (protocolVersion) {
+    result.protocolVersion = protocolVersion;
+  }
+
+  if (isRecord(info.serverInfo)) {
+    const name =
+      typeof info.serverInfo.name === "string"
+        ? info.serverInfo.name.trim()
+        : undefined;
+    const version =
+      typeof info.serverInfo.version === "string"
+        ? info.serverInfo.version.trim()
+        : undefined;
+    if (name || version) {
+      result.serverInfo = {
+        ...(name ? { name } : {}),
+        ...(version ? { version } : {}),
+      };
+    }
+  }
+
+  if (isRecord(info.capabilities)) {
+    result.capabilities = info.capabilities;
+  }
+
+  if (typeof info.instructions === "string" && info.instructions.trim()) {
+    result.instructions = info.instructions.trim();
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export async function exportConnectedServerToolSnapshotForEvalAuthoring(
   manager: Manager,
   serverIds: string[],
@@ -269,22 +360,14 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
     [...new Set(serverIds)].map(async (serverId) => {
       try {
         const result = await manager.listTools(serverId);
-        const tools = (result?.tools ?? []).map((tool: any) => ({
-          name: tool.name,
-          ...(normalizeTrimmedString(tool.description)
-            ? { description: normalizeTrimmedString(tool.description) }
-            : {}),
-          ...(tool.inputSchema !== undefined
-            ? { inputSchema: tool.inputSchema }
-            : {}),
-          ...(tool.outputSchema !== undefined
-            ? { outputSchema: tool.outputSchema }
-            : {}),
-        }));
+        const tools = (result?.tools ?? []).map(transformToolForSnapshot);
+
+        const initialize = readInitializeFromManager(manager, serverId);
 
         return {
           serverId,
           tools: sortSnapshotTools(tools),
+          ...(initialize ? { initialize } : {}),
         } satisfies ServerToolSnapshotServer;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -308,6 +391,53 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
     version: 1,
     capturedAt: Date.now(),
     servers: sortSnapshotServers(servers),
+  };
+}
+
+/**
+ * One-server inspection snapshot for the connect-time path.
+ *
+ * The manager is keyed by `managerKey` (display name in the connect path,
+ * Convex Id in the eval path), but the snapshot's `serverId` carries
+ * `snapshotServerId` so the backend's `normalizeId('servers', …)` resolves
+ * correctly. Always returns a valid snapshot — failures land in
+ * `captureError` rather than throwing — so callers can use this without an
+ * outer try/catch.
+ */
+export async function exportSingleServerForInspection(
+  manager: Manager,
+  managerKey: string,
+  snapshotServerId: string,
+  options?: { logPrefix?: string },
+): Promise<ServerToolSnapshot> {
+  const logPrefix = options?.logPrefix ?? "inspection";
+  let server: ServerToolSnapshotServer;
+  try {
+    const result = await manager.listTools(managerKey);
+    const tools = (result?.tools ?? []).map(transformToolForSnapshot);
+    const initialize = readInitializeFromManager(manager, managerKey);
+    server = {
+      serverId: snapshotServerId,
+      tools: sortSnapshotTools(tools),
+      ...(initialize ? { initialize } : {}),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`[${logPrefix}] Failed to capture inspection snapshot`, {
+      managerKey,
+      snapshotServerId,
+      error: message,
+    });
+    server = {
+      serverId: snapshotServerId,
+      tools: [],
+      captureError: message,
+    };
+  }
+  return {
+    version: 1,
+    capturedAt: Date.now(),
+    servers: [server],
   };
 }
 

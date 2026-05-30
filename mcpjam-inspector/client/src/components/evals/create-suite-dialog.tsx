@@ -8,7 +8,7 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "./client-attachments-editor";
-import { ServerSetPicker } from "./server-set-picker";
+import { ServerAttachmentPicker } from "./server-attachment-picker";
 
 export type CreateSuitePayload = {
   name: string;
@@ -20,8 +20,8 @@ export type CreateSuitePayload = {
    * no longer a suite-level flat server list or model override.
    */
   hostAttachments?: HostAttachmentDraft[];
-  /** Server Sets MVP: shared server collection for all runs of this suite. */
-  serverSetId?: string;
+  /** Standalone server attachment shared across all runs of this suite. */
+  serverAttachmentId?: string;
 };
 
 type CreateSuiteDialogProps = {
@@ -44,7 +44,9 @@ export function CreateSuiteDialog({
   const [hostAttachments, setHostAttachments] = useState<
     HostAttachmentDraft[]
   >([]);
-  const [serverSetId, setServerSetId] = useState<string | null>(null);
+  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
+    null,
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export function CreateSuiteDialog({
       setName("");
       setDescription("");
       setHostAttachments([]);
-      setServerSetId(null);
+      setServerAttachmentId(null);
       setIsSaving(false);
     }
   }, [open]);
@@ -70,7 +72,7 @@ export function CreateSuiteDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
-        ...(serverSetId ? { serverSetId } : {}),
+        ...(serverAttachmentId ? { serverAttachmentId } : {}),
       });
     } catch {
       // onSubmit surfaces its own error toast; keep the dialog open so the
@@ -120,14 +122,15 @@ export function CreateSuiteDialog({
                 <div>
                   <h3 className="text-sm font-medium text-foreground">Servers</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Pick a named server set that all hosts will run against. You
-                    can create a new set inline or change it later.
+                    Pick a named server attachment that all hosts will run
+                    against. You can create a new attachment inline or change it
+                    later.
                   </p>
                 </div>
-                <ServerSetPicker
+                <ServerAttachmentPicker
                   projectId={projectId}
-                  value={serverSetId}
-                  onChange={setServerSetId}
+                  value={serverAttachmentId}
+                  onChange={setServerAttachmentId}
                   disabled={isSaving}
                 />
               </div>

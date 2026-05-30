@@ -110,8 +110,10 @@ interface SuiteHeaderProps {
   onSuiteHostAttachmentsUpdate?: (
     attachments: HostAttachmentDraft[],
   ) => Promise<void>;
-  /** Persists the suite's server set selection. */
-  onSuiteServerSetUpdate?: (serverSetId: string) => Promise<void>;
+  /** Persists the suite's server attachment selection. */
+  onSuiteServerAttachmentUpdate?: (
+    serverAttachmentId: string,
+  ) => Promise<void>;
   /** Hosts available to attach (from `useHostList`). Optional for legacy callers. */
   projectHosts?: HostListItem[];
   /** Playground run detail: compact KPI strip rendered beside the run title. */
@@ -159,7 +161,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runningTestCaseId = null,
     runsViewMode = "runs",
     onSuiteHostAttachmentsUpdate,
-    onSuiteServerSetUpdate,
+    onSuiteServerAttachmentUpdate,
     projectHosts = [],
     runDetailKpiStrip,
   } = props;
@@ -393,7 +395,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       projectHosts={projectHosts}
       readOnly={readOnlyConfig}
       onUpdate={onSuiteHostAttachmentsUpdate}
-      onUpdateServerSet={onSuiteServerSetUpdate}
+      onUpdateServerAttachment={onSuiteServerAttachmentUpdate}
     />
   );
 

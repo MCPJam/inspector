@@ -355,7 +355,13 @@ export function useEvalHandlers({
       const modelApiKeys: Record<string, string> = {};
 
       return {
-        suiteServers: normalizeSuiteServerRefs(suite.environment?.servers),
+        // Effective server list: union of legacy `environment.servers`,
+        // per-host attachment picks, AND the suite's standalone server
+        // attachment (when set). The runner fallback in
+        // `runEvals.serverIds` reads this, so an attachment-only suite
+        // would otherwise send `serverIds: []` and fail the backend's
+        // `min(1)` validation with HTTP 400.
+        suiteServers: normalizeSuiteServerRefs(getEffectiveSuiteServers(suite)),
         testCases,
         tests,
         modelApiKeys,
