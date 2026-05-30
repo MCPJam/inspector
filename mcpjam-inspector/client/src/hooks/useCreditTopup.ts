@@ -238,26 +238,10 @@ export function useCreditTopup() {
         });
         clearPendingTopup();
 
-        // Re-shape known server-side rate-limit responses into a friendlier,
-        // bounded user message. The dialog's existing toast displays
-        // `error.message` verbatim, so re-throwing a sanitized Error is
-        // enough to surface the right copy without double-toasting.
-        let surfaced: unknown = err;
-        if (
-          err instanceof Error &&
-          err.message.includes("Too many top-up attempts")
-        ) {
-          surfaced = new Error(
-            "You've hit the top-up rate limit. Try again in a few minutes.",
-          );
-        }
-
         const message =
-          surfaced instanceof Error
-            ? surfaced.message
-            : "Failed to start checkout";
+          err instanceof Error ? err.message : "Failed to start checkout";
         setError(message);
-        throw surfaced;
+        throw err;
       } finally {
         setIsStartingCheckout(false);
       }
