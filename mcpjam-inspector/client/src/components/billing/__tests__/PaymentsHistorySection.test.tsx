@@ -36,6 +36,9 @@ function makeEntry(
     paidAmountCents: overrides.paidAmountCents ?? 1000,
     status: overrides.status ?? "succeeded",
     occurredAt: overrides.occurredAt ?? Date.now(),
+    ...(overrides.reversedAmountCents !== undefined
+      ? { reversedAmountCents: overrides.reversedAmountCents }
+      : {}),
     ...(overrides.receiptUrl !== undefined
       ? { receiptUrl: overrides.receiptUrl }
       : {}),
@@ -58,9 +61,7 @@ describe("PaymentsHistorySection", () => {
     // would otherwise fire the view event. Asserts both render-suppression
     // AND telemetry-suppression in the same test.
     const populated: typeof hookState = {
-      entries: [
-        makeEntry({ id: "flag_test_entry", status: "succeeded" }),
-      ],
+      entries: [makeEntry({ id: "flag_test_entry", status: "succeeded" })],
       isLoading: false,
       isAuthenticated: true,
     };
@@ -91,7 +92,9 @@ describe("PaymentsHistorySection", () => {
   describe("loading + empty states", () => {
     it("renders loading skeletons while the query is in flight", () => {
       render(<PaymentsHistorySection />);
-      expect(screen.getByTestId("payments-history-loading")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("payments-history-loading"),
+      ).toBeInTheDocument();
     });
 
     it("renders the empty state with no CTA when there are no entries", () => {
@@ -221,6 +224,62 @@ describe("PaymentsHistorySection", () => {
         (c) => c[0] === "credit_topup_history_viewed",
       );
       expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe("reversal statuses", () => {
+    // Each entry renders twice (desktop table + mobile stack), so badge text
+    // appears 2×. These statuses are the whole point of the fix: a refunded or
+    // charged-back payment must NOT read as a plain green "Succeeded".
+    function renderWithStatus(entry: PaymentHistoryEntry) {
+      hookState = {
+        entries: [entry],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      render(<PaymentsHistorySection />);
+    }
+
+    it("renders a Refunded badge for a fully refunded payment", () => {
+      renderWithStatus(
+        makeEntry({
+          id: "r1",
+          status: "refunded",
+          paidAmountCents: 500,
+          reversedAmountCents: 500,
+        }),
+      );
+      expect(screen.getAllByText("Refunded")).toHaveLength(2);
+      // Must not also read as Succeeded.
+      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+    });
+
+    it("renders a Partially refunded badge with a reversed-amount tooltip", () => {
+      renderWithStatus(
+        makeEntry({
+          id: "r2",
+          status: "partially_refunded",
+          paidAmountCents: 2500,
+          reversedAmountCents: 1000,
+        }),
+      );
+      const badges = screen.getAllByText("Partially refunded");
+      expect(badges).toHaveLength(2);
+      // "$10 of $25 refunded" hover detail on the badge label.
+      expect(badges[0]).toHaveAttribute("title", "$10 of $25 refunded");
+    });
+
+    it("renders a Disputed badge for a charged-back payment", () => {
+      renderWithStatus(
+        makeEntry({
+          id: "r3",
+          status: "disputed",
+          paidAmountCents: 500,
+          reversedAmountCents: 500,
+        }),
+      );
+      expect(screen.getAllByText("Disputed")).toHaveLength(2);
+      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
     });
   });
 });

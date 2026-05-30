@@ -2,12 +2,20 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
 
-export type PaymentHistoryStatus = "succeeded" | "pending" | "failed";
+export type PaymentHistoryStatus =
+  | "succeeded"
+  | "pending"
+  | "failed"
+  | "refunded"
+  | "partially_refunded"
+  | "disputed";
 
 export interface PaymentHistoryEntry {
   id: string;
   sessionId: string;
   paidAmountCents: number;
+  /** Paid cents handed back when refunded/charged back. Reversed rows only. */
+  reversedAmountCents?: number;
   status: PaymentHistoryStatus;
   occurredAt: number;
   receiptUrl?: string;
@@ -17,25 +25,31 @@ interface RawEntry {
   id?: unknown;
   sessionId?: unknown;
   paidAmountCents?: unknown;
+  reversedAmountCents?: unknown;
   status?: unknown;
   occurredAt?: unknown;
   receiptUrl?: unknown;
 }
 
+const VALID_STATUSES = new Set<PaymentHistoryStatus>([
+  "succeeded",
+  "pending",
+  "failed",
+  "refunded",
+  "partially_refunded",
+  "disputed",
+]);
+
 const isValidStatus = (value: unknown): value is PaymentHistoryStatus =>
-  value === "succeeded" || value === "pending" || value === "failed";
+  typeof value === "string" &&
+  VALID_STATUSES.has(value as PaymentHistoryStatus);
 
 const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
   // Accept either a bare array or `{ items: [...] }`. Loose-shape parsing
   // matches the rest of the billing hooks so the backend can evolve without
   // forcing a coordinated inspector PR.
   let items: unknown = raw;
-  if (
-    raw &&
-    typeof raw === "object" &&
-    !Array.isArray(raw) &&
-    "items" in raw
-  ) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && "items" in raw) {
     items = (raw as { items?: unknown }).items;
   }
   if (!Array.isArray(items)) return undefined;
@@ -57,6 +71,9 @@ const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
       paidAmountCents: item.paidAmountCents,
       status: item.status,
       occurredAt: item.occurredAt,
+      ...(typeof item.reversedAmountCents === "number"
+        ? { reversedAmountCents: item.reversedAmountCents }
+        : {}),
       ...(typeof item.receiptUrl === "string" && item.receiptUrl.length > 0
         ? { receiptUrl: item.receiptUrl }
         : {}),
@@ -72,10 +89,8 @@ export interface UsePaymentsHistoryResult {
 }
 
 export function usePaymentsHistory(): UsePaymentsHistoryResult {
-  const {
-    isAuthenticated: hasConvexIdentity,
-    isLoading: isConvexAuthLoading,
-  } = useConvexAuth();
+  const { isAuthenticated: hasConvexIdentity, isLoading: isConvexAuthLoading } =
+    useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const hasWorkOsUser = !!user;
   const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
