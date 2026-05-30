@@ -539,7 +539,6 @@ export function RunOverview({
                     [
                       { value: "runs", label: "Runs" },
                       { value: "test-cases", label: "Cases" },
-                      { value: "cross-host", label: "Cross-host" },
                     ] as { value: SuiteOverviewView; label: string }[]
                   ).map(({ value, label }) => (
                     <button

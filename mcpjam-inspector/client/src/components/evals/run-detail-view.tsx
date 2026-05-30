@@ -692,7 +692,7 @@ export function RunDetailView({
               className="h-8 text-xs"
             >
               <ArrowLeftRight className="mr-2 h-3.5 w-3.5" aria-hidden />
-              Compare to Run {formatRunId(compareBaseRun._id)}
+              Compare to previous run
             </Button>
           </div>
         ) : null}

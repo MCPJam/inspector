@@ -123,17 +123,17 @@ describe("RunDiffView", () => {
       <RunDiffView
         baseRunId="base-run-123"
         compareRunId="compare-run-456"
+        onOpenIteration={vi.fn()}
       />,
     );
 
     expect(await screen.findByText("Find checkout total")).toBeInTheDocument();
     expect(screen.getByText("Regressed")).toBeInTheDocument();
-    expect(screen.getByText("Base prompt")).toBeInTheDocument();
-    expect(screen.getByText("Compare answer")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /View trace/i })).toHaveLength(2);
     expect(mocks.getRunDiff).toHaveBeenCalledWith({
       baseRunId: "base-run-123",
       compareRunId: "compare-run-456",
-      previewChars: 2000,
+      previewChars: 0,
     });
   });
 
@@ -149,7 +149,7 @@ describe("RunDiffView", () => {
 
     const user = userEvent.setup();
     const traceButtons = await screen.findAllByRole("button", {
-      name: /Trace/i,
+      name: /View trace/i,
     });
     await user.click(traceButtons[1]);
 

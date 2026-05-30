@@ -9,7 +9,6 @@ import type {
   EvalRunDiffCaseStatus,
   EvalRunDiffSide,
   EvalRunNumericDiff,
-  EvalRunTextPreview,
 } from "./types";
 
 type RunDiffViewProps = {
@@ -35,7 +34,7 @@ type DiffMetricFormat =
 export function RunDiffView({
   baseRunId,
   compareRunId,
-  previewChars = 2000,
+  previewChars = 0,
   onBackToRun,
   onOpenIteration,
 }: RunDiffViewProps) {
@@ -439,73 +438,34 @@ function CaseSide({
   const canOpen = Boolean(side.representativeIterationId && onOpenIteration);
 
   return (
-    <div className="min-w-0 rounded-lg border border-border/50 bg-muted/10">
-      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-semibold">{label}</div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
-            {formatOutcome(side.outcome)} - {side.iterationIds.length} iteration
-            {side.iterationIds.length === 1 ? "" : "s"} -{" "}
-            {side.expectedToolCalls.length} expected /{" "}
-            {side.actualToolCalls.length} actual tools
-          </div>
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/50 bg-muted/10 px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-medium">{label}</div>
+        <div className="mt-0.5 text-[11px] text-muted-foreground">
+          {formatOutcome(side.outcome)} · {side.iterationIds.length} iteration
+          {side.iterationIds.length === 1 ? "" : "s"} ·{" "}
+          {side.expectedToolCalls.length} expected / {side.actualToolCalls.length}{" "}
+          actual tools
         </div>
-        {canOpen ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 shrink-0 px-2 text-xs"
-            onClick={() =>
-              onOpenIteration?.(runId, side.representativeIterationId!)
-            }
-          >
-            <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            Trace
-          </Button>
-        ) : null}
-      </div>
-      <div className="grid gap-0 divide-y divide-border/40">
-        <PreviewBlock label="Input" preview={side.input} />
-        <PreviewBlock label="Output" preview={side.output} />
         {side.error && !side.output ? (
-          <div className="px-3 py-2">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Error
-            </div>
-            <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-destructive">
-              {side.error}
-            </pre>
-          </div>
+          <p className="mt-1 truncate text-[11px] text-destructive">{side.error}</p>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function PreviewBlock({
-  label,
-  preview,
-}: {
-  label: string;
-  preview: EvalRunTextPreview | null;
-}) {
-  return (
-    <div className="px-3 py-2">
-      <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        <span>{label}</span>
-        {preview?.truncated ? (
-          <span className="rounded bg-muted px-1 py-0.5 text-[9px]">
-            Truncated
-          </span>
-        ) : null}
-      </div>
-      {preview ? (
-        <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground">
-          {preview.text}
-        </pre>
+      {canOpen ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 shrink-0 px-2 text-xs"
+          onClick={() =>
+            onOpenIteration?.(runId, side.representativeIterationId!)
+          }
+        >
+          <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          View trace
+        </Button>
       ) : (
-        <span className="text-xs text-muted-foreground">-</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">No trace</span>
       )}
     </div>
   );

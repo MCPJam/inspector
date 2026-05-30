@@ -8,6 +8,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import {
   buildFixPrompt,
   buildTopNPrompt,
+  computeRunPassFailStats,
   computeRunPassRatePercent,
   unifyTriageRows,
   type TriageRow,
@@ -36,28 +37,6 @@ async function copyWithToast(text: string, successLabel: string) {
   }
 }
 
-function ImpactBadge({ row }: { row: TriageRow }) {
-  if (row.failureCount > 0) {
-    return (
-      <span className="text-xs font-medium tabular-nums text-destructive">
-        −{row.failureCount} failure{row.failureCount === 1 ? "" : "s"}
-      </span>
-    );
-  }
-  if (row.source === "tool" && row.affectedCaseKeys.length === 0) {
-    return (
-      <span className="text-xs font-medium text-muted-foreground">
-        Server-wide
-      </span>
-    );
-  }
-  return (
-    <span className="text-xs font-medium text-muted-foreground">
-      Inefficient
-    </span>
-  );
-}
-
 function CategoryChip({ row }: { row: TriageRow }) {
   return (
     <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -78,7 +57,6 @@ function TriageRowItem({ row }: { row: TriageRow }) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <ImpactBadge row={row} />
         <Button
           type="button"
           variant="outline"
@@ -120,6 +98,17 @@ export function AiTriageCard({
     [run, iterations],
   );
 
+  const passFailStats = useMemo(
+    () =>
+      computeRunPassFailStats({
+        selectedRunDetails: run,
+        caseGroupsForSelectedRun: iterations,
+      }),
+    [run, iterations],
+  );
+
+  const metricLabel = run.source === "sdk" ? "Pass rate" : "Accuracy";
+
   const hasRows = rows.length > 0;
   // Distinguish "judge returned insights, all good/optimal" (arrays populated,
   // just filtered out) from "judge returned NO insights at all" (empty arrays —
@@ -137,7 +126,7 @@ export function AiTriageCard({
     if (!serverQuality && requested) return "Requesting analysis…";
     if (!serverQuality) return "Run a completed suite to see triage";
     if (!hasRows) return noInsights ? "Summary only" : "All clean";
-    return `${rows.length} root cause${rows.length === 1 ? "" : "s"}`;
+    return `${rows.length} suggested fix${rows.length === 1 ? "" : "es"}`;
   })();
 
   return (
@@ -186,7 +175,13 @@ export function AiTriageCard({
       </header>
 
       <div className="border-t border-border/50 px-3 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
+          <span>{metricLabel}</span>
+          <span className="tabular-nums">
+            {passFailStats.passed} passed · {passFailStats.failed} failed
+          </span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-3">
           <span className="text-lg font-semibold tabular-nums">
             {passRate}
             <span className="text-xs font-normal text-muted-foreground">%</span>
