@@ -19,6 +19,24 @@ function parseRecord(value: unknown): Record<string, string> | null {
   return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
+function isErrorCode(value: unknown): value is ErrorCode {
+  return (
+    typeof value === "string" &&
+    (Object.values(ErrorCode) as string[]).includes(value)
+  );
+}
+
+function statusToErrorCode(status: number): ErrorCode {
+  if (status === 400) return ErrorCode.VALIDATION_ERROR;
+  if (status === 401) return ErrorCode.UNAUTHORIZED;
+  if (status === 403) return ErrorCode.FORBIDDEN;
+  if (status === 404) return ErrorCode.NOT_FOUND;
+  if (status === 429) return ErrorCode.RATE_LIMITED;
+  if (status === 502) return ErrorCode.SERVER_UNREACHABLE;
+  if (status === 504) return ErrorCode.TIMEOUT;
+  return ErrorCode.INTERNAL_ERROR;
+}
+
 export async function fetchRuntimeServerSecrets(args: {
   bearerToken: string;
   projectId: string;
@@ -86,13 +104,16 @@ export async function fetchRuntimeServerSecrets(args: {
   }
 
   if (!response.ok) {
+    const code = isErrorCode(body?.code)
+      ? body.code
+      : statusToErrorCode(response.status);
     const message =
       typeof body?.message === "string"
         ? body.message
         : typeof body?.error === "string"
         ? body.error
         : `Secret reveal failed (${response.status})`;
-    throw new WebRouteError(response.status, ErrorCode.INTERNAL_ERROR, message);
+    throw new WebRouteError(response.status, code, message);
   }
 
   if (!body?.success) {

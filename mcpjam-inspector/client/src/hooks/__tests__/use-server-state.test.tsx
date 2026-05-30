@@ -1814,6 +1814,34 @@ describe("useServerState authenticated fallback persistence", () => {
     );
   });
 
+  it("preserves cached OAuth custom headers when no header patch is sent", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+      customHeaders: { "X-MCPJam": "yes" },
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState(), {
+      isAuthenticated: true,
+      useLocalFallback: true,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+        useOAuth: true,
+      });
+    });
+
+    const stored = JSON.parse(
+      localStorage.getItem("mcp-oauth-config-demo-server") ?? "{}"
+    );
+    expect(stored.customHeaders).toEqual({ "X-MCPJam": "yes" });
+  });
+
   it("persists renamed servers into the local project in authenticated fallback mode", async () => {
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch, createAppState(), {

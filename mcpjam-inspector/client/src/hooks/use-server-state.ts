@@ -85,12 +85,23 @@ function extractRequestHeaders(
   requestInit: RequestInit | undefined
 ): Record<string, string> | undefined {
   const headers = requestInit?.headers;
-  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+  if (!headers || typeof headers !== "object") {
     return undefined;
   }
 
   if (typeof Headers !== "undefined" && headers instanceof Headers) {
     return Object.fromEntries(headers.entries());
+  }
+
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(
+      headers.filter(
+        (entry): entry is [string, string] =>
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          typeof entry[1] === "string"
+      )
+    );
   }
 
   return Object.fromEntries(
@@ -183,8 +194,18 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (formData.oauthScopes && formData.oauthScopes.length > 0) {
     oauthConfig.scopes = formData.oauthScopes;
   }
-  if (formData.headers && Object.keys(formData.headers).length > 0) {
-    oauthConfig.customHeaders = formData.headers;
+  const hasExplicitHeaderPatch = Object.prototype.hasOwnProperty.call(
+    formData.secretPatch ?? {},
+    "headers"
+  );
+  const customHeaders = hasExplicitHeaderPatch
+    ? formData.secretPatch?.headers ?? {}
+    : {
+        ...(existingOAuthConfig.customHeaders ?? {}),
+        ...(formData.headers ?? {}),
+      };
+  if (Object.keys(customHeaders).length > 0) {
+    oauthConfig.customHeaders = customHeaders;
   }
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
@@ -1124,7 +1145,7 @@ export function useServerState({
       const clientSecret = secretOptions?.clientSecret?.trim();
       const clearClientSecret = secretOptions?.clearClientSecret === true;
       const config = serverEntry.config as any;
-      const headers = config?.requestInit?.headers || undefined;
+      const headers = extractRequestHeaders(config?.requestInit);
       const hasEnvSecretPatch = Object.prototype.hasOwnProperty.call(
         secretOptions ?? {},
         "env"

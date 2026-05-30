@@ -293,10 +293,12 @@ export function serversHaveChanged(
       ? { headers: remoteServer.headers }
       : remoteServer.config?.requestInit;
     const remoteHasHeaders = remoteServer.hasHeaders === true;
-    const localHasHiddenHeaders =
-      localServer.hasHeaders === true &&
-      (localServer.config as any)?.requestInit === undefined;
-    if (!remoteHasHeaders || !localHasHiddenHeaders) {
+    const remoteHeadersAreRedacted =
+      remoteHasHeaders &&
+      (remoteRequestInit == null ||
+        (typeof remoteRequestInit === "object" &&
+          (remoteRequestInit as any).headers === undefined));
+    if (!remoteHeadersAreRedacted) {
       if (
         JSON.stringify((localServer.config as any)?.requestInit) !==
         JSON.stringify(remoteRequestInit)
@@ -307,10 +309,8 @@ export function serversHaveChanged(
     // Get remote env (flat field or nested config)
     const remoteEnv = remoteServer.env || remoteServer.config?.env;
     const remoteHasEnv = remoteServer.hasEnv === true;
-    const localHasHiddenEnv =
-      localServer.hasEnv === true &&
-      (localServer.config as any)?.env === undefined;
-    if (!remoteHasEnv || !localHasHiddenEnv) {
+    const remoteEnvIsRedacted = remoteHasEnv && remoteEnv === undefined;
+    if (!remoteEnvIsRedacted) {
       if (
         JSON.stringify((localServer.config as any)?.env) !==
         JSON.stringify(remoteEnv)

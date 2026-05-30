@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  serversHaveChanged,
   serializeServersForPersistence,
   serializeServersForSharing,
 } from "../project-serialization";
@@ -80,5 +81,69 @@ describe("project-serialization OAuth scopes coercion", () => {
   it("applies the same coercion on the sharing path", () => {
     const out = serializeServersForSharing(makeOAuthHttpServer("a, b ,, c"));
     expect((out.s1 as any).oauthFlowProfile.scopes).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("serversHaveChanged redacted secrets", () => {
+  it("does not treat revealed local headers as changed when remote headers are redacted", () => {
+    const local: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useOAuth: false,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        hasHeaders: true,
+        config: {
+          url: "https://example.test/mcp",
+          requestInit: {
+            headers: { Authorization: "Bearer revealed" },
+          },
+        } as any,
+      },
+    };
+
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: false,
+          hasHeaders: true,
+          url: "https://example.test/mcp",
+        },
+      ])
+    ).toBe(false);
+  });
+
+  it("does not treat revealed local env as changed when remote env is redacted", () => {
+    const local: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useOAuth: false,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        hasEnv: true,
+        config: {
+          command: "node",
+          env: { FOO: "revealed" },
+        } as any,
+      },
+    };
+
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "s1",
+          enabled: true,
+          useOAuth: false,
+          hasEnv: true,
+          command: "node",
+        },
+      ])
+    ).toBe(false);
   });
 });

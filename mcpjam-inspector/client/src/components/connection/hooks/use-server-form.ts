@@ -468,6 +468,10 @@ export function useServerForm(
       ) {
         return "HTTPS is required";
       }
+
+      if (hasStoredHeaders && !headersRevealed && headersDirty) {
+        return "Reveal saved headers before changing authentication so existing hidden headers aren't lost.";
+      }
     }
 
     if (
@@ -554,10 +558,14 @@ export function useServerForm(
     const nextCustomHeaders = Object.entries(nextHeaders)
       .filter(([key]) => !isAuthorizationHeader(key))
       .map(([key, value]) => createHeaderEntry(key, String(value)));
-    if (authorization?.toLowerCase().startsWith("bearer ")) {
+    const isBearerAuthorization =
+      authorization?.toLowerCase().startsWith("bearer ") === true;
+    if (isBearerAuthorization) {
       setAuthType("bearer");
-      setBearerToken(authorization.slice("bearer ".length));
+      setBearerToken(authorization!.slice("bearer ".length));
       setShowAuthSettings(true);
+    } else if (authorization) {
+      nextCustomHeaders.push(createHeaderEntry("Authorization", authorization));
     }
     setCustomHeaders(nextCustomHeaders);
     setHasStoredHeaders(false);
@@ -567,11 +575,11 @@ export function useServerForm(
     if (initialValues.current) {
       initialValues.current = {
         ...initialValues.current,
-        authType: authorization?.toLowerCase().startsWith("bearer ")
+        authType: isBearerAuthorization
           ? "bearer"
           : initialValues.current.authType,
-        bearerToken: authorization?.toLowerCase().startsWith("bearer ")
-          ? authorization.slice("bearer ".length)
+        bearerToken: isBearerAuthorization
+          ? authorization!.slice("bearer ".length)
           : initialValues.current.bearerToken,
         hasStoredHeaders: false,
         customHeaders: nextCustomHeaders.map(({ key, value }) => ({
@@ -692,7 +700,9 @@ export function useServerForm(
     }
     const explicitHeaders =
       Object.keys(headers).length > 0 ? headers : undefined;
-    const secretPatch = headersDirty ? { headers } : undefined;
+    const canPatchHeaders = !hasStoredHeaders || headersRevealed;
+    const secretPatch =
+      headersDirty && canPatchHeaders ? { headers } : undefined;
 
     return {
       name: name.trim(),

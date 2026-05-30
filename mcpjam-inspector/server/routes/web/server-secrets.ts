@@ -7,6 +7,7 @@ import {
 } from "./errors.js";
 
 const serverSecretsWeb = new Hono();
+const EDIT_REVEAL_TIMEOUT_MS = 20_000;
 
 function getConvexHttpUrl(): string {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -34,14 +35,38 @@ serverSecretsWeb.post("/reveal-secrets", async (c) => {
       );
     }
 
-    const response = await fetch(`${convexUrl}/web/server/reveal-secrets`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(authorization ? { Authorization: authorization } : {}),
-      },
-      body: JSON.stringify({ ...payload, purpose: "edit" }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      EDIT_REVEAL_TIMEOUT_MS
+    );
+    let response: Response;
+    try {
+      response = await fetch(`${convexUrl}/web/server/reveal-secrets`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authorization ? { Authorization: authorization } : {}),
+        },
+        body: JSON.stringify({ ...payload, purpose: "edit" }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const isAbort =
+        error instanceof Error &&
+        (error.name === "AbortError" ||
+          (error as { code?: string }).code === "ABORT_ERR");
+      if (isAbort) {
+        throw new WebRouteError(
+          504,
+          ErrorCode.TIMEOUT,
+          "Couldn't reveal saved secrets. Try again."
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     return new Response(await response.text(), {
       status: response.status,

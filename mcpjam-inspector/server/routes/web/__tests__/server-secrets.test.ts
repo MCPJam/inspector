@@ -9,6 +9,7 @@ describe("web routes — server secret reveal", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -98,7 +99,42 @@ describe("web routes — server secret reveal", () => {
           serverId: "srv_1",
           purpose: "edit",
         }),
+        signal: expect.any(AbortSignal),
       })
     );
+  });
+
+  it("times out browser reveal proxy requests", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const responsePromise = postJson(
+      app,
+      "/api/web/server/reveal-secrets",
+      {
+        projectId: "proj_1",
+        serverId: "srv_1",
+      },
+      token
+    );
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    const response = await responsePromise;
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(504);
+    expect(data).toEqual({
+      code: "TIMEOUT",
+      message: "Couldn't reveal saved secrets. Try again.",
+    });
   });
 });

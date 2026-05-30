@@ -116,7 +116,7 @@ describe("useServerForm", () => {
     });
   });
 
-  it("sends a replacement header patch when editing hidden stored headers", async () => {
+  it("does not replace hidden stored headers when editing auth without reveal", async () => {
     const server = {
       name: "Hidden header server",
       config: {
@@ -142,10 +142,91 @@ describe("useServerForm", () => {
 
     expect(result.current.buildFormData()).toMatchObject({
       headers: { Authorization: "Bearer new-token" },
+    });
+    expect(result.current.buildFormData().secretPatch?.headers).toBeUndefined();
+    expect(result.current.validateForm()).toBe(
+      "Reveal saved headers before changing authentication so existing hidden headers aren't lost."
+    );
+  });
+
+  it("sends a replacement header patch after stored headers are revealed", async () => {
+    const server = {
+      name: "Revealed header server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredHeaders).toBe(true);
+    });
+
+    act(() => {
+      result.current.revealStoredHeaders({
+        Authorization: "Bearer old-token",
+        "X-Api-Key": "secret",
+      });
+      result.current.setBearerToken("new-token");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.buildFormData()).toMatchObject({
       secretPatch: {
-        headers: { Authorization: "Bearer new-token" },
+        headers: {
+          Authorization: "Bearer new-token",
+          "X-Api-Key": "secret",
+        },
       },
     });
+  });
+
+  it("preserves non-Bearer Authorization headers when revealing stored headers", async () => {
+    const server = {
+      name: "Basic auth server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredHeaders).toBe(true);
+    });
+
+    act(() => {
+      result.current.revealStoredHeaders({
+        Authorization: "Basic abc123",
+        "X-Api-Key": "secret",
+      });
+    });
+
+    expect(result.current.authType).toBe("none");
+    expect(result.current.customHeaders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "Authorization", value: "Basic abc123" }),
+        expect.objectContaining({ key: "X-Api-Key", value: "secret" }),
+      ])
+    );
+    expect(result.current.buildFormData()).toMatchObject({
+      headers: {
+        Authorization: "Basic abc123",
+        "X-Api-Key": "secret",
+      },
+    });
+    expect(result.current.buildFormData().secretPatch?.headers).toBeUndefined();
   });
 
   it("includes an exact client capabilities override when enabled", () => {
