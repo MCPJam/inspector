@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
+import { ConvexHttpClient } from "convex/browser";
 import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
   mapRuntimeError,
@@ -18,6 +19,8 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
+import { exportSingleServerForInspection } from "../../utils/export-helpers.js";
+import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
 
@@ -27,6 +30,19 @@ servers.post("/validate", async (c) =>
     projectServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
+      // Fire-and-forget: persist a connect-time inspection snapshot so the
+      // backend's `serverInspections` table picks up reconnect-time changes
+      // (port of PR #1731's `use-inspection-coordinator`). Failures here
+      // never affect the validate response.
+      void recordHostedConnectInspection(c, manager, {
+        projectId: body.projectId,
+        serverId: body.serverId,
+      }).catch((error) => {
+        logger.debug("Failed to persist hosted connect-time inspection", {
+          serverId: body.serverId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
       // Same success envelope as the local /api/mcp/connect path so the
       // inspector client's `storeInitInfo` takes one code path on both
       // surfaces and we don't drift on the success shape.
@@ -35,6 +51,29 @@ servers.post("/validate", async (c) =>
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
   )
 );
+
+async function recordHostedConnectInspection(
+  c: any,
+  manager: any,
+  args: { projectId: string; serverId: string },
+): Promise<void> {
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) return;
+  const bearer = c.req.header("authorization");
+  if (!bearer) return;
+  const snapshot = await exportSingleServerForInspection(
+    manager,
+    args.serverId,
+    args.serverId,
+    { logPrefix: "hosted-connect-inspection" },
+  );
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearer.replace(/^Bearer\s+/i, ""));
+  await client.mutation("serverInspections:recordFromConnect" as any, {
+    projectId: args.projectId,
+    snapshot,
+  });
+}
 
 servers.post("/check-oauth", async (c) =>
   handleRoute(c, async () => {

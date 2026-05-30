@@ -275,6 +275,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// Convex rejects any object field name that starts with `$` (e.g. JSON
+// Schema's `$schema` / `$ref` / `$defs` / `$id`) at every nesting depth — the
+// value is invalid the instant it crosses a Convex function-argument boundary,
+// well before the backend's storage-time redaction can run. MCP tool schemas
+// routinely carry these keywords, and every consumer of these snapshots (chat
+// persist, connect inspection, eval authoring) forwards the result straight
+// into a Convex action/mutation. So strip them here at the source. The drop is
+// lossy but matches what the backend would store anyway — it mirrors
+// `sanitizeConvexReservedKeys` in convex/lib/serverToolSnapshot.ts. `_`-prefixed
+// nested keys stay (Convex only reserves `_` for top-level document fields, so
+// MCP's `_meta` survives).
+function stripConvexReservedKeys<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripConvexReservedKeys(entry)) as unknown as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      if (key.startsWith("$")) {
+        continue;
+      }
+      out[key] = stripConvexReservedKeys(entry);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 function transformToolForSnapshot(tool: any): ServerToolSnapshotTool {
   const meta =
     tool._meta &&
@@ -288,12 +318,14 @@ function transformToolForSnapshot(tool: any): ServerToolSnapshotTool {
       ? { description: normalizeTrimmedString(tool.description) }
       : {}),
     ...(tool.inputSchema !== undefined
-      ? { inputSchema: tool.inputSchema }
+      ? { inputSchema: stripConvexReservedKeys(tool.inputSchema) }
       : {}),
     ...(tool.outputSchema !== undefined
-      ? { outputSchema: tool.outputSchema }
+      ? { outputSchema: stripConvexReservedKeys(tool.outputSchema) }
       : {}),
-    ...(meta && Object.keys(meta).length > 0 ? { metadata: meta } : {}),
+    ...(meta && Object.keys(meta).length > 0
+      ? { metadata: stripConvexReservedKeys(meta) }
+      : {}),
   };
 }
 
@@ -340,7 +372,7 @@ function readInitializeFromManager(
   }
 
   if (isRecord(info.capabilities)) {
-    result.capabilities = info.capabilities;
+    result.capabilities = stripConvexReservedKeys(info.capabilities);
   }
 
   if (typeof info.instructions === "string" && info.instructions.trim()) {
