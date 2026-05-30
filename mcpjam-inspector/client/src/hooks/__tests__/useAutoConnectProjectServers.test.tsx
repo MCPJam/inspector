@@ -25,6 +25,7 @@ function wrapper({
   ensureServersReady,
   appState,
   runtimeDisconnectServer = () => {},
+  reconnectServer = async () => {},
   setSelectedServerNames = () => {},
 }: {
   children: ReactNode;
@@ -38,6 +39,7 @@ function wrapper({
   }>;
   appState: ReturnType<typeof makeAppState>;
   runtimeDisconnectServer?: (name: string) => void;
+  reconnectServer?: (name: string) => Promise<void>;
   setSelectedServerNames?: (names: string[]) => void;
 }) {
   return (
@@ -47,6 +49,7 @@ function wrapper({
           actions={{
             ensureServersReady,
             runtimeDisconnectServer,
+            reconnectServer,
             setSelectedServerNames,
           }}
         >
@@ -238,18 +241,18 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenLastCalledWith(["alpha"]);
   });
 
-  it("disconnects only connected servers required by the active host on host switch", async () => {
+  it("reconnects ALL connected servers on client switch, not just the required ones", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
       failedServerNames: [],
       missingServerNames: [],
       reauthServerNames: [],
     });
-    const runtimeDisconnectServer = vi.fn();
-    // Three servers connected from a prior host; current host requires only
-    // "alpha". Only alpha needs a recycle so it can reconnect with the
-    // active host's initialize payload. beta/gamma may have been connected
-    // manually or by project-level auto-connect and should remain up.
+    const reconnectServer = vi.fn().mockResolvedValue(undefined);
+    // Three servers connected from a prior client; current client requires
+    // only "alpha". Switching clients must re-handshake EVERY connected server
+    // under the new client identity — so all three reconnect, regardless of
+    // whether the host declares them required.
     const appState = {
       servers: {
         alpha: { name: "alpha", connectionStatus: "connected" },
@@ -267,29 +270,22 @@ describe("useAutoConnectProjectServers", () => {
         }),
       {
         wrapper: ({ children }) =>
-          wrapper({
-            children,
-            ensureServersReady,
-            appState,
-            runtimeDisconnectServer,
-          }),
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
       },
     );
 
     await flushMicrotasks();
-    // Connect side: alpha still looks "connected" in this render's app
-    // state, so it's filtered out of the candidate set. In production the
-    // next render (after DISCONNECT lands) would pick it up.
+    expect(reconnectServer).toHaveBeenCalledTimes(3);
+    const reconnected = reconnectServer.mock.calls.map((c) => c[0]).sort();
+    expect(reconnected).toEqual(["alpha", "beta", "gamma"]);
+    // alpha is already connected, so the connect-required candidate path has
+    // nothing to do (reconnect, not connect, handles it).
     expect(ensureServersReady).not.toHaveBeenCalled();
-    // Disconnect side: only the host-required connected server comes down.
-    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
-    const disconnected = runtimeDisconnectServer.mock.calls.map((c) => c[0]);
-    expect(disconnected).toEqual(["alpha"]);
   });
 
-  it("keeps connected servers up when the active host requires none", async () => {
+  it("reconnects connected servers even when the active host requires none", async () => {
     const ensureServersReady = vi.fn();
-    const runtimeDisconnectServer = vi.fn();
+    const reconnectServer = vi.fn().mockResolvedValue(undefined);
     const appState = {
       servers: {
         alpha: { name: "alpha", connectionStatus: "connected" },
@@ -306,139 +302,92 @@ describe("useAutoConnectProjectServers", () => {
         }),
       {
         wrapper: ({ children }) =>
-          wrapper({
-            children,
-            ensureServersReady,
-            appState,
-            runtimeDisconnectServer,
-          }),
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
       },
     );
 
     await flushMicrotasks();
-    expect(ensureServersReady).not.toHaveBeenCalled();
-    expect(runtimeDisconnectServer).not.toHaveBeenCalled();
+    // Recycle is gated on a client being active (hostScopeKey non-null), not on
+    // the required set. Both connected servers re-handshake.
+    expect(reconnectServer).toHaveBeenCalledTimes(2);
+    const reconnected = reconnectServer.mock.calls.map((c) => c[0]).sort();
+    expect(reconnected).toEqual(["alpha", "beta"]);
   });
 
-  it("syncs setSelectedServerNames to the host's required set on each new scope", async () => {
+  it("still auto-connects required-but-disconnected servers on top of the recycle", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
-      readyServerNames: [],
+      readyServerNames: ["needed"],
       failedServerNames: [],
       missingServerNames: [],
       reauthServerNames: [],
     });
-    const setSelectedServerNames = vi.fn();
-    const appState = makeAppState(["alpha", "beta"]);
-
-    const { rerender } = renderHook(
-      ({
-        hostScopeKey,
-        requiredServerNames,
-      }: {
-        hostScopeKey: string;
-        requiredServerNames: ReadonlyArray<string>;
-      }) =>
-        useAutoConnectProjectServers({
-          projectId: "proj-selection",
-          hostScopeKey,
-          requiredServerNames,
-        }),
-      {
-        initialProps: {
-          hostScopeKey: "host-claude",
-          requiredServerNames: ["alpha", "beta"],
-        },
-        wrapper: ({ children }) =>
-          wrapper({
-            children,
-            ensureServersReady,
-            appState,
-            setSelectedServerNames,
-          }),
+    const reconnectServer = vi.fn().mockResolvedValue(undefined);
+    // "up" is connected (gets reconnected); "needed" is required but not
+    // connected (gets connected via the candidate path).
+    const appState = {
+      servers: {
+        up: { name: "up", connectionStatus: "connected" },
+        needed: { name: "needed", connectionStatus: "disconnected" },
       },
-    );
+    } as any;
 
-    await flushMicrotasks();
-    expect(setSelectedServerNames).toHaveBeenLastCalledWith(["alpha", "beta"]);
-
-    // Empty required set is no-op; surfaces with no explicit host selection
-    // must not clear the project/default host's selected servers.
-    rerender({ hostScopeKey: "host-mcpjam", requiredServerNames: [] });
-    await flushMicrotasks();
-    expect(setSelectedServerNames).toHaveBeenCalledTimes(1);
-  });
-
-  it("merges newly-required servers without wiping manual picks in the same scope", async () => {
-    // Regression: connecting a server updated the project catalog so a host-
-    // referenced id resolved into `requiredServerNames` mid-session (same
-    // host scope). The old code REPLACED the selection with the required set,
-    // silently dropping servers the user had toggled on by hand — they stayed
-    // connected but their toggle flipped off. Within a scope we now merge.
-    const ensureServersReady = vi.fn().mockResolvedValue({
-      readyServerNames: [],
-      failedServerNames: [],
-      missingServerNames: [],
-      reauthServerNames: [],
-    });
-    const setSelectedServerNames = vi.fn();
-    const appStateHolder: { current: any } = {
-      current: {
-        servers: {
-          amazon: { name: "amazon", connectionStatus: "connected" },
-          worldcup: { name: "worldcup", connectionStatus: "connected" },
-          champions: { name: "champions", connectionStatus: "connected" },
-        },
-        // Before the user touches anything the selection matches the host.
-        selectedMultipleServers: ["amazon"],
-      },
-    };
-
-    const { rerender } = renderHook(
-      ({
-        requiredServerNames,
-      }: {
-        requiredServerNames: ReadonlyArray<string>;
-      }) =>
+    renderHook(
+      () =>
         useAutoConnectProjectServers({
-          projectId: "proj-merge",
+          projectId: "proj-mixed",
           hostScopeKey: "host-a",
-          requiredServerNames,
+          requiredServerNames: ["needed"],
         }),
       {
-        initialProps: { requiredServerNames: ["amazon"] },
         wrapper: ({ children }) =>
-          wrapper({
-            children,
-            ensureServersReady,
-            appState: appStateHolder.current,
-            setSelectedServerNames,
-          }),
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
       },
     );
 
     await flushMicrotasks();
-    // First resolve for this scope: replace with the host's required set.
-    expect(setSelectedServerNames).toHaveBeenLastCalledWith(["amazon"]);
+    expect(reconnectServer).toHaveBeenCalledTimes(1);
+    expect(reconnectServer).toHaveBeenCalledWith("up");
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    expect(ensureServersReady).toHaveBeenCalledWith(["needed"]);
+  });
 
-    // User manually toggles "worldcup" on — not part of the host's set.
-    appStateHolder.current = {
-      ...appStateHolder.current,
-      selectedMultipleServers: ["amazon", "worldcup"],
-    };
-    setSelectedServerNames.mockClear();
+  it("does not recycle again on a same-scope re-render (only lead changes recycle)", async () => {
+    // Adding/removing a SECONDARY compare client doesn't change hostScopeKey
+    // (only the lead does), so a same-scope re-render must not re-reconnect.
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const reconnectServer = vi.fn().mockResolvedValue(undefined);
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "connected" },
+        beta: { name: "beta", connectionStatus: "connected" },
+      },
+    } as any;
 
-    // Connecting "champions" makes it resolve into the required set — same
-    // scope, required names changed.
-    rerender({ requiredServerNames: ["amazon", "champions"] });
+    const { rerender } = renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-same-scope",
+          hostScopeKey: "host-lead",
+          requiredServerNames: ["alpha"],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      },
+    );
+
     await flushMicrotasks();
+    expect(reconnectServer).toHaveBeenCalledTimes(2);
 
-    // "champions" is merged in; "worldcup" is preserved, not wiped.
-    expect(setSelectedServerNames).toHaveBeenCalledTimes(1);
-    expect(setSelectedServerNames).toHaveBeenLastCalledWith([
-      "amazon",
-      "worldcup",
-      "champions",
-    ]);
+    rerender();
+    await flushMicrotasks();
+    // Same scope → no second recycle.
+    expect(reconnectServer).toHaveBeenCalledTimes(2);
   });
 
   it("re-attempts on every host transition, including returning to a previously-visited host", async () => {
@@ -482,18 +431,17 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenCalledTimes(3);
   });
 
-  it("does NOT disconnect a server the user manually connects after the scope's tear-down pass already ran", async () => {
-    // Regression: when the user adds a new server from the Servers tab
-    // while sitting on a host, the reconciler used to see the freshly-
-    // connected server as a fresh disconnect target and tear it down.
-    // The host-switch tear-down must fire AT MOST ONCE per scope.
+  it("does NOT reconnect a server the user manually connects after the scope's recycle pass already ran", async () => {
+    // When the user adds a new server from the Servers tab while sitting on a
+    // host, it connected fresh under the CURRENT client — so the recycle must
+    // not re-handshake it. The recycle fires AT MOST ONCE per scope.
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: ["learn"],
       failedServerNames: [],
       missingServerNames: [],
       reauthServerNames: [],
     });
-    const runtimeDisconnectServer = vi.fn();
+    const reconnectServer = vi.fn().mockResolvedValue(undefined);
 
     // Mutable holder so we can simulate a server-state change between
     // renders without re-mounting the hook.
@@ -518,19 +466,18 @@ describe("useAutoConnectProjectServers", () => {
             children,
             ensureServersReady,
             appState: appStateHolder.current,
-            runtimeDisconnectServer,
+            reconnectServer,
           }),
       },
     );
 
     await flushMicrotasks();
-    // First pass: the host-required connected server is torn down so it
-    // can reconnect once its DISCONNECT lands.
-    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
-    expect(runtimeDisconnectServer).toHaveBeenCalledWith("learn");
+    // First pass: the connected server re-handshakes under the new client.
+    expect(reconnectServer).toHaveBeenCalledTimes(1);
+    expect(reconnectServer).toHaveBeenCalledWith("learn");
 
-    // User manually connects "bench" from the Servers tab — it's not in
-    // the host's required list, but the user explicitly wants it connected.
+    // User manually connects "bench" from the Servers tab — fresh under the
+    // current client, so it must NOT be recycled.
     appStateHolder.current = {
       servers: {
         learn: { name: "learn", connectionStatus: "connected" },
@@ -541,9 +488,9 @@ describe("useAutoConnectProjectServers", () => {
     rerender();
     await flushMicrotasks();
 
-    // Tear-down must NOT re-fire — bench stays connected, and `learn`
-    // isn't double-disconnected.
-    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
+    // Recycle must NOT re-fire — bench is left alone, learn isn't reconnected
+    // twice.
+    expect(reconnectServer).toHaveBeenCalledTimes(1);
   });
 
   it("respects a user-initiated disconnect: a host-required server toggled off stays off in the same scope", async () => {

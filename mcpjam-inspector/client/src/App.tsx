@@ -1474,6 +1474,7 @@ export default function App() {
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,
     handleUpdate,
@@ -2677,6 +2678,7 @@ export default function App() {
       onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
+      onDisconnect: handleRuntimeDisconnect,
       showOnlyOAuthServers: false,
       showOnlyServersWithViews: false,
     };
@@ -2690,6 +2692,7 @@ export default function App() {
     setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
+    handleRuntimeDisconnect,
   ]);
 
   if (isDebugCallback) {
@@ -2881,6 +2884,7 @@ export default function App() {
     handleOrganizationDeleted,
     handleProjectShared,
     handleReconnect,
+    handleRuntimeDisconnect,
     handleRefreshTokensFromOAuthFlow,
     handleRemoveServer,
     handleUpdate,
@@ -3045,6 +3049,7 @@ export default function App() {
         actions={{
           ensureServersReady,
           runtimeDisconnectServer: handleRuntimeDisconnect,
+          reconnectServer: reconnectServerForClientSwitch,
           setSelectedServerNames: setSelectedMCPConfigs,
         }}
       >

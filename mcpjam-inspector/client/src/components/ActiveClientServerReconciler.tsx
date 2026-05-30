@@ -1,7 +1,19 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
 import { useProjectServers } from "@/hooks/useViews";
+import { useSharedAppState } from "@/state/app-state-context";
+import { useServerActions } from "@/state/server-actions-context";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+
+/** Set-equality for two name lists, order-independent. */
+function sameNameSet(a: ReadonlyArray<string>, b: ReadonlyArray<string>) {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  for (const name of b) {
+    if (!set.has(name)) return false;
+  }
+  return true;
+}
 
 interface ActiveHostServerReconcilerProps {
   projectId: string | null;
@@ -63,6 +75,31 @@ export function ActiveClientServerReconciler({
     hostScopeKey: activeHostId ?? activeHost?.id ?? null,
     requiredServerNames,
   });
+
+  // Single source of truth: the Playground/chat "active server" set
+  // (`selectedMultipleServers`) is a strict mirror of the connected set. The
+  // Connect tab owns connectivity; everything else reflects it. This is the
+  // ONLY unconditional writer of the multi-select — toggles in the UI now
+  // connect/disconnect, and selection follows. Guarded by set-equality so we
+  // never dispatch (and never loop) when the mirror already matches.
+  const sharedAppState = useSharedAppState();
+  const { setSelectedServerNames } = useServerActions();
+  const connectedNames = useMemo(
+    () =>
+      Object.entries(sharedAppState.servers)
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name),
+    [sharedAppState.servers],
+  );
+  useEffect(() => {
+    if (!sameNameSet(connectedNames, sharedAppState.selectedMultipleServers)) {
+      setSelectedServerNames(connectedNames);
+    }
+  }, [
+    connectedNames,
+    sharedAppState.selectedMultipleServers,
+    setSelectedServerNames,
+  ]);
 
   return null;
 }

@@ -3676,6 +3676,29 @@ export function useServerState({
     [reconnectServerInternal]
   );
 
+  // Force a re-handshake of an ALREADY-connected server under the current
+  // client identity. Unlike `ensureServersReady` (which skips servers that are
+  // already connected), this always reconnects — the backend
+  // `/api/mcp/servers/reconnect` endpoint closes the live transport and reopens
+  // it with the active host's `clientInfo`. Non-interactive and non-selecting:
+  // used by the client-switch recycle, where popping an OAuth window per server
+  // or thrashing the single-select pointer would be wrong. Errors are
+  // swallowed (the per-card Reconnect button is the manual retry path).
+  const reconnectServerForClientSwitch = useCallback(
+    async (serverName: string): Promise<void> => {
+      try {
+        await reconnectServerInternal(serverName, {
+          allowInteractiveOAuthFlow: false,
+          select: false,
+          suppressErrors: true,
+        });
+      } catch {
+        // intentionally empty — surfaced via the server's status dot
+      }
+    },
+    [reconnectServerInternal]
+  );
+
   const ensureServersReady = useCallback(
     async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
@@ -4064,6 +4087,7 @@ export function useServerState({
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,
     handleUpdate,

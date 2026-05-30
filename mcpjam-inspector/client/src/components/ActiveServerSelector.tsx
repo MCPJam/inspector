@@ -40,6 +40,8 @@ export interface ActiveServerSelectorProps {
   onSelectMultipleServers?: (serverNames: string[]) => void;
   onConnect: (formData: ServerFormData) => void;
   onReconnect?: (serverName: string) => Promise<void>;
+  /** Disconnect a connected server (Playground toggle off = unplug). */
+  onDisconnect?: (serverName: string) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
