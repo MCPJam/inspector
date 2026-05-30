@@ -7,6 +7,18 @@ vi.mock("../use-run-insights", () => ({
   useRunInsights: vi.fn(),
 }));
 
+vi.mock("../use-server-quality", () => ({
+  useServerQuality: vi.fn(() => ({
+    result: null,
+    pending: false,
+    requested: false,
+    failedGeneration: false,
+    error: null,
+    requestServerQuality: vi.fn(),
+    unavailable: true,
+  })),
+}));
+
 import { useRunInsights } from "../use-run-insights";
 import { RunDetailView, RunIterationsSidebar } from "../run-detail-view";
 
@@ -94,6 +106,26 @@ function defaultRunInsightsReturn() {
 describe("RunDetailView", () => {
   beforeEach(() => {
     vi.mocked(useRunInsights).mockReturnValue(defaultRunInsightsReturn());
+  });
+
+  it("uses a vertically scrollable root so expanded triage can exceed the viewport", () => {
+    const { container } = render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        omitIterationList
+      />,
+    );
+
+    const root = container.firstElementChild;
+    expect(root).toHaveClass("overflow-y-auto");
+    expect(root).not.toHaveClass("overflow-hidden");
   });
 
   it("places single-row KPI dashboard above breakdown charts", () => {

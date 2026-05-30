@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -119,6 +119,14 @@ export function AiTriageCard({
     (serverQuality.toolInsights?.length ?? 0) === 0 &&
     (serverQuality.workflowInsights?.length ?? 0) === 0;
   const topRows = rows.slice(0, TOP_N);
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
+
+  useEffect(() => {
+    setShowAllSuggestions(false);
+  }, [run._id, serverQuality?.generatedAt]);
+
+  const visibleRows = showAllSuggestions ? rows : topRows;
+  const hasMoreSuggestions = rows.length > TOP_N;
 
   const headerSubtitle = (() => {
     if (pending) return "Analyzing…";
@@ -126,6 +134,9 @@ export function AiTriageCard({
     if (!serverQuality && requested) return "Requesting analysis…";
     if (!serverQuality) return "Run a completed suite to see triage";
     if (!hasRows) return noInsights ? "Summary only" : "All clean";
+    if (rows.length > TOP_N) {
+      return `Top ${TOP_N} of ${rows.length} suggested fix${rows.length === 1 ? "" : "es"}`;
+    }
     return `${rows.length} suggested fix${rows.length === 1 ? "" : "es"}`;
   })();
 
@@ -225,11 +236,25 @@ export function AiTriageCard({
             </div>
           )
         ) : (
-          <ul className="divide-y divide-border/40">
-            {rows.map((row) => (
-              <TriageRowItem key={row.id} row={row} />
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-border/40">
+              {visibleRows.map((row) => (
+                <TriageRowItem key={row.id} row={row} />
+              ))}
+            </ul>
+            {hasMoreSuggestions ? (
+              <button
+                type="button"
+                className="w-full border-t border-border/40 py-2 text-xs font-medium text-primary transition-colors hover:bg-muted/50"
+                aria-expanded={showAllSuggestions}
+                onClick={() => setShowAllSuggestions((v) => !v)}
+              >
+                {showAllSuggestions
+                  ? "Show less"
+                  : `Show ${rows.length - TOP_N} more`}
+              </button>
+            ) : null}
+          </>
         )}
       </div>
     </section>
