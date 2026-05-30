@@ -206,6 +206,7 @@ const navigationSections: NavSection[] = [
         url: "/chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
       },
       {
         title: "Playground",

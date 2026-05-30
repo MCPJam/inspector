@@ -767,7 +767,18 @@ export function ConformanceRoute() {
 // a host, manage its chatbox here. There is no chatbox list; the host
 // list lives in Connect.
 export function ChatboxesRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
   return (
     <ChatboxesTab
       projectId={convexProjectId}
@@ -2431,7 +2442,11 @@ export default function App() {
       }
     }
 
-    if (activeTabBillingLocked && activeTabBillingFeature) {
+    if (
+      activeTabBillingLocked &&
+      activeTabBillingFeature &&
+      activeTab !== "chatboxes"
+    ) {
       toast.error(
         `${formatBillingFeatureName(
           activeTabBillingFeature

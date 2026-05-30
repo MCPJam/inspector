@@ -35,6 +35,7 @@ export function getAnnualDiscountPercent(
 export const BILLING_FEATURE_BY_TAB = {
   evals: "evals",
   "ci-evals": "cicd",
+  chatboxes: "chatboxes",
 } as const satisfies Record<string, BillingFeatureName>;
 
 export function getRequiredBillingFeatureForTab(
