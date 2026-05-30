@@ -131,16 +131,21 @@ function SessionsBody() {
 
 function ToolsBody() {
   const state = useAppBuilderStateContext();
-  const isMulti = state.activeServerNames.length > 1;
-
-  if (isMulti) {
+  // The Playground is multi-server by nature: its active set mirrors the
+  // connected servers. Aggregate tools across ALL active servers whenever
+  // there's at least one — not only when there's more than one. Using `> 1`
+  // meant disconnecting down to a single server fell back to the single-
+  // server pane (keyed on the stale `serverName` pointer), so the remaining
+  // server's tools vanished. Only the zero-server case falls back to
+  // PlaygroundLeft for its empty/onboarding state.
+  if (state.activeServerNames.length >= 1) {
     return (
       <MultiServerToolsPaneInner activeServerNames={state.activeServerNames} />
     );
   }
 
-  // Single-server (and zero-server) → reuse the existing PlaygroundLeft, but
-  // suppress its inline LoggerView since the logger lives in the right rail.
+  // Zero-server → reuse the existing PlaygroundLeft (empty/onboarding state),
+  // but suppress its inline LoggerView since the logger lives in the right rail.
   return (
     <PlaygroundLeft
       tools={state.tools}

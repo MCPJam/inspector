@@ -126,6 +126,8 @@ interface ChatTabProps {
   onServerToggle?: (serverName: string) => void;
   /** Reconnect a disconnected server. */
   onReconnectServer?: (serverName: string) => Promise<void>;
+  /** Disconnect a connected server (toggle off = unplug). */
+  onDisconnectServer?: (serverName: string) => void;
   /** Add a new server (opens add-server modal). */
   onAddServer?: (formData: import("@/shared/types").ServerFormData) => void;
   onSelectedServerNamesChange?: (names: string[]) => void;
@@ -162,6 +164,7 @@ export function ChatTabV2({
   allServerConfigs,
   onServerToggle,
   onReconnectServer,
+  onDisconnectServer,
   onAddServer,
   onSelectedServerNamesChange,
   onHasMessagesChange,
@@ -2040,6 +2043,7 @@ export function ChatTabV2({
     allServerConfigs,
     onServerToggle,
     onReconnectServer,
+    onDisconnectServer,
     onAddServer,
     chatboxAttachableServers:
       chatboxOptionalInventory && chatboxOptionalInventory.length > 0

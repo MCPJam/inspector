@@ -2724,6 +2724,7 @@ export function PlaygroundMain({
     allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
     onServerToggle: handlePlaygroundServerToggle,
     onReconnectServer: playgroundServerSelectorProps?.onReconnect,
+    onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
     onAddServer: playgroundServerSelectorProps?.onConnect,
   };
 

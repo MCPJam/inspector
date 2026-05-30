@@ -19,6 +19,13 @@ export interface ServerActions {
    */
   runtimeDisconnectServer: (serverName: string) => void;
   /**
+   * Force a re-handshake of an already-connected server under the current
+   * client identity (backend closes + reopens the transport with the active
+   * host's clientInfo). Used by the client-switch recycle so every connected
+   * server re-initializes as the newly-selected client. Non-interactive.
+   */
+  reconnectServer: (serverName: string) => Promise<void>;
+  /**
    * Replace the global playground/chat multi-select set. Used by the
    * host-switch reconciliation so the chat composer's per-server toggles
    * match what the active host actually requires — without this, the

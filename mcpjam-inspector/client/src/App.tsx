@@ -941,9 +941,9 @@ export function ChatV2Route() {
     evalChatHandoff,
     handleConnect,
     handleReconnect,
+    handleRuntimeDisconnect,
     hostsHubFlagEnabled,
     isAuthenticated,
-    projectServers,
     setActiveHostId,
     setEvalChatHandoff,
     setSelectedMCPConfigs,
@@ -973,6 +973,7 @@ export function ChatV2Route() {
         allServerConfigs={displayServerConfigs}
         onServerToggle={toggleServerSelection}
         onReconnectServer={handleReconnect}
+        onDisconnectServer={handleRuntimeDisconnect}
         onAddServer={handleConnect}
         onSelectedServerNamesChange={setSelectedMCPConfigs}
         enableMultiModelChat
@@ -1588,6 +1589,7 @@ export default function App() {
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,
     handleUpdate,
@@ -1595,7 +1597,6 @@ export default function App() {
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleServerSelection,
-    setSelectedMultipleServersToAllServers,
     projects,
     activeProjectId,
     handleSwitchProject,
@@ -2145,15 +2146,6 @@ export default function App() {
     },
     [navigateToTarget]
   );
-
-  const previousActiveTabRef = useRef(activeTab);
-  useEffect(() => {
-    const previousActiveTab = previousActiveTabRef.current;
-    if (activeTab === "chat-v2" && previousActiveTab !== "chat-v2") {
-      setSelectedMultipleServersToAllServers();
-    }
-    previousActiveTabRef.current = activeTab;
-  }, [activeTab, setSelectedMultipleServersToAllServers]);
 
   useEffect(() => {
     if (!routeOrganizationId || !hasRouteOrganization) {
@@ -2774,6 +2766,7 @@ export default function App() {
       onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
+      onDisconnect: handleRuntimeDisconnect,
       showOnlyOAuthServers: false,
       showOnlyServersWithViews: false,
     };
@@ -2787,6 +2780,7 @@ export default function App() {
     setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
+    handleRuntimeDisconnect,
   ]);
 
   if (isDebugCallback) {
@@ -2978,6 +2972,7 @@ export default function App() {
     handleOrganizationDeleted,
     handleProjectShared,
     handleReconnect,
+    handleRuntimeDisconnect,
     handleRefreshTokensFromOAuthFlow,
     handleRemoveServer,
     handleUpdate,
@@ -3143,6 +3138,7 @@ export default function App() {
         actions={{
           ensureServersReady,
           runtimeDisconnectServer: handleRuntimeDisconnect,
+          reconnectServer: reconnectServerForClientSwitch,
           setSelectedServerNames: setSelectedMCPConfigs,
         }}
       >
