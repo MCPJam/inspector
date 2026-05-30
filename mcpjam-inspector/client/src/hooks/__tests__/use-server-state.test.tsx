@@ -226,7 +226,7 @@ function renderUseServerState(
   }
 ) {
   mockUseDbUserReady.mockReturnValue(
-    options?.isUserReady ?? options?.isAuthenticated ?? false,
+    options?.isUserReady ?? options?.isAuthenticated ?? false
   );
 
   return renderHook(() =>
@@ -344,7 +344,7 @@ describe("useServerState CLI config import", () => {
         },
       }),
     } as Response);
-    mockCreateServerIfMissing.mockResolvedValue("srv_cli");
+    mockCreateServerWithClientSecret.mockResolvedValue("srv_cli");
     const appState = createCloudCliAppState();
     const dispatch = vi.fn();
     const requestSignIn = vi.fn();
@@ -387,9 +387,10 @@ describe("useServerState CLI config import", () => {
     rerender({ hasSignedInUser: true });
 
     await waitFor(() => {
-      expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
+      expect(mockCreateServerWithClientSecret).toHaveBeenCalledTimes(1);
     });
-    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockCreateServerWithClientSecret).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj_cloud",
         name: "cli-stdio",
@@ -425,9 +426,11 @@ describe("useServerState CLI config import", () => {
         },
       }),
     } as Response);
-    mockCreateServerIfMissing.mockImplementation(async (payload: any) => {
-      return `srv_${payload.name}`;
-    });
+    mockCreateServerWithClientSecret.mockImplementation(
+      async (payload: any) => {
+        return `srv_${payload.name}`;
+      }
+    );
     const appState = createCloudCliAppState();
     const dispatch = vi.fn();
     const logger = {
@@ -459,10 +462,11 @@ describe("useServerState CLI config import", () => {
     });
 
     await waitFor(() => {
-      expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(2);
+      expect(mockCreateServerWithClientSecret).toHaveBeenCalledTimes(2);
     });
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
 
-    const payloads = mockCreateServerIfMissing.mock.calls.map(
+    const payloads = mockCreateServerWithClientSecret.mock.calls.map(
       ([payload]) => payload
     );
     expect(payloads).toEqual(
@@ -628,7 +632,7 @@ describe("useServerState effective server projection", () => {
       }),
     });
     expect(result.current.projectServers).not.toHaveProperty(
-      "runtime-connected",
+      "runtime-connected"
     );
     expect(result.current.selectedMCPConfig).toBeUndefined();
   });
@@ -1810,6 +1814,34 @@ describe("useServerState authenticated fallback persistence", () => {
     );
   });
 
+  it("preserves cached OAuth custom headers when no header patch is sent", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+      customHeaders: { "X-MCPJam": "yes" },
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState(), {
+      isAuthenticated: true,
+      useLocalFallback: true,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+        useOAuth: true,
+      });
+    });
+
+    const stored = JSON.parse(
+      localStorage.getItem("mcp-oauth-config-demo-server") ?? "{}"
+    );
+    expect(stored.customHeaders).toEqual({ "X-MCPJam": "yes" });
+  });
+
   it("persists renamed servers into the local project in authenticated fallback mode", async () => {
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch, createAppState(), {
@@ -2759,4 +2791,3 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
-

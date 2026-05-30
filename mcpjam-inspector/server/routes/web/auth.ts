@@ -33,6 +33,7 @@ import {
   parseWithSchema,
 } from "./errors.js";
 import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
+import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -53,6 +54,18 @@ const mcpProtocolVersionEnum = z.enum([
   "2025-11-25",
   "2026-07-28",
 ]);
+
+function hasNonEmptyStringRecord(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.entries(value as Record<string, unknown>).some(
+      ([, recordValue]) => typeof recordValue === "string"
+    )
+  );
+}
+
 // Per-server `mcpProtocolVersion` map. Map entries are validated against
 // the wire-mode enum so a typo in one server's pin doesn't tank the whole
 // batch — Zod returns the typed enum union, and the route handler can
@@ -213,6 +226,7 @@ export type ConvexAuthorizeResponse = {
     transportType: "stdio" | "http";
     url?: string;
     headers?: Record<string, string>;
+    hasHeaders?: boolean;
     useOAuth?: boolean;
   };
   internalLogContext?: InternalLogContext;
@@ -698,77 +712,102 @@ export async function createAuthorizedManager(
     }
   );
 
-  const configEntries = uniqueServerIds.map((serverId) => {
-    const auth = batch.results[serverId];
-    if (!auth) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        `Authorization response is missing result for server "${serverId}"`
-      );
-    }
-
-    if (!auth.ok) {
-      throw new WebRouteError(
-        auth.status,
-        auth.code as ErrorCode,
-        auth.message
-      );
-    }
-
-    const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
-    const displayServerName = serverNamesById?.[serverId] ?? serverId;
-    const onUnauthorized =
-      auth.serverConfig.useOAuth && auth.oauthAccessToken
-        ? buildHostedOAuthUnauthorizedHandler({
-            bearerToken,
-            projectId,
-            serverId,
-            serverName: displayServerName,
-            accessScope: options?.accessScope,
-            shareToken: (options as { shareToken?: string })?.shareToken,
-            chatboxId: options?.chatboxId,
-            accessVersion: options?.accessVersion,
-          })
-        : undefined;
-
-    if (auth.serverConfig.useOAuth) {
-      if (auth.serverConfig.url) {
-        oauthServerUrls[serverId] = auth.serverConfig.url;
-      }
-      if (!oauthToken) {
+  const configEntries = await Promise.all(
+    uniqueServerIds.map(async (serverId) => {
+      const auth = batch.results[serverId];
+      if (!auth) {
         throw new WebRouteError(
-          401,
-          ErrorCode.UNAUTHORIZED,
-          `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-          {
-            oauthRequired: true,
-            serverId,
-            serverName: serverNamesById?.[serverId] ?? null,
-            serverUrl: auth.serverConfig.url,
-          }
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          `Authorization response is missing result for server "${serverId}"`
         );
       }
-    }
 
-    const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
-      serverId,
-      options?.initializePins,
-      options?.mcpProtocolVersionsByServerId
-    );
+      if (!auth.ok) {
+        throw new WebRouteError(
+          auth.status,
+          auth.code as ErrorCode,
+          auth.message
+        );
+      }
 
-    return [
-      serverId,
-      toHttpConfig(
-        auth,
-        timeoutMs,
-        oauthToken,
-        clientCapabilities,
-        onUnauthorized,
-        effectiveInitializePins
-      ),
-    ] as const;
-  });
+      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
+      const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      const onUnauthorized =
+        auth.serverConfig.useOAuth && auth.oauthAccessToken
+          ? buildHostedOAuthUnauthorizedHandler({
+              bearerToken,
+              projectId,
+              serverId,
+              serverName: displayServerName,
+              accessScope: options?.accessScope,
+              shareToken: (options as { shareToken?: string })?.shareToken,
+              chatboxId: options?.chatboxId,
+              accessVersion: options?.accessVersion,
+            })
+          : undefined;
+
+      if (auth.serverConfig.useOAuth) {
+        if (auth.serverConfig.url) {
+          oauthServerUrls[serverId] = auth.serverConfig.url;
+        }
+        if (!oauthToken) {
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+            {
+              oauthRequired: true,
+              serverId,
+              serverName: serverNamesById?.[serverId] ?? null,
+              serverUrl: auth.serverConfig.url,
+            }
+          );
+        }
+      }
+
+      const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
+        serverId,
+        options?.initializePins,
+        options?.mcpProtocolVersionsByServerId
+      );
+      const authForConfig =
+        auth.serverConfig.hasHeaders === true &&
+        !hasNonEmptyStringRecord(auth.serverConfig.headers)
+          ? {
+              ...auth,
+              serverConfig: {
+                ...auth.serverConfig,
+                headers: {
+                  ...(auth.serverConfig.headers ?? {}),
+                  ...((
+                    await fetchRuntimeServerSecrets({
+                      bearerToken,
+                      projectId,
+                      serverId,
+                      accessScope: options?.accessScope,
+                      chatboxId: options?.chatboxId,
+                      accessVersion: options?.accessVersion,
+                    })
+                  ).headers ?? {}),
+                },
+              },
+            }
+          : auth;
+
+      return [
+        serverId,
+        toHttpConfig(
+          authForConfig,
+          timeoutMs,
+          oauthToken,
+          clientCapabilities,
+          onUnauthorized,
+          effectiveInitializePins
+        ),
+      ] as const;
+    })
+  );
 
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
