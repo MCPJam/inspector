@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
+import { toast } from "sonner";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
+import { useLogger } from "@/hooks/use-logger";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -35,17 +37,24 @@ const attemptedByProject = new Map<string, Set<string>>();
  */
 const lastSeenScopeByProject = new Map<string, string>();
 
-function buildAttemptKey(
-  hostScopeKey: string,
-  serverNamesKey: string,
-): string {
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function reconnectFailureToastMessage(count: number): string {
+  return count === 1
+    ? "Failed to reconnect 1 server."
+    : `Failed to reconnect ${count} servers.`;
+}
+
+function buildAttemptKey(hostScopeKey: string, serverNamesKey: string): string {
   return `${hostScopeKey}${serverNamesKey}`;
 }
 
 function markAttempted(
   projectId: string,
   hostScopeKey: string,
-  serverNamesKey: string,
+  serverNamesKey: string
 ) {
   let set = attemptedByProject.get(projectId);
   if (!set) {
@@ -58,7 +67,7 @@ function markAttempted(
 function isAttempted(
   projectId: string,
   hostScopeKey: string,
-  serverNamesKey: string,
+  serverNamesKey: string
 ): boolean {
   return (
     attemptedByProject
@@ -133,6 +142,7 @@ export function useAutoConnectProjectServers({
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
   const { ensureServersReady, reconnectServer } = useServerActions();
+  const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
   const scopeKey = hostScopeKey ?? "-";
@@ -141,11 +151,11 @@ export function useAutoConnectProjectServers({
   // disconnect dedupe.
   const requiredNamesKey = useMemo(
     () => requiredServerNames.slice().sort().join("\0"),
-    [requiredServerNames],
+    [requiredServerNames]
   );
   const requiredNames = useMemo(
     () => (requiredNamesKey ? requiredNamesKey.split("\0") : []),
-    [requiredNamesKey],
+    [requiredNamesKey]
   );
 
   // Build the candidate name list. Skip servers that are already connected,
@@ -208,14 +218,34 @@ export function useAutoConnectProjectServers({
     const connectedNow = Object.entries(sharedAppState.servers)
       .filter(([, server]) => server.connectionStatus === "connected")
       .map(([name]) => name);
-    for (const name of connectedNow) {
-      reconnectServer(name);
-    }
+    void Promise.allSettled(
+      connectedNow.map(async (name) => {
+        await reconnectServer(name);
+        return name;
+      })
+    ).then((results) => {
+      const failures = results.flatMap((result, index) => {
+        if (result.status === "fulfilled") return [];
+        return [
+          {
+            serverName: connectedNow[index],
+            error: getErrorMessage(result.reason),
+          },
+        ];
+      });
+
+      if (failures.length === 0) return;
+
+      for (const failure of failures) {
+        logger.error("Failed to reconnect server after client switch", failure);
+      }
+      toast.error(reconnectFailureToastMessage(failures.length));
+    });
     // `sharedAppState.servers` is read via closure but excluded from deps on
     // purpose: this must fire only on scope transitions, not whenever the
     // connected set changes within a scope. The dedupe gate stops re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, scopeKey, hostScopeKey, reconnectServer]);
+  }, [enabled, projectId, scopeKey, hostScopeKey, reconnectServer, logger]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
   // connected) changes. Dedupe is per-server-within-scope, not per
@@ -233,7 +263,7 @@ export function useAutoConnectProjectServers({
     if (!enabled || !projectId || !candidateNamesKey) return;
     const allNames = candidateNamesKey.split("\0");
     const fresh = allNames.filter(
-      (name) => !isAttempted(projectId, scopeKey, `srv:${name}`),
+      (name) => !isAttempted(projectId, scopeKey, `srv:${name}`)
     );
     if (fresh.length === 0) return;
     for (const name of fresh) {
@@ -253,18 +283,12 @@ export function useAutoConnectProjectServers({
       // rejections in dev/test.
       () => {
         // intentionally empty
-      },
+      }
     );
     return () => {
       cancelled = true;
     };
-  }, [
-    enabled,
-    projectId,
-    scopeKey,
-    candidateNamesKey,
-    ensureServersReady,
-  ]);
+  }, [enabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
 
   return { enabled, lastResult: lastResultRef.current };
 }

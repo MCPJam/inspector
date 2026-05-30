@@ -14,14 +14,14 @@ vi.mock("@/hooks/useViews", () => ({
 
 function makeAppState(
   servers: Record<string, "connected" | "disconnected" | "connecting">,
-  selectedMultipleServers: string[],
+  selectedMultipleServers: string[]
 ) {
   return {
     servers: Object.fromEntries(
       Object.entries(servers).map(([name, connectionStatus]) => [
         name,
         { name, connectionStatus },
-      ]),
+      ])
     ),
     selectedMultipleServers,
   } as any;
@@ -64,7 +64,7 @@ function renderReconciler({
       activeHost={undefined}
       activeHostId={null}
     />,
-    { wrapper },
+    { wrapper }
   );
 }
 
@@ -75,18 +75,22 @@ describe("ActiveClientServerReconciler — active-set mirror", () => {
     vi.clearAllMocks();
   });
 
-  it("mirrors the connected set into the multi-select", async () => {
+  it("mirrors connected and reconnecting servers into the multi-select", async () => {
     const setSelectedServerNames = vi.fn();
     renderReconciler({
       appState: makeAppState(
-        { alpha: "connected", beta: "connected", gamma: "disconnected" },
-        [],
+        {
+          alpha: "connected",
+          beta: "connecting",
+          gamma: "disconnected",
+        },
+        []
       ),
       setSelectedServerNames,
     });
 
     await flush();
-    // Only connected servers become active; gamma (disconnected) is excluded.
+    // Connected and reconnecting servers stay active; gamma is excluded.
     expect(setSelectedServerNames).toHaveBeenCalledTimes(1);
     expect(setSelectedServerNames.mock.calls[0][0].sort()).toEqual([
       "alpha",

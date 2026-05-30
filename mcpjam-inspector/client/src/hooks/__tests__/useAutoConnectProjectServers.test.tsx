@@ -9,13 +9,35 @@ import {
   useAutoConnectProjectServers,
 } from "../useAutoConnectProjectServers";
 
+const mocks = vi.hoisted(() => ({
+  toastError: vi.fn(),
+  logger: {
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+    context: "AutoConnectProjectServers",
+  },
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: mocks.toastError,
+  },
+}));
+
+vi.mock("@/hooks/use-logger", () => ({
+  useLogger: () => mocks.logger,
+}));
+
 function makeAppState(serverNames: string[]) {
   return {
     servers: Object.fromEntries(
       serverNames.map((name) => [
         name,
         { name, connectionStatus: "disconnected" },
-      ]),
+      ])
     ),
   } as any;
 }
@@ -29,9 +51,7 @@ function wrapper({
   setSelectedServerNames = () => {},
 }: {
   children: ReactNode;
-  ensureServersReady: (
-    names: string[],
-  ) => Promise<{
+  ensureServersReady: (names: string[]) => Promise<{
     readyServerNames: string[];
     failedServerNames: string[];
     missingServerNames: string[];
@@ -66,6 +86,12 @@ describe("useAutoConnectProjectServers", () => {
   beforeEach(() => {
     resetAutoConnectAttempts();
     localStorage.removeItem("mcpjam-auto-connect-servers");
+    mocks.toastError.mockClear();
+    mocks.logger.error.mockClear();
+    mocks.logger.warn.mockClear();
+    mocks.logger.info.mockClear();
+    mocks.logger.debug.mockClear();
+    mocks.logger.trace.mockClear();
   });
 
   it("calls ensureServersReady once for the same (project, required set) across re-renders", async () => {
@@ -87,7 +113,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -114,7 +140,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -136,7 +162,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -169,7 +195,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -191,7 +217,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -223,7 +249,7 @@ describe("useAutoConnectProjectServers", () => {
         initialProps: { requiredServerNames: ["alpha"] },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -271,7 +297,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -281,6 +307,50 @@ describe("useAutoConnectProjectServers", () => {
     // alpha is already connected, so the connect-required candidate path has
     // nothing to do (reconnect, not connect, handles it).
     expect(ensureServersReady).not.toHaveBeenCalled();
+  });
+
+  it("logs and shows one toast when client-switch reconnects fail", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const reconnectServer = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("beta exploded"));
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "connected" },
+        beta: { name: "beta", connectionStatus: "connected" },
+      },
+    } as any;
+
+    renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-reconnect-failure",
+          hostScopeKey: "host-a",
+          requiredServerNames: [],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      }
+    );
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(reconnectServer).toHaveBeenCalledTimes(2);
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      "Failed to reconnect server after client switch",
+      { serverName: "beta", error: "beta exploded" }
+    );
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "Failed to reconnect 1 server."
+    );
   });
 
   it("reconnects connected servers even when the active host requires none", async () => {
@@ -303,7 +373,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -341,7 +411,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -378,7 +448,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState, reconnectServer }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -410,7 +480,7 @@ describe("useAutoConnectProjectServers", () => {
         initialProps: { hostScopeKey: "host-a" },
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -468,7 +538,7 @@ describe("useAutoConnectProjectServers", () => {
             appState: appStateHolder.current,
             reconnectServer,
           }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -528,7 +598,7 @@ describe("useAutoConnectProjectServers", () => {
             ensureServersReady,
             appState: appStateHolder.current,
           }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -594,7 +664,7 @@ describe("useAutoConnectProjectServers", () => {
             ensureServersReady,
             appState: appStateHolder.current,
           }),
-      },
+      }
     );
 
     await flushMicrotasks();
@@ -638,7 +708,7 @@ describe("useAutoConnectProjectServers", () => {
       {
         wrapper: ({ children }) =>
           wrapper({ children, ensureServersReady, appState }),
-      },
+      }
     );
 
     await flushMicrotasks();

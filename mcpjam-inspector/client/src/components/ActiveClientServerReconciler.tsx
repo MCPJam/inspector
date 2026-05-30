@@ -15,6 +15,10 @@ function sameNameSet(a: ReadonlyArray<string>, b: ReadonlyArray<string>) {
   return true;
 }
 
+function isActiveRuntimeStatus(status: string | undefined) {
+  return status === "connected" || status === "connecting";
+}
+
 interface ActiveHostServerReconcilerProps {
   projectId: string | null;
   isAuthenticated: boolean;
@@ -60,7 +64,7 @@ export function ActiveClientServerReconciler({
     const requiredIds = activeHost?.serverIds ?? [];
     if (requiredIds.length === 0 || !projectServersList) return [];
     const byId = new Map(
-      projectServersList.map((s) => [s._id, s.name] as const),
+      projectServersList.map((s) => [s._id, s.name] as const)
     );
     return requiredIds
       .map((id) => byId.get(id))
@@ -76,27 +80,29 @@ export function ActiveClientServerReconciler({
     requiredServerNames,
   });
 
-  // Single source of truth: the Playground/chat "active server" set
-  // (`selectedMultipleServers`) is a strict mirror of the connected set. The
-  // Connect tab owns connectivity; everything else reflects it. This is the
-  // ONLY unconditional writer of the multi-select — toggles in the UI now
-  // connect/disconnect, and selection follows. Guarded by set-equality so we
-  // never dispatch (and never loop) when the mirror already matches.
+  // Single source of truth: the Playground active server set
+  // (`selectedMultipleServers`) mirrors the runtime set that is connected or
+  // reconnecting. Keeping "connecting" active prevents the Playground tools
+  // pane from blinking empty during a client-switch reconnect. The Connect tab
+  // owns connectivity; everything else reflects it. Guarded by set-equality so
+  // we never dispatch (and never loop) when the mirror already matches.
   const sharedAppState = useSharedAppState();
   const { setSelectedServerNames } = useServerActions();
-  const connectedNames = useMemo(
+  const activeRuntimeNames = useMemo(
     () =>
       Object.entries(sharedAppState.servers)
-        .filter(([, server]) => server.connectionStatus === "connected")
+        .filter(([, server]) => isActiveRuntimeStatus(server.connectionStatus))
         .map(([name]) => name),
-    [sharedAppState.servers],
+    [sharedAppState.servers]
   );
   useEffect(() => {
-    if (!sameNameSet(connectedNames, sharedAppState.selectedMultipleServers)) {
-      setSelectedServerNames(connectedNames);
+    if (
+      !sameNameSet(activeRuntimeNames, sharedAppState.selectedMultipleServers)
+    ) {
+      setSelectedServerNames(activeRuntimeNames);
     }
   }, [
-    connectedNames,
+    activeRuntimeNames,
     sharedAppState.selectedMultipleServers,
     setSelectedServerNames,
   ]);

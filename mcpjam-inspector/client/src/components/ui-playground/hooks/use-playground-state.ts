@@ -123,15 +123,13 @@ export type PlaygroundLoadingState =
 export type UsePlaygroundStateReturn = ReturnType<typeof usePlaygroundState>;
 
 /**
- * Pick the servers whose tools should appear in the Playground tools pane
- * and be callable by the manual Run button. Mirrors the predicate the LLM
- * tools list (`PlaygroundMain.tsx`) and composer popover (`chat-input.tsx`)
- * already use, so all three surfaces agree on what "in-use" means and the
- * pane stays in sync with the user's connection toggle.
+ * Pick the servers whose tools should appear in the Playground tools pane.
+ * Reconnecting servers stay active so the left rail can show a loading state
+ * instead of briefly dropping them during a client switch.
  *
  * Multi-server mode passes `selectedServerNames`; single-server mode passes
- * `serverName`. Either way the filter rejects anything not currently in
- * `connectionStatus === "connected"`.
+ * `serverName`. Either way the filter rejects anything that is not connected
+ * or connecting.
  */
 export function selectConnectedActiveServerNames(input: {
   selectedServerNames: ReadonlyArray<string> | undefined;
@@ -139,12 +137,14 @@ export function selectConnectedActiveServerNames(input: {
   servers: Record<string, ServerWithName>;
 }): string[] {
   const { selectedServerNames, serverName, servers } = input;
-  const isConnected = (name: string) =>
-    servers[name]?.connectionStatus === "connected";
+  const isConnectedOrConnecting = (name: string) => {
+    const status = servers[name]?.connectionStatus;
+    return status === "connected" || status === "connecting";
+  };
   if (selectedServerNames && selectedServerNames.length > 0) {
-    return selectedServerNames.filter(isConnected);
+    return selectedServerNames.filter(isConnectedOrConnecting);
   }
-  return serverName && isConnected(serverName) ? [serverName] : [];
+  return serverName && isConnectedOrConnecting(serverName) ? [serverName] : [];
 }
 
 export function usePlaygroundState(options: UsePlaygroundStateOptions) {

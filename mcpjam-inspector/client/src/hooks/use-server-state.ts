@@ -3682,18 +3682,18 @@ export function useServerState({
   // `/api/mcp/servers/reconnect` endpoint closes the live transport and reopens
   // it with the active host's `clientInfo`. Non-interactive and non-selecting:
   // used by the client-switch recycle, where popping an OAuth window per server
-  // or thrashing the single-select pointer would be wrong. Errors are
-  // swallowed (the per-card Reconnect button is the manual retry path).
+  // or thrashing the single-select pointer would be wrong. Per-server error
+  // toasts are suppressed here; the caller aggregates failures for logging and
+  // one user-facing toast.
   const reconnectServerForClientSwitch = useCallback(
     async (serverName: string): Promise<void> => {
-      try {
-        await reconnectServerInternal(serverName, {
-          allowInteractiveOAuthFlow: false,
-          select: false,
-          suppressErrors: true,
-        });
-      } catch {
-        // intentionally empty — surfaced via the server's status dot
+      const result = await reconnectServerInternal(serverName, {
+        allowInteractiveOAuthFlow: false,
+        select: false,
+        suppressErrors: true,
+      });
+      if (result.status !== "connected") {
+        throw new Error(result.error || `Failed to reconnect ${serverName}`);
       }
     },
     [reconnectServerInternal]

@@ -2678,7 +2678,7 @@ export default function App() {
       onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
-      onDisconnect: handleRuntimeDisconnect,
+      onDisconnect: handleDisconnect,
       showOnlyOAuthServers: false,
       showOnlyServersWithViews: false,
     };
@@ -2692,7 +2692,7 @@ export default function App() {
     setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
-    handleRuntimeDisconnect,
+    handleDisconnect,
   ]);
 
   if (isDebugCallback) {
