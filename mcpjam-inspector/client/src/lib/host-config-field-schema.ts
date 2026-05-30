@@ -75,11 +75,10 @@ export interface HostConfigFieldDef {
    * User-friendly label. This is the primary label both the matrix and the
    * focus tabs display to users — keep it short ("Model", "Temperature",
    * "Require tool approval"). Source of truth: editing here updates both
-   * surfaces. The dotted technical path is captured separately on
-   * {@link path}.
+   * surfaces.
    */
   label: string;
-  /** Dotted path against `HostConfigDtoV2` — shown as a mono subtitle in the matrix. */
+  /** Dotted path against `HostConfigDtoV2` — schema identifier for tests and tooling. */
   path: string;
   /** User-friendly description; one short sentence. Optional. */
   description?: string;

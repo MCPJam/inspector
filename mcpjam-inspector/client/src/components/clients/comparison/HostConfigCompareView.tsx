@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { Switch } from "@mcpjam/design-system/switch";
 import { useHost, useHostList } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
+import { HostCompareSelector } from "./HostCompareSelector";
+import {
+  resolveInitialHostCompareSelection,
+  toggleHostCompareSelection,
+  writeHostCompareSelection,
+} from "./host-compare-selection";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
 
 interface HostConfigCompareViewProps {
@@ -11,14 +16,9 @@ interface HostConfigCompareViewProps {
 }
 
 /**
- * Top-level container for `/clients/compare`. Fetches every host's
- * hydrated `HostConfigDtoV2` and feeds them to the comparison matrix.
- *
- * Per-host fetching is parallelized via one `useHost` subscription per
- * row (`HostConfigFetcher`). Convex queries dedupe and the host count
- * is bounded by what the user has saved (typically <20), so a fan-out
- * subscription is cheaper than adding a dedicated list-with-config
- * backend query just for this view.
+ * Top-level container for `/clients/compare`. Loads every host in the
+ * project, lets the user pick which ones appear as columns, and renders
+ * their hydrated `HostConfigDtoV2` side by side.
  */
 export function HostConfigCompareView({
   projectId,
@@ -32,7 +32,29 @@ export function HostConfigCompareView({
   const [subjectsByHost, setSubjectsByHost] = useState<
     Record<string, HostComparisonSubject>
   >({});
+  const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
+
+  const liveHostIds = useMemo(
+    () => hosts.map((host) => host.hostId),
+    [hosts],
+  );
+
+  useEffect(() => {
+    if (listLoading) return;
+    setSelectedHostIds((previous) =>
+      resolveInitialHostCompareSelection({
+        projectId: projectId ?? "",
+        liveHostIds,
+        previousSelection: previous,
+      }),
+    );
+  }, [listLoading, liveHostIds, projectId]);
+
+  useEffect(() => {
+    if (!projectId || selectedHostIds.length === 0) return;
+    writeHostCompareSelection(projectId, selectedHostIds);
+  }, [projectId, selectedHostIds]);
 
   const reportSubject = useCallback(
     (hostId: string, subject: HostComparisonSubject | null) => {
@@ -57,32 +79,41 @@ export function HostConfigCompareView({
     [],
   );
 
-  // Drop subjects whose host disappeared from the list (host deleted
-  // elsewhere). Without this, the matrix would keep rendering a stale
-  // column until the page reloads.
   useEffect(() => {
     if (listLoading) return;
-    const live = new Set(hosts.map((h) => h.hostId));
+    const live = new Set(liveHostIds);
     setSubjectsByHost((prev) => {
       let mutated = false;
       const next: typeof prev = {};
-      for (const [id, s] of Object.entries(prev)) {
-        if (live.has(id)) next[id] = s;
+      for (const [id, subject] of Object.entries(prev)) {
+        if (live.has(id)) next[id] = subject;
         else mutated = true;
       }
       return mutated ? next : prev;
     });
-  }, [hosts, listLoading]);
+  }, [liveHostIds, listLoading]);
+
+  const selectedHostIdSet = useMemo(
+    () => new Set(selectedHostIds),
+    [selectedHostIds],
+  );
 
   const orderedSubjects = useMemo(() => {
-    return hosts
-      .map((h) => subjectsByHost[h.hostId])
-      .filter((s): s is HostComparisonSubject => s !== undefined);
-  }, [hosts, subjectsByHost]);
+    return selectedHostIds
+      .map((hostId) => subjectsByHost[hostId])
+      .filter((subject): subject is HostComparisonSubject => subject !== undefined);
+  }, [selectedHostIds, subjectsByHost]);
 
-  const loadedCount = orderedSubjects.length;
-  const totalCount = hosts.length;
-  const allLoaded = !listLoading && loadedCount === totalCount;
+  const loadedSelectedCount = orderedSubjects.length;
+  const totalSelectedCount = selectedHostIds.length;
+  const allSelectedLoaded =
+    !listLoading && loadedSelectedCount === totalSelectedCount;
+
+  const handleToggleHost = useCallback((hostId: string) => {
+    setSelectedHostIds((previous) =>
+      toggleHostCompareSelection(previous, hostId),
+    );
+  }, []);
 
   if (!projectId) {
     return (
@@ -94,45 +125,25 @@ export function HostConfigCompareView({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      {hosts.map((h) => (
-        <HostConfigFetcher
-          key={h.hostId}
-          hostId={h.hostId}
-          hostName={h.name}
-          hostConfigId={h.hostConfigId}
-          isAuthenticated={isAuthenticated}
-          onLoaded={reportSubject}
-        />
-      ))}
-
-      <header className="shrink-0 border-b border-border/40 px-4 py-3 md:px-8">
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
-            <h1 className="text-[15px] font-medium leading-tight">
-              Host config comparison
-            </h1>
-            <p className="text-[12px] text-muted-foreground leading-tight">
-              Every saved <code className="font-mono">hostConfig</code> in this
-              project, side by side.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-[12px]">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <Switch
-                checked={divergingOnly}
-                onCheckedChange={setDivergingOnly}
-                aria-label="Show only diverging fields"
-              />
-              <span>Only diverging</span>
-            </label>
-          </div>
-        </div>
-      </header>
+      {selectedHostIds.map((hostId) => {
+        const host = hosts.find((entry) => entry.hostId === hostId);
+        if (!host) return null;
+        return (
+          <HostConfigFetcher
+            key={host.hostId}
+            hostId={host.hostId}
+            hostName={host.name}
+            hostConfigId={host.hostConfigId}
+            isAuthenticated={isAuthenticated}
+            onLoaded={reportSubject}
+          />
+        );
+      })}
 
       <div className="flex-1 min-h-0 overflow-auto p-4 md:p-8">
         {listLoading ? (
           <LoadingState label="Loading hosts…" />
-        ) : totalCount === 0 ? (
+        ) : hosts.length === 0 ? (
           <div className="rounded-xl border border-border bg-card p-10 text-center">
             <p className="text-sm text-muted-foreground">
               No hosts yet. Create one from the Clients tab to populate the
@@ -141,16 +152,40 @@ export function HostConfigCompareView({
           </div>
         ) : (
           <>
-            {!allLoaded && (
-              <div className="mb-3 text-[11px] text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Loading {loadedCount} / {totalCount} host configs…
-              </div>
-            )}
-            <HostConfigComparisonMatrix
-              subjects={orderedSubjects}
+            <HostCompareSelector
+              hosts={hosts}
+              selectedHostIds={selectedHostIds}
+              subjectsByHost={subjectsByHost}
+              onToggleHost={handleToggleHost}
               divergingOnly={divergingOnly}
+              onDivergingOnlyChange={setDivergingOnly}
+              disabled={listLoading}
             />
+
+            {totalSelectedCount === 0 ? (
+              <div className="rounded-xl border border-border bg-card p-10 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Select at least one client above to compare.
+                </p>
+              </div>
+            ) : (
+              <>
+                {!allSelectedLoaded && (
+                  <div className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading {loadedSelectedCount} / {totalSelectedCount} client
+                    configs…
+                  </div>
+                )}
+                <HostConfigComparisonMatrix
+                  subjects={orderedSubjects}
+                  divergingOnly={divergingOnly}
+                  onRemoveHost={
+                    selectedHostIdSet.size > 1 ? handleToggleHost : undefined
+                  }
+                />
+              </>
+            )}
           </>
         )}
       </div>
@@ -158,11 +193,6 @@ export function HostConfigCompareView({
   );
 }
 
-/**
- * Hidden subscriber. Calls `useHost` for one host and reports the
- * hydrated DTO back via callback so the parent can collect everyone's
- * config into a single subjects array.
- */
 function HostConfigFetcher({
   hostId,
   hostName,

@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
+import { X } from "lucide-react";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { cn } from "@/lib/utils";
+import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import {
   fieldDiverges,
   groupHostConfigFields,
@@ -17,6 +19,8 @@ interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
+  /** Remove a column; omitted when only one host remains. */
+  onRemoveHost?: (hostId: string) => void;
 }
 
 /**
@@ -30,6 +34,7 @@ interface HostConfigComparisonMatrixProps {
 export function HostConfigComparisonMatrix({
   subjects,
   divergingOnly = false,
+  onRemoveHost,
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(HOST_CONFIG_FIELDS), []);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
@@ -63,20 +68,16 @@ export function HostConfigComparisonMatrix({
         <thead>
           <tr>
             <th className="sticky left-0 top-0 z-30 bg-card border-b border-r border-border px-5 py-4 text-left">
-              <div className="flex items-baseline justify-between">
-                <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                  Field
-                </span>
-                <span className="text-[10px] text-muted-foreground">
-                  {subjects.length} hosts · {HOST_CONFIG_FIELDS.length} fields ·{" "}
-                  <span className="text-foreground font-medium tabular-nums">
-                    {divergingIds.size} diverge
-                  </span>
-                </span>
-              </div>
+              <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                Field
+              </span>
             </th>
             {subjects.map((s) => (
-              <HostColumnHeader key={s.hostId} subject={s} />
+              <HostColumnHeader
+                key={s.hostId}
+                subject={s}
+                onRemove={onRemoveHost}
+              />
             ))}
           </tr>
         </thead>
@@ -96,7 +97,6 @@ export function HostConfigComparisonMatrix({
               <SectionRows
                 key={group.section.id}
                 sectionLabel={group.section.label}
-                sectionSubtitle={group.section.subtitle}
                 divergeCount={groupDivergeCount}
                 subsections={group.subsections}
                 subjects={subjects}
@@ -113,7 +113,6 @@ export function HostConfigComparisonMatrix({
 
 interface SectionRowsProps {
   sectionLabel: string;
-  sectionSubtitle: string;
   divergeCount: number;
   subsections: ReadonlyArray<{
     label: string;
@@ -126,7 +125,6 @@ interface SectionRowsProps {
 
 function SectionRows({
   sectionLabel,
-  sectionSubtitle,
   divergeCount,
   subsections,
   subjects,
@@ -145,9 +143,6 @@ function SectionRows({
           <div className="flex items-baseline gap-3">
             <span className="text-[15px] font-medium tracking-tight">
               {sectionLabel}
-            </span>
-            <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-              {sectionSubtitle}
             </span>
             <span className="ml-auto text-[10.5px] text-muted-foreground tabular-nums">
               {divergeCount} diverging
@@ -238,9 +233,6 @@ function FieldRow({
         <div className="text-[13px] font-medium text-foreground leading-tight">
           {field.label}
         </div>
-        <div className="font-mono text-[11px] text-muted-foreground/80 mt-0.5">
-          {field.path}
-        </div>
         {field.description && (
           <div className="text-[11px] text-muted-foreground mt-1 leading-snug">
             {field.description}
@@ -278,16 +270,16 @@ function FieldCell({
 
   switch (kind.kind) {
     case "boolean":
-      return value === true ? (
-        <ValuePill tone="on">on</ValuePill>
-      ) : (
-        <ValuePill tone="off">off</ValuePill>
-      );
+      return <BooleanCellValue value={value === true} />;
 
     case "tri-state":
-      if (value === true) return <ValuePill tone="on">on</ValuePill>;
-      if (value === false) return <ValuePill tone="off">off</ValuePill>;
-      return <ValuePill tone="auto">auto</ValuePill>;
+      return (
+        <TriStateCellValue
+          value={
+            value === true ? true : value === false ? false : undefined
+          }
+        />
+      );
 
     case "number":
       return (
@@ -309,7 +301,7 @@ function FieldCell({
     }
 
     case "enum":
-      return <ValuePill tone="info">{String(value)}</ValuePill>;
+      return <span className="text-[13px] text-foreground">{String(value)}</span>;
 
     case "string": {
       const s = String(value);
@@ -344,13 +336,9 @@ function FieldCell({
         return <span className="text-[12px] text-muted-foreground/60">[] empty</span>;
       }
       return (
-        <div className="flex flex-wrap gap-1">
-          {value.map((item, idx) => (
-            <ValuePill key={`${idx}-${String(item)}`} tone="info">
-              {String(item)}
-            </ValuePill>
-          ))}
-        </div>
+        <span className="text-[13px] text-foreground leading-snug">
+          {value.join(", ")}
+        </span>
       );
     }
 
@@ -380,54 +368,76 @@ function FieldCell({
   }
 }
 
-function HostColumnHeader({ subject }: { subject: HostComparisonSubject }) {
-  return (
-    <th className="sticky top-0 z-20 bg-card border-b border-l border-border px-4 py-4 text-left align-top">
-      <div className="flex items-start gap-2.5">
-        <span
-          aria-hidden="true"
-          className="mt-1 inline-block w-1.5 h-1.5 rounded-full bg-primary"
-        />
-        <div className="leading-tight min-w-0">
-          <div className="font-medium text-[14px] truncate" title={subject.hostName}>
-            {subject.hostName}
-          </div>
-          <div className="text-[11px] text-muted-foreground mt-0.5">
-            <span className="font-mono">hostStyle: {subject.hostStyle}</span>
-          </div>
-          <div className="text-[11px] text-muted-foreground mt-0.5 font-mono">
-            ·{subject.configHashShort}
-          </div>
-        </div>
-      </div>
-    </th>
-  );
-}
-
-function ValuePill({
-  tone,
-  children,
-}: {
-  tone: "on" | "off" | "auto" | "info" | "warn";
-  children: React.ReactNode;
-}) {
+function BooleanCellValue({ value }: { value: boolean }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[11px] font-medium leading-tight",
-        tone === "on" &&
-          "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-        tone === "off" && "bg-muted text-muted-foreground",
-        tone === "auto" &&
-          "italic bg-transparent text-muted-foreground border border-border",
-        tone === "info" &&
-          "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-        tone === "warn" &&
-          "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-300",
+        "text-[13px]",
+        value ? "text-foreground" : "text-muted-foreground",
       )}
     >
-      {children}
+      {value ? "Yes" : "No"}
     </span>
+  );
+}
+
+function TriStateCellValue({
+  value,
+}: {
+  value: boolean | undefined;
+}) {
+  const label =
+    value === true ? "On" : value === false ? "Off" : "Auto";
+  return (
+    <span
+      className={cn(
+        "text-[13px]",
+        value === true && "text-foreground",
+        value === false && "text-muted-foreground",
+        value === undefined && "text-muted-foreground/80",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function HostColumnHeader({
+  subject,
+  onRemove,
+}: {
+  subject: HostComparisonSubject;
+  onRemove?: (hostId: string) => void;
+}) {
+  const logoSrc = getChatboxHostLogo(
+    subject.hostStyle,
+    subject.config.chatUiOverride,
+  );
+
+  return (
+    <th className="sticky top-0 z-20 bg-card border-b border-l border-border px-4 py-4 text-left align-top">
+      <div className="flex items-start gap-2">
+        {onRemove ? (
+          <button
+            type="button"
+            aria-label={`Remove ${subject.hostName} from comparison`}
+            data-testid={`host-compare-remove-${subject.hostId}`}
+            className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={() => onRemove(subject.hostId)}
+          >
+            <X className="size-3" />
+          </button>
+        ) : null}
+        <img
+          src={logoSrc}
+          alt=""
+          className="mt-0.5 size-4 shrink-0 object-contain"
+        />
+        <div className="min-w-0 font-medium text-[14px] truncate leading-tight" title={subject.hostName}>
+          {subject.hostName}
+        </div>
+      </div>
+    </th>
   );
 }
 

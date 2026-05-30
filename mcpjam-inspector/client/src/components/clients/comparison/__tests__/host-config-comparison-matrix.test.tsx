@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import { HostConfigComparisonMatrix } from "../host-config-comparison-matrix";
@@ -64,7 +65,7 @@ describe("HostConfigComparisonMatrix", () => {
     expect(sections[2]).toMatch(/^Apps/);
   });
 
-  it("renders a column header per subject with name and configHashShort", () => {
+  it("renders a column header per subject with host name", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[
@@ -75,8 +76,6 @@ describe("HostConfigComparisonMatrix", () => {
     );
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     expect(screen.getByText("Cursor")).toBeInTheDocument();
-    expect(screen.getByText(/·a3f9d2/)).toBeInTheDocument();
-    expect(screen.getByText(/·1b8e44/)).toBeInTheDocument();
   });
 
   it("paints the diverge gutter on rows whose value differs across hosts", () => {
@@ -121,7 +120,7 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.queryByText("modelId")).not.toBeInTheDocument();
   });
 
-  it("renders boolean values as on/off pills", () => {
+  it("renders boolean values as plain Yes/No text", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[
@@ -130,16 +129,34 @@ describe("HostConfigComparisonMatrix", () => {
         ]}
       />,
     );
-    expect(screen.getAllByText("on").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("off").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Yes").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("No").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders progressiveToolDiscovery=undefined as 'auto' (tri-state)", () => {
+  it("renders progressiveToolDiscovery=undefined as Auto (tri-state)", () => {
     render(
       <HostConfigComparisonMatrix
         subjects={[makeSubject("h_a", "A")]}
       />,
     );
-    expect(screen.getAllByText("auto").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Auto").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders column remove buttons when onRemoveHost is provided", async () => {
+    const user = userEvent.setup();
+    const onRemoveHost = vi.fn();
+
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_a", "A"),
+          makeSubject("h_b", "B"),
+        ]}
+        onRemoveHost={onRemoveHost}
+      />,
+    );
+
+    await user.click(screen.getByTestId("host-compare-remove-h_b"));
+    expect(onRemoveHost).toHaveBeenCalledWith("h_b");
   });
 });
