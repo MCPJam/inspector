@@ -658,7 +658,7 @@ export function RunDetailView({
             title={selectedRunDetails.namedHostId}
           >
             Host:{" "}
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
+            <span className="text-foreground/90">
               {hostNamesById?.get(selectedRunDetails.namedHostId) ??
                 formatRunId(selectedRunDetails.namedHostId)}
             </span>

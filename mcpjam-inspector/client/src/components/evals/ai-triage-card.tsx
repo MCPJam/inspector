@@ -1,7 +1,6 @@
 import { useMemo } from "react";
-import { Copy, Loader2, RotateCw, Sparkles } from "lucide-react";
+import { Copy, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Progress } from "@mcpjam/design-system/progress";
 import { cn } from "@/lib/utils";
@@ -154,13 +153,7 @@ export function AiTriageCard({
     >
       <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <Badge
-            variant="outline"
-            className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-          >
-            <Sparkles className="h-3 w-3" />
-            AI Triage
-          </Badge>
+          <span className="text-sm font-medium text-foreground">Triage</span>
           <span className="truncate text-sm text-muted-foreground">
             {headerSubtitle}
           </span>
