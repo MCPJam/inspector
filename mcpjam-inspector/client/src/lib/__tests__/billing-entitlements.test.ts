@@ -1,8 +1,11 @@
 import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
 import {
+  BILLING_FEATURE_BY_TAB,
   getBillingErrorMessage,
   getDisplayPriceCentsForPlan,
+  getPremiumnessGateForTab,
+  getRequiredBillingFeatureForTab,
   isGateAccessDenied,
   isPremiumnessGateDeniedForShell,
 } from "../billing-entitlements";
@@ -39,6 +42,14 @@ function premiumness(
     ...overrides,
   };
 }
+
+describe("BILLING_FEATURE_BY_TAB", () => {
+  it("maps the chatboxes tab to the chatboxes premiumness feature", () => {
+    expect(BILLING_FEATURE_BY_TAB.chatboxes).toBe("chatboxes");
+    expect(getRequiredBillingFeatureForTab("chatboxes")).toBe("chatboxes");
+    expect(getPremiumnessGateForTab("chatboxes")).toBe("chatboxes");
+  });
+});
 
 describe("getBillingErrorMessage", () => {
   it("formats backend limit payloads for monthly eval runs", () => {
@@ -278,6 +289,29 @@ describe("isGateAccessDenied", () => {
         "maxProjects",
       ),
     ).toBe(true);
+  });
+
+  it("allows chatboxes for enterprise when the gate decision grants access", () => {
+    expect(
+      isGateAccessDenied(
+        premiumness({
+          plan: "enterprise",
+          effectivePlan: "enterprise",
+          gates: [
+            {
+              gateKey: "chatboxes",
+              kind: "feature",
+              scope: "organization",
+              canAccess: true,
+              shouldShowUpsell: false,
+              upgradePlan: null,
+              reason: "feature_included",
+            },
+          ],
+        }),
+        "chatboxes",
+      ),
+    ).toBe(false);
   });
 });
 

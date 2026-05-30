@@ -29,7 +29,7 @@ function t(text: string, emphasize?: boolean): ComparePlanCell {
   return { kind: "text", text, emphasize };
 }
 
-/** Section order: organization & projects, standard features, evaluations, chatboxes, LLM usage, security, platform, support. */
+/** Section order: organization & projects, evaluations, LLM usage, security, support, standard features. */
 export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
   {
     title: "Organization & projects",
@@ -61,53 +61,6 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     ],
   },
   {
-    title: "Standard features",
-    rows: [
-      {
-        label: "Inspector",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Visual OAuth Debugger",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "JSON-RPC Logger & SDK",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "MCPJam Public Server Registry",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Learning Platform",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "MCP Newsletter",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Open Source on GitHub",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-    ],
-  },
-  {
     title: "Evaluations",
     rows: [
       {
@@ -132,57 +85,21 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       {
         label: "Insights Data Export",
         free: x,
-        team: c,
+        team: x,
         enterprise: c,
       },
       {
-        label: "Evals CI/CD runs",
-        free: t("5 / mo"),
-        team: t("5,000 included", true),
-        enterprise: t("Custom", true),
-      },
-    ],
-  },
-  {
-    title: "Chatboxes",
-    rows: [
-      {
-        label: "Traces",
-        tooltipKey: "Chatbox traces",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Deployments",
-        free: x,
-        team: t("3", true),
+        label: "Eval iteration cap",
+        free: t("100 iter. / mo"),
+        team: t("5,000 iter. / mo", true),
         enterprise: t("Custom", true),
       },
       {
-        label: "Uptime",
+        label: "Eval iteration overage",
+        tooltipKey: "Eval iteration overage",
         free: x,
-        team: t("60 hrs included", true),
+        team: t("$0.02 / iter.", true),
         enterprise: t("Custom", true),
-      },
-      {
-        label: "User Feedback Insights",
-        free: x,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Insights Data Export",
-        tooltipKey: "Chatbox Insights Data Export",
-        free: x,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Branding",
-        free: x,
-        team: c,
-        enterprise: c,
       },
     ],
   },
@@ -245,29 +162,6 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     ],
   },
   {
-    title: "Platform & Infrastructure",
-    rows: [
-      {
-        label: "Hosting option",
-        free: x,
-        team: t("Cloud", true),
-        enterprise: t("Cloud, Hybrid, Self-Hosted", true),
-      },
-      {
-        label: "Infra",
-        free: x,
-        team: t("Managed by MCPJam", true),
-        enterprise: t("Cloud, Hybrid, Self-Hosted", true),
-      },
-      {
-        label: "Data location",
-        free: x,
-        team: t("MCPJam's Cloud (US or EU)", true),
-        enterprise: t("Cloud, Hybrid, Self-Hosted", true),
-      },
-    ],
-  },
-  {
     title: "Support",
     rows: [
       {
@@ -279,6 +173,35 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       {
         label: "Priority support",
         free: x,
+        team: c,
+        enterprise: c,
+      },
+    ],
+  },
+  {
+    title: "Standard features",
+    rows: [
+      {
+        label: "Playground",
+        free: c,
+        team: c,
+        enterprise: c,
+      },
+      {
+        label: "Visual OAuth Debugger",
+        free: c,
+        team: c,
+        enterprise: c,
+      },
+      {
+        label: "JSON-RPC Logger & SDK",
+        free: c,
+        team: c,
+        enterprise: c,
+      },
+      {
+        label: "Open Source on GitHub",
+        free: c,
         team: c,
         enterprise: c,
       },

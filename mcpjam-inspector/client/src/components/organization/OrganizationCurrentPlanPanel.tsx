@@ -359,13 +359,13 @@ export function OrganizationCurrentPlanPanel({
             <Box className="size-6 text-primary" />
           </div>
           <div className="min-w-0 space-y-1.5">
-            <p className="text-2xl font-semibold tracking-tight text-muted-foreground">
+            <p className="text-2xl font-semibold tracking-tight text-foreground">
               {isTrial
                 ? `${formatPlanName(displayPlan)} Trial`
                 : formatPlanName(displayPlan)}
             </p>
             {displayPlan === "free" && !isTrial ? (
-              <p className="text-xs text-muted-foreground/90">
+              <p className="text-sm text-muted-foreground">
                 Limited functionality
               </p>
             ) : null}
