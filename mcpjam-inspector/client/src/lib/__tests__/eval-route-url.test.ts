@@ -22,7 +22,7 @@ describe("eval-route-url", () => {
       view: "runs",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=runs"),
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=runs")
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -32,8 +32,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123",
-        "?view=test-cases&fromCommit=abc123",
-      ),
+        "?view=test-cases&fromCommit=abc123"
+      )
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -41,7 +41,7 @@ describe("eval-route-url", () => {
       fromCommit: "abc123",
     });
     expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=cross-host"),
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123", "?view=cross-host")
     ).toEqual({
       type: "suite-overview",
       suiteId: "s_123",
@@ -57,14 +57,14 @@ describe("eval-route-url", () => {
         type: "suite-overview",
         suiteId: "s_abc",
         view: "executions",
-      }),
+      })
     ).toBe("/evals/suite/s_abc?view=executions");
     expect(
       buildEvalsPath({
         type: "suite-overview",
         suiteId: "s_abc",
         fromCommit: "manual-xyz",
-      }),
+      })
     ).toBe("/evals/suite/s_abc?fromCommit=manual-xyz");
   });
 
@@ -73,14 +73,27 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/runs/r_456",
-        "?iteration=i_1&insights=1",
-      ),
+        "?iteration=i_1&insights=1"
+      )
     ).toEqual({
       type: "run-detail",
       suiteId: "s_123",
       runId: "r_456",
       iteration: "i_1",
       insightsFocus: true,
+    });
+    expect(
+      parseEvalRouteFromUrl(
+        "/evals",
+        "/evals/suite/s_123/runs/r_456",
+        "?compareTo=r_123"
+      )
+    ).toEqual({
+      type: "run-detail",
+      suiteId: "s_123",
+      runId: "r_456",
+      iteration: undefined,
+      compareToRunId: "r_123",
     });
   });
 
@@ -92,8 +105,11 @@ describe("eval-route-url", () => {
         runId: "r_def",
         iteration: "i_3",
         insightsFocus: true,
-      }),
-    ).toBe("/evals/suite/s_abc/runs/r_def?iteration=i_3&insights=1");
+        compareToRunId: "r_base",
+      })
+    ).toBe(
+      "/evals/suite/s_abc/runs/r_def?iteration=i_3&insights=1&compareTo=r_base"
+    );
   });
 
   it("parses test detail, test edit, and suite edit routes", () => {
@@ -101,8 +117,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789",
-        "?iteration=i_2",
-      ),
+        "?iteration=i_2"
+      )
     ).toEqual({
       type: "test-detail",
       suiteId: "s_123",
@@ -110,10 +126,7 @@ describe("eval-route-url", () => {
       iteration: "i_2",
     });
     expect(
-      parseEvalRouteFromUrl(
-        "/evals",
-        "/evals/suite/s_123/test/t_789/edit",
-      ),
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123/test/t_789/edit")
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -123,8 +136,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789/edit",
-        "?compare=1",
-      ),
+        "?compare=1"
+      )
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -135,8 +148,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/evals",
         "/evals/suite/s_123/test/t_789/edit",
-        "?compare=true&iteration=i_42",
-      ),
+        "?compare=true&iteration=i_42"
+      )
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -144,9 +157,7 @@ describe("eval-route-url", () => {
       openCompare: true,
       iteration: "i_42",
     });
-    expect(
-      parseEvalRouteFromUrl("/evals", "/evals/suite/s_123/edit"),
-    ).toEqual({
+    expect(parseEvalRouteFromUrl("/evals", "/evals/suite/s_123/edit")).toEqual({
       type: "suite-edit",
       suiteId: "s_123",
     });
@@ -160,7 +171,7 @@ describe("eval-route-url", () => {
         testId: "t_def",
         openCompare: true,
         iteration: "i_42",
-      }),
+      })
     ).toBe("/evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
   });
 
@@ -169,8 +180,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/ci-evals",
         "/ci-evals/commit/abc1234567890",
-        "?suite=s_abc&iteration=i_4",
-      ),
+        "?suite=s_abc&iteration=i_4"
+      )
     ).toEqual({
       type: "commit-detail",
       commitSha: "abc1234567890",
@@ -186,7 +197,7 @@ describe("eval-route-url", () => {
         commitSha: "abc1234567890",
         suite: "s_abc",
         iteration: "i_4",
-      }),
+      })
     ).toBe("/ci-evals/commit/abc1234567890?suite=s_abc&iteration=i_4");
     expect(
       buildCiEvalsPath({
@@ -194,10 +205,8 @@ describe("eval-route-url", () => {
         suiteId: "s_abc",
         view: "test-cases",
         fromCommit: "sha9abcdef",
-      }),
-    ).toBe(
-      "/ci-evals/suite/s_abc?view=test-cases&fromCommit=sha9abcdef",
-    );
+      })
+    ).toBe("/ci-evals/suite/s_abc?view=test-cases&fromCommit=sha9abcdef");
   });
 
   it("parses ci eval suite drill-down paths", () => {
@@ -205,8 +214,8 @@ describe("eval-route-url", () => {
       parseEvalRouteFromUrl(
         "/ci-evals",
         "/ci-evals/suite/s_123/test/t_789/edit",
-        "?compare=1",
-      ),
+        "?compare=1"
+      )
     ).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -216,17 +225,12 @@ describe("eval-route-url", () => {
   });
 
   it("returns null outside the requested prefix", () => {
-    expect(
-      parseEvalRouteFromUrl("/ci-evals", "/evals/suite/s_123"),
-    ).toBeNull();
+    expect(parseEvalRouteFromUrl("/ci-evals", "/evals/suite/s_123")).toBeNull();
   });
 
   it("decodes path params", () => {
     expect(
-      parseEvalRouteFromUrl(
-        "/evals",
-        "/evals/suite/suite%20one/test/case%202",
-      ),
+      parseEvalRouteFromUrl("/evals", "/evals/suite/suite%20one/test/case%202")
     ).toEqual({
       type: "test-detail",
       suiteId: "suite one",

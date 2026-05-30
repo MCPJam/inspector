@@ -24,12 +24,17 @@ import { cn } from "@/lib/utils";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
-import type { EvalCase, EvalIteration } from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
   CaseListColumnHeaders,
 } from "./case-list-shared";
+import {
+  CaseListHostToggle,
+  type CaseListHostMode,
+} from "./case-list-host-toggle";
+import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 
 function iterationRecencyTs(iter: EvalIteration): number {
   return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
@@ -40,9 +45,23 @@ interface TestCasesOverviewProps {
     _id: string;
     name: string;
     environment?: { servers?: string[] };
+    /** Host attachments drive the "By host" matrix; absent on minimal callers. */
+    hostAttachments?: EvalSuite["hostAttachments"];
   };
   cases: EvalCase[];
   allIterations: EvalIteration[];
+  /**
+   * Suite runs, required to build the "By host" cross-host matrix. Optional
+   * because minimal callers (and the by-case-only path) don't need it; the
+   * matrix only renders when host attachments exist, which implies runs.
+   */
+  runs?: EvalSuiteRun[];
+  /**
+   * Seeds the "By case / By host" toggle on mount (e.g. from a
+   * `view=cross-host` deep-link). The toggle is local state thereafter, so
+   * flipping it does not remount this component or churn the URL.
+   */
+  initialHostMode?: CaseListHostMode;
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   onTestCaseClick: (testCaseId: string) => void;
@@ -86,7 +105,9 @@ interface TestCasesOverviewProps {
 export function TestCasesOverview({
   suite,
   cases,
+  runs,
   allIterations,
+  initialHostMode = "by-case",
   runsViewMode,
   onViewModeChange,
   onTestCaseClick,
@@ -101,6 +122,17 @@ export function TestCasesOverview({
   isDirectGuest = false,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
+  // A one-host matrix is pointless, so the "By host" view is only offered when
+  // the suite has >=2 host attachments. Same source useCrossHostData reads.
+  const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
+  const canShowByHost = hostAttachmentCount >= 2;
+  // Local state (seeded from the route on mount) so flipping the toggle swaps
+  // the list/matrix in place without remounting this component or the content
+  // region; the deep-link is still honored on initial render.
+  const [hostMode, setHostMode] = useState<CaseListHostMode>(
+    canShowByHost ? initialHostMode : "by-case",
+  );
+  const effectiveHostMode = canShowByHost ? hostMode : "by-case";
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
     { suiteId: suite._id } as any
@@ -373,13 +405,18 @@ export function TestCasesOverview({
               <p className="text-xs text-muted-foreground">{clickHint}</p>
             </div>
             <div className="flex items-center gap-2">
+              {canShowByHost ? (
+                <CaseListHostToggle
+                  value={effectiveHostMode}
+                  onChange={setHostMode}
+                />
+              ) : null}
               {!hideViewModeSelect ? (
                 <div className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5">
                   {(
                     [
                       { value: "runs", label: "Runs" },
                       { value: "test-cases", label: "Cases" },
-                      { value: "cross-host", label: "Cross-host" },
                     ] as { value: SuiteOverviewView; label: string }[]
                   ).map(({ value, label }) => (
                     <button
@@ -402,17 +439,28 @@ export function TestCasesOverview({
           </div>
         ) : null}
 
-        {/* Column Headers */}
-        {testCaseStats.length > 0 && (
-          <CaseListColumnHeaders
-            firstColumnLabel="Case name"
-            secondColumnLabel="Last run"
-            leadingGutter={batchDelete}
-            trailingGutter={showRunColumn}
-          />
-        )}
+        {effectiveHostMode === "by-host" ? (
+          <div className="overflow-y-auto p-4">
+            <CrossHostDashboard
+              suite={suite as EvalSuite}
+              cases={cases}
+              runs={runs ?? []}
+              allIterations={allIterations}
+            />
+          </div>
+        ) : (
+          <>
+            {/* Column Headers */}
+            {testCaseStats.length > 0 && (
+              <CaseListColumnHeaders
+                firstColumnLabel="Case name"
+                secondColumnLabel="Last run"
+                leadingGutter={batchDelete}
+                trailingGutter={showRunColumn}
+              />
+            )}
 
-        <div className="divide-y overflow-y-auto">
+            <div className="divide-y overflow-y-auto">
           {testCaseStats.length === 0 ? (
             showDisconnectedPlaygroundEmptyState ? (
               <EmptyState
@@ -681,7 +729,9 @@ export function TestCasesOverview({
               );
             })
           )}
-        </div>
+            </div>
+          </>
+        )}
       </div>
 
       <Dialog

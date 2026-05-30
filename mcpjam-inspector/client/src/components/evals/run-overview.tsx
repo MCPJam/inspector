@@ -3,8 +3,12 @@ import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { cn, getInitials } from "@/lib/utils";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
-import { Trash2 } from "lucide-react";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
+import { ArrowLeftRight, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -63,6 +67,7 @@ interface RunOverviewProps {
     total: number;
   }>;
   onRunClick: (runId: string) => void;
+  onCompareRuns?: (baseRunId: string, compareRunId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
@@ -132,7 +137,7 @@ function getTableColumnCount(input: RunsTableWidthInput): number {
 }
 
 export function estimateRunsTableRequiredWidth(
-  input: RunsTableWidthInput,
+  input: RunsTableWidthInput
 ): number {
   let width =
     (input.includeSelectionColumn === false ? 0 : TABLE_SELECTION_COL_PX) +
@@ -170,7 +175,7 @@ export function resolveRunsTableLayout(input: {
 }): RunsTableLayout {
   const normalizedContainerWidth = Math.max(
     0,
-    Math.floor(input.containerWidth),
+    Math.floor(input.containerWidth)
   );
   const showTokens = input.hasTokenData;
   const showRunBy = true;
@@ -195,6 +200,10 @@ export function resolveRunsTableLayout(input: {
   };
 }
 
+function compareRunsBySequence(a: EvalSuiteRun, b: EvalSuiteRun): number {
+  return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
+}
+
 export function RunOverview({
   suite,
   runs,
@@ -203,6 +212,7 @@ export function RunOverview({
   runTrendData,
   modelStats,
   onRunClick,
+  onCompareRuns,
   onDirectDeleteRun,
   runsViewMode,
   onViewModeChange,
@@ -222,7 +232,7 @@ export function RunOverview({
 
   const hasTokenData = useMemo(
     () => allIterations.some((i) => (i.tokensUsed || 0) > 0),
-    [allIterations],
+    [allIterations]
   );
 
   const hasCiMetadata = useMemo(
@@ -231,9 +241,9 @@ export function RunOverview({
         (r) =>
           !!r.ciMetadata?.branch ||
           !!r.ciMetadata?.commitSha ||
-          !!r.ciMetadata?.runUrl,
+          !!r.ciMetadata?.runUrl
       ),
-    [runs],
+    [runs]
   );
 
   useEffect(() => {
@@ -270,13 +280,14 @@ export function RunOverview({
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [suiteDeleteArmed, setSuiteDeleteArmed] = useState(false);
+  const selectionEnabled = canDeleteRuns || Boolean(onCompareRuns);
 
   useEffect(() => {
-    if (!canDeleteRuns) {
+    if (!selectionEnabled) {
       setSelectedRunIds(new Set());
       setShowBatchDeleteModal(false);
     }
-  }, [canDeleteRuns]);
+  }, [selectionEnabled]);
 
   useEffect(() => {
     if (!canDeleteSuite) {
@@ -299,9 +310,9 @@ export function RunOverview({
             : DEFAULT_TABLE_VIEWPORT_WIDTH_PX,
         hasTokenData,
         hasCiMetadata,
-        includeSelectionColumn: canDeleteRuns,
+        includeSelectionColumn: selectionEnabled,
       }),
-    [tableViewportWidth, hasTokenData, hasCiMetadata, canDeleteRuns],
+    [tableViewportWidth, hasTokenData, hasCiMetadata, selectionEnabled]
   );
 
   const rowGridTemplateColumns = useMemo(() => {
@@ -327,7 +338,7 @@ export function RunOverview({
       columns.push(
         responsiveLayout.metadataMode === "chip"
           ? "minmax(72px, 0.7fr)"
-          : "minmax(140px, 1.3fr)",
+          : "minmax(140px, 1.3fr)"
       );
     }
 
@@ -336,8 +347,10 @@ export function RunOverview({
 
   const fullGridTemplateColumns = useMemo(
     () =>
-      canDeleteRuns ? `28px ${rowGridTemplateColumns}` : rowGridTemplateColumns,
-    [canDeleteRuns, rowGridTemplateColumns],
+      selectionEnabled
+        ? `28px ${rowGridTemplateColumns}`
+        : rowGridTemplateColumns,
+    [selectionEnabled, rowGridTemplateColumns]
   );
 
   const toggleRunSelection = useCallback((runId: string) => {
@@ -361,6 +374,23 @@ export function RunOverview({
       }
     });
   }, [runs]);
+
+  const selectedRunsForCompare = useMemo(
+    () =>
+      runs
+        .filter((run) => selectedRunIds.has(run._id))
+        .sort(compareRunsBySequence),
+    [runs, selectedRunIds]
+  );
+
+  const canCompareSelected =
+    selectedRunsForCompare.length === 2 &&
+    selectedRunsForCompare.every((run) => run.status === "completed");
+
+  const handleCompareSelected = useCallback(() => {
+    if (!onCompareRuns || !canCompareSelected) return;
+    onCompareRuns(selectedRunsForCompare[0]._id, selectedRunsForCompare[1]._id);
+  }, [canCompareSelected, onCompareRuns, selectedRunsForCompare]);
 
   const confirmBatchDeleteRuns = useCallback(() => {
     const runIds = Array.from(selectedRunIds);
@@ -397,7 +427,7 @@ export function RunOverview({
       <SuiteInsightsCollapsible runs={runs} />
       {/* Runs List */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border bg-card text-card-foreground">
-        {canDeleteRuns && selectedRunIds.size > 0 ? (
+        {selectionEnabled && selectedRunIds.size > 0 ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Checkbox
@@ -418,14 +448,32 @@ export function RunOverview({
               >
                 Cancel
               </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowBatchDeleteModal(true)}
-                disabled={deletingRunId !== null}
-              >
-                Delete
-              </Button>
+              {onCompareRuns ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCompareSelected}
+                  disabled={!canCompareSelected}
+                  title={
+                    selectedRunsForCompare.length === 2
+                      ? "Compare selected completed runs"
+                      : "Select exactly two completed runs to compare"
+                  }
+                >
+                  <ArrowLeftRight className="mr-2 h-3.5 w-3.5" aria-hidden />
+                  Compare
+                </Button>
+              ) : null}
+              {canDeleteRuns ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setShowBatchDeleteModal(true)}
+                  disabled={deletingRunId !== null}
+                >
+                  Delete
+                </Button>
+              ) : null}
             </div>
           </div>
         ) : canDeleteSuite && suiteDeleteArmed && onDeleteSuite ? (
@@ -465,7 +513,9 @@ export function RunOverview({
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between gap-4">
             <div>
               <p className="text-xs text-muted-foreground">
-                Click on a run to view its case breakdown and results.
+                {onCompareRuns
+                  ? "Click a run to view it, or select two completed runs to compare."
+                  : "Click on a run to view its case breakdown and results."}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -500,7 +550,7 @@ export function RunOverview({
                         "px-2 py-0.5 text-xs rounded transition-colors",
                         runsViewMode === value
                           ? "bg-background text-foreground shadow-sm font-medium"
-                          : "text-muted-foreground hover:text-foreground",
+                          : "text-muted-foreground hover:text-foreground"
                       )}
                     >
                       {label}
@@ -531,7 +581,7 @@ export function RunOverview({
                   className="grid items-center gap-x-3"
                   style={{ gridTemplateColumns: fullGridTemplateColumns }}
                 >
-                  {canDeleteRuns && <div className="h-4 w-4" />}
+                  {selectionEnabled && <div className="h-4 w-4" />}
                   <div>Run ID</div>
                   <div>Start time</div>
                   <div>Duration</div>
@@ -564,49 +614,47 @@ export function RunOverview({
               ) : (
                 runs.map((run, runIndex) => {
                   const runIterations = allIterations.filter(
-                    (iter) => iter.suiteRunId === run._id,
+                    (iter) => iter.suiteRunId === run._id
                   );
                   // Only count completed iterations - exclude pending/cancelled
                   const iterationResults = runIterations.map((i) =>
-                    computeIterationResult(i),
+                    computeIterationResult(i)
                   );
                   const realTimePassed = iterationResults.filter(
-                    (r) => r === "passed",
+                    (r) => r === "passed"
                   ).length;
                   const realTimeFailed = iterationResults.filter(
-                    (r) => r === "failed",
+                    (r) => r === "failed"
                   ).length;
                   const realTimeTotal = realTimePassed + realTimeFailed;
                   const totalTokens = runIterations.reduce(
                     (sum, iter) => sum + (iter.tokensUsed || 0),
-                    0,
+                    0
                   );
 
                   const passed =
                     realTimePassed > 0
                       ? realTimePassed
-                      : (run.summary?.passed ?? 0);
+                      : run.summary?.passed ?? 0;
                   const failed =
                     realTimeFailed > 0
                       ? realTimeFailed
-                      : (run.summary?.failed ?? 0);
+                      : run.summary?.failed ?? 0;
                   const total =
-                    realTimeTotal > 0
-                      ? realTimeTotal
-                      : (run.summary?.total ?? 0);
+                    realTimeTotal > 0 ? realTimeTotal : run.summary?.total ?? 0;
                   const passRate =
                     total > 0 ? Math.round((passed / total) * 100) : null;
 
                   const timestamp = formatTime(
-                    run.completedAt ?? run.createdAt,
+                    run.completedAt ?? run.createdAt
                   );
 
                   const duration =
                     run.completedAt && run.createdAt
                       ? formatDuration(run.completedAt - run.createdAt)
                       : run.createdAt && run.status === "running"
-                        ? formatDuration(Date.now() - run.createdAt)
-                        : "—";
+                      ? formatDuration(Date.now() - run.createdAt)
+                      : "—";
 
                   const runResult =
                     run.result ||
@@ -615,10 +663,10 @@ export function RunOverview({
                         ? "passed"
                         : "failed"
                       : run.status === "cancelled"
-                        ? "cancelled"
-                        : run.status === "running"
-                          ? "running"
-                          : "pending");
+                      ? "cancelled"
+                      : run.status === "running"
+                      ? "running"
+                      : "pending");
                   const runAccent = evalStatusLeftBorderClasses(runResult);
 
                   const isSelected = selectedRunIds.has(run._id);
@@ -709,7 +757,7 @@ export function RunOverview({
                     </>
                   );
 
-                  const runButton = canDeleteRuns ? (
+                  const runButton = selectionEnabled ? (
                     <div
                       className="grid items-center gap-x-3 px-4 py-2.5"
                       style={{ gridTemplateColumns: fullGridTemplateColumns }}

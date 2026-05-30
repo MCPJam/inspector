@@ -75,11 +75,6 @@ function TriageRowItem({ row }: { row: TriageRow }) {
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
           <CategoryChip row={row} />
-          {row.affectedCaseKeys.length > 0 ? (
-            <span className="truncate">
-              cases {row.affectedCaseKeys.join(", ")}
-            </span>
-          ) : null}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">

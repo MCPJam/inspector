@@ -29,7 +29,7 @@ import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { AiTriageCard } from "./ai-triage-card";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowUpDown, ExternalLink } from "lucide-react";
+import { ArrowLeftRight, ArrowUpDown, ExternalLink } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
@@ -83,6 +83,9 @@ interface RunDetailViewProps {
    * `body` = KPI row stays in this view (CI / commit detail).
    */
   kpiPlacement?: "header" | "body";
+  /** Previous completed run offered as the default deterministic diff base. */
+  compareBaseRun?: EvalSuiteRun | null;
+  onCompareWithRun?: (baseRunId: string) => void;
   /**
    * `namedHostId` → host display name. When the run was triggered against
    * a specific attached host (multi-host fan-out), the run header surfaces
@@ -177,8 +180,8 @@ function IterationListItem({
     testInfo?.isNegativeTest === true
       ? "Negative test — expects the tool NOT to be called"
       : modelName && modelName !== "—"
-        ? `${caseTitle} — ${modelName}`
-        : caseTitle;
+      ? `${caseTitle} — ${modelName}`
+      : caseTitle;
 
   return (
     <div
@@ -288,10 +291,10 @@ function IterationListWithSections({
   }
 
   const failing = iterations.filter(
-    (i) => computeIterationResult(i) === "failed",
+    (i) => computeIterationResult(i) === "failed"
   );
   const passing = iterations.filter(
-    (i) => computeIterationResult(i) === "passed",
+    (i) => computeIterationResult(i) === "passed"
   );
   const other = iterations.filter((i) => {
     const r = computeIterationResult(i);
@@ -351,10 +354,10 @@ export function RunIterationsSidebar({
       );
     }
     const passed = caseGroupsForSelectedRun.filter((i) =>
-      computeIterationPassed(i),
+      computeIterationPassed(i)
     ).length;
     const failed = caseGroupsForSelectedRun.filter(
-      (i) => !computeIterationPassed(i),
+      (i) => !computeIterationPassed(i)
     ).length;
     const total = caseGroupsForSelectedRun.length;
     const passRate = total > 0 ? passed / total : 0;
@@ -365,7 +368,7 @@ export function RunIterationsSidebar({
     if (!runForOverview) return null;
     return getSidebarRunInsightsPassRateLabel(
       runForOverview,
-      overviewStatsOverride,
+      overviewStatsOverride
     );
   }, [runForOverview, overviewStatsOverride]);
 
@@ -418,8 +421,8 @@ export function RunIterationsSidebar({
           {runOverviewExtra ? (
             <div
               className={cn(
-                (showRunOverviewNav && runForOverview) && "border-t",
-                "px-4 pb-2 pt-2",
+                showRunOverviewNav && runForOverview && "border-t",
+                "px-4 pb-2 pt-2"
               )}
             >
               {runOverviewExtra}
@@ -431,7 +434,7 @@ export function RunIterationsSidebar({
         <div
           className={cn(
             caseListCardClassName,
-            "min-h-0 min-w-0 flex-1 overflow-hidden",
+            "min-h-0 min-w-0 flex-1 overflow-hidden"
           )}
         >
           {caseGroupsForSelectedRun.length > 0 ? (
@@ -482,6 +485,8 @@ export function RunDetailView({
   onEditTestCase: onEditTestCaseProp,
   alwaysShowEditIterationRows = false,
   kpiPlacement = "body",
+  compareBaseRun = null,
+  onCompareWithRun,
   hostNamesById,
 }: RunDetailViewProps) {
   const handleEditTestCase =
@@ -492,7 +497,7 @@ export function RunDetailView({
           type: "test-edit",
           suiteId: selectedRunDetails.suiteId,
           testId: testCaseId,
-        }),
+        })
       ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
 
@@ -516,14 +521,14 @@ export function RunDetailView({
             source,
           })
         : [],
-    [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source],
+    [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source]
   );
 
   const hasTokenData = useMemo(
     () =>
       selectedRunChartData.tokensData.length > 0 &&
       selectedRunChartData.tokensData.some((d) => d.tokens > 0),
-    [selectedRunChartData.tokensData],
+    [selectedRunChartData.tokensData]
   );
 
   const hasRunBarCharts =
@@ -571,7 +576,7 @@ export function RunDetailView({
               <div
                 className={cn(
                   "mt-2 text-2xl font-semibold leading-none tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
-                  stat.valueClass,
+                  stat.valueClass
                 )}
               >
                 {stat.value}
@@ -604,8 +609,8 @@ export function RunDetailView({
                         model.passRate >= 80
                           ? "hsl(142.1 76.2% 36.3%)"
                           : model.passRate >= 50
-                            ? "hsl(45.4 93.4% 47.5%)"
-                            : "hsl(0 84.2% 60.2%)",
+                          ? "hsl(45.4 93.4% 47.5%)"
+                          : "hsl(0 84.2% 60.2%)",
                     }}
                   />
                   <span className="text-[11px] text-foreground">
@@ -638,7 +643,7 @@ export function RunDetailView({
     <div
       className={cn(
         "relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
-        omitIterationList ? "px-3 py-3" : "p-4",
+        omitIterationList ? "px-3 py-3" : "p-4"
       )}
     >
       {/* Run Header */}
@@ -677,10 +682,23 @@ export function RunDetailView({
           </p>
         ) : null}
 
+        {compareBaseRun && onCompareWithRun ? (
+          <div className="mb-4 flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onCompareWithRun(compareBaseRun._id)}
+              className="h-8 text-xs"
+            >
+              <ArrowLeftRight className="mr-2 h-3.5 w-3.5" aria-hidden />
+              Compare to Run {formatRunId(compareBaseRun._id)}
+            </Button>
+          </div>
+        ) : null}
+
         {/* Run-level KPIs, narrative, and charts stay visible while drilling into an iteration (graphs no longer disappear). */}
-        <div className="shrink-0">
-          {runInsightsBody}
-        </div>
+        <div className="shrink-0">{runInsightsBody}</div>
       </div>
 
       {/* Iteration list only (details open from row actions / navigation). List may live in a parent when omitIterationList. */}

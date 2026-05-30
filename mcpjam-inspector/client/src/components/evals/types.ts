@@ -347,6 +347,116 @@ export type EvalSuiteRun = {
   };
 };
 
+export type EvalRunNumericDiff = {
+  base: number | null;
+  compare: number | null;
+  delta: number | null;
+  percentDelta: number | null;
+};
+
+export type EvalRunTextPreview = {
+  text: string;
+  truncated: boolean;
+};
+
+export type EvalRunDiffCaseStatus =
+  | "unchanged_passed"
+  | "unchanged_failed"
+  | "regressed"
+  | "fixed"
+  | "new_case"
+  | "removed_case"
+  | "changed";
+
+export type EvalRunDiffSide = {
+  outcome: "passed" | "failed" | "absent";
+  iterationIds: string[];
+  representativeIterationId: string | null;
+  traceBlobIds: string[];
+  input: EvalRunTextPreview | null;
+  output: EvalRunTextPreview | null;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: unknown;
+  }>;
+  actualToolCalls: Array<{
+    toolName: string;
+    arguments: unknown;
+  }>;
+  error: string | null;
+  metrics: {
+    durationMs: number | null;
+    totalTokens: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cachedInputTokens: number | null;
+    reasoningTokens: number | null;
+    estimatedCostUsd: number | null;
+  };
+};
+
+export type EvalRunDiff = {
+  suite: {
+    id: string;
+    name: string;
+    source?: "ui" | "sdk";
+  };
+  baseRun: {
+    id: string;
+    runNumber: number;
+    source: "ui" | "sdk" | null;
+    framework: string | null;
+    createdAt: number;
+    completedAt: number | null;
+    result?: "pending" | "passed" | "failed" | "cancelled";
+    summary: EvalSuiteRunSummary | null;
+  };
+  compareRun: {
+    id: string;
+    runNumber: number;
+    source: "ui" | "sdk" | null;
+    framework: string | null;
+    createdAt: number;
+    completedAt: number | null;
+    result?: "pending" | "passed" | "failed" | "cancelled";
+    summary: EvalSuiteRunSummary | null;
+  };
+  metrics: {
+    startOffsetMs: EvalRunNumericDiff;
+    wallDurationMs: EvalRunNumericDiff;
+    totalTokens: EvalRunNumericDiff;
+    inputTokens: EvalRunNumericDiff;
+    outputTokens: EvalRunNumericDiff;
+    cachedInputTokens: EvalRunNumericDiff;
+    reasoningTokens: EvalRunNumericDiff;
+    estimatedCostUsd: EvalRunNumericDiff;
+  };
+  scores: {
+    passRatePercent: EvalRunNumericDiff;
+    total: EvalRunNumericDiff;
+    passed: EvalRunNumericDiff;
+    failed: EvalRunNumericDiff;
+  };
+  cases: Array<{
+    caseKey: string;
+    title: string;
+    testCaseId: string | null;
+    status: EvalRunDiffCaseStatus;
+    configChanged: boolean;
+    base: EvalRunDiffSide;
+    compare: EvalRunDiffSide;
+    metrics: {
+      durationMs: EvalRunNumericDiff;
+      totalTokens: EvalRunNumericDiff;
+      inputTokens: EvalRunNumericDiff;
+      outputTokens: EvalRunNumericDiff;
+      cachedInputTokens: EvalRunNumericDiff;
+      reasoningTokens: EvalRunNumericDiff;
+      estimatedCostUsd: EvalRunNumericDiff;
+    };
+  }>;
+};
+
 export type EvalRefinementSession = {
   _id: string;
   status: "pending_candidate" | "ready" | "verifying" | "completed" | "failed";

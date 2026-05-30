@@ -90,6 +90,37 @@ import type {
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
 
+/**
+ * Turn a non-OK backend stream response into a human-readable message. The
+ * Convex stream endpoint returns structured JSON for guardrails like the daily
+ * spend cap — e.g. { code: "user_rate_limit", error: "Daily MCPJam model limit
+ * reached. Use BYOK or try again tomorrow.", details: "Try again in N minutes." }.
+ * Surface that instead of the bare HTTP status text ("Too Many Requests"), and
+ * flag 429s as expected guardrails (not faults) so callers can log them quietly.
+ */
+function describeBackendStreamError(
+  status: number,
+  bodyText: string,
+): { message: string; code?: string; expected: boolean } {
+  const expected = status === 429;
+  try {
+    const body = JSON.parse(bodyText) as {
+      code?: string;
+      error?: string;
+      details?: string;
+    };
+    if (body?.error) {
+      const message = body.details
+        ? `${body.error} ${body.details}`
+        : body.error;
+      return { message, code: body.code, expected };
+    }
+  } catch {
+    // body wasn't JSON — fall through to the generic shape
+  }
+  return { message: `Backend stream error: ${status} ${bodyText}`, expected };
+}
+
 export type EvalTestCase = {
   title: string;
   query: string;
@@ -1962,12 +1993,20 @@ const runIterationViaBackend = async ({
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -3539,12 +3578,20 @@ const streamIterationViaBackend = async ({
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
