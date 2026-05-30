@@ -303,7 +303,7 @@ export type EvalSuiteRun = {
       summary: string;
     }>;
   };
-  serverQualityJobId?: number;
+  serverQualityJobId?: string;
   serverQualityStatus?: "pending" | "completed" | "failed";
   serverQuality?: {
     summary: string;
@@ -314,6 +314,16 @@ export type EvalSuiteRun = {
       rating: "good" | "needs_improvement" | "poor";
       issues: string[];
       suggestions: string[];
+      /** Arcade pattern slug the violation maps to. Allowlist-validated server-side. */
+      patternSlug?: string;
+      /** PR-B auditability metadata (optional; populated by the judge). */
+      evidence?: string[];
+      confidence?: "low" | "medium" | "high";
+      attribution?:
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -323,6 +333,16 @@ export type EvalSuiteRun = {
       efficiency: "optimal" | "acceptable" | "inefficient" | "excessive";
       issues: string[];
       suggestions: string[];
+      /** Arcade pattern slug the violation maps to. Allowlist-validated server-side. */
+      patternSlug?: string;
+      /** PR-B auditability metadata (optional; populated by the judge). */
+      evidence?: string[];
+      confidence?: "low" | "medium" | "high";
+      attribution?:
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
   };
 };

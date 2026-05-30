@@ -23,15 +23,39 @@ export type TriageRow = {
   rawIssues: string[];
   rawSuggestions: string[];
   toolName?: string;
+  /** Arcade pattern slug the judge attributed the violation to, if any. */
+  patternSlug?: string;
+  /** PR-B auditability metadata carried through from the judge insight. */
+  evidence?: string[];
+  confidence?: ToolInsight["confidence"];
+  attribution?: ToolInsight["attribution"];
 };
 
-const TOOL_RATING_SEVERITY: Record<ToolInsight["rating"], 0 | 1 | 2 | 3> = {
+/** Pre-resolved tool definition embedded in a fix prompt so the coding agent
+ * has the current shape to edit against. Callers do the lookup against the
+ * snapshot (via `getInspectionRevisionById`) before invoking `buildFixPrompt`. */
+export type EmbeddableTool = {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+};
+
+const ARCADE_PATTERNS_BASE_URL = "https://arcade.dev/patterns";
+
+// SYNC: these weights mirror the backend source of truth at
+// mcpjam-backend/convex/lib/serverQualityScore.ts. They live in a separate repo
+// so they cannot be imported across; a literal-value test pins both sides. If
+// you change a weight here, change it there too (and vice versa).
+export const TOOL_RATING_SEVERITY: Record<
+  ToolInsight["rating"],
+  0 | 1 | 2 | 3
+> = {
   poor: 3,
   needs_improvement: 2,
   good: 0,
 };
 
-const WORKFLOW_EFFICIENCY_SEVERITY: Record<
+export const WORKFLOW_EFFICIENCY_SEVERITY: Record<
   WorkflowInsight["efficiency"],
   0 | 1 | 2 | 3
 > = {
@@ -104,6 +128,10 @@ export function unifyTriageRows({
       failureCount,
       rawIssues: w.issues ?? [],
       rawSuggestions: w.suggestions ?? [],
+      patternSlug: w.patternSlug,
+      evidence: w.evidence,
+      confidence: w.confidence,
+      attribution: w.attribution,
     });
   }
 
@@ -125,6 +153,10 @@ export function unifyTriageRows({
       rawIssues: t.issues ?? [],
       rawSuggestions: t.suggestions ?? [],
       toolName: t.toolName,
+      patternSlug: t.patternSlug,
+      evidence: t.evidence,
+      confidence: t.confidence,
+      attribution: t.attribution,
     });
   }
 
@@ -203,31 +235,99 @@ function bulletList(items: string[]): string {
   return items.length > 0 ? items.map((s) => `- ${s}`).join("\n") : "- (none)";
 }
 
-export function buildFixPrompt(row: TriageRow): string {
+function renderEmbeddableTool(tool: EmbeddableTool): string {
+  const lines: string[] = [`### \`${tool.name}\``];
+  lines.push(
+    `Current description: ${tool.description?.trim() || "_(no description)_"}`,
+  );
+  if (tool.inputSchema !== undefined) {
+    lines.push("Current inputSchema:");
+    lines.push("```json");
+    lines.push(JSON.stringify(tool.inputSchema, null, 2));
+    lines.push("```");
+  }
+  return lines.join("\n");
+}
+
+export type BuildFixPromptOptions = {
+  /** Tools to embed verbatim so the coding agent has the current shape to
+   * edit against. For tool rows, pass the single tool. For workflow rows,
+   * pass every tool actually used in the workflow's iteration. */
+  embedTools?: EmbeddableTool[];
+};
+
+export function buildFixPrompt(
+  row: TriageRow,
+  options?: BuildFixPromptOptions,
+): string {
   const scopeLine =
     row.source === "tool"
       ? `Tool: ${row.toolName ?? "(unknown)"}`
       : `Case: ${row.affectedCaseKeys.join(", ") || "(unknown)"}`;
 
-  return [
+  const sections: string[] = [
     "Improve the MCP server for the following issue found by an eval run.",
     "",
     `Category: ${row.category}`,
     scopeLine,
-    "",
-    "Issues identified:",
-    bulletList(row.rawIssues),
-    "",
-    "Suggested changes:",
-    bulletList(row.rawSuggestions),
+  ];
+
+  if (row.confidence) {
+    sections.push(`Judge confidence: ${row.confidence}`);
+  }
+  if (row.attribution && row.attribution !== "server_design") {
+    sections.push(
+      `> Attribution: ${row.attribution} — this finding may reflect agent or test-harness behavior rather than a server defect. Verify against the trace before changing server code.`,
+    );
+  }
+
+  if (row.patternSlug) {
+    sections.push(
+      `Pattern: ${row.patternSlug}`,
+      `Reference: ${ARCADE_PATTERNS_BASE_URL}/${row.patternSlug}`,
+    );
+  }
+
+  if (row.evidence && row.evidence.length > 0) {
+    sections.push("", "Evidence:", bulletList(row.evidence));
+  }
+
+  sections.push("", "Issues identified:", bulletList(row.rawIssues));
+  sections.push("", "Suggested changes:", bulletList(row.rawSuggestions));
+
+  if (options?.embedTools && options.embedTools.length > 0) {
+    sections.push("", "Current tool definition(s) — edit these:");
+    sections.push("");
+    for (const tool of options.embedTools) {
+      sections.push(renderEmbeddableTool(tool));
+    }
+  }
+
+  sections.push(
     "",
     "Please update the server (tool descriptions, input schemas, or handler logic) to address these issues. Keep changes minimal and explain what you changed and why.",
-  ].join("\n");
+  );
+
+  return sections.join("\n");
 }
 
-export function buildTopNPrompt(rows: TriageRow[]): string {
+export type BuildTopNPromptOptions = {
+  /** Per-row embed-tool overrides. Maps `TriageRow.id` to its tools. */
+  embedToolsByRowId?: Record<string, EmbeddableTool[]>;
+};
+
+export function buildTopNPrompt(
+  rows: TriageRow[],
+  options?: BuildTopNPromptOptions,
+): string {
   if (rows.length === 0) return "";
   const header = `The following ${rows.length} issues were found in an eval run. Please address each:`;
-  const body = rows.map(buildFixPrompt).join("\n\n---\n\n");
+  const body = rows
+    .map((row) =>
+      buildFixPrompt(row, {
+        embedTools: options?.embedToolsByRowId?.[row.id],
+      }),
+    )
+    .join("\n\n---\n\n");
   return `${header}\n\n${body}`;
 }
