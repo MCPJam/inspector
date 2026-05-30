@@ -127,6 +127,14 @@ export function AiTriageCard({
   );
 
   const hasRows = rows.length > 0;
+  // Distinguish "judge returned insights, all good/optimal" (arrays populated,
+  // just filtered out) from "judge returned NO insights at all" (empty arrays —
+  // usually a truncated/failed parse that fell back to summary-only). The latter
+  // must NOT be reported as "all good".
+  const noInsights =
+    !!serverQuality &&
+    (serverQuality.toolInsights?.length ?? 0) === 0 &&
+    (serverQuality.workflowInsights?.length ?? 0) === 0;
   const topRows = rows.slice(0, TOP_N);
 
   const headerSubtitle = (() => {
@@ -134,7 +142,7 @@ export function AiTriageCard({
     if (error || failedGeneration) return "Analysis failed";
     if (!serverQuality && requested) return "Requesting analysis…";
     if (!serverQuality) return "Run a completed suite to see triage";
-    if (!hasRows) return "All clean";
+    if (!hasRows) return noInsights ? "Summary only" : "All clean";
     return `${rows.length} root cause${rows.length === 1 ? "" : "s"}`;
   })();
 
@@ -219,9 +227,20 @@ export function AiTriageCard({
               : "We will analyze your MCP server's tool quality and workflow efficiency here."}
           </div>
         ) : !hasRows ? (
-          <div className="px-3 py-4 text-sm text-muted-foreground">
-            No actionable issues — all tools rated good and workflows optimal.
-          </div>
+          noInsights ? (
+            <div className="px-3 py-4 text-sm text-muted-foreground">
+              {serverQuality.summary?.trim() ||
+                "The analysis produced no per-tool or per-workflow insights."}
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                No per-tool/workflow breakdown was produced — the analysis may
+                have been truncated. Re-run to retry.
+              </p>
+            </div>
+          ) : (
+            <div className="px-3 py-4 text-sm text-muted-foreground">
+              No actionable issues — all tools rated good and workflows optimal.
+            </div>
+          )
         ) : (
           <ul className="divide-y divide-border/40">
             {rows.map((row) => (
