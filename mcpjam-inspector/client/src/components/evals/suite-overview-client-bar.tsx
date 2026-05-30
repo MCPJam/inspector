@@ -173,6 +173,10 @@ export function SuiteOverviewClientBar({
     </DropdownMenu>
   );
 
+  const showServersSection = Boolean(
+    suite.projectId && (editable || suite.serverAttachment),
+  );
+
   // The bar always renders (per the empty-state decision in the plan) so the
   // "Attach host" affordance is discoverable even on suites with no hosts.
   return (
@@ -184,59 +188,51 @@ export function SuiteOverviewClientBar({
         className,
       )}
     >
-      {/* Servers row — suite-level standalone server attachment */}
-      {(suite.projectId && (editable || suite.serverAttachment)) ? (
-        <div
-          className={cn(
-            "flex items-center gap-2 px-1 py-0.5 sm:px-2",
-            containerVariant === "inline" && "w-full min-w-0",
-          )}
-        >
-          <span className="shrink-0 text-[11px] text-muted-foreground w-12">
-            Servers
-          </span>
-          {editable && suite.projectId && onUpdateServerAttachment ? (
-            <ServerAttachmentPicker
-              projectId={suite.projectId}
-              value={suite.serverAttachmentId ?? null}
-              onChange={onUpdateServerAttachment}
-            />
-          ) : suite.serverAttachment ? (
-            <span className="flex h-8 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-xs font-medium text-foreground">
-              <Globe className="size-3.5 shrink-0 text-muted-foreground" />
-              {suite.serverAttachment.name}
-              <span className="text-[10px] text-muted-foreground">
-                · {suite.serverAttachment.serverIds.length} server
-                {suite.serverAttachment.serverIds.length === 1 ? "" : "s"}
-              </span>
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Hosts row */}
       <div
         className={cn(
-          "flex min-h-9 items-center gap-2 px-1 sm:px-2",
-          containerVariant === "inline" &&
-            "w-full min-w-0 max-w-full overflow-hidden",
+          "flex min-h-9 flex-wrap items-center gap-x-4 gap-y-2 px-1 sm:px-2",
+          containerVariant === "inline" && "w-full min-w-0 max-w-full",
         )}
       >
-        {(suite.projectId && (editable || suite.serverAttachment)) ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground w-12">
-            Hosts
-          </span>
+        {showServersSection ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              Servers
+            </span>
+            {editable && suite.projectId && onUpdateServerAttachment ? (
+              <ServerAttachmentPicker
+                projectId={suite.projectId}
+                value={suite.serverAttachmentId ?? null}
+                onChange={onUpdateServerAttachment}
+              />
+            ) : suite.serverAttachment ? (
+              <span className="flex h-8 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-xs font-medium text-foreground">
+                <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                {suite.serverAttachment.name}
+                <span className="text-[10px] text-muted-foreground">
+                  · {suite.serverAttachment.serverIds.length} server
+                  {suite.serverAttachment.serverIds.length === 1 ? "" : "s"}
+                </span>
+              </span>
+            ) : null}
+          </div>
         ) : null}
+
         <div
           className={cn(
             "flex min-w-0 items-center gap-2",
-            containerVariant === "panel" ? "flex-1" : "w-full flex-1",
+            containerVariant === "inline" ? "min-w-0 flex-1" : "flex-1",
           )}
         >
+          {showServersSection ? (
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              Hosts
+            </span>
+          ) : null}
           <div
             className={cn(
               "flex min-w-0 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-              containerVariant === "panel" ? "flex-1" : "min-w-0 flex-1",
+              containerVariant === "inline" ? "min-w-0 flex-1" : "flex-1",
             )}
           >
             {attachments.length === 0 ? (
