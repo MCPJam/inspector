@@ -14,7 +14,7 @@ export interface PaymentHistoryEntry {
   id: string;
   sessionId: string;
   paidAmountCents: number;
-  /** Paid dollars handed back when refunded/charged back. Reversed rows only. */
+  /** Paid cents handed back when refunded/charged back. Reversed rows only. */
   reversedAmountCents?: number;
   status: PaymentHistoryStatus;
   occurredAt: number;
