@@ -45,7 +45,8 @@ export interface AggregatedToolsState {
  *     last-seen-wins collision behavior baked into `ToolServerMap`.
  */
 export function useAggregatedTools(
-  serverNames: string[]
+  serverNames: string[],
+  options: { unavailableServerNames?: ReadonlyArray<string> } = {}
 ): AggregatedToolsState {
   const apiContextRevision = useSyncExternalStore(
     subscribeApiContext,
@@ -69,8 +70,16 @@ export function useAggregatedTools(
     () => [...serverNames].sort().join("\x00"),
     [serverNames]
   );
+  const unavailableServersKey = useMemo(
+    () => [...(options.unavailableServerNames ?? [])].sort().join("\x00"),
+    [options.unavailableServerNames]
+  );
   const serverNamesRef = useRef<string[]>([]);
   serverNamesRef.current = serversKey ? serversKey.split("\x00") : [];
+  const unavailableServerNamesRef = useRef<string[]>([]);
+  unavailableServerNamesRef.current = unavailableServersKey
+    ? unavailableServersKey.split("\x00")
+    : [];
 
   // Monotonic token so a stale in-flight fetch can't clobber a fresher result
   // when the server set toggles or `refetch` is called mid-request.
@@ -86,6 +95,9 @@ export function useAggregatedTools(
       return;
     }
 
+    const unavailableSet = new Set(unavailableServerNamesRef.current);
+    const fetchableNames = names.filter((name) => !unavailableSet.has(name));
+
     // Prune state to the new server set synchronously so tools from
     // just-deselected servers disappear immediately rather than lingering
     // until the new fetch returns.
@@ -93,7 +105,9 @@ export function useAggregatedTools(
     const pruneToActive = <V>(prev: Record<string, V>): Record<string, V> => {
       const next: Record<string, V> = {};
       for (const key of Object.keys(prev)) {
-        if (activeSet.has(key)) next[key] = prev[key];
+        if (activeSet.has(key) && !unavailableSet.has(key)) {
+          next[key] = prev[key];
+        }
       }
       return next;
     };
@@ -101,12 +115,18 @@ export function useAggregatedTools(
     setErrorByServer((prev) => pruneToActive(prev));
     setLoadingByServer((prev) => {
       const next = pruneToActive(prev);
-      for (const name of names) next[name] = true;
+      for (const name of names) {
+        next[name] = true;
+      }
       return next;
     });
 
+    if (fetchableNames.length === 0) {
+      return;
+    }
+
     const results = await Promise.all(
-      names.map(async (serverId) => {
+      fetchableNames.map(async (serverId) => {
         try {
           const data = await listTools({ serverId });
           return { serverId, tools: data.tools ?? [], error: null as null };
@@ -135,9 +155,12 @@ export function useAggregatedTools(
     setLoadingByServer(() => {
       const next: Record<string, boolean> = {};
       for (const { serverId } of results) next[serverId] = false;
+      for (const serverId of unavailableSet) {
+        if (activeSet.has(serverId)) next[serverId] = true;
+      }
       return next;
     });
-  }, [serversKey, apiContextRevision]);
+  }, [serversKey, apiContextRevision, unavailableServersKey]);
 
   useEffect(() => {
     void fetchAll();

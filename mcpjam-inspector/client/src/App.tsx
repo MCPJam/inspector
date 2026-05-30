@@ -1476,6 +1476,7 @@ export default function App() {
     isLoadingRemoteProjects,
     areServersHydrated,
     projectServers,
+    displayServerConfigs,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     selectedServerEntry,
@@ -1484,6 +1485,7 @@ export default function App() {
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,
     handleUpdate,
@@ -2679,7 +2681,7 @@ export default function App() {
     | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
-      serverConfigs: projectServers,
+      serverConfigs: displayServerConfigs,
       selectedServer: appState.selectedServer,
       selectedMultipleServers: appState.selectedMultipleServers,
       // Playground supports multi-server selection — the user can toggle
@@ -2691,12 +2693,13 @@ export default function App() {
       onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
+      onDisconnect: handleDisconnect,
       showOnlyOAuthServers: false,
       showOnlyServersWithViews: false,
     };
   }, [
     activeTab,
-    projectServers,
+    displayServerConfigs,
     appState.selectedServer,
     appState.selectedMultipleServers,
     setSelectedServer,
@@ -2704,6 +2707,7 @@ export default function App() {
     setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
+    handleDisconnect,
   ]);
 
   if (isDebugCallback) {
@@ -2814,6 +2818,10 @@ export default function App() {
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
+          // Stays on projectServers (NOT displayServerConfigs): the header
+          // picker also drives the OAuth Debugger / XAA tabs, and tests
+          // explicitly guard against surfacing runtime-only entries there
+          // (cross-project / cross-org leak prevention).
           serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
@@ -2873,6 +2881,7 @@ export default function App() {
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
     consumeCheckoutIntent,
+    displayServerConfigs,
     convexProjectId,
     defaultHubRoute,
     ensureServersReady,
@@ -2890,6 +2899,7 @@ export default function App() {
     handleOrganizationDeleted,
     handleProjectShared,
     handleReconnect,
+    handleRuntimeDisconnect,
     handleRefreshTokensFromOAuthFlow,
     handleRemoveServer,
     handleUpdate,
@@ -3054,6 +3064,7 @@ export default function App() {
         actions={{
           ensureServersReady,
           runtimeDisconnectServer: handleRuntimeDisconnect,
+          reconnectServer: reconnectServerForClientSwitch,
           setSelectedServerNames: setSelectedMCPConfigs,
         }}
       >

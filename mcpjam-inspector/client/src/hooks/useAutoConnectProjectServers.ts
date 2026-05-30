@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
+import { toast } from "sonner";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
+import { useLogger } from "@/hooks/use-logger";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -35,17 +37,24 @@ const attemptedByProject = new Map<string, Set<string>>();
  */
 const lastSeenScopeByProject = new Map<string, string>();
 
-function buildAttemptKey(
-  hostScopeKey: string,
-  serverNamesKey: string,
-): string {
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function reconnectFailureToastMessage(count: number): string {
+  return count === 1
+    ? "Failed to reconnect 1 server."
+    : `Failed to reconnect ${count} servers.`;
+}
+
+function buildAttemptKey(hostScopeKey: string, serverNamesKey: string): string {
   return `${hostScopeKey}${serverNamesKey}`;
 }
 
 function markAttempted(
   projectId: string,
   hostScopeKey: string,
-  serverNamesKey: string,
+  serverNamesKey: string
 ) {
   let set = attemptedByProject.get(projectId);
   if (!set) {
@@ -58,7 +67,7 @@ function markAttempted(
 function isAttempted(
   projectId: string,
   hostScopeKey: string,
-  serverNamesKey: string,
+  serverNamesKey: string
 ): boolean {
   return (
     attemptedByProject
@@ -100,10 +109,19 @@ interface UseAutoConnectProjectServersResult {
  * preferences store.
  *
  * Server-set semantics: the caller passes the SAVED host's required set
- * (`HostConfig.serverIds` resolved to names). Optional servers stay
- * disconnected; if the host has no required servers, this hook is a
- * no-op. This matches the host's declared dependencies — connecting
- * servers the host doesn't claim to need would be surprising.
+ * (`HostConfig.serverIds` resolved to names). Required servers auto-connect.
+ *
+ * Client-switch recycle: switching the active/lead client (a `hostScopeKey`
+ * change) reconnects EVERY currently-connected server so each re-runs the MCP
+ * `initialize` handshake under the new client identity. It calls the real
+ * reconnect path (`reconnectServer` → backend `/api/mcp/servers/reconnect`,
+ * which closes and reopens the transport with the new `clientInfo`) once per
+ * scope per server — NOT an in-memory disconnect, which left the backend
+ * connection alive and made re-handshakes flaky. Required-but-not-connected
+ * servers are additionally auto-connected via the candidate path. Gated on a
+ * host being active (`hostScopeKey` non-null). Selection is NOT managed here:
+ * the connected set is the active set, mirrored by
+ * `ActiveClientServerReconciler`.
  */
 export function useAutoConnectProjectServers({
   projectId,
@@ -123,11 +141,8 @@ export function useAutoConnectProjectServers({
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
-  const {
-    ensureServersReady,
-    runtimeDisconnectServer,
-    setSelectedServerNames,
-  } = useServerActions();
+  const { ensureServersReady, reconnectServer } = useServerActions();
+  const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
   const scopeKey = hostScopeKey ?? "-";
@@ -136,117 +151,101 @@ export function useAutoConnectProjectServers({
   // disconnect dedupe.
   const requiredNamesKey = useMemo(
     () => requiredServerNames.slice().sort().join("\0"),
-    [requiredServerNames],
+    [requiredServerNames]
   );
   const requiredNames = useMemo(
     () => (requiredNamesKey ? requiredNamesKey.split("\0") : []),
-    [requiredNamesKey],
+    [requiredNamesKey]
   );
-
-  // Names in the active host's required set that are currently connected.
-  // On a host switch, only those servers need to be recycled so they can
-  // reconnect with the new host's initialize payload. Servers outside the
-  // required set may have been connected manually or by the project-level
-  // auto-connect switch; entering a host with no required servers must not
-  // tear them down.
-  const requiredConnectedNamesToDisconnectKey = useMemo(() => {
-    if (!enabled || !projectId || requiredNames.length === 0) return null;
-    const connected: string[] = [];
-    for (const name of requiredNames) {
-      if (sharedAppState.servers[name]?.connectionStatus !== "connected") {
-        continue;
-      }
-      connected.push(name);
-    }
-    if (connected.length === 0) return null;
-    return connected.join("\0");
-  }, [enabled, projectId, requiredNames, sharedAppState.servers]);
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
   // be interrupted; connected has nothing to do.
+  // The candidate pool is the host's required set UNION the servers the
+  // currently connecting, or in an OAuth flow — connecting/oauth-flow would
+  // be interrupted; connected has nothing to do. This is the "connect the
+  // host's required servers" path; reconnecting the ALREADY-connected set on a
+  // client switch is handled separately below.
   const candidateNamesKey = useMemo(() => {
     if (!enabled || !projectId || requiredNames.length === 0) {
       return null;
     }
-    const candidates: string[] = [];
-    for (const name of requiredNames) {
+    const candidates = requiredNames.filter((name) => {
       const status = sharedAppState.servers[name]?.connectionStatus;
-      if (
-        status === "connected" ||
-        status === "connecting" ||
-        status === "oauth-flow"
-      ) {
-        continue;
-      }
-      candidates.push(name);
-    }
+      return (
+        status !== "connected" &&
+        status !== "connecting" &&
+        status !== "oauth-flow"
+      );
+    });
     if (candidates.length === 0) return null;
-    // Stable key: sorted and joined with NUL — same shape ChatboxBuilderView
-    // uses (line 754) so reordering doesn't trigger a fresh batch.
-    return candidates.join("\0");
+    // Stable key: sorted and joined with NUL so reordering doesn't trigger a
+    // fresh batch.
+    return candidates.sort().join("\0");
   }, [enabled, projectId, requiredNames, sharedAppState.servers]);
 
-  // Sync the playground/chat multi-select to the host's required set
-  // whenever the (project, hostScope, required-names) tuple changes. Empty
-  // required sets are a no-op: surfaces with no explicit host selection
-  // should not wipe the active project/default host's server selection.
-  // React's dep comparison deduplicates re-renders that don't actually
-  // change the tuple, so this fires once per host switch (and once per
-  // edit to the host's required set after save).
-  useEffect(() => {
-    if (!enabled || !projectId || requiredNames.length === 0) return;
-    setSelectedServerNames(requiredNames);
-  }, [enabled, projectId, scopeKey, requiredNames, setSelectedServerNames]);
-
-  // Detect a scope transition (user switched the previewed host) and
+  // Detect a scope transition (user switched the active/lead client) and
   // clear the prior attempt log so revisiting a previously-tried host
   // re-fires reconciliation. Without this, the dedupe set would say
   // "already tried (Claude, [E,b,l])" and skip the second visit forever,
   // even though leaving and coming back is a clear user-intent signal to
   // try again. Sitting on the same host doesn't trigger this — only the
-  // actual scope change does.
+  // actual scope change does. Gated on a host being active (hostScopeKey
+  // non-null), not on the required set, so recycling fires even for hosts
+  // that declare no required servers.
   useEffect(() => {
-    if (!projectId || requiredNames.length === 0) return;
+    if (!projectId || hostScopeKey == null) return;
     if (lastSeenScopeByProject.get(projectId) !== scopeKey) {
       attemptedByProject.delete(projectId);
       lastSeenScopeByProject.set(projectId, scopeKey);
     }
-  }, [projectId, scopeKey, requiredNames.length]);
+  }, [projectId, scopeKey, hostScopeKey]);
 
-  // Disconnect-required-connected: fires at most once per (project,
-  // scopeKey). This is the host-switch recycle pass — it snapshots the
-  // active host's required servers that are already connected on first
-  // entry to the scope and disconnects only those. They then re-enter the
-  // candidate set on the next render and reconnect fresh. Later changes
-  // to the connected set within the SAME scope (e.g. the user manually
-  // connecting an additional server from the Servers tab) must not re-
-  // fire this path, otherwise we'd tear down servers the user just
-  // intentionally connected. The dedupe key is scope-only and we mark
-  // attempted unconditionally on first run, so subsequent renders bail
-  // even if `requiredConnectedNamesToDisconnectKey` becomes non-null
-  // afterwards.
+  // Reconnect-on-client-switch: fires at most once per (project, scopeKey).
+  // On switching the active/lead client, every currently-connected server must
+  // re-run the MCP `initialize` handshake as the new client. We hit the real
+  // reconnect path (`reconnectServer` → backend closes + reopens the transport
+  // with the new clientInfo) rather than an in-memory disconnect, which left
+  // the backend connection alive and made the re-handshake flaky. We snapshot
+  // the connected set at scope entry; servers connected later in the same scope
+  // already used the current client, so they're left alone. The module-level
+  // scope dedupe makes this fire exactly once even though the hook mounts on
+  // several surfaces.
   useEffect(() => {
-    if (!enabled || !projectId || requiredNames.length === 0) return;
-    if (isAttempted(projectId, scopeKey, "disconnect")) return;
-    markAttempted(projectId, scopeKey, "disconnect");
-    if (!requiredConnectedNamesToDisconnectKey) return;
-    for (const name of requiredConnectedNamesToDisconnectKey.split("\0")) {
-      runtimeDisconnectServer(name);
-    }
-    // `requiredConnectedNamesToDisconnectKey` is intentionally excluded from
-    // the dep array: this effect must fire only on scope transitions, not
-    // when the user's actions change the set of connected servers within
-    // the same scope. Reading the latest value via closure is fine because
-    // the dedupe gate stops re-runs.
+    if (!enabled || !projectId || hostScopeKey == null) return;
+    if (isAttempted(projectId, scopeKey, "recycle")) return;
+    markAttempted(projectId, scopeKey, "recycle");
+    const connectedNow = Object.entries(sharedAppState.servers)
+      .filter(([, server]) => server.connectionStatus === "connected")
+      .map(([name]) => name);
+    void Promise.allSettled(
+      connectedNow.map(async (name) => {
+        await reconnectServer(name);
+        return name;
+      })
+    ).then((results) => {
+      const failures = results.flatMap((result, index) => {
+        if (result.status === "fulfilled") return [];
+        return [
+          {
+            serverName: connectedNow[index],
+            error: getErrorMessage(result.reason),
+          },
+        ];
+      });
+
+      if (failures.length === 0) return;
+
+      for (const failure of failures) {
+        logger.error("Failed to reconnect server after client switch", failure);
+      }
+      toast.error(reconnectFailureToastMessage(failures.length));
+    });
+    // `sharedAppState.servers` is read via closure but excluded from deps on
+    // purpose: this must fire only on scope transitions, not whenever the
+    // connected set changes within a scope. The dedupe gate stops re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    enabled,
-    projectId,
-    scopeKey,
-    requiredNames.length,
-    runtimeDisconnectServer,
-  ]);
+  }, [enabled, projectId, scopeKey, hostScopeKey, reconnectServer, logger]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
   // connected) changes. Dedupe is per-server-within-scope, not per
@@ -264,7 +263,7 @@ export function useAutoConnectProjectServers({
     if (!enabled || !projectId || !candidateNamesKey) return;
     const allNames = candidateNamesKey.split("\0");
     const fresh = allNames.filter(
-      (name) => !isAttempted(projectId, scopeKey, `srv:${name}`),
+      (name) => !isAttempted(projectId, scopeKey, `srv:${name}`)
     );
     if (fresh.length === 0) return;
     for (const name of fresh) {
@@ -284,18 +283,12 @@ export function useAutoConnectProjectServers({
       // rejections in dev/test.
       () => {
         // intentionally empty
-      },
+      }
     );
     return () => {
       cancelled = true;
     };
-  }, [
-    enabled,
-    projectId,
-    scopeKey,
-    candidateNamesKey,
-    ensureServersReady,
-  ]);
+  }, [enabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
 
   return { enabled, lastResult: lastResultRef.current };
 }

@@ -1,7 +1,23 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
 import { useProjectServers } from "@/hooks/useViews";
+import { useSharedAppState } from "@/state/app-state-context";
+import { useServerActions } from "@/state/server-actions-context";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+
+/** Set-equality for two name lists, order-independent. */
+function sameNameSet(a: ReadonlyArray<string>, b: ReadonlyArray<string>) {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  for (const name of b) {
+    if (!set.has(name)) return false;
+  }
+  return true;
+}
+
+function isActiveRuntimeStatus(status: string | undefined) {
+  return status === "connected" || status === "connecting";
+}
 
 interface ActiveHostServerReconcilerProps {
   projectId: string | null;
@@ -48,7 +64,7 @@ export function ActiveClientServerReconciler({
     const requiredIds = activeHost?.serverIds ?? [];
     if (requiredIds.length === 0 || !projectServersList) return [];
     const byId = new Map(
-      projectServersList.map((s) => [s._id, s.name] as const),
+      projectServersList.map((s) => [s._id, s.name] as const)
     );
     return requiredIds
       .map((id) => byId.get(id))
@@ -63,6 +79,33 @@ export function ActiveClientServerReconciler({
     hostScopeKey: activeHostId ?? activeHost?.id ?? null,
     requiredServerNames,
   });
+
+  // Single source of truth: the Playground active server set
+  // (`selectedMultipleServers`) mirrors the runtime set that is connected or
+  // reconnecting. Keeping "connecting" active prevents the Playground tools
+  // pane from blinking empty during a client-switch reconnect. The Connect tab
+  // owns connectivity; everything else reflects it. Guarded by set-equality so
+  // we never dispatch (and never loop) when the mirror already matches.
+  const sharedAppState = useSharedAppState();
+  const { setSelectedServerNames } = useServerActions();
+  const activeRuntimeNames = useMemo(
+    () =>
+      Object.entries(sharedAppState.servers)
+        .filter(([, server]) => isActiveRuntimeStatus(server.connectionStatus))
+        .map(([name]) => name),
+    [sharedAppState.servers]
+  );
+  useEffect(() => {
+    if (
+      !sameNameSet(activeRuntimeNames, sharedAppState.selectedMultipleServers)
+    ) {
+      setSelectedServerNames(activeRuntimeNames);
+    }
+  }, [
+    activeRuntimeNames,
+    sharedAppState.selectedMultipleServers,
+    setSelectedServerNames,
+  ]);
 
   return null;
 }

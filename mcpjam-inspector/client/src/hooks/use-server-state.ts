@@ -772,6 +772,31 @@ export function useServerState({
       ),
     [effectiveServers]
   );
+
+  // What chat-input's "Servers" popover (and any other "show me everything
+  // we can talk to" surface) should iterate: the project catalog PLUS any
+  // runtime-connected/connecting servers that aren't in it yet. The catalog
+  // (effectiveServers) is the Convex `project_servers` query in hosted mode
+  // and can lag mcpjam-backend's `MCPClientManager` — a server is genuinely
+  // connected (Tools pane and tool calls work against it) but its catalog
+  // row hasn't synced, so the popover used to hide it. We only merge
+  // runtime entries that are currently connected/connecting; disconnected
+  // runtime leftovers from a previous session/project never surface here.
+  const displayServerConfigs = useMemo(() => {
+    const result: Record<string, ServerWithName> = { ...effectiveServers };
+    for (const [name, runtime] of Object.entries(appState.servers)) {
+      if (result[name]) continue;
+      if (
+        runtime.connectionStatus !== "connected" &&
+        runtime.connectionStatus !== "connecting"
+      ) {
+        continue;
+      }
+      result[name] = runtime;
+    }
+    return result;
+  }, [effectiveServers, appState.servers]);
+
   const latestEffectiveServersRef = useRef(effectiveServers);
 
   useEffect(() => {
@@ -3740,6 +3765,29 @@ export function useServerState({
     [reconnectServerInternal]
   );
 
+  // Force a re-handshake of an ALREADY-connected server under the current
+  // client identity. Unlike `ensureServersReady` (which skips servers that are
+  // already connected), this always reconnects — the backend
+  // `/api/mcp/servers/reconnect` endpoint closes the live transport and reopens
+  // it with the active host's `clientInfo`. Non-interactive and non-selecting:
+  // used by the client-switch recycle, where popping an OAuth window per server
+  // or thrashing the single-select pointer would be wrong. Per-server error
+  // toasts are suppressed here; the caller aggregates failures for logging and
+  // one user-facing toast.
+  const reconnectServerForClientSwitch = useCallback(
+    async (serverName: string): Promise<void> => {
+      const result = await reconnectServerInternal(serverName, {
+        allowInteractiveOAuthFlow: false,
+        select: false,
+        suppressErrors: true,
+      });
+      if (result.status !== "connected") {
+        throw new Error(result.error || `Failed to reconnect ${serverName}`);
+      }
+    },
+    [reconnectServerInternal]
+  );
+
   const ensureServersReady = useCallback(
     async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
@@ -4107,6 +4155,7 @@ export function useServerState({
     activeProject,
     effectiveServers,
     projectServers: effectiveServers,
+    displayServerConfigs,
     connectedOrConnectingServerConfigs,
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
@@ -4127,6 +4176,7 @@ export function useServerState({
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,
     handleUpdate,
