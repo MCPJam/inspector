@@ -45,6 +45,24 @@ Members get access to every server in the project with the same configuration.
 For security, authorization headers and OAuth tokens are never shared. Each team member authenticates with their own credentials when connecting to servers that require authentication.
 </Note>
 
+## Secret storage for env vars and headers
+
+When you save a server that has **environment variables** (stdio) or **custom HTTP headers**, those values are stored as encrypted secrets. The next time you open the server's edit form, those fields show **"Hidden — Reveal to view"** instead of the raw values.
+
+### Revealing saved secrets
+
+Click **Reveal** next to the hidden section to fetch and display the stored values. You can then view or edit them as normal.
+
+<Warning>
+If you want to change the **authentication type** (for example, switching from Bearer Token to a different method) on an HTTP server that has hidden headers, you must click **Reveal** first. Saving an auth change without revealing will show a validation error to prevent accidentally overwriting hidden headers.
+</Warning>
+
+### How updates work
+
+- **Env vars**: Any edit to the env vars section (add, remove, or change a value) replaces the stored secret with the new set of values on save.
+- **Custom headers**: Any edit to headers or the authentication type replaces the stored headers secret on save.
+- If you save without revealing or editing a secret section, the existing stored secret is left unchanged.
+
 ### Real-Time Sync
 
 Changes sync instantly between all project members. New servers and configuration changes update automatically for everyone.
