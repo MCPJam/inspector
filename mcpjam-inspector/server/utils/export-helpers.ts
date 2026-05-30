@@ -9,12 +9,32 @@ import { logger } from "./logger.js";
 
 type Manager = InstanceType<typeof MCPClientManager>;
 
+/**
+ * Tool-snapshot envelope version. v2 added the MCP `annotations` hint booleans
+ * and `execution.taskSupport`. Deterministic serverQuality prechecks gate
+ * annotation/execution-derived facts on `version >= 2`, so older snapshots emit
+ * no false "missing hint" findings.
+ */
+export const SERVER_TOOL_SNAPSHOT_VERSION = 2;
+
 export type ServerToolSnapshotTool = {
   name: string;
   description?: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
   metadata?: Record<string, unknown>;
+  /** MCP ToolAnnotations — only the four spec hint booleans (no `title`, which
+   * is server-controlled display text we deliberately keep out of the judge). */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+  /** MCP Tool.execution — task-augmentation support hint. */
+  execution?: {
+    taskSupport?: "forbidden" | "optional" | "required";
+  };
 };
 
 // The server's response to MCP `initialize`. Captured alongside the tool
@@ -305,6 +325,40 @@ function stripConvexReservedKeys<T>(value: T): T {
   return value;
 }
 
+/** MCP ToolAnnotations → the four spec hint booleans only (drops `title` and
+ * any vendor extras). Returns undefined when none are present. */
+function pickToolAnnotations(
+  value: unknown,
+): ServerToolSnapshotTool["annotations"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const a = value as Record<string, unknown>;
+  const out: NonNullable<ServerToolSnapshotTool["annotations"]> = {};
+  if (typeof a.readOnlyHint === "boolean") out.readOnlyHint = a.readOnlyHint;
+  if (typeof a.destructiveHint === "boolean")
+    out.destructiveHint = a.destructiveHint;
+  if (typeof a.idempotentHint === "boolean")
+    out.idempotentHint = a.idempotentHint;
+  if (typeof a.openWorldHint === "boolean")
+    out.openWorldHint = a.openWorldHint;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** MCP Tool.execution → taskSupport enum, validated. */
+function pickToolExecution(
+  value: unknown,
+): ServerToolSnapshotTool["execution"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const ts = (value as Record<string, unknown>).taskSupport;
+  if (ts === "forbidden" || ts === "optional" || ts === "required") {
+    return { taskSupport: ts };
+  }
+  return undefined;
+}
+
 function transformToolForSnapshot(tool: any): ServerToolSnapshotTool {
   const meta =
     tool._meta &&
@@ -312,6 +366,8 @@ function transformToolForSnapshot(tool: any): ServerToolSnapshotTool {
     !Array.isArray(tool._meta)
       ? (tool._meta as Record<string, unknown>)
       : undefined;
+  const annotations = pickToolAnnotations(tool.annotations);
+  const execution = pickToolExecution(tool.execution);
   return {
     name: tool.name,
     ...(normalizeTrimmedString(tool.description)
@@ -326,6 +382,8 @@ function transformToolForSnapshot(tool: any): ServerToolSnapshotTool {
     ...(meta && Object.keys(meta).length > 0
       ? { metadata: stripConvexReservedKeys(meta) }
       : {}),
+    ...(annotations ? { annotations } : {}),
+    ...(execution ? { execution } : {}),
   };
 }
 
@@ -420,7 +478,7 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
   );
 
   return {
-    version: 1,
+    version: SERVER_TOOL_SNAPSHOT_VERSION,
     capturedAt: Date.now(),
     servers: sortSnapshotServers(servers),
   };
@@ -467,7 +525,7 @@ export async function exportSingleServerForInspection(
     };
   }
   return {
-    version: 1,
+    version: SERVER_TOOL_SNAPSHOT_VERSION,
     capturedAt: Date.now(),
     servers: [server],
   };

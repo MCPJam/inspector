@@ -4,6 +4,7 @@ import {
   exportConnectedServerToolSnapshotForEvalAuthoring,
   exportServer,
   renderServerToolSnapshotSection,
+  SERVER_TOOL_SNAPSHOT_VERSION,
 } from "../export-helpers.js";
 
 function createMockManager(overrides: Record<string, any> = {}) {
@@ -207,7 +208,7 @@ describe("exportConnectedServerToolSnapshotForEvalAuthoring", () => {
     );
 
     expect(snapshot).toEqual({
-      version: 1,
+      version: SERVER_TOOL_SNAPSHOT_VERSION,
       capturedAt: expect.any(Number),
       servers: [
         {
@@ -343,6 +344,41 @@ describe("exportConnectedServerToolSnapshotForEvalAuthoring", () => {
       // The `$internal` key inside `_meta` is dropped; siblings are kept.
       metadata: { kept: true },
     });
+  });
+
+  it("captures MCP annotation hints + execution.taskSupport, dropping extras", async () => {
+    const manager = createMockManager({
+      listTools: vi.fn().mockResolvedValue({
+        tools: [
+          {
+            name: "delete_thing",
+            description: "Deletes a thing",
+            inputSchema: { type: "object" },
+            annotations: {
+              readOnlyHint: false,
+              destructiveHint: true,
+              title: "Delete Thing",
+              vendorExtra: 1,
+            },
+            execution: { taskSupport: "optional", extra: "x" },
+          },
+        ],
+      }),
+    });
+
+    const snapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
+      manager,
+      ["srv"],
+    );
+
+    expect(snapshot.version).toBe(SERVER_TOOL_SNAPSHOT_VERSION);
+    const tool = snapshot.servers[0].tools[0];
+    // Only the four spec hint booleans survive — no title, no vendor extras.
+    expect(tool.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(tool.execution).toEqual({ taskSupport: "optional" });
   });
 });
 
