@@ -1,43 +1,39 @@
-diff --git a/.changeset/release-inspector-2-8-0.md b/.changeset/release-inspector-2-8-0.md
+diff --git a/.changeset/payment-history-status-badges.md b/.changeset/payment-history-status-badges.md
 deleted file mode 100644
-index fcf810f38..000000000
---- a/.changeset/release-inspector-2-8-0.md
+index 72097e631..000000000
+--- a/.changeset/payment-history-status-badges.md
 +++ /dev/null
-@@ -1,11 +0,0 @@
+@@ -1,7 +0,0 @@
 ----
--"@mcpjam/inspector": minor
+-"@mcpjam/inspector": patch
 ----
 -
 -Inspector updates:
 -
--- Tighten request-header handling for stdio and HTTP server connections
--- Allow the HTTP transport for bring-your-own-key servers
--- Freeze the evals suite execution snapshot on a plain rerun
--- Fix a dark-mode color that fell back incorrectly in local mode
--- Billing table refresh and team-based gating updates
+-- Show refund and dispute status badges in the credit purchase history, with a hover detail for partial refunds
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 20f1adcee..c4c4035a0 100644
+index c4c4035a0..7b2de073c 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.7.0",
-+  "version": "2.8.0",
+-  "version": "2.8.0",
++  "version": "2.8.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 78a067fb2..ea04955f3 100644
+index ea04955f3..b2de25fef 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.7.0",
-+      "version": "2.8.0",
+-      "version": "2.8.0",
++      "version": "2.8.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",

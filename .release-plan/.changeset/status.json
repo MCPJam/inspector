@@ -4,22 +4,22 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Inspector updates:\n\n- Tighten request-header handling for stdio and HTTP server connections\n- Allow the HTTP transport for bring-your-own-key servers\n- Freeze the evals suite execution snapshot on a plain rerun\n- Fix a dark-mode color that fell back incorrectly in local mode\n- Billing table refresh and team-based gating updates",
-      "id": "release-inspector-2-8-0"
+      "summary": "Inspector updates:\n\n- Show refund and dispute status badges in the credit purchase history, with a hover detail for partial refunds",
+      "id": "payment-history-status-badges"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.7.0",
+      "type": "patch",
+      "oldVersion": "2.8.0",
       "changesets": [
-        "release-inspector-2-8-0"
+        "payment-history-status-badges"
       ],
-      "newVersion": "2.8.0"
+      "newVersion": "2.8.1"
     }
   ]
 }
