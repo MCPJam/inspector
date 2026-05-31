@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
+import { ConvexHttpClient } from "convex/browser";
 import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
   mapRuntimeError,
@@ -18,6 +19,12 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
+import {
+  exportSingleServerForInspection,
+  type ServerToolSnapshot,
+} from "../../utils/export-helpers.js";
+import { getInspectorClientRuntimeConfig } from "../../env.js";
+import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
 
@@ -27,6 +34,27 @@ servers.post("/validate", async (c) =>
     projectServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
+      // Capture the inspection snapshot synchronously while the ephemeral
+      // manager is still live — `withManager`'s `finally` will call
+      // `disconnectAllServers()` the moment we return, which would race any
+      // `listTools` we left pending here. Only the Convex write is
+      // fire-and-forget, so persistence failures still don't affect the
+      // validate response. (Port of PR #1731's `use-inspection-coordinator`.)
+      const snapshot = await exportSingleServerForInspection(
+        manager,
+        body.serverId,
+        body.serverId,
+        { logPrefix: "hosted-connect-inspection" },
+      );
+      void persistHostedConnectInspection(c, {
+        projectId: body.projectId,
+        snapshot,
+      }).catch((error) => {
+        logger.debug("Failed to persist hosted connect-time inspection", {
+          serverId: body.serverId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
       // Same success envelope as the local /api/mcp/connect path so the
       // inspector client's `storeInitInfo` takes one code path on both
       // surfaces and we don't drift on the success shape.
@@ -35,6 +63,25 @@ servers.post("/validate", async (c) =>
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
   )
 );
+
+async function persistHostedConnectInspection(
+  c: any,
+  args: { projectId: string; snapshot: ServerToolSnapshot },
+): Promise<void> {
+  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
+  // derived from it (suffix swap) by the runtime config helper so that
+  // production env (which sets only CONVEX_HTTP_URL) works.
+  const { convexUrl } = getInspectorClientRuntimeConfig();
+  if (!convexUrl) return;
+  const bearer = c.req.header("authorization");
+  if (!bearer) return;
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearer.replace(/^Bearer\s+/i, ""));
+  await client.mutation("serverInspections:recordFromConnect" as any, {
+    projectId: args.projectId,
+    snapshot: args.snapshot,
+  });
+}
 
 servers.post("/check-oauth", async (c) =>
   handleRoute(c, async () => {
