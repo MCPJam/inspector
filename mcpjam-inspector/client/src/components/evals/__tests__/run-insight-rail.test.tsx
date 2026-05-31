@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { RunAccuracyHeroBand, RunInsightRail } from "../run-insight-rail";
+import {
+  RunAccuracyHeroBand,
+  RunDetailMetricsCharts,
+  RunInsightRail,
+} from "../run-insight-rail";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
@@ -156,28 +160,51 @@ describe("RunAccuracyHeroBand", () => {
 });
 
 describe("RunInsightRail", () => {
-  it("renders triage before charts and omits accuracy", () => {
+  it("renders triage only (charts live below the run hero band)", () => {
     render(
       <RunInsightRail
-        run={makeRun()}
-        iterations={[makeIteration()]}
-        durationData={[
-          {
-            name: "Test",
-            duration: 5000,
-            durationSeconds: 5,
-          },
-        ]}
-        tokensData={[]}
-        hasTokenData={false}
-        triageCard={<div data-testid="triage-slot">Triage</div>}
+        triageCard={<div data-testid="triage-slot">Insights</div>}
       />,
     );
 
     expect(screen.getByTestId("triage-slot")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Avg duration by test" }),
+      screen.queryByRole("heading", { name: "Latency by test (p50 / p95)" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("RunDetailMetricsCharts", () => {
+  it("renders duration and token chart headings", () => {
+    render(
+      <RunDetailMetricsCharts
+        durationData={[
+          {
+            name: "Test",
+            p50Ms: 3000,
+            p95Ms: 5000,
+            p50Seconds: 3,
+            p95TailSeconds: 2,
+          },
+        ]}
+        tokensData={[
+          {
+            name: "Test",
+            inputP50: 500,
+            outputP50: 1500,
+            inputP95Tail: 0,
+            outputP95Tail: 500,
+          },
+        ]}
+        hasTokenData
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Latency by test (p50 / p95)" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Recent runs")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Tokens by test (p50 / p95)" }),
+    ).toBeInTheDocument();
   });
 });

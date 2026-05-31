@@ -26,58 +26,14 @@ import type {
   CommitGroup,
 } from "./types";
 import { classifyFailure, type FailureTag } from "./ai-insights";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Strip trailing timestamp suffixes from suite names for display, e.g. "Suite (2026-03-12 15:20:43)" → "Suite" */
-function stripTimestampSuffix(name: string): string {
-  return name.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() || name;
-}
-
-function toPercent(value: number): number {
-  const n = value <= 1 ? value * 100 : value;
-  return Math.max(0, Math.min(100, Math.round(n)));
-}
-
-function formatRelativeTime(timestamp?: number): string {
-  if (!timestamp) return "";
-  const now = Date.now();
-  const diff = now - timestamp;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
-}
-
-/** Tiny inline sparkline rendered as CSS bars. */
-function Sparkline({
-  data,
-  className,
-}: {
-  data: number[];
-  className?: string;
-}) {
-  if (data.length === 0) return null;
-  return (
-    <div className={cn("flex items-end gap-px", className)}>
-      {data.map((value, idx) => (
-        <div
-          key={idx}
-          className="w-1.5 rounded-sm bg-primary/70"
-          style={{
-            height: `${Math.max(3, (toPercent(value) / 100) * 100)}%`,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
+import {
+  Sparkline,
+  stripTimestampSuffix,
+  toPercent,
+  computeSuitePassRateDelta,
+  getSuitePassRateLabel,
+  formatOverviewRelativeTime as formatRelativeTime,
+} from "./suite-overview-presentation";
 
 // ---------------------------------------------------------------------------
 // Run timeline bucketing
@@ -352,41 +308,6 @@ export function OverviewPanel({
 
   // Auto-collapse failure feed when no failures
   const hasFailures = failureEntries.length > 0;
-
-  // ---------------------------------------------------------------------------
-  // Helpers for delta computation
-  // ---------------------------------------------------------------------------
-  function computeDelta(entry: EvalSuiteOverviewEntry): {
-    value: number | null;
-    label: string;
-    colorClass: string;
-  } {
-    const trend = entry.passRateTrend;
-    if (!entry.latestRun) {
-      return { value: null, label: "—", colorClass: "text-muted-foreground" };
-    }
-    if (trend.length < 2) {
-      return { value: null, label: "NEW", colorClass: "text-blue-500" };
-    }
-    const delta = Math.round(
-      (trend[trend.length - 1] - trend[trend.length - 2]) * 100,
-    );
-    if (delta === 0) {
-      return { value: 0, label: "+0%", colorClass: "text-muted-foreground" };
-    }
-    return {
-      value: delta,
-      label: `${delta > 0 ? "+" : ""}${delta}%`,
-      colorClass: delta > 0 ? "text-emerald-500" : "text-destructive",
-    };
-  }
-
-  function getPassRate(entry: EvalSuiteOverviewEntry): string {
-    if (!entry.latestRun) return "--";
-    const total = entry.totals.passed + entry.totals.failed;
-    if (total === 0) return "--";
-    return `${Math.round((entry.totals.passed / total) * 100)}%`;
-  }
 
   function getStatusIcon(entry: EvalSuiteOverviewEntry) {
     if (!entry.latestRun) {
@@ -789,8 +710,8 @@ export function OverviewPanel({
           ) : (
             tableSuites.map((entry) => {
               const isFailed = entry.latestRun?.result === "failed";
-              const delta = computeDelta(entry);
-              const passRate = getPassRate(entry);
+              const delta = computeSuitePassRateDelta(entry);
+              const passRate = getSuitePassRateLabel(entry);
               const trend = entry.passRateTrend.slice(-8);
               const lastRunTs =
                 entry.latestRun?.completedAt ?? entry.latestRun?.createdAt;

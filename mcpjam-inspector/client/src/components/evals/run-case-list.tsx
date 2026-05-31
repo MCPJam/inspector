@@ -61,9 +61,12 @@ function RunCaseMetricsHeader({ className }: { className?: string }) {
 }
 
 function RunCaseListColumnHeaders({
+  caseCount,
   headerEnd,
   trailingGutter = false,
 }: {
+  /** When set, replaces the "Case" label with "Test cases · N". */
+  caseCount?: number;
   headerEnd?: ReactNode;
   trailingGutter?: boolean;
 }) {
@@ -71,7 +74,25 @@ function RunCaseListColumnHeaders({
 
   return (
     <div className={cn(runCaseListRowClassName(), runCaseListHeadClassName)}>
-      <div className={cn(runCaseTitleClassName, "px-2 py-2")}>Case</div>
+      <div
+        className={cn(
+          runCaseTitleClassName,
+          "px-2 py-2.5",
+          caseCount !== undefined &&
+            "min-h-10 normal-case tracking-normal font-sans text-base font-semibold leading-tight text-foreground sm:text-lg",
+        )}
+      >
+        {caseCount !== undefined ? (
+          <>
+            Test cases{" "}
+            <span className="font-mono text-sm font-normal tabular-nums text-muted-foreground">
+              · {caseCount}
+            </span>
+          </>
+        ) : (
+          "Case"
+        )}
+      </div>
       <RunCaseMetricsHeader />
       {reserveTrailing ? (
         <div className={cn(runCaseListSortGutterClassName, "py-2")}>
@@ -169,6 +190,7 @@ export function RunCaseListWithSections({
   sortBy,
   selectedTestCaseId,
   onSelectTestCase,
+  caseCount,
   headerEnd,
   trailingGutter = false,
 }: {
@@ -176,6 +198,7 @@ export function RunCaseListWithSections({
   sortBy: "model" | "test" | "result";
   selectedTestCaseId: string | null;
   onSelectTestCase: (group: RunCaseGroup) => void;
+  caseCount?: number;
   headerEnd?: ReactNode;
   trailingGutter?: boolean;
 }) {
@@ -194,6 +217,7 @@ export function RunCaseListWithSections({
   return (
     <>
       <RunCaseListColumnHeaders
+        caseCount={caseCount}
         headerEnd={headerEnd}
         trailingGutter={trailingGutter}
       />

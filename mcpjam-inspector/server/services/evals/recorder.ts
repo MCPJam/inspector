@@ -8,6 +8,7 @@ import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -249,7 +250,10 @@ export const createSuiteRunRecorder = ({
           error,
           errorDetails,
           resultSource,
-          metadata,
+          metadata: {
+            ...(metadata ?? {}),
+            ...buildIterationUsageMetadata(usage),
+          },
         });
       } catch (error) {
         const errorMessage =

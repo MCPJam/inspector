@@ -1,4 +1,6 @@
 import { useMemo, type ReactNode } from "react";
+import { ArrowLeftRight } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { formatRunId } from "./helpers";
 import {
@@ -9,9 +11,11 @@ import { ClientChip } from "@/components/clients/client-chip";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
+import type { DurationChartDatum, TokensChartDatum } from "./run-chart-data";
 import {
   runDetailHeroStatClass,
   runDetailMetaLabelClass,
+  runDetailSectionLabelClass,
   runDetailMetricClass,
   runDetailSupportingClass,
 } from "./run-detail-typography";
@@ -122,7 +126,7 @@ function RunAccuracyRunCard({
         </div>
         <span
           className={cn(
-            "shrink-0 font-mono text-xl font-semibold tabular-nums leading-none",
+            "shrink-0 font-metric text-xl font-semibold tabular-nums leading-none",
             passRateToneClass(point.passRate, "text"),
           )}
         >
@@ -189,6 +193,7 @@ export function RunAccuracyHeroBand({
   metricLabel,
   badgeMetricLabel = metricLabel,
   onSelectRun,
+  onCompareWithRun,
   includeRunIdentity = false,
   hideReplayLineage = false,
   runClient = null,
@@ -202,6 +207,8 @@ export function RunAccuracyHeroBand({
   /** Pass/fail badge copy (e.g. "Accuracy" vs "Pass Rate"). */
   badgeMetricLabel?: string;
   onSelectRun?: (runId: string) => void;
+  /** Opens the deterministic diff against {@link compareBaseRun}. */
+  onCompareWithRun?: (baseRunId: string) => void;
   /** Title, outcome badge, and operational stats (playground run detail). */
   includeRunIdentity?: boolean;
   hideReplayLineage?: boolean;
@@ -265,107 +272,151 @@ export function RunAccuracyHeroBand({
         }
       : undefined;
 
-  return (
-    <RunInsightRailCard
-      className={cn("shrink-0 p-4 sm:p-5", className)}
-    >
-      {includeRunIdentity ? (
-        <div className="mb-4 flex flex-col gap-1 border-b border-border/40 pb-4">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <h2 className="text-lg font-semibold tracking-tight">
-              Run {formatRunId(run._id)}
-            </h2>
-            <PassCriteriaBadge
-              run={run}
-              variant="compact"
-              metricLabel={badgeMetricLabel}
-            />
-          </div>
-          <RunHeaderCompactStats
-            run={run}
-            variant="operational"
-            statsOverride={statsOverride}
+  const runIdentityBlock = includeRunIdentity ? (
+    <div className="flex shrink-0 flex-col gap-1 sm:max-w-[11rem]">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Run {formatRunId(run._id)}
+        </h2>
+        <PassCriteriaBadge
+          run={run}
+          variant="compact"
+          metricLabel={badgeMetricLabel}
+        />
+      </div>
+      <RunHeaderCompactStats
+        run={run}
+        variant="operational"
+        statsOverride={statsOverride}
+      />
+      {runClient ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={runDetailMetaLabelClass}>Client</span>
+          <ClientChip
+            name={runClient.displayName}
+            hostId={runClient.hostId}
           />
-          {runClient ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className={runDetailMetaLabelClass}>Client</span>
-              <ClientChip
-                name={runClient.displayName}
-                hostId={runClient.hostId}
-              />
-            </div>
-          ) : null}
-          {!hideReplayLineage && run.replayedFromRunId ? (
-            <p
-              className="text-xs text-muted-foreground"
-              title={run.replayedFromRunId}
-            >
-              Replay of{" "}
-              <span className="font-mono text-foreground/80">
-                Run {formatRunId(run.replayedFromRunId)}
-              </span>
+        </div>
+      ) : null}
+      {!hideReplayLineage && run.replayedFromRunId ? (
+        <p
+          className="text-xs text-muted-foreground"
+          title={run.replayedFromRunId}
+        >
+          Replay of{" "}
+          <span className="font-mono text-foreground/80">
+            Run {formatRunId(run.replayedFromRunId)}
+          </span>
+        </p>
+      ) : null}
+    </div>
+  ) : null;
+
+  const accuracyBlock = (
+    <div
+      className={cn(
+        "flex shrink-0 flex-col gap-1 sm:min-w-[9rem]",
+        includeRunIdentity && "sm:items-end sm:text-right",
+      )}
+    >
+      <p className={runDetailSectionLabelClass}>{metricLabel}</p>
+      <p className={runDetailHeroStatClass}>
+        {passRatePercent}
+        <span className="text-2xl font-medium text-muted-foreground sm:text-3xl">
+          %
+        </span>
+      </p>
+      {deltaPp !== null && compareBaseRun ? (
+        <p
+          className={cn(
+            "font-metric text-sm font-medium tabular-nums",
+            deltaPp > 0 && "text-success",
+            deltaPp < 0 && "text-destructive",
+            deltaPp === 0 && "text-muted-foreground",
+          )}
+        >
+          {deltaPp > 0 ? "+" : ""}
+          {deltaPp}pp vs run #
+          {compareBaseRun.runNumber ?? formatRunId(compareBaseRun._id)}
+        </p>
+      ) : null}
+    </div>
+  );
+
+  const compareButton =
+    compareBaseRun && onCompareWithRun ? (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => onCompareWithRun(compareBaseRun._id)}
+        className="h-7 shrink-0 gap-1.5 text-xs"
+      >
+        <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden />
+        Compare to previous run
+      </Button>
+    ) : null;
+
+  const recentRunsBlock = hasRecentRuns ? (
+    <div className="flex min-w-0 flex-1 flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <p className={runDetailSectionLabelClass}>Recent runs</p>
+          {trendChips.hiddenCount > 0 ? (
+            <p className={runDetailSupportingClass}>
+              Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
             </p>
           ) : null}
         </div>
-      ) : null}
+        {compareButton}
+      </div>
+      <div
+        className="flex w-full min-w-0 gap-3 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
+        aria-label={`${metricLabel} across recent suite runs`}
+      >
+        {trendChips.points.map((point) => (
+          <RunAccuracyRunCard
+            key={point.runId}
+            point={point}
+            isCurrent={point.isCurrent}
+            onSelectRun={onSelectRun}
+          />
+        ))}
+      </div>
+    </div>
+  ) : null;
 
+  // With run identity: title/stats and recent runs share one row; accuracy on the right.
+  if (includeRunIdentity) {
+    return (
+      <RunInsightRailCard className={cn("shrink-0 p-4 sm:p-5", className)}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+          <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-4">
+            {runIdentityBlock}
+            {recentRunsBlock ?? (
+              compareButton ? (
+                <div className="flex min-w-0 flex-1 items-start justify-end sm:justify-start">
+                  {compareButton}
+                </div>
+              ) : null
+            )}
+          </div>
+          {accuracyBlock}
+        </div>
+      </RunInsightRailCard>
+    );
+  }
+
+  return (
+    <RunInsightRailCard className={cn("shrink-0 p-4 sm:p-5", className)}>
       <div
         className={cn(
           "flex gap-4 sm:gap-6",
-          hasRecentRuns
-            ? "flex-col sm:flex-row sm:items-end"
-            : "flex-col",
+          hasRecentRuns ? "flex-col sm:flex-row sm:items-end" : "flex-col",
         )}
       >
-        <div className="shrink-0 sm:min-w-[9rem]">
-          <p className={runDetailMetaLabelClass}>{metricLabel}</p>
-          <p className={cn("mt-1", runDetailHeroStatClass)}>
-            {passRatePercent}
-            <span className="text-2xl font-medium text-muted-foreground sm:text-3xl">
-              %
-            </span>
-          </p>
-          {deltaPp !== null && compareBaseRun ? (
-            <p
-              className={cn(
-                "mt-1.5 font-mono text-sm font-medium tabular-nums",
-                deltaPp > 0 && "text-success",
-                deltaPp < 0 && "text-destructive",
-                deltaPp === 0 && "text-muted-foreground",
-              )}
-            >
-              {deltaPp > 0 ? "+" : ""}
-              {deltaPp}pp vs run #
-              {compareBaseRun.runNumber ?? formatRunId(compareBaseRun._id)}
-            </p>
-          ) : null}
-        </div>
-
-        {hasRecentRuns ? (
-          <div className="min-w-0 flex-1">
-            <div className="mb-2 flex items-baseline justify-between gap-2 sm:mb-2.5">
-              <p className={runDetailMetaLabelClass}>Recent runs</p>
-              {trendChips.hiddenCount > 0 ? (
-                <p className={runDetailSupportingClass}>
-                  Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
-                </p>
-              ) : null}
-            </div>
-            <div
-              className="flex w-full min-w-0 gap-3 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
-              aria-label={`${metricLabel} across recent suite runs`}
-            >
-              {trendChips.points.map((point) => (
-                <RunAccuracyRunCard
-                  key={point.runId}
-                  point={point}
-                  isCurrent={point.isCurrent}
-                  onSelectRun={onSelectRun}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
+        {accuracyBlock}
+        {recentRunsBlock}
       </div>
     </RunInsightRailCard>
   );
@@ -393,59 +444,50 @@ export function shouldShowRunAccuracyHero({
   return passRatePercent !== null;
 }
 
-/** Right column: triage on top, charts below. */
-export function RunInsightRail({
-  run: _run,
-  iterations: _iterations,
-  source: _source,
-  compareBaseRun: _compareBaseRun,
-  runTrendData: _runTrendData = [],
+/** Full-width duration / token bars below the run hero band. */
+export function RunDetailMetricsCharts({
   durationData,
   tokensData,
   hasTokenData,
-  triageCard,
   className,
-  onSelectRun: _onSelectRun,
 }: {
-  run: EvalSuiteRun;
-  iterations: EvalIteration[];
-  source?: "ui" | "sdk";
-  compareBaseRun?: EvalSuiteRun | null;
-  runTrendData?: RunTrendPoint[];
-  onSelectRun?: (runId: string) => void;
-  durationData: Array<{
-    name: string;
-    duration: number;
-    durationSeconds: number;
-  }>;
-  tokensData: Array<{ name: string; tokens: number }>;
+  durationData: DurationChartDatum[];
+  tokensData: TokensChartDatum[];
   hasTokenData: boolean;
-  triageCard: ReactNode;
   className?: string;
 }) {
   const hasBarCharts = durationData.length > 0 || hasTokenData;
-  const hasContent = Boolean(triageCard) || hasBarCharts;
+  if (!hasBarCharts) return null;
 
-  if (!hasContent) return null;
+  return (
+    <RunInsightRailCard className={cn("shrink-0 p-2 sm:p-3", className)}>
+      <RunMetricsBarCharts
+        durationData={durationData}
+        tokensData={tokensData}
+        hasTokenData={hasTokenData}
+      />
+    </RunInsightRailCard>
+  );
+}
+
+/** Right column: AI insights only. */
+export function RunInsightRail({
+  triageCard,
+  className,
+}: {
+  triageCard: ReactNode;
+  className?: string;
+}) {
+  if (!triageCard) return null;
 
   return (
     <aside
       className={cn(
-        "flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto",
+        "flex h-full min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto overscroll-y-contain",
         className,
       )}
     >
       {triageCard}
-
-      {hasBarCharts ? (
-        <RunInsightRailCard className="shrink-0 p-3">
-          <RunMetricsBarCharts
-            durationData={durationData}
-            tokensData={tokensData}
-            hasTokenData={hasTokenData}
-          />
-        </RunInsightRailCard>
-      ) : null}
     </aside>
   );
 }

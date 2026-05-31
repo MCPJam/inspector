@@ -93,11 +93,21 @@ const chartDataUsable = {
   durationData: [
     {
       name: "Short name",
-      duration: 5000,
-      durationSeconds: 5,
+      p50Ms: 4000,
+      p95Ms: 5000,
+      p50Seconds: 4,
+      p95TailSeconds: 1,
     },
   ],
-  tokensData: [{ name: "Short name", tokens: 1200 }],
+  tokensData: [
+    {
+      name: "Short name",
+      inputP50: 400,
+      outputP50: 800,
+      inputP95Tail: 100,
+      outputP95Tail: 200,
+    },
+  ],
   modelData: [],
 };
 
@@ -157,7 +167,18 @@ describe("RunDetailView", () => {
     expect(root).not.toHaveClass("overflow-hidden");
   });
 
-  it("places body KPI strip and accuracy hero above charts in the insight rail", () => {
+  it("places body KPI strip and charts below the run hero band", () => {
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: query.includes("min-width: 1024px"),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
     render(
       <RunDetailView
         selectedRunDetails={makeRun()}
@@ -172,28 +193,41 @@ describe("RunDetailView", () => {
     );
 
     const durationChartHeading = screen.getByRole("heading", {
-      name: "Avg duration by test",
+      name: "Latency by test (p50 / p95)",
     });
-    const rail = screen.getByRole("complementary");
-    expect(screen.getByText("Passed")).toBeInTheDocument();
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getByText("Total")).toBeInTheDocument();
-    expect(screen.getByText("Duration")).toBeInTheDocument();
+    const kpiStrip = screen.getByText("Passed").closest(".mb-4");
+    expect(kpiStrip).not.toBeNull();
+    const kpi = within(kpiStrip as HTMLElement);
+    expect(kpi.getByText("Passed")).toBeInTheDocument();
+    expect(kpi.getByText("Failed")).toBeInTheDocument();
+    expect(kpi.getByText("Total")).toBeInTheDocument();
+    expect(kpi.getByText("Duration")).toBeInTheDocument();
     expect(screen.getByText(/^100$/)).toBeInTheDocument();
-    expect(within(rail).queryByText(/Accuracy/)).not.toBeInTheDocument();
-    const accuracyLabel = screen.getByText(/Accuracy · this run/);
+
+    const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
+    const panelGroup = screen.getByTestId("run-detail-resizable-group");
+    const sections = Array.from(document.querySelectorAll("section"));
+    const heroIndex = sections.findIndex((section) =>
+      section.contains(runHeading),
+    );
+    const chartsIndex = sections.findIndex((section) =>
+      section.contains(durationChartHeading),
+    );
+    expect(heroIndex).toBeGreaterThanOrEqual(0);
+    expect(chartsIndex).toBeGreaterThan(heroIndex);
     expect(
-      accuracyLabel.compareDocumentPosition(durationChartHeading) &
+      durationChartHeading.compareDocumentPosition(panelGroup) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
     expect(durationChartHeading).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Avg tokens by test" }),
+      screen.getByRole("heading", { name: "Tokens by test (p50 / p95)" }),
     ).toBeVisible();
     expect(
       document.querySelectorAll('[data-slot="chart"]').length,
     ).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
   it("does not render compact run stats in a duplicate page header", () => {
@@ -240,13 +274,14 @@ describe("RunDetailView", () => {
 
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Avg duration by test" }),
+      screen.getByRole("heading", { name: "Latency by test (p50 / p95)" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Avg tokens by test" }),
+      screen.getByRole("heading", { name: "Tokens by test (p50 / p95)" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Test cases/)).toBeInTheDocument();
-    expect(screen.getByText(/p50 \/ p95 · fail/i)).toBeInTheDocument();
+    expect(screen.getByText("P50")).toBeInTheDocument();
+    expect(screen.getByText("Fail")).toBeInTheDocument();
     expect(
       screen.getByTestId("run-detail-resizable-group"),
     ).toBeInTheDocument();
@@ -263,7 +298,15 @@ describe("RunDetailView", () => {
         selectedRunChartData={{
           donutData: [{ name: "passed", value: 1, fill: "green" }],
           durationData: [],
-          tokensData: [{ name: "x", tokens: 0 }],
+          tokensData: [
+            {
+              name: "x",
+              inputP50: 0,
+              outputP50: 0,
+              inputP95Tail: 0,
+              outputP95Tail: 0,
+            },
+          ],
           modelData: [],
         }}
         runDetailSortBy="test"

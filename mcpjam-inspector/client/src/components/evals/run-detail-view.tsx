@@ -30,18 +30,21 @@ import {
 import { RunCaseListWithSections } from "./run-case-list";
 import type { RunCaseGroup } from "./run-case-groups";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
+import {
+  tokensChartDatumTotal,
+  type DurationChartDatum,
+  type TokensChartDatum,
+} from "./run-chart-data";
 import { RunDetailKpiStrip } from "./run-detail-kpis";
 import { ClientChip } from "@/components/clients/client-chip";
 import {
   RunAccuracyHeroBand,
+  RunDetailMetricsCharts,
   RunInsightRail,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
 } from "./run-insight-rail";
-import {
-  runDetailMetaLabelClass,
-  runDetailSectionTitleClass,
-} from "./run-detail-typography";
+import { runDetailMetaLabelClass } from "./run-detail-typography";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -84,15 +87,8 @@ interface RunDetailViewProps {
   source?: "ui" | "sdk";
   selectedRunChartData: {
     donutData: Array<{ name: string; value: number; fill: string }>;
-    durationData: Array<{
-      name: string;
-      duration: number;
-      durationSeconds: number;
-    }>;
-    tokensData: Array<{
-      name: string;
-      tokens: number;
-    }>;
+    durationData: DurationChartDatum[];
+    tokensData: TokensChartDatum[];
   };
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
@@ -293,17 +289,6 @@ export function RunIterationsSidebar({
             "min-h-0 min-w-0 flex-1 overflow-hidden"
           )}
         >
-          {showCaseCardHeader ? (
-            <div className="flex shrink-0 items-baseline justify-between gap-3 border-b border-border/40 px-4 py-2.5">
-              <div className={runDetailSectionTitleClass}>
-                Test cases{" "}
-                <span className="font-mono text-xs font-normal text-muted-foreground">
-                  · {groupedCaseCount}
-                </span>
-              </div>
-              <div className={runDetailMetaLabelClass}>p50 / p95 · fail</div>
-            </div>
-          ) : null}
           <div className="min-h-0 flex-1 overflow-y-auto bg-background">
             <RunCaseListWithSections
               iterations={caseGroupsForSelectedRun}
@@ -312,6 +297,7 @@ export function RunIterationsSidebar({
               onSelectTestCase={(group) => {
                 onSelectTestCase?.(group);
               }}
+              caseCount={showCaseCardHeader ? groupedCaseCount : undefined}
               headerEnd={sortHeaderControl}
               trailingGutter={Boolean(_onEditTestCase)}
             />
@@ -384,7 +370,7 @@ export function RunDetailView({
   const hasTokenData = useMemo(
     () =>
       selectedRunChartData.tokensData.length > 0 &&
-      selectedRunChartData.tokensData.some((d) => d.tokens > 0),
+      selectedRunChartData.tokensData.some((d) => tokensChartDatumTotal(d) > 0),
     [selectedRunChartData.tokensData]
   );
 
@@ -431,6 +417,7 @@ export function RunDetailView({
       includeRunIdentity
       hideReplayLineage={hideReplayLineage}
       runClient={runClient}
+      onCompareWithRun={onCompareWithRun}
       onSelectRun={(runId) => {
         if (runId === selectedRunDetails._id) return;
         navigateApp(
@@ -445,28 +432,17 @@ export function RunDetailView({
     />
   ) : null;
 
-  const insightRail = (
-    <RunInsightRail
-      run={selectedRunDetails}
-      iterations={caseGroupsForSelectedRun}
-      source={source}
-      compareBaseRun={compareBaseRun}
-      runTrendData={runTrendData}
-      onSelectRun={(runId) => {
-        if (runId === selectedRunDetails._id) return;
-        navigateApp(
-          buildEvalsPath({
-            type: "run-detail",
-            suiteId: selectedRunDetails.suiteId,
-            runId,
-          }),
-        );
-      }}
+  const runMetricsCharts = (
+    <RunDetailMetricsCharts
       durationData={selectedRunChartData.durationData}
       tokensData={selectedRunChartData.tokensData}
       hasTokenData={hasTokenData}
-      triageCard={serverQualityTriage}
+      className="mb-4"
     />
+  );
+
+  const insightRail = (
+    <RunInsightRail triageCard={serverQualityTriage} />
   );
 
   const runMetadataBlock = (
@@ -502,7 +478,10 @@ export function RunDetailView({
         </p>
       ) : null}
 
-      {compareBaseRun && onCompareWithRun ? (
+      {/* When the accuracy band renders, the compare action lives in its
+          Recent runs section. This top-level button is only a fallback for
+          runs without enough data to show the band. */}
+      {compareBaseRun && onCompareWithRun && !showAccuracyHero ? (
         <div className="mb-4 flex justify-end">
           <Button
             type="button"
@@ -530,6 +509,7 @@ export function RunDetailView({
     <div className="space-y-4">
       {bodyKpiStrip}
       {accuracyHero}
+      {runMetricsCharts}
       {insightRail}
     </div>
   );
@@ -570,6 +550,7 @@ export function RunDetailView({
         <>
           {bodyKpiStrip}
           {accuracyHero}
+          {runMetricsCharts}
           {lgUp ? (
             <ResizablePanelGroup
               direction="horizontal"
@@ -591,15 +572,19 @@ export function RunDetailView({
                 maxSize={RUN_DETAIL_INSIGHTS_PANEL_MAX}
                 className="flex min-h-0 min-w-0 flex-col overflow-hidden"
               >
-                {insightRail}
+                <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+                  {insightRail}
+                </div>
               </ResizablePanel>
             </ResizablePanelGroup>
           ) : (
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
               <div className="flex min-h-[240px] min-w-0 flex-col overflow-hidden">
                 {iterationsSidebar}
               </div>
-              {insightRail}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {insightRail}
+              </div>
             </div>
           )}
         </>
