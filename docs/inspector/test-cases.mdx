@@ -157,6 +157,37 @@ For failed tests, expand the iteration to view:
   If tests are consistently failing, check that your expected tool calls match your tool definitions. The LLM may be calling tools with slightly different argument formats.
 </Tip>
 
+## Cross-host comparison
+
+When a suite has two or more MCP host applications attached, a **By case / By host** toggle appears in the test cases list. Switching to **By host** replaces the flat case list with a matrix that shows one column per host and one row per test case.
+
+### Attaching hosts
+
+Hosts are attached at the suite level. Navigate to the suite's settings and add each MCP host application (for example, Claude Desktop, Cursor, or ChatGPT) you want to compare. You need at least two host attachments for the toggle to appear.
+
+### Reading the matrix
+
+Each cell in the matrix represents the latest run of that test case on that host and shows:
+
+- **Pass/fail dots** — one dot per iteration, green for passed and red for failed, capped at 12 with an overflow count
+- **Pass rate** — percentage of completed iterations that passed, color-coded green (100 %), yellow (partial), or red (0 %)
+- **Median latency** — p50 latency across completed iterations; median is used instead of mean to dampen single slow-run outliers
+- **Token usage** — total tokens consumed across iterations in the cell
+- **Metadata chips** — contextual badges that appear when the host's configuration affects results:
+  - `tools N/M` — tools exposed to the model out of total available
+  - `visibility -N` — tools filtered by the host's visibility policy
+  - `gated tool calls ×N` — tool calls that would require user approval under the host's policy
+  - `progressive discovery` — progressive tool discovery was enabled
+  - `OpenAI compat` — OpenAI Apps SDK compatibility runtime was injected
+
+### Historical hosts
+
+If a host was detached from the suite after runs were recorded, its column remains visible and is labelled **historical**. Historical columns are dimmed and use a truncated host ID in place of a display name.
+
+<Note>
+  The cross-host matrix pins each cell to the **latest run** per (case, host) pair. Re-running a suite on a host replaces the previous cell data rather than accumulating all historical iterations, keeping the view consistent with the "last run" semantics of the by-case list.
+</Note>
+
 ## Best Practices
 
 ### Writing Effective Test Cases
