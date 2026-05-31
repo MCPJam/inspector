@@ -69,6 +69,24 @@ export type EvalSuite = {
     hostName: string | null;
     resolvedServerNames: string[];
   }>;
+  /**
+   * Snapshot pointer to a `serverAttachment` row of scope 'standalone'
+   * — a named, project-scoped, frozen server selection. When present,
+   * the suite's run-time resolver uses the row's `selectedServerIds`
+   * for ALL attached hosts (bypassing per-attachment server picks).
+   * Editing the project pool does NOT propagate; to change the
+   * selection, create a new attachment and re-point the suite.
+   */
+  serverAttachmentId?: string;
+  /** Hydrated by the backend resolver when serverAttachmentId is set. */
+  serverAttachment?: EvalServerAttachment;
+};
+
+export type EvalServerAttachment = {
+  _id: string;
+  name: string;
+  serverIds: string[];
+  resolvedServerNames: string[];
 };
 
 export type EvalCase = {
@@ -285,7 +303,7 @@ export type EvalSuiteRun = {
       summary: string;
     }>;
   };
-  serverQualityJobId?: number;
+  serverQualityJobId?: string;
   serverQualityStatus?: "pending" | "completed" | "failed";
   serverQuality?: {
     summary: string;
@@ -296,6 +314,16 @@ export type EvalSuiteRun = {
       rating: "good" | "needs_improvement" | "poor";
       issues: string[];
       suggestions: string[];
+      /** Arcade pattern slug the violation maps to. Allowlist-validated server-side. */
+      patternSlug?: string;
+      /** PR-B auditability metadata (optional; populated by the judge). */
+      evidence?: string[];
+      confidence?: "low" | "medium" | "high";
+      attribution?:
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -305,8 +333,128 @@ export type EvalSuiteRun = {
       efficiency: "optimal" | "acceptable" | "inefficient" | "excessive";
       issues: string[];
       suggestions: string[];
+      /** Arcade pattern slug the violation maps to. Allowlist-validated server-side. */
+      patternSlug?: string;
+      /** PR-B auditability metadata (optional; populated by the judge). */
+      evidence?: string[];
+      confidence?: "low" | "medium" | "high";
+      attribution?:
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
   };
+};
+
+export type EvalRunNumericDiff = {
+  base: number | null;
+  compare: number | null;
+  delta: number | null;
+  percentDelta: number | null;
+};
+
+export type EvalRunTextPreview = {
+  text: string;
+  truncated: boolean;
+};
+
+export type EvalRunDiffCaseStatus =
+  | "unchanged_passed"
+  | "unchanged_failed"
+  | "regressed"
+  | "fixed"
+  | "new_case"
+  | "removed_case"
+  | "changed";
+
+export type EvalRunDiffSide = {
+  outcome: "passed" | "failed" | "absent";
+  iterationIds: string[];
+  representativeIterationId: string | null;
+  traceBlobIds: string[];
+  input: EvalRunTextPreview | null;
+  output: EvalRunTextPreview | null;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: unknown;
+  }>;
+  actualToolCalls: Array<{
+    toolName: string;
+    arguments: unknown;
+  }>;
+  error: string | null;
+  metrics: {
+    durationMs: number | null;
+    totalTokens: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cachedInputTokens: number | null;
+    reasoningTokens: number | null;
+    estimatedCostUsd: number | null;
+  };
+};
+
+export type EvalRunDiff = {
+  suite: {
+    id: string;
+    name: string;
+    source?: "ui" | "sdk";
+  };
+  baseRun: {
+    id: string;
+    runNumber: number;
+    source: "ui" | "sdk" | null;
+    framework: string | null;
+    createdAt: number;
+    completedAt: number | null;
+    result?: "pending" | "passed" | "failed" | "cancelled";
+    summary: EvalSuiteRunSummary | null;
+  };
+  compareRun: {
+    id: string;
+    runNumber: number;
+    source: "ui" | "sdk" | null;
+    framework: string | null;
+    createdAt: number;
+    completedAt: number | null;
+    result?: "pending" | "passed" | "failed" | "cancelled";
+    summary: EvalSuiteRunSummary | null;
+  };
+  metrics: {
+    startOffsetMs: EvalRunNumericDiff;
+    wallDurationMs: EvalRunNumericDiff;
+    totalTokens: EvalRunNumericDiff;
+    inputTokens: EvalRunNumericDiff;
+    outputTokens: EvalRunNumericDiff;
+    cachedInputTokens: EvalRunNumericDiff;
+    reasoningTokens: EvalRunNumericDiff;
+    estimatedCostUsd: EvalRunNumericDiff;
+  };
+  scores: {
+    passRatePercent: EvalRunNumericDiff;
+    total: EvalRunNumericDiff;
+    passed: EvalRunNumericDiff;
+    failed: EvalRunNumericDiff;
+  };
+  cases: Array<{
+    caseKey: string;
+    title: string;
+    testCaseId: string | null;
+    status: EvalRunDiffCaseStatus;
+    configChanged: boolean;
+    base: EvalRunDiffSide;
+    compare: EvalRunDiffSide;
+    metrics: {
+      durationMs: EvalRunNumericDiff;
+      totalTokens: EvalRunNumericDiff;
+      inputTokens: EvalRunNumericDiff;
+      outputTokens: EvalRunNumericDiff;
+      cachedInputTokens: EvalRunNumericDiff;
+      reasoningTokens: EvalRunNumericDiff;
+      estimatedCostUsd: EvalRunNumericDiff;
+    };
+  }>;
 };
 
 export type EvalRefinementSession = {
