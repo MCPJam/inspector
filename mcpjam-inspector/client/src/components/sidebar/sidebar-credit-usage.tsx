@@ -59,12 +59,12 @@ export function SidebarCreditUsage({
         )}
       >
         <SidebarUsageRow
-          label="Daily limit"
+          label="Free daily credits"
           percentText={`${dailyPercentUsed}%${
             variant === "full" ? " used" : ""
           }`}
           eyebrowText={
-            showGuestUpgradeHint ? "Sign in for 15× daily usage" : null
+            showGuestUpgradeHint ? "Sign in for 15× the credits" : null
           }
           helperText={resetText}
           fillPercent={balance ? balance.freeDailyPercentUsed : 0}
@@ -79,7 +79,7 @@ export function SidebarCreditUsage({
             fillPercent={paidPercentUsed}
             isLoading={false}
             testId="sidebar-usage-paid"
-            tooltip="Used only after your daily free quota runs out."
+            tooltip="Used only after your free daily credits run out."
           />
         ) : null}
       </div>

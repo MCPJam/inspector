@@ -119,7 +119,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         enterprise: c,
       },
       {
-        label: "Daily rate limit / user",
+        label: "Free daily credits / user",
         free: x,
         team: t("$5", true),
         enterprise: t("Custom", true),
