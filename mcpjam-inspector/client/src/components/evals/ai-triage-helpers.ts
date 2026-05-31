@@ -91,6 +91,9 @@ function collectAffectedCaseKeysForTool(
   const out = new Set<string>();
   for (const w of workflowInsights) {
     if (!w.caseKey) continue;
+    // Optimal workflows are filtered out of triage rows; their text must not
+    // attribute case failures to a tool either.
+    if (w.efficiency === "optimal") continue;
     const hit =
       (w.issues ?? []).some((s) => s.toLowerCase().includes(needle)) ||
       (w.suggestions ?? []).some((s) => s.toLowerCase().includes(needle));
@@ -111,6 +114,12 @@ export function unifyTriageRows({
   const workflows = serverQuality.workflowInsights ?? [];
 
   const rows: TriageRow[] = [];
+  const idCounts = new Map<string, number>();
+  const uniqueId = (base: string): string => {
+    const n = idCounts.get(base) ?? 0;
+    idCounts.set(base, n + 1);
+    return n === 0 ? base : `${base}#${n}`;
+  };
 
   for (const w of workflows) {
     if (w.efficiency === "optimal") continue;
@@ -120,7 +129,7 @@ export function unifyTriageRows({
       new Set(affected),
     );
     rows.push({
-      id: `workflow:${w.caseKey ?? w.title}`,
+      id: uniqueId(`workflow:${w.caseKey ?? w.title ?? "untitled"}`),
       source: "workflow",
       title: `Fix workflow for ${w.title}`,
       category: "workflow",
@@ -145,7 +154,7 @@ export function unifyTriageRows({
       new Set(affected),
     );
     rows.push({
-      id: `tool:${t.toolName}`,
+      id: uniqueId(`tool:${t.toolName}`),
       source: "tool",
       title: `Improve ${t.toolName}`,
       category: "tool description",
