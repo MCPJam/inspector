@@ -210,6 +210,24 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     }
   }, [editedName, suite.name, suite._id, updateSuite]);
 
+  const handleServerAttachmentUpdate = useCallback(
+    async (serverAttachmentId: string) => {
+      try {
+        await updateSuite({
+          suiteId: suite._id,
+          serverAttachmentId,
+        });
+        toast.success("Server attachment updated");
+      } catch (error) {
+        toast.error(
+          getBillingErrorMessage(error, "Failed to update server attachment"),
+        );
+        throw error;
+      }
+    },
+    [suite._id, updateSuite],
+  );
+
   const handleNameKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") {
@@ -389,6 +407,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       projectHosts={projectHosts}
       readOnly={readOnlyConfig}
       onUpdate={onSuiteHostAttachmentsUpdate}
+      onUpdateServerAttachment={handleServerAttachmentUpdate}
     />
   );
 

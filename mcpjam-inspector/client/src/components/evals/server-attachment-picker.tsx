@@ -114,7 +114,19 @@ export function ServerAttachmentPicker({
     : null;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          // Reopen should always land back on the attachment list, not
+          // a half-filled create form from the last session.
+          setShowCreate(false);
+          setCreateName("");
+          setCreateServerIds(new Set());
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"
