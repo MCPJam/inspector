@@ -107,7 +107,7 @@ describe("CreditBalanceCard", () => {
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
   });
 
-  it("shows the org wallet lock state on the paid-credits row", () => {
+  it("shows the org wallet lock state independent of the paid-credits row", () => {
     balanceState = {
       availableCredits: -500,
       hasPurchaseHistory: true,
@@ -119,7 +119,29 @@ describe("CreditBalanceCard", () => {
 
     const paidRow = screen.getByTestId("usage-paid");
     expect(paidRow).toHaveTextContent(/-500 credits/);
-    expect(paidRow).toHaveTextContent(/paused pending review/);
+    // The lock notice lives in its own block, not inside the paid row.
+    expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
+      /paused pending review/
+    );
+  });
+
+  it("surfaces the wallet lock notice even with no purchase history", () => {
+    // A wallet can be locked (chargeback/dispute) before/without any completed
+    // purchase. Gating the notice on purchase history would hide it exactly
+    // when the user needs to know spending is paused.
+    balanceState = {
+      availableCredits: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 0,
+      freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      walletLocked: true,
+    };
+    render(<CreditBalanceCard />);
+
+    expect(screen.queryByTestId("usage-paid")).toBeNull();
+    expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
+      /paused pending review/
+    );
   });
 
   it("does NOT expose a tooltip trigger on the daily-limit row (no ambiguity to explain there)", () => {

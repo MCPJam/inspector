@@ -75,10 +75,13 @@ export function SidebarCreditUsage({
             label="Shared paid credits"
             percentText={`${balance.availableCredits.toLocaleString()}`}
             helperText="shared credits"
+            // Absolute credit count, not a percentage — render no progress
+            // bar (a permanently 0%-filled bar reads as a bug).
+            showBar={false}
             fillPercent={0}
             isLoading={false}
             testId="sidebar-usage-paid"
-            tooltip="Used only after your free daily credits run out."
+            tooltip="Shared across your organization. Spent after the free daily credits run out."
           />
         ) : null}
       </div>
@@ -131,6 +134,8 @@ interface SidebarUsageRowProps {
   fillPercent: number;
   isLoading: boolean;
   testId: string;
+  /** Render the progress bar. Off for absolute counts with no denominator. */
+  showBar?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
@@ -143,6 +148,7 @@ function SidebarUsageRow({
   fillPercent,
   isLoading,
   testId,
+  showBar = true,
   tooltip,
 }: SidebarUsageRowProps) {
   return (
@@ -179,11 +185,13 @@ function SidebarUsageRow({
           {isLoading ? <Skeleton className="h-3 w-12" /> : percentText}
         </span>
       </div>
-      {isLoading ? (
-        <Skeleton className="h-1.5 w-full rounded-full" />
-      ) : (
-        <Progress className="h-1.5 bg-primary/15" value={fillPercent} />
-      )}
+      {showBar ? (
+        isLoading ? (
+          <Skeleton className="h-1.5 w-full rounded-full" />
+        ) : (
+          <Progress className="h-1.5 bg-primary/15" value={fillPercent} />
+        )
+      ) : null}
       {helperText && !isLoading ? (
         <span className="truncate text-[10px] leading-none text-muted-foreground">
           {helperText}
