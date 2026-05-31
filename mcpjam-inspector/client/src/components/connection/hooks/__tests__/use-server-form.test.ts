@@ -173,7 +173,19 @@ describe("useServerForm", () => {
         Authorization: "Bearer old-token",
         "X-Api-Key": "secret",
       });
-      result.current.setBearerToken("new-token");
+    });
+
+    const authorizationHeaderIndex = result.current.customHeaders.findIndex(
+      (header) => header.key === "Authorization"
+    );
+    expect(authorizationHeaderIndex).toBeGreaterThanOrEqual(0);
+
+    act(() => {
+      result.current.updateCustomHeader(
+        authorizationHeaderIndex,
+        "value",
+        "Bearer new-token"
+      );
     });
 
     expect(result.current.validateForm()).toBeNull();
@@ -227,6 +239,53 @@ describe("useServerForm", () => {
       },
     });
     expect(result.current.buildFormData().secretPatch?.headers).toBeUndefined();
+  });
+
+  it("keeps OAuth selected when revealing a Bearer Authorization header", async () => {
+    const server = {
+      name: "OAuth server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      hasHeaders: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("oauth");
+    });
+    await waitFor(() => {
+      expect(result.current.hasStoredHeaders).toBe(true);
+    });
+
+    act(() => {
+      result.current.revealStoredHeaders({
+        Authorization: "Bearer oauth-access-token",
+        "X-Api-Key": "secret",
+      });
+    });
+
+    // Revealing stored headers must not silently switch auth away from OAuth.
+    expect(result.current.authType).toBe("oauth");
+    expect(result.current.bearerToken).toBe("");
+    expect(result.current.customHeaders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "Authorization",
+          value: "Bearer oauth-access-token",
+        }),
+        expect.objectContaining({ key: "X-Api-Key", value: "secret" }),
+      ])
+    );
+    expect(result.current.buildFormData()).toMatchObject({ useOAuth: true });
+    // Revealing alone is not a pending change.
+    expect(result.current.hasChanges).toBe(false);
   });
 
   it("includes an exact client capabilities override when enabled", () => {
