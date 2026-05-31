@@ -23,6 +23,7 @@ import {
   exportSingleServerForInspection,
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
+import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
@@ -67,7 +68,10 @@ async function persistHostedConnectInspection(
   c: any,
   args: { projectId: string; snapshot: ServerToolSnapshot },
 ): Promise<void> {
-  const convexUrl = process.env.CONVEX_URL;
+  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
+  // derived from it (suffix swap) by the runtime config helper so that
+  // production env (which sets only CONVEX_HTTP_URL) works.
+  const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl) return;
   const bearer = c.req.header("authorization");
   if (!bearer) return;

@@ -13,6 +13,7 @@ import {
 import { logger } from "./logger.js";
 import { exportSingleServerForInspection } from "./export-helpers.js";
 import { ConvexHttpClient } from "convex/browser";
+import { getInspectorClientRuntimeConfig } from "../env.js";
 import { setRequestLogContext } from "./request-logger.js";
 import {
   type InternalLogContext,
@@ -914,7 +915,10 @@ async function persistConnectInspection(args: {
   projectId: string;
   snapshot: Awaited<ReturnType<typeof exportSingleServerForInspection>>;
 }): Promise<void> {
-  const convexUrl = process.env.CONVEX_URL;
+  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
+  // derived from it (suffix swap) by the runtime config helper so that
+  // production env (which sets only CONVEX_HTTP_URL) works.
+  const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl || !args.convexBearer) {
     return;
   }
