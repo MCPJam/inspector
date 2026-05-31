@@ -7,7 +7,8 @@ export type PendingCreditTopupStatus = "pending" | "failed";
 export interface PendingCreditTopup {
   id: string;
   stripeSessionId: string;
-  amountCents: number;
+  pricePaidCents: number;
+  displayCredits: string;
   status: PendingCreditTopupStatus;
   createdAt: number;
   updatedAt: number;
@@ -16,7 +17,8 @@ export interface PendingCreditTopup {
 interface RawPendingTopup {
   id?: unknown;
   stripeSessionId?: unknown;
-  amountCents?: unknown;
+  pricePaidCents?: unknown;
+  displayCredits?: unknown;
   status?: unknown;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -25,19 +27,12 @@ interface RawPendingTopup {
 const isValidStatus = (value: unknown): value is PendingCreditTopupStatus =>
   value === "pending" || value === "failed";
 
-const normalizePending = (
-  raw: unknown,
-): PendingCreditTopup[] | undefined => {
+const normalizePending = (raw: unknown): PendingCreditTopup[] | undefined => {
   // Accept either a bare array or `{ items: [...] }`. Matches the loose-shape
   // convention used by useCreditTopup / useCreditBalance so the backend can
   // evolve without forcing a coordinated inspector PR.
   let items: unknown = raw;
-  if (
-    raw &&
-    typeof raw === "object" &&
-    !Array.isArray(raw) &&
-    "items" in raw
-  ) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && "items" in raw) {
     items = (raw as { items?: unknown }).items;
   }
   if (!Array.isArray(items)) return undefined;
@@ -47,7 +42,8 @@ const normalizePending = (
     if (
       typeof item?.id !== "string" ||
       typeof item.stripeSessionId !== "string" ||
-      typeof item.amountCents !== "number" ||
+      typeof item.pricePaidCents !== "number" ||
+      typeof item.displayCredits !== "string" ||
       !isValidStatus(item.status) ||
       typeof item.createdAt !== "number" ||
       typeof item.updatedAt !== "number"
@@ -57,7 +53,8 @@ const normalizePending = (
     out.push({
       id: item.id,
       stripeSessionId: item.stripeSessionId,
-      amountCents: item.amountCents,
+      pricePaidCents: item.pricePaidCents,
+      displayCredits: item.displayCredits,
       status: item.status,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
@@ -76,20 +73,20 @@ export interface UsePendingCreditTopupsResult {
   isAuthenticated: boolean;
 }
 
-export function usePendingCreditTopups(): UsePendingCreditTopupsResult {
-  const {
-    isAuthenticated: hasConvexIdentity,
-    isLoading: isConvexAuthLoading,
-  } = useConvexAuth();
+export function usePendingCreditTopups(
+  organizationId?: string | null
+): UsePendingCreditTopupsResult {
+  const { isAuthenticated: hasConvexIdentity, isLoading: isConvexAuthLoading } =
+    useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const hasWorkOsUser = !!user;
   const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
   const shouldFetch =
-    !isAuthLoading && hasConvexIdentity && hasWorkOsUser;
+    !isAuthLoading && hasConvexIdentity && hasWorkOsUser && !!organizationId;
 
   const raw = useQuery(
-    "billing/pendingCreditTopups:listForCurrentUser" as any,
-    shouldFetch ? ({} as any) : "skip",
+    "billing/pendingCreditTopups:listForOrganization" as any,
+    shouldFetch ? ({ organizationId } as any) : "skip"
   ) as unknown | undefined;
 
   // Stable reference: Convex returns the same object when nothing has
@@ -98,11 +95,11 @@ export function usePendingCreditTopups(): UsePendingCreditTopupsResult {
 
   const pending = useMemo(
     () => topups?.filter((t) => t.status === "pending"),
-    [topups],
+    [topups]
   );
   const failed = useMemo(
     () => topups?.filter((t) => t.status === "failed"),
-    [topups],
+    [topups]
   );
 
   const isLoading = isAuthLoading || (shouldFetch && raw === undefined);

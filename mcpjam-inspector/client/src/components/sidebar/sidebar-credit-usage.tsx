@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 interface SidebarCreditUsageProps {
   className?: string;
+  organizationId?: string | null;
   includeGuests?: boolean;
   variant?: "strip" | "full";
   onClick?: () => void;
@@ -19,11 +20,13 @@ interface SidebarCreditUsageProps {
 
 export function SidebarCreditUsage({
   className,
+  organizationId,
   includeGuests = false,
   variant = "strip",
   onClick,
 }: SidebarCreditUsageProps = {}) {
   const { balance, isLoading, hasWorkOsUser } = useCreditBalance({
+    organizationId,
     includeGuests,
   });
 
@@ -37,10 +40,6 @@ export function SidebarCreditUsage({
   const resetText = balance
     ? formatCreditResetText(balance.freeDailyResetAt)
     : null;
-  const paidPercentUsed =
-    balance?.paidPercentRemaining != null
-      ? Math.round(100 - balance.paidPercentRemaining)
-      : 0;
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
   const showGuestUpgradeHint =
     variant === "strip" && includeGuests && !hasWorkOsUser && !isLoading;
@@ -73,10 +72,10 @@ export function SidebarCreditUsage({
         />
         {variant === "full" && !isLoading && hasPaidHistory && balance ? (
           <SidebarUsageRow
-            label="Paid credits"
-            percentText={`${paidPercentUsed}% used`}
-            helperText={null}
-            fillPercent={paidPercentUsed}
+            label="Shared paid credits"
+            percentText={`${balance.availableCredits.toLocaleString()}`}
+            helperText="shared credits"
+            fillPercent={0}
             isLoading={false}
             testId="sidebar-usage-paid"
             tooltip="Used only after your free daily credits run out."

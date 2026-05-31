@@ -3,12 +3,8 @@ import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
 
 export interface CreditBalanceState {
-  /**
-   * 0-100. Percent of the user's credited pool still remaining. The bar
-   * renders `100 - paidPercentRemaining` as "% used". Backend computes
-   * the percent so the inspector never sees the dollar denominator.
-   */
-  paidPercentRemaining: number | null;
+  /** Shared credits currently available to the organization. */
+  availableCredits: number;
   /**
    * Whether the user has ever topped up. Used to gate paid-bar
    * visibility. Boolean-only — we deliberately don't expose the
@@ -23,6 +19,8 @@ export interface CreditBalanceState {
   freeDailyPercentUsed: number;
   /** Epoch ms when the daily bucket resets. */
   freeDailyResetAt: number;
+  /** Whether org credit spending is paused for manual review. */
+  walletLocked: boolean;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -32,56 +30,43 @@ const clampPercent = (value: unknown): number => {
   return value;
 };
 
-const optionalPercent = (value: unknown): number | null => {
-  if (value == null) return null;
-  return clampPercent(value);
-};
-
 const optionalNumber = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
 const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
-  // Accept either an explicit `hasPurchaseHistory: boolean` (preferred, new
-  // backend shape) or fall back to the legacy `lifetimePurchasedCents > 0`
-  // signal. Either is enough to know the user has topped up at least once.
-  // We DO NOT store the dollar value, so the inspector can't accidentally
-  // surface it.
-  const hasPurchaseHistory =
-    r.hasPurchaseHistory === true ||
-    (typeof r.lifetimePurchasedCents === "number" &&
-      Number.isFinite(r.lifetimePurchasedCents) &&
-      r.lifetimePurchasedCents > 0);
   return {
-    paidPercentRemaining: optionalPercent(r.paidPercentRemaining),
-    hasPurchaseHistory,
+    availableCredits: optionalNumber(r.availableCredits),
+    hasPurchaseHistory: r.hasPurchaseHistory === true,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
+    walletLocked: r.walletLocked === true,
   };
 };
 
 interface UseCreditBalanceOptions {
+  organizationId?: string | null;
   includeGuests?: boolean;
 }
 
 export function useCreditBalance({
+  organizationId,
   includeGuests = false,
 }: UseCreditBalanceOptions = {}) {
-  const {
-    isAuthenticated: hasConvexIdentity,
-    isLoading: isConvexAuthLoading,
-  } = useConvexAuth();
+  const { isAuthenticated: hasConvexIdentity, isLoading: isConvexAuthLoading } =
+    useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const hasWorkOsUser = !!user;
   const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
   const shouldFetchBalance =
     !isAuthLoading &&
     hasConvexIdentity &&
-    (hasWorkOsUser || includeGuests);
+    (hasWorkOsUser ? !!organizationId : includeGuests);
+  const queryArgs = organizationId ? { organizationId } : {};
   const raw = useQuery(
     "billing:getCreditBalance" as any,
-    shouldFetchBalance ? ({} as any) : "skip"
+    shouldFetchBalance ? (queryArgs as any) : "skip"
   ) as unknown | undefined;
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized object stays
