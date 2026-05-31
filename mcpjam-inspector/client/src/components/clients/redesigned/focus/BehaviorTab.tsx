@@ -16,6 +16,7 @@ import {
   DEFAULT_TEMPERATURE_V2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import { hostConfigField } from "@/lib/host-config-field-schema";
 import { SUPPORTED_MODELS } from "@/shared/types";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useClientDraftValidation";
@@ -50,12 +51,20 @@ interface BehaviorTabProps {
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
+  /**
+   * When true, all controls render disabled. Used by the attachment
+   * editor when surfacing the client's profile in a context where the
+   * user shouldn't be editing it inline (edits flow through the owning
+   * Client surface instead).
+   */
+  readOnly?: boolean;
 }
 
 export function BehaviorTab({
   draft,
   onDraftChange,
   attention,
+  readOnly = false,
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
   const reactId = useId();
@@ -75,18 +84,31 @@ export function BehaviorTab({
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
 
+  // Labels and descriptions are sourced from the shared field schema so
+  // the focus tab and the cross-host comparison matrix stay in sync.
+  // Changing a label here would otherwise drift; lookups throw on a typo
+  // so renames fail loudly at the first render.
+  const fModel = hostConfigField("modelId");
+  const fTemp = hostConfigField("temperature");
+  const fApproval = hostConfigField("requireToolApproval");
+  const fVisibility = hostConfigField("respectToolVisibility");
+  const fProgressive = hostConfigField("progressiveToolDiscovery");
+  const fSystemPrompt = hostConfigField("systemPrompt");
+
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock title="Model & sampling">
         <FieldRow
-          label="Model"
+          label={fModel.label}
+          description={fModel.description}
           control={
             <select
               id={`${reactId}-model`}
               value={draft.modelId}
               onChange={(e) => update({ modelId: e.target.value })}
+              disabled={readOnly}
               className={
-                "h-8 w-[260px] rounded-md border border-input bg-background px-2 text-[12px] " +
+                "h-8 w-[260px] rounded-md border border-input bg-background px-2 text-[12px] disabled:cursor-not-allowed disabled:opacity-60 " +
                 (issues.has("modelId") ? "border-amber-500" : "")
               }
             >
@@ -106,7 +128,7 @@ export function BehaviorTab({
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium">Temperature</span>
+            <span className="text-[12px] font-medium">{fTemp.label}</span>
             <span className="font-mono text-[11px] text-muted-foreground">
               {draft.temperature.toFixed(2)}
             </span>
@@ -121,32 +143,37 @@ export function BehaviorTab({
                 temperature: values[0] ?? DEFAULT_TEMPERATURE_V2,
               })
             }
-            aria-label="Temperature"
+            aria-label={fTemp.label}
+            disabled={readOnly}
           />
         </div>
 
         <FieldRow
-          label="Require tool approval"
+          label={fApproval.label}
+          description={fApproval.description}
           control={
             <Switch
               checked={draft.requireToolApproval}
               onCheckedChange={(checked) =>
                 update({ requireToolApproval: checked })
               }
-              aria-label="Require tool approval"
+              aria-label={fApproval.label}
+              disabled={readOnly}
             />
           }
         />
 
         <FieldRow
-          label="Respect tool visibility"
+          label={fVisibility.label}
+          description={fVisibility.description}
           control={
             <Switch
               checked={draft.respectToolVisibility}
               onCheckedChange={(checked) =>
                 update({ respectToolVisibility: checked })
               }
-              aria-label="Respect tool visibility"
+              aria-label={fVisibility.label}
+              disabled={readOnly}
             />
           }
         />
@@ -154,7 +181,7 @@ export function BehaviorTab({
         <FieldRow
           label={
             <span className="inline-flex items-center gap-1.5">
-              Progressive tools
+              {fProgressive.label}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -203,6 +230,7 @@ export function BehaviorTab({
                 });
               }}
               aria-label="Progressive MCP tool discovery"
+              disabled={readOnly}
             >
               <ToggleGroupItem value="auto" aria-label="Auto (default)">
                 Auto
@@ -217,26 +245,15 @@ export function BehaviorTab({
           }
         />
 
-        <FieldRow
-          label="Respect tool visibility"
-          control={
-            <Switch
-              checked={draft.respectToolVisibility}
-              onCheckedChange={(checked) =>
-                update({ respectToolVisibility: checked })
-              }
-              aria-label="Respect tool visibility"
-            />
-          }
-        />
       </FocusBlock>
 
-      <FocusBlock title="System prompt">
+      <FocusBlock title={fSystemPrompt.label}>
         <Textarea
           rows={10}
           value={draft.systemPrompt}
           onChange={(e) => update({ systemPrompt: e.target.value })}
           placeholder="You are a helpful assistant…"
+          readOnly={readOnly}
           className={
             issues.has("systemPrompt") ? "border-amber-500/60" : undefined
           }

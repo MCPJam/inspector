@@ -19,8 +19,7 @@ export function suitePassCriteriaCompactBadgeClassNames(
     outcome === "passed"
       ? "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
       : outcome === "failed"
-        ? // Use semantic destructive tokens + border so suite outcome reads at a glance next to KPIs.
-          "border border-destructive/35 bg-destructive/10 font-bold text-destructive shadow-sm dark:border-destructive/45 dark:bg-destructive/20"
+        ? "bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
         : "bg-amber-500/15 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300";
 
   return cn(ITERATION_RESULT_BADGE_BASE, colorClass);

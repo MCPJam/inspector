@@ -25,6 +25,7 @@ import {
   MCP_UI_RESOURCE_MIME_TYPE,
 } from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
+import { hostConfigField } from "@/lib/host-config-field-schema";
 import { clientAdvertisesMcpApps, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
@@ -46,6 +47,15 @@ interface AppsExtensionTabProps {
    * is in place end-to-end so that landing is a one-file change.
    */
   focusSubKey?: SandboxConfigSubKey;
+  /**
+   * When true, the tab renders all controls disabled. Threaded as
+   * `disabled` onto the surrounding fieldset, which bubbles to every
+   * form control inside (capability-matrix switches, sub-toggles, etc.)
+   * and as the JsonEditor's own `readOnly` prop. Phase 3 can refine
+   * individual write-only buttons if any leak through; today no caller
+   * passes `readOnly={true}` so this is a prep-only addition.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -998,6 +1008,9 @@ function OpenaiAppsCapabilityMatrix({
     });
   };
 
+  // Shared with the cross-host comparison matrix via the field schema.
+  const fInjectShim = hostConfigField("compatRuntime.openaiApps");
+
   return (
     <div className="rounded-[10px] border border-border bg-background">
       <div className="flex items-stretch border-b border-border">
@@ -1010,7 +1023,7 @@ function OpenaiAppsCapabilityMatrix({
         >
           <div className="flex flex-col gap-0.5">
             <span className="text-[12px] font-medium">
-              Inject <span className="font-mono">window.openai</span>
+              {fInjectShim.label}
             </span>
           </div>
           <ChevronDown
@@ -1024,7 +1037,7 @@ function OpenaiAppsCapabilityMatrix({
             id="apps-extension-openai-toggle"
             checked={injected}
             onCheckedChange={setInjected}
-            aria-label="Inject window.openai"
+            aria-label={fInjectShim.label}
           />
         </div>
       </div>
@@ -1856,12 +1869,14 @@ export function AppsExtensionTab({
   draft,
   onDraftChange,
   focusSubKey: _focusSubKey,
+  readOnly = false,
 }: AppsExtensionTabProps) {
   // _focusSubKey is intentionally unused — see prop doc. Destructured so
   // the prop appears in TS signature checks and the linter doesn't warn
   // about an undeclared prop on the call site.
   void _focusSubKey;
   const [jsonMode, setJsonMode] = useState<JsonEditorMode>("edit");
+  const effectiveJsonMode: JsonEditorMode = readOnly ? "view" : jsonMode;
   const { content, onRawChange } = useJsonDraftBuffer({
     draft,
     serialize: appsToJson,
@@ -1870,26 +1885,33 @@ export function AppsExtensionTab({
   });
 
   return (
-    <div className="flex h-full min-h-[480px] flex-col gap-3">
-      <OpenaiAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
-      {/* Two-matrix architecture: window.openai (shim) and app.* (spec
-          bridge) are independent surfaces and never cross-gate. The
-          subtitle on each section makes this explicit so users don't
-          confuse them. */}
-      <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
-      <div className="min-h-0 flex-1">
-        <JsonEditor
-          rawContent={content}
-          onRawChange={onRawChange}
-          mode={jsonMode}
-          onModeChange={setJsonMode}
-          showModeToggle
-          showToolbar
-          showLineNumbers
-          autoFormatOnEdit={false}
-          height="100%"
-        />
+    // `fieldset[disabled] + display:contents` bulk-disables every form
+    // control inside without changing layout. JsonEditor gets `readOnly`
+    // threaded explicitly because its editor surface isn't a form
+    // control fieldset can reach.
+    <fieldset disabled={readOnly} className="contents">
+      <div className="flex h-full min-h-[480px] flex-col gap-3">
+        <OpenaiAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
+        {/* Two-matrix architecture: window.openai (shim) and app.* (spec
+            bridge) are independent surfaces and never cross-gate. The
+            subtitle on each section makes this explicit so users don't
+            confuse them. */}
+        <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
+        <div className="min-h-0 flex-1">
+          <JsonEditor
+            rawContent={content}
+            onRawChange={onRawChange}
+            mode={effectiveJsonMode}
+            onModeChange={readOnly ? undefined : setJsonMode}
+            showModeToggle={!readOnly}
+            showToolbar
+            showLineNumbers
+            autoFormatOnEdit={false}
+            height="100%"
+            readOnly={readOnly}
+          />
+        </div>
       </div>
-    </div>
+    </fieldset>
   );
 }
