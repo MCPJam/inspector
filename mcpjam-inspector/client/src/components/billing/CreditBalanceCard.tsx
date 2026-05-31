@@ -29,7 +29,7 @@ function consumeTopupFlag(): boolean {
     window.history.replaceState(
       null,
       "",
-      `${window.location.pathname}${nextSearch}`,
+      `${window.location.pathname}${nextSearch}`
     );
     return true;
   }
@@ -38,29 +38,47 @@ function consumeTopupFlag(): boolean {
 }
 
 interface CreditBalanceCardProps {
+  organizationId?: string | null;
+  canManageCredits?: boolean;
   /** Optional override for the chat session id used by the top-up flow. */
   chatSessionId?: string;
 }
 
 export function CreditBalanceCard({
+  organizationId,
+  canManageCredits = false,
   chatSessionId,
 }: CreditBalanceCardProps = {}) {
-  const { balance, isLoading } = useCreditBalance();
+  const { balance, isLoading } = useCreditBalance({ organizationId });
   const [isTopupOpen, setIsTopupOpen] = useState(false);
   const [topupSource, setTopupSource] =
     useState<CreditTopupSource>("billing_page");
+  // Whether the user landed here from the global limit modal (`?topup=open`).
+  // Captured once on mount, then acted on once we know whether they can
+  // manage credits — `canManageCredits` can arrive a render late while the
+  // org role resolves.
+  const [arrivedFromLimitModal, setArrivedFromLimitModal] = useState(false);
 
-  // Auto-open the topup dialog when the user is redirected here from the
-  // global limit modal (`/organizations/{id}/billing?topup=open`). One-shot:
-  // the flag is consumed from the URL so a subsequent reload doesn't reopen.
-  // Source is recorded as `limit_modal` so the funnel can attribute the
-  // top-up back to the limit-hit that triggered the redirect.
+  // One-shot: consume the redirect flag from the URL so a reload doesn't
+  // reopen the dialog. Source is recorded as `limit_modal` so the funnel can
+  // attribute the top-up back to the limit-hit that triggered the redirect.
   useEffect(() => {
     if (consumeTopupFlag()) {
-      setTopupSource("limit_modal");
-      setIsTopupOpen(true);
+      setArrivedFromLimitModal(true);
     }
   }, []);
+
+  // Open the dialog only once we know the user can manage credits. A member
+  // who can't top up keeps `arrivedFromLimitModal` true and instead sees the
+  // "ask an admin" hint below — not a silent dead-end where the flag was
+  // consumed but nothing happened.
+  useEffect(() => {
+    if (arrivedFromLimitModal && canManageCredits) {
+      setTopupSource("limit_modal");
+      setIsTopupOpen(true);
+      setArrivedFromLimitModal(false);
+    }
+  }, [arrivedFromLimitModal, canManageCredits]);
 
   const handleManualTopup = () => {
     setTopupSource("billing_page");
@@ -68,10 +86,6 @@ export function CreditBalanceCard({
   };
 
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
-  const paidPercentUsed =
-    balance?.paidPercentRemaining != null
-      ? 100 - balance.paidPercentRemaining
-      : 0;
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">
@@ -82,56 +96,85 @@ export function CreditBalanceCard({
               Credit usage
             </p>
             <p className="mt-1 text-sm font-semibold leading-snug">
-              Your model credits
+              Organization model credits
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Credits are linked to your user, not the organization.
+              Shared credits are available to everyone in this organization.
             </p>
           </div>
-          <ErrorBoundary fallback={null}>
-            <TopupActionButton onClick={handleManualTopup} />
-          </ErrorBoundary>
+          {canManageCredits ? (
+            <ErrorBoundary fallback={null}>
+              <TopupActionButton onClick={handleManualTopup} />
+            </ErrorBoundary>
+          ) : null}
         </div>
 
-        <ErrorBoundary fallback={null}>
-          <PendingCreditTopupsBanner />
-        </ErrorBoundary>
+        {canManageCredits ? (
+          <ErrorBoundary fallback={null}>
+            <PendingCreditTopupsBanner organizationId={organizationId} />
+          </ErrorBoundary>
+        ) : null}
 
         <UsageRow
           label="Free daily credits"
           rightText={
             isLoading || !balance
               ? null
-              : `${Math.round(balance.freeDailyPercentUsed)}% used · ${formatCreditResetText(balance.freeDailyResetAt)}`
+              : `${Math.round(
+                  balance.freeDailyPercentUsed
+                )}% used · ${formatCreditResetText(balance.freeDailyResetAt)}`
           }
-          fillPercent={
-            isLoading || !balance ? 0 : balance.freeDailyPercentUsed
-          }
+          fillPercent={isLoading || !balance ? 0 : balance.freeDailyPercentUsed}
           isLoading={isLoading}
           testId="usage-daily"
         />
 
         {!isLoading && hasPaidHistory && balance && (
-          <UsageRow
-            label="Paid credits"
-            rightText={
-              balance.paidPercentRemaining != null
-                ? `${Math.round(100 - balance.paidPercentRemaining)}% used`
-                : null
-            }
-            fillPercent={paidPercentUsed}
-            isLoading={false}
-            testId="usage-paid"
-            tooltip="Used only after your free daily credits run out."
-          />
+          <div
+            className="rounded-md border border-border/60 bg-muted/20 px-3 py-2"
+            data-testid="usage-paid"
+          >
+            <p className="text-xs font-medium text-muted-foreground">
+              Shared paid credits
+            </p>
+            <p className="mt-1 text-lg font-semibold">
+              {balance.availableCredits.toLocaleString()} credits
+            </p>
+          </div>
         )}
+
+        {/* Wallet-lock notice is independent of purchase history: a wallet can
+            be locked (chargeback/dispute) with no completed purchase on
+            record, and that's exactly when the user needs to know spending is
+            paused. Gating it on hasPaidHistory would hide it in that case. */}
+        {!isLoading && balance?.walletLocked ? (
+          <p
+            className="text-xs text-destructive"
+            data-testid="usage-wallet-locked"
+          >
+            Credit spending is paused pending review.
+          </p>
+        ) : null}
+
+        {/* A member routed here from the limit modal who can't manage credits
+            would otherwise hit a silent dead-end (no dialog opens). Tell them
+            how to proceed instead. */}
+        {!isLoading && arrivedFromLimitModal && !canManageCredits ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="usage-ask-admin"
+          >
+            Ask an organization admin to add shared credits.
+          </p>
+        ) : null}
       </CardContent>
-      {isTopupOpen && (
+      {isTopupOpen && canManageCredits && (
         <CreditTopupDialog
           open
           onOpenChange={setIsTopupOpen}
           chatSessionId={chatSessionId ?? ""}
           lastUserMessage=""
+          organizationId={organizationId}
           source={topupSource}
         />
       )}

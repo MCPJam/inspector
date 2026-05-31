@@ -66,11 +66,11 @@ function getPlanColumnCta(params: {
   isBillingActionPending: boolean;
   onDowngradePlan: (
     plan: OrganizationPlan,
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => void;
   onStartPlanChange: (
     plan: "team",
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   billingInterval: BillingInterval;
 }): {
@@ -142,7 +142,7 @@ function getPlanColumnCta(params: {
 function formatCurrency(
   amount: number,
   currency: string,
-  maximumFractionDigits: number,
+  maximumFractionDigits: number
 ): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
@@ -161,7 +161,7 @@ function formatBillingDate(timestampMs: number): string {
 }
 
 function getDeferredTrialBillingCopy(
-  billingStatus: OrganizationBillingStatus | undefined,
+  billingStatus: OrganizationBillingStatus | undefined
 ): string | null {
   const deferredTrialBillingStartsAt =
     billingStatus?.deferredTrialBillingStartsAt;
@@ -170,7 +170,7 @@ function getDeferredTrialBillingCopy(
   }
 
   return `$0 today. First bill charged in advance on ${formatBillingDate(
-    deferredTrialBillingStartsAt,
+    deferredTrialBillingStartsAt
   )}.`;
 }
 
@@ -179,7 +179,7 @@ function formatPlanPriceLabel(
   _plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
-  interval: BillingInterval,
+  interval: BillingInterval
 ): string {
   if (amountInCents == null) {
     return interval === "annual" ? "Custom annual" : "Custom pricing";
@@ -189,13 +189,17 @@ function formatPlanPriceLabel(
     return `${formatCurrency(amountInCents / 100, currency, 0)}/seat/mo`;
   }
   const monthlyEquivalentDollars = amountInCents / 12 / 100;
-  return `${formatCurrency(Math.round(monthlyEquivalentDollars), currency, 0)}/seat/mo`;
+  return `${formatCurrency(
+    Math.round(monthlyEquivalentDollars),
+    currency,
+    0
+  )}/seat/mo`;
 }
 
 function formatPerSeatCadence(
   plan: OrganizationPlan,
   entry: PlanCatalog["plans"][OrganizationPlan],
-  interval: BillingInterval,
+  interval: BillingInterval
 ): string {
   if (plan === "free") {
     return "No credit card required";
@@ -218,8 +222,8 @@ function PlanPriceDisplay({ label }: { label: string }) {
   const suffix = label.endsWith(PER_SEAT_MO_SUFFIX)
     ? PER_SEAT_MO_SUFFIX
     : label.endsWith(PER_MO_SUFFIX)
-      ? PER_MO_SUFFIX
-      : null;
+    ? PER_MO_SUFFIX
+    : null;
   const amount = suffix ? label.slice(0, -suffix.length) : label;
 
   return (
@@ -358,7 +362,7 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
     <span
       className={cn(
         "block w-full text-center text-sm text-muted-foreground",
-        cell.emphasize && "font-semibold text-foreground",
+        cell.emphasize && "font-semibold text-foreground"
       )}
     >
       {cell.text}
@@ -387,7 +391,7 @@ function BillingIntervalToggle({
           "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:gap-2 sm:px-3",
           billingInterval === "annual"
             ? "bg-background text-foreground shadow-sm"
-            : "text-muted-foreground",
+            : "text-muted-foreground"
         )}
         onClick={() => onBillingIntervalChange("annual")}
       >
@@ -405,7 +409,7 @@ function BillingIntervalToggle({
           "shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:px-3",
           billingInterval === "monthly"
             ? "bg-background text-foreground shadow-sm"
-            : "text-muted-foreground",
+            : "text-muted-foreground"
         )}
         onClick={() => onBillingIntervalChange("monthly")}
       >
@@ -416,8 +420,10 @@ function BillingIntervalToggle({
 }
 
 interface OrganizationBillingSectionProps {
+  organizationId: string;
   billingStatus: OrganizationBillingStatus | undefined;
   organizationName: string;
+  canManageCredits: boolean;
   planCatalog: PlanCatalog | undefined;
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
@@ -426,23 +432,25 @@ interface OrganizationBillingSectionProps {
   isOpeningPortal: boolean;
   onDowngradePlan: (
     plan: OrganizationPlan,
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   onStartPlanChange: (
     plan: "team",
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   onStartAutoPlanChange?: (
     plan: "team",
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
 }
 
 export function OrganizationBillingSection({
+  organizationId,
   billingStatus,
   organizationName,
+  canManageCredits,
   planCatalog,
   isLoadingBilling,
   isLoadingPlanCatalog,
@@ -514,7 +522,7 @@ export function OrganizationBillingSection({
           toast.error(
             !billingStatus.canManageBilling
               ? "Only organization owners can start checkout."
-              : "Checkout isn't available in this environment.",
+              : "Checkout isn't available in this environment."
           );
           onCheckoutIntentConsumed?.();
         }
@@ -523,7 +531,7 @@ export function OrganizationBillingSection({
 
       const intentGuard = guardCheckoutIntentAgainstBillingStatus(
         billingStatus,
-        checkoutIntent.plan,
+        checkoutIntent.plan
       );
       if (!intentGuard.proceed) {
         if (!cancelled && autoCheckoutStartedForKeyRef.current !== intentKey) {
@@ -548,7 +556,7 @@ export function OrganizationBillingSection({
       try {
         await (onStartAutoPlanChange ?? onStartPlanChange)(
           checkoutIntent.plan,
-          checkoutIntent.interval,
+          checkoutIntent.interval
         );
         if (!cancelled) {
           onCheckoutIntentConsumed?.();
@@ -666,11 +674,17 @@ export function OrganizationBillingSection({
       </Dialog>
 
       <ErrorBoundary fallback={null}>
-        <CreditBalanceCard />
+        <CreditBalanceCard
+          organizationId={organizationId}
+          canManageCredits={canManageCredits}
+        />
       </ErrorBoundary>
 
       <ErrorBoundary fallback={null}>
-        <PaymentsHistorySection />
+        <PaymentsHistorySection
+          organizationId={organizationId}
+          canViewHistory={canManageCredits}
+        />
       </ErrorBoundary>
 
       {checkoutIntent ? (
@@ -783,27 +797,23 @@ export function OrganizationBillingSection({
                             : getDisplayPriceCentsForPlan(
                                 plan,
                                 billingInterval,
-                                entry,
+                                entry
                               );
                         const priceLabel = isEnterprisePlan
                           ? "Custom"
                           : plan === "free"
-                            ? "$0"
-                            : formatPlanPriceLabel(
-                                plan,
-                                displayCents,
-                                planCatalog.currency,
-                                billingInterval,
-                              );
+                          ? "$0"
+                          : formatPlanPriceLabel(
+                              plan,
+                              displayCents,
+                              planCatalog.currency,
+                              billingInterval
+                            );
                         const priceSubtext = isEnterprisePlan
                           ? formatPerSeatCadence(plan, entry, billingInterval)
                           : plan === "free"
-                            ? "No credit card required"
-                            : formatPerSeatCadence(
-                                plan,
-                                entry,
-                                billingInterval,
-                              );
+                          ? "No credit card required"
+                          : formatPerSeatCadence(plan, entry, billingInterval);
                         const cta = getPlanColumnCta({
                           plan,
                           currentPlan,
@@ -813,11 +823,11 @@ export function OrganizationBillingSection({
                           isBillingActionPending,
                           onDowngradePlan: (
                             targetPlan,
-                            targetBillingInterval,
+                            targetBillingInterval
                           ) =>
                             void onDowngradePlan(
                               targetPlan,
-                              targetBillingInterval,
+                              targetBillingInterval
                             ),
                           onStartPlanChange,
                           billingInterval,
@@ -826,7 +836,7 @@ export function OrganizationBillingSection({
                           pendingPlanChangeTarget === plan &&
                           (cta.label === "Upgrade" ||
                             cta.label === "Downgrade") &&
-                          (plan === "team");
+                          plan === "team";
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
                         const showDeferredTrialBillingCopy =
@@ -834,14 +844,14 @@ export function OrganizationBillingSection({
                           cta.label === "Upgrade" &&
                           !cta.disabled &&
                           !cta.tooltip &&
-                          (plan === "team");
+                          plan === "team";
                         return (
                           <TableHead
                             key={plan}
                             className={cn(
                               "h-full min-h-0 whitespace-normal px-3 pt-5 pb-4 text-center align-top",
                               isPopular &&
-                                "border-x border-primary/35 bg-primary/[0.06]",
+                                "border-x border-primary/35 bg-primary/[0.06]"
                             )}
                           >
                             <div className="mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col">
@@ -963,7 +973,7 @@ export function OrganizationBillingSection({
                                     className={cn(
                                       "max-w-[13rem] whitespace-normal px-3 py-3 text-center align-middle text-sm",
                                       isPopular &&
-                                        "border-x border-primary/35 bg-primary/[0.06]",
+                                        "border-x border-primary/35 bg-primary/[0.06]"
                                     )}
                                   >
                                     <ComparePlanMatrixCell cell={cells[i]!} />
