@@ -1,10 +1,14 @@
 import type { EvalRoute } from "@/lib/eval-route-types";
-import { buildCiEvalsPath, buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import {
+  buildCiEvalsPath,
+  buildEvalsPath,
+  navigateApp,
+} from "@/lib/app-navigation";
 import type { SuiteNavigation } from "./suite-iterations-view";
 
 function applyPlaygroundEvalsPath(
   route: EvalRoute,
-  options?: { replace?: boolean },
+  options?: { replace?: boolean }
 ) {
   navigateApp(buildEvalsPath(route), { replace: options?.replace });
 }
@@ -16,7 +20,7 @@ function applyCiEvalsPath(route: EvalRoute, options?: { replace?: boolean }) {
 /** Playground Explore: same path shape as `buildEvalsPath`. */
 export function navigatePlaygroundEvalsRoute(
   route: EvalRoute,
-  options?: { replace?: boolean },
+  options?: { replace?: boolean }
 ) {
   applyPlaygroundEvalsPath(route, options);
 }
@@ -35,8 +39,9 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
           runId,
           iteration,
           insightsFocus: options?.insightsFocus,
+          compareToRunId: options?.compareToRunId,
         },
-        { replace: options?.replace },
+        { replace: options?.replace }
       );
     },
     toTestDetail: (suiteId, testId, iteration) => {
@@ -56,7 +61,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
           ...(options?.openCompare ? { openCompare: true } : {}),
           ...(options?.iteration ? { iteration: options.iteration } : {}),
         },
-        { replace: options?.replace },
+        { replace: options?.replace }
       );
     },
     toSuiteEdit: (suiteId) => {
@@ -84,6 +89,7 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
         runId,
         iteration,
         insightsFocus: options?.insightsFocus,
+        compareToRunId: options?.compareToRunId,
       }),
     toTestDetail: (suiteId, testId, iteration) =>
       applyCiEvalsPath({
@@ -101,9 +107,8 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
           ...(options?.openCompare ? { openCompare: true } : {}),
           ...(options?.iteration ? { iteration: options.iteration } : {}),
         },
-        { replace: options?.replace },
+        { replace: options?.replace }
       ),
-    toSuiteEdit: (suiteId) =>
-      applyCiEvalsPath({ type: "suite-edit", suiteId }),
+    toSuiteEdit: (suiteId) => applyCiEvalsPath({ type: "suite-edit", suiteId }),
   };
 }

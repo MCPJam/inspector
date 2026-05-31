@@ -4,6 +4,7 @@ import { SuiteHeader } from "../suite-header";
 
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 const mockIsHostedMode = vi.fn(() => false);
