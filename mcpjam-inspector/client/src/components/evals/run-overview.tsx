@@ -534,7 +534,11 @@ export function RunOverview({
                 </Button>
               ) : null}
               {!hideViewModeSelect ? (
-                <div className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5">
+                <div
+                  role="group"
+                  aria-label="Suite overview view"
+                  className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5"
+                >
                   {(
                     [
                       { value: "runs", label: "Runs" },
@@ -544,6 +548,7 @@ export function RunOverview({
                     <button
                       key={value}
                       type="button"
+                      aria-pressed={runsViewMode === value}
                       onClick={() => onViewModeChange(value)}
                       className={cn(
                         "px-2 py-0.5 text-xs rounded transition-colors",
@@ -631,16 +636,16 @@ export function RunOverview({
                     0
                   );
 
-                  const passed =
-                    realTimePassed > 0
-                      ? realTimePassed
-                      : run.summary?.passed ?? 0;
-                  const failed =
-                    realTimeFailed > 0
-                      ? realTimeFailed
-                      : run.summary?.failed ?? 0;
-                  const total =
-                    realTimeTotal > 0 ? realTimeTotal : run.summary?.total ?? 0;
+                  const hasRealTimeTotals = realTimeTotal > 0;
+                  const passed = hasRealTimeTotals
+                    ? realTimePassed
+                    : run.summary?.passed ?? 0;
+                  const failed = hasRealTimeTotals
+                    ? realTimeFailed
+                    : run.summary?.failed ?? 0;
+                  const total = hasRealTimeTotals
+                    ? realTimeTotal
+                    : run.summary?.total ?? 0;
                   const passRate =
                     total > 0 ? Math.round((passed / total) * 100) : null;
 

@@ -45,6 +45,20 @@ describe("extractHostExecutionPolicy", () => {
     expect(policy.progressiveDiscoveryEnabled).toBe(false);
   });
 
+  it("extracts progressive discovery from HostConfigV2 boolean shape", () => {
+    const policy = extractHostExecutionPolicy({
+      progressiveToolDiscovery: true,
+    });
+    expect(policy.progressiveDiscoveryEnabled).toBe(true);
+  });
+
+  it("does not set progressive discovery when boolean is false", () => {
+    const policy = extractHostExecutionPolicy({
+      progressiveToolDiscovery: false,
+    });
+    expect(policy.progressiveDiscoveryEnabled).toBe(false);
+  });
+
   it("extracts hostStyle and namedHostId", () => {
     const policy = extractHostExecutionPolicy({ hostStyle: "cursor" }, "h_abc");
     expect(policy.hostStyle).toBe("cursor");

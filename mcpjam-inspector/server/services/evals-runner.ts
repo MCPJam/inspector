@@ -2592,20 +2592,20 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         }));
 
-  // Mirror prepareChatV2: when the host opts out of visibility, app-only tools
-  // must enter the SDK set so `applyVisibilityPolicyAndCountSignals` can keep
-  // them (and count them in `toolsTotalBefore`). Without this they're stripped
-  // by getToolsForAiSdk before the policy ever runs.
+  // When a host policy is present we need the full tool set (including
+  // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+  //   1. Count `toolsTotalBefore` honestly, and
+  //   2. Keep app-only tools when the host opted out of visibility filtering.
+  // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+  // sees a partial set — drops are reported as 0 even when tools were hidden.
   const tools = (await mcpClientManager.getToolsForAiSdk(
     serverIds,
-    hostExecutionPolicy?.respectToolVisibility === false
-      ? { includeAppOnly: true }
-      : undefined,
+    hostExecutionPolicy ? { includeAppOnly: true } : undefined,
   )) as ToolSet;
 
-  // Compute tool exposure signals and apply visibility filtering when a host
-  // policy is present. The filter mutates `tools` in place (same as
-  // prepareChatV2) so downstream iteration runners see the post-filter set.
+  // Apply visibility filtering when a host policy is present. The filter
+  // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+  // runners see the post-filter set.
   const resolvedToolSignals = hostExecutionPolicy
     ? applyVisibilityPolicyAndCountSignals(
         tools as Record<string, unknown>,
@@ -2827,6 +2827,8 @@ const streamIterationWithAiSdk = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3231,6 +3233,14 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -3358,6 +3368,14 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -3392,6 +3410,8 @@ const streamIterationViaBackend = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -4142,6 +4162,14 @@ const streamIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -4181,6 +4209,10 @@ export const streamTestCase = async (params: {
    * off (SEP-1865 honest behavior).
    */
   injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy (mirrors runEvalSuiteWithAiSdk). */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for the stream run. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -4200,6 +4232,8 @@ export const streamTestCase = async (params: {
     emit,
     compareRunId,
     injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -4300,6 +4334,8 @@ export const streamTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4332,6 +4368,8 @@ export const streamTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4359,6 +4397,8 @@ export const streamTestCase = async (params: {
       compareRunId,
       precreatedIterationId,
       injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }

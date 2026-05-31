@@ -128,10 +128,10 @@ export function TestCasesOverview({
   const canShowByHost = hostAttachmentCount >= 2;
   // Local state (seeded from the route on mount) so flipping the toggle swaps
   // the list/matrix in place without remounting this component or the content
-  // region; the deep-link is still honored on initial render.
-  const [hostMode, setHostMode] = useState<CaseListHostMode>(
-    canShowByHost ? initialHostMode : "by-case",
-  );
+  // region. Seed unconditionally from the route — `effectiveHostMode` clamps
+  // to "by-case" until host attachments load, so a `view=cross-host` deep-link
+  // that arrives before attachments populate isn't lost.
+  const [hostMode, setHostMode] = useState<CaseListHostMode>(initialHostMode);
   const effectiveHostMode = canShowByHost ? hostMode : "by-case";
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,

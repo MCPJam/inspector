@@ -54,11 +54,14 @@ export function extractHostExecutionPolicy(
       ? hostConfig.respectToolVisibility
       : undefined;
 
-  const discoveryConfig = isRecord(hostConfig.progressiveToolDiscovery)
-    ? hostConfig.progressiveToolDiscovery
-    : null;
+  // HostConfigV2 stores this as a plain boolean; chat-v2 wire payloads wrap
+  // it as `{ enabled, threshold }`. Accept both shapes so iteration metadata
+  // is stamped regardless of which form the snapshot was built from.
+  const discoveryRaw = hostConfig.progressiveToolDiscovery;
   const progressiveDiscoveryEnabled =
-    discoveryConfig?.enabled === true;
+    typeof discoveryRaw === "boolean"
+      ? discoveryRaw
+      : isRecord(discoveryRaw) && discoveryRaw.enabled === true;
 
   const hostStyle =
     typeof hostConfig.hostStyle === "string" ? hostConfig.hostStyle : undefined;
