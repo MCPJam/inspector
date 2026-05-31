@@ -48,6 +48,7 @@ import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
+import { HostConfigCompareView } from "./components/clients/comparison/HostConfigCompareView";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -439,6 +440,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <TracingRoute />;
     case "clients":
       return <ClientsRoute />;
+    case "host-compare":
+      return <HostCompareRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "playground":
@@ -621,6 +624,16 @@ export function ClientsRoute() {
       selectedHostId={urlHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
+    />
+  );
+}
+
+export function HostCompareRoute() {
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  return (
+    <HostConfigCompareView
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
     />
   );
 }

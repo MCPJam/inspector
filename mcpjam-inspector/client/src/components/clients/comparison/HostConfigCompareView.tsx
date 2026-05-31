@@ -57,14 +57,8 @@ export function HostConfigCompareView({
   }, [projectId, selectedHostIds]);
 
   const reportSubject = useCallback(
-    (hostId: string, subject: HostComparisonSubject | null) => {
+    (hostId: string, subject: HostComparisonSubject) => {
       setSubjectsByHost((prev) => {
-        if (subject === null) {
-          if (!(hostId in prev)) return prev;
-          const next = { ...prev };
-          delete next[hostId];
-          return next;
-        }
         const existing = prev[hostId];
         if (
           existing &&
@@ -204,15 +198,16 @@ function HostConfigFetcher({
   hostName: string;
   hostConfigId: string;
   isAuthenticated: boolean;
-  onLoaded: (hostId: string, subject: HostComparisonSubject | null) => void;
+  onLoaded: (hostId: string, subject: HostComparisonSubject) => void;
 }) {
   const { host } = useHost({ isAuthenticated, hostId });
 
   useEffect(() => {
-    if (!host) {
-      onLoaded(hostId, null);
-      return;
-    }
+    // Only publish on success. `useHost` returns null for both "loading" and
+    // "not found"; calling onLoaded(null) during loading would wipe the cached
+    // subject when a host is deselected then re-selected. Dead-host removal is
+    // handled by the liveHostIds cleanup effect above.
+    if (!host) return;
     onLoaded(hostId, {
       hostId,
       hostName: host.name ?? hostName,
