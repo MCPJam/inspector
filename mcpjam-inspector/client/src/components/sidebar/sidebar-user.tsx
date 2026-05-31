@@ -10,11 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@mcpjam/design-system/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -194,7 +190,9 @@ export function SidebarUser({
                   </AvatarFallback>
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">{displayName}</span>
+                  <span className="truncate font-semibold">
+                    {displayName}
+                  </span>
                   <span className="truncate text-xs text-muted-foreground">
                     {email}
                   </span>
@@ -203,11 +201,8 @@ export function SidebarUser({
             </DropdownMenuLabel>
             <SidebarCreditUsage
               className="px-1 pb-1"
-              organizationId={activeOrganizationId}
               variant="full"
-              onClick={
-                canNavigateToBilling ? handleCreditUsageClick : undefined
-              }
+              onClick={canNavigateToBilling ? handleCreditUsageClick : undefined}
             />
             <DropdownMenuSeparator />
             <DropdownMenuItem

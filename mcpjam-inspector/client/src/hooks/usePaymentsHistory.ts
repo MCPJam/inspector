@@ -13,10 +13,9 @@ export type PaymentHistoryStatus =
 export interface PaymentHistoryEntry {
   id: string;
   sessionId: string;
-  pricePaidCents: number;
-  displayCredits: string;
+  paidAmountCents: number;
   /** Paid cents handed back when refunded/charged back. Reversed rows only. */
-  reversedPaidCents?: number;
+  reversedAmountCents?: number;
   status: PaymentHistoryStatus;
   occurredAt: number;
   receiptUrl?: string;
@@ -25,9 +24,8 @@ export interface PaymentHistoryEntry {
 interface RawEntry {
   id?: unknown;
   sessionId?: unknown;
-  pricePaidCents?: unknown;
-  displayCredits?: unknown;
-  reversedPaidCents?: unknown;
+  paidAmountCents?: unknown;
+  reversedAmountCents?: unknown;
   status?: unknown;
   occurredAt?: unknown;
   receiptUrl?: unknown;
@@ -61,8 +59,7 @@ const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
     if (
       typeof item?.id !== "string" ||
       typeof item.sessionId !== "string" ||
-      typeof item.pricePaidCents !== "number" ||
-      typeof item.displayCredits !== "string" ||
+      typeof item.paidAmountCents !== "number" ||
       !isValidStatus(item.status) ||
       typeof item.occurredAt !== "number"
     ) {
@@ -71,12 +68,11 @@ const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
     out.push({
       id: item.id,
       sessionId: item.sessionId,
-      pricePaidCents: item.pricePaidCents,
-      displayCredits: item.displayCredits,
+      paidAmountCents: item.paidAmountCents,
       status: item.status,
       occurredAt: item.occurredAt,
-      ...(typeof item.reversedPaidCents === "number"
-        ? { reversedPaidCents: item.reversedPaidCents }
+      ...(typeof item.reversedAmountCents === "number"
+        ? { reversedAmountCents: item.reversedAmountCents }
         : {}),
       ...(typeof item.receiptUrl === "string" && item.receiptUrl.length > 0
         ? { receiptUrl: item.receiptUrl }
@@ -92,20 +88,17 @@ export interface UsePaymentsHistoryResult {
   isAuthenticated: boolean;
 }
 
-export function usePaymentsHistory(
-  organizationId?: string | null
-): UsePaymentsHistoryResult {
+export function usePaymentsHistory(): UsePaymentsHistoryResult {
   const { isAuthenticated: hasConvexIdentity, isLoading: isConvexAuthLoading } =
     useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const hasWorkOsUser = !!user;
   const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
-  const shouldFetch =
-    !isAuthLoading && hasConvexIdentity && hasWorkOsUser && !!organizationId;
+  const shouldFetch = !isAuthLoading && hasConvexIdentity && hasWorkOsUser;
 
   const raw = useQuery(
-    "billing/creditHistory:listTopupHistoryForOrganization" as any,
-    shouldFetch ? ({ organizationId } as any) : "skip"
+    "billing/creditHistory:listTopupHistoryForCurrentUser" as any,
+    shouldFetch ? ({} as any) : "skip",
   ) as unknown | undefined;
 
   // Stable reference: Convex returns the same object when nothing has

@@ -3,10 +3,8 @@ import { useCallback, useMemo, useState } from "react";
 import { usePostHog } from "posthog-js/react";
 
 export interface CreditTopupPreset {
-  packageId: string;
-  priceCents: number;
-  displayPrice: string;
-  displayCredits: string;
+  amountCents: number;
+  amountUsd: string;
 }
 
 export interface PendingTopupContext {
@@ -27,14 +25,18 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
 const ALLOWED_CHECKOUT_URL_PREFIX = "https://checkout.stripe.com/";
 
 export function isAllowedCheckoutUrl(url: unknown): url is string {
-  return typeof url === "string" && url.startsWith(ALLOWED_CHECKOUT_URL_PREFIX);
+  return (
+    typeof url === "string" && url.startsWith(ALLOWED_CHECKOUT_URL_PREFIX)
+  );
 }
 
+const formatUsd = (cents: number) => {
+  const dollars = cents / 100;
+  return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+};
+
 interface RawPreset {
-  packageId?: unknown;
-  priceCents?: unknown;
-  displayPrice?: unknown;
-  displayCredits?: unknown;
+  amountCents?: unknown;
 }
 
 const normalizePresets = (raw: unknown): CreditTopupPreset[] | undefined => {
@@ -54,19 +56,10 @@ const normalizePresets = (raw: unknown): CreditTopupPreset[] | undefined => {
   if (!Array.isArray(items)) return undefined;
   const presets: CreditTopupPreset[] = [];
   for (const item of items as RawPreset[]) {
-    if (
-      typeof item?.packageId !== "string" ||
-      typeof item.priceCents !== "number" ||
-      typeof item.displayPrice !== "string" ||
-      typeof item.displayCredits !== "string"
-    ) {
-      continue;
-    }
+    if (typeof item?.amountCents !== "number") continue;
     presets.push({
-      packageId: item.packageId,
-      priceCents: item.priceCents,
-      displayPrice: item.displayPrice,
-      displayCredits: item.displayCredits,
+      amountCents: item.amountCents,
+      amountUsd: formatUsd(item.amountCents),
     });
   }
   return presets.length > 0 ? presets : undefined;
@@ -154,12 +147,13 @@ export function peekPendingTopup(): PendingTopupContext | null {
  * on `credit_topup_*` PostHog events so the funnel can be split between
  * the chat-banner CTA and the billing-page Top up button.
  */
-export type CreditTopupSource = "chat_banner" | "billing_page" | "limit_modal";
+export type CreditTopupSource =
+  | "chat_banner"
+  | "billing_page"
+  | "limit_modal";
 
 interface StartCheckoutInput {
-  organizationId: string;
-  packageId: string;
-  priceCents: number;
+  amountCents: number;
   chatSessionId: string;
   lastUserMessage: string;
   returnUrl?: string;
@@ -171,14 +165,13 @@ export interface UseCreditTopupPresetsOptions {
   skip?: boolean;
 }
 
-export function useCreditTopupPresets(options?: UseCreditTopupPresetsOptions): {
-  presets: CreditTopupPreset[] | undefined;
-  isLoading: boolean;
-} {
+export function useCreditTopupPresets(
+  options?: UseCreditTopupPresetsOptions,
+): { presets: CreditTopupPreset[] | undefined; isLoading: boolean } {
   const skip = options?.skip === true;
   const presetsRaw = useQuery(
     "billing:getCreditTopupPresets" as any,
-    skip ? "skip" : (undefined as any)
+    skip ? "skip" : (undefined as any),
   ) as unknown | undefined;
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized array stays
@@ -194,7 +187,7 @@ export function useCreditTopup() {
   const posthog = usePostHog();
 
   const createCheckoutSession = useAction(
-    "billing:createCreditCheckoutSession" as any
+    "billing:createCreditCheckoutSession" as any,
   );
 
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
@@ -202,9 +195,7 @@ export function useCreditTopup() {
 
   const startCheckout = useCallback(
     async ({
-      organizationId,
-      packageId,
-      priceCents,
+      amountCents,
       chatSessionId,
       lastUserMessage,
       returnUrl,
@@ -213,8 +204,7 @@ export function useCreditTopup() {
       setIsStartingCheckout(true);
       setError(null);
       posthog?.capture("credit_topup_checkout_started", {
-        package_id: packageId,
-        price_cents: priceCents,
+        amount_cents: amountCents,
         source,
       });
       stashPendingTopup({ chatSessionId, message: lastUserMessage });
@@ -225,8 +215,7 @@ export function useCreditTopup() {
         "action_threw";
       try {
         const result = (await createCheckoutSession({
-          organizationId,
-          packageId,
+          amountCents,
           ...(returnUrl ? { returnUrl } : {}),
         } as any)) as { checkoutUrl?: string } | null;
         const checkoutUrl = result?.checkoutUrl;
@@ -243,8 +232,7 @@ export function useCreditTopup() {
         window.location.assign(checkoutUrl);
       } catch (err) {
         posthog?.capture("credit_topup_checkout_failed", {
-          package_id: packageId,
-          price_cents: priceCents,
+          amount_cents: amountCents,
           error_kind: errorKind,
           source,
         });
@@ -258,7 +246,7 @@ export function useCreditTopup() {
         setIsStartingCheckout(false);
       }
     },
-    [createCheckoutSession, posthog]
+    [createCheckoutSession, posthog],
   );
 
   return {

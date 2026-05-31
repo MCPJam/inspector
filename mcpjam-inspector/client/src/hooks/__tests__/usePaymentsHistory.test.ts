@@ -11,8 +11,7 @@ let queryReturn: unknown = undefined;
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => convexAuth,
-  useQuery: (_name: unknown, args: unknown) =>
-    args === "skip" ? undefined : queryReturn,
+  useQuery: (..._args: unknown[]) => queryReturn,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -21,9 +20,6 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 // Import AFTER mocks are set up.
 import { usePaymentsHistory } from "../usePaymentsHistory";
-
-// Billing is org-scoped, so the query only fires once an org is selected.
-const ORG_ID = "org_test";
 
 describe("usePaymentsHistory", () => {
   beforeEach(() => {
@@ -35,7 +31,7 @@ describe("usePaymentsHistory", () => {
   describe("auth gating", () => {
     it("returns isLoading=true and entries=undefined while convex auth is loading", () => {
       convexAuth = { isAuthenticated: false, isLoading: true };
-      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
+      const { result } = renderHook(() => usePaymentsHistory());
       expect(result.current.isLoading).toBe(true);
       expect(result.current.entries).toBeUndefined();
     });
@@ -43,15 +39,8 @@ describe("usePaymentsHistory", () => {
     it("returns isLoading=false and entries=undefined when unauthenticated (query is skipped)", () => {
       convexAuth = { isAuthenticated: false, isLoading: false };
       workOsAuth = { user: null, isLoading: false };
-      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
-      // Query is skipped so we don't wait on a response.
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.entries).toBeUndefined();
-    });
-
-    it("skips the query until an organization is selected", () => {
       const { result } = renderHook(() => usePaymentsHistory());
-      // No org id -> query is skipped -> entries undefined, not loading.
+      // Query is skipped so we don't wait on a response.
       expect(result.current.isLoading).toBe(false);
       expect(result.current.entries).toBeUndefined();
     });
@@ -64,21 +53,19 @@ describe("usePaymentsHistory", () => {
           {
             id: "row_1",
             sessionId: "cs_1",
-            pricePaidCents: 2500,
-            displayCredits: "2,500 credits",
+            paidAmountCents: 2500,
             status: "succeeded",
             occurredAt: 100,
             receiptUrl: "https://pay.stripe.com/receipts/abc",
           },
         ],
       };
-      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
+      const { result } = renderHook(() => usePaymentsHistory());
       expect(result.current.entries).toHaveLength(1);
       expect(result.current.entries?.[0]).toEqual({
         id: "row_1",
         sessionId: "cs_1",
-        pricePaidCents: 2500,
-        displayCredits: "2,500 credits",
+        paidAmountCents: 2500,
         status: "succeeded",
         occurredAt: 100,
         receiptUrl: "https://pay.stripe.com/receipts/abc",
@@ -90,13 +77,12 @@ describe("usePaymentsHistory", () => {
         {
           id: "row_2",
           sessionId: "cs_2",
-          pricePaidCents: 1000,
-          displayCredits: "1,000 credits",
+          paidAmountCents: 1000,
           status: "pending",
           occurredAt: 200,
         },
       ];
-      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
+      const { result } = renderHook(() => usePaymentsHistory());
       expect(result.current.entries).toHaveLength(1);
       expect(result.current.entries?.[0].status).toBe("pending");
       expect(result.current.entries?.[0].receiptUrl).toBeUndefined();
@@ -105,40 +91,19 @@ describe("usePaymentsHistory", () => {
     it("drops malformed rows but keeps valid neighbors", () => {
       queryReturn = {
         items: [
-          {
-            id: "good",
-            sessionId: "cs_good",
-            pricePaidCents: 100,
-            displayCredits: "100 credits",
-            status: "failed",
-            occurredAt: 1,
-          },
-          {
-            id: 123,
-            sessionId: "cs_bad",
-            pricePaidCents: 100,
-            displayCredits: "100 credits",
-            status: "failed",
-            occurredAt: 1,
-          },
-          {
-            id: "no_status",
-            sessionId: "cs_n",
-            pricePaidCents: 100,
-            displayCredits: "100 credits",
-            status: "weird",
-            occurredAt: 1,
-          },
+          { id: "good", sessionId: "cs_good", paidAmountCents: 100, status: "failed", occurredAt: 1 },
+          { id: 123, sessionId: "cs_bad", paidAmountCents: 100, status: "failed", occurredAt: 1 },
+          { id: "no_status", sessionId: "cs_n", paidAmountCents: 100, status: "weird", occurredAt: 1 },
         ],
       };
-      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
+      const { result } = renderHook(() => usePaymentsHistory());
       expect(result.current.entries).toHaveLength(1);
       expect(result.current.entries?.[0].id).toBe("good");
     });
 
     it("returns undefined when raw is not an array or envelope", () => {
       queryReturn = "not an array";
-      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
+      const { result } = renderHook(() => usePaymentsHistory());
       expect(result.current.entries).toBeUndefined();
     });
 
@@ -148,15 +113,14 @@ describe("usePaymentsHistory", () => {
           {
             id: "row",
             sessionId: "cs_e",
-            pricePaidCents: 100,
-            displayCredits: "100 credits",
+            paidAmountCents: 100,
             status: "succeeded",
             occurredAt: 1,
             receiptUrl: "",
           },
         ],
       };
-      const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
+      const { result } = renderHook(() => usePaymentsHistory());
       expect(result.current.entries?.[0].receiptUrl).toBeUndefined();
     });
   });
