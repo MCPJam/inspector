@@ -13,6 +13,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import {
@@ -35,6 +38,7 @@ import {
   Trash2,
   AlertCircle,
   FileText,
+  FolderInput,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -95,17 +99,30 @@ interface ServerConnectionCardProps {
     options?: {
       forceOAuthFlow?: boolean;
       allowInteractiveOAuthFlow?: boolean;
-    },
+    }
   ) => Promise<void>;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
   hostedServerId?: string;
   onOpenDetailModal?: (
     server: ServerWithName,
-    defaultTab: ServerDetailTab,
+    defaultTab: ServerDetailTab
   ) => void;
   /** When set (e.g. active project on Servers tab), prefetches Explore AI test cases on MCP connect. */
   projectId?: string | null;
+  /**
+   * Projects this server can be moved into via the actions menu. Already
+   * excludes the current project. When omitted/empty the "Move to project"
+   * item is hidden.
+   */
+  moveTargets?: Array<{ id: string; name: string; icon?: string }>;
+  /** Moves this server into another project (create in target, remove here). */
+  onMoveToProject?: (
+    serverName: string,
+    targetProjectId: string
+  ) => void | Promise<void>;
+  /** True while a move for this server is in flight. */
+  isMovingToProject?: boolean;
 }
 
 export function ServerConnectionCard({
@@ -118,6 +135,9 @@ export function ServerConnectionCard({
   hostedServerId,
   onOpenDetailModal,
   projectId,
+  moveTargets,
+  onMoveToProject,
+  isMovingToProject = false,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
@@ -130,7 +150,7 @@ export function ServerConnectionCard({
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(
-    serverTunnelUrl ?? null,
+    serverTunnelUrl ?? null
   );
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
@@ -359,7 +379,7 @@ export function ServerConnectionCard({
         server_id: server.name,
       });
     },
-    [onOpenDetailModal, posthog, server],
+    [onOpenDetailModal, posthog, server]
   );
 
   const handleCardContextMenu = useCallback(
@@ -372,7 +392,7 @@ export function ServerConnectionCard({
       event.stopPropagation();
       setIsActionsMenuOpen(true);
     },
-    [],
+    []
   );
 
   const handleCardClick = useCallback(
@@ -400,7 +420,7 @@ export function ServerConnectionCard({
       server.name,
       posthog,
       openDetailModal,
-    ],
+    ]
   );
 
   return (
@@ -507,7 +527,7 @@ export function ServerConnectionCard({
                     });
                     if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
-                        "HTTP servers are not supported in hosted mode",
+                        "HTTP servers are not supported in hosted mode"
                       );
                       return;
                     }
@@ -539,7 +559,7 @@ export function ServerConnectionCard({
                       onClick={() => {
                         if (isHostedHttpReconnectBlocked) {
                           toast.error(
-                            "HTTP servers are not supported in hosted mode",
+                            "HTTP servers are not supported in hosted mode"
                           );
                           return;
                         }
@@ -554,7 +574,7 @@ export function ServerConnectionCard({
                         void handleReconnect(
                           shouldForceOAuth
                             ? { forceOAuthFlow: true }
-                            : undefined,
+                            : undefined
                         );
                       }}
                       disabled={isReconnectMenuDisabled}
@@ -621,6 +641,50 @@ export function ServerConnectionCard({
                         ? "Copying..."
                         : "Copy markdown for evals"}
                     </DropdownMenuItem>
+                    {onMoveToProject &&
+                    moveTargets &&
+                    moveTargets.length > 0 ? (
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger
+                          disabled={isMovingToProject}
+                          className="gap-2 text-xs cursor-pointer [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground"
+                        >
+                          {isMovingToProject ? (
+                            <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                          ) : (
+                            <FolderInput className="h-3 w-3 mr-2" />
+                          )}
+                          {isMovingToProject ? "Moving..." : "Move to project"}
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent
+                          sideOffset={4}
+                          className="max-h-64 w-52 overflow-y-auto"
+                        >
+                          {moveTargets.map((target) => (
+                            <DropdownMenuItem
+                              key={target.id}
+                              className="text-xs cursor-pointer"
+                              onClick={() => {
+                                posthog.capture(
+                                  "move_server_to_project_clicked",
+                                  {
+                                    location: "server_connection_card",
+                                    platform: detectPlatform(),
+                                    environment: detectEnvironment(),
+                                  }
+                                );
+                                void onMoveToProject(server.name, target.id);
+                              }}
+                            >
+                              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-primary/10 text-[9px] font-semibold text-primary">
+                                {target.name.charAt(0).toUpperCase()}
+                              </span>
+                              <span className="truncate">{target.name}</span>
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    ) : null}
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -752,8 +816,8 @@ export function ServerConnectionCard({
                 {isErrorExpanded
                   ? server.lastError
                   : server.lastError!.length > 140
-                    ? `${server.lastError!.substring(0, 140)}...`
-                    : server.lastError}
+                  ? `${server.lastError!.substring(0, 140)}...`
+                  : server.lastError}
               </div>
               {server.lastError!.length > 140 && (
                 <button

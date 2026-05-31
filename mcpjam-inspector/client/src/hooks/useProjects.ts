@@ -261,6 +261,7 @@ export function useServerMutations() {
   const createServerWithClientSecret = useAction(
     "servers:createServerWithClientSecret" as any
   );
+  const moveServerToProject = useAction("servers:moveServerToProject" as any);
   const updateServerWithClientSecret = useAction(
     "servers:updateServerWithClientSecret" as any
   );
@@ -270,6 +271,7 @@ export function useServerMutations() {
     createServerIfMissing,
     updateServer,
     createServerWithClientSecret,
+    moveServerToProject,
     updateServerWithClientSecret,
     deleteServer,
   };
