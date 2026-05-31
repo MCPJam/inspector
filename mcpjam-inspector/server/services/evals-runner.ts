@@ -2592,7 +2592,16 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         }));
 
-  const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+  // Mirror prepareChatV2: when the host opts out of visibility, app-only tools
+  // must enter the SDK set so `applyVisibilityPolicyAndCountSignals` can keep
+  // them (and count them in `toolsTotalBefore`). Without this they're stripped
+  // by getToolsForAiSdk before the policy ever runs.
+  const tools = (await mcpClientManager.getToolsForAiSdk(
+    serverIds,
+    hostExecutionPolicy?.respectToolVisibility === false
+      ? { includeAppOnly: true }
+      : undefined,
+  )) as ToolSet;
 
   // Compute tool exposure signals and apply visibility filtering when a host
   // policy is present. The filter mutates `tools` in place (same as

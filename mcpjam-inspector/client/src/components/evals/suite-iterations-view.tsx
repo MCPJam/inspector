@@ -3,6 +3,7 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { compareRunsBySequence } from "./helpers";
 import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
@@ -318,14 +319,9 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
-          (run.runNumber < selectedRunDetails.runNumber ||
-            run.createdAt < selectedRunDetails.createdAt)
+          compareRunsBySequence(run, selectedRunDetails) < 0
       )
-      .sort(
-        (a, b) =>
-          b.runNumber - a.runNumber ||
-          (b.completedAt ?? b.createdAt) - (a.completedAt ?? a.createdAt)
-      );
+      .sort((a, b) => compareRunsBySequence(b, a));
     return earlierCompletedRuns[0] ?? null;
   }, [runs, selectedRunDetails]);
 

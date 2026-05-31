@@ -22,7 +22,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
+import {
+  compareRunsBySequence,
+  evalStatusLeftBorderClasses,
+  formatRunId,
+} from "./helpers";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
@@ -198,10 +202,6 @@ export function resolveRunsTableLayout(input: {
     enableHorizontalScroll,
     requiredTableWidthPx,
   };
-}
-
-function compareRunsBySequence(a: EvalSuiteRun, b: EvalSuiteRun): number {
-  return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
 export function RunOverview({
