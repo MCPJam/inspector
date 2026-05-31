@@ -19,7 +19,11 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
-import { exportSingleServerForInspection } from "../../utils/export-helpers.js";
+import {
+  exportSingleServerForInspection,
+  type ServerToolSnapshot,
+} from "../../utils/export-helpers.js";
+import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
@@ -30,13 +34,21 @@ servers.post("/validate", async (c) =>
     projectServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
-      // Fire-and-forget: persist a connect-time inspection snapshot so the
-      // backend's `serverInspections` table picks up reconnect-time changes
-      // (port of PR #1731's `use-inspection-coordinator`). Failures here
-      // never affect the validate response.
-      void recordHostedConnectInspection(c, manager, {
+      // Capture the inspection snapshot synchronously while the ephemeral
+      // manager is still live — `withManager`'s `finally` will call
+      // `disconnectAllServers()` the moment we return, which would race any
+      // `listTools` we left pending here. Only the Convex write is
+      // fire-and-forget, so persistence failures still don't affect the
+      // validate response. (Port of PR #1731's `use-inspection-coordinator`.)
+      const snapshot = await exportSingleServerForInspection(
+        manager,
+        body.serverId,
+        body.serverId,
+        { logPrefix: "hosted-connect-inspection" },
+      );
+      void persistHostedConnectInspection(c, {
         projectId: body.projectId,
-        serverId: body.serverId,
+        snapshot,
       }).catch((error) => {
         logger.debug("Failed to persist hosted connect-time inspection", {
           serverId: body.serverId,
@@ -52,26 +64,22 @@ servers.post("/validate", async (c) =>
   )
 );
 
-async function recordHostedConnectInspection(
+async function persistHostedConnectInspection(
   c: any,
-  manager: any,
-  args: { projectId: string; serverId: string },
+  args: { projectId: string; snapshot: ServerToolSnapshot },
 ): Promise<void> {
-  const convexUrl = process.env.CONVEX_URL;
+  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
+  // derived from it (suffix swap) by the runtime config helper so that
+  // production env (which sets only CONVEX_HTTP_URL) works.
+  const { convexUrl } = getInspectorClientRuntimeConfig();
   if (!convexUrl) return;
   const bearer = c.req.header("authorization");
   if (!bearer) return;
-  const snapshot = await exportSingleServerForInspection(
-    manager,
-    args.serverId,
-    args.serverId,
-    { logPrefix: "hosted-connect-inspection" },
-  );
   const client = new ConvexHttpClient(convexUrl);
   client.setAuth(bearer.replace(/^Bearer\s+/i, ""));
   await client.mutation("serverInspections:recordFromConnect" as any, {
     projectId: args.projectId,
-    snapshot,
+    snapshot: args.snapshot,
   });
 }
 

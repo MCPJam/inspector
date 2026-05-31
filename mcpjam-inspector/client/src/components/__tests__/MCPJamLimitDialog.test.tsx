@@ -23,7 +23,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isAuthenticated: !!authState.user, isLoading: false }),
+  useConvexAuth: () => ({
+    isAuthenticated: !!authState.user,
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -74,11 +77,11 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("heading", {
         name: /you've used up your free guest credits/i,
-      }),
+      })
     ).toBeInTheDocument();
     expect(screen.getByText(/15×/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^sign in$/i }),
+      screen.getByRole("button", { name: /^sign in$/i })
     ).toBeInTheDocument();
   });
 
@@ -117,13 +120,13 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("heading", {
         name: /you've run out of free daily credits/i,
-      }),
+      })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^top up$/i }),
+      screen.getByRole("button", { name: /^buy credits$/i })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /bring your own key/i }),
+      screen.getByRole("button", { name: /bring your own key/i })
     ).toBeInTheDocument();
   });
 
@@ -135,7 +138,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     await user.click(
-      screen.getByRole("button", { name: /bring your own key/i }),
+      screen.getByRole("button", { name: /bring your own key/i })
     );
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
@@ -150,9 +153,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(
-      screen.getByRole("button", { name: /^top up$/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
     expect(window.location.pathname).toBe("/organizations/org-active/billing");
@@ -166,12 +167,10 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(
-      screen.getByRole("button", { name: /^top up$/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     expect(window.location.pathname).toBe(
-      "/organizations/org-fallback/billing",
+      "/organizations/org-fallback/billing"
     );
     expect(window.location.search).toBe("?topup=open");
   });
@@ -182,9 +181,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(
-      screen.getByRole("button", { name: /^top up$/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
 
     // Modal stays open and no nav happens — once orgs load, the user can
     // click again and be routed correctly.
@@ -200,7 +197,7 @@ describe("MCPJamLimitDialog", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("hides the Top up button when the billing-entitlements-ui flag is off", () => {
+  it("hides the Buy credits button when the billing-entitlements-ui flag is off", () => {
     billingUiFlagState = false;
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1" });
@@ -208,14 +205,14 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.getByRole("button", { name: /bring your own key/i }),
+      screen.getByRole("button", { name: /bring your own key/i })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^top up$/i }),
+      screen.queryByRole("button", { name: /^buy credits$/i })
     ).not.toBeInTheDocument();
   });
 
-  it("hides the Top up button while the flag is still loading (undefined)", () => {
+  it("hides the Buy credits button while the flag is still loading (undefined)", () => {
     billingUiFlagState = undefined;
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1" });
@@ -223,7 +220,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.queryByRole("button", { name: /^top up$/i }),
+      screen.queryByRole("button", { name: /^buy credits$/i })
     ).not.toBeInTheDocument();
   });
 });
