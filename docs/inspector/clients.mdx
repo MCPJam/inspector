@@ -73,6 +73,34 @@ Once saved, a Client shows up in the picker at the top of every consumer:
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
 
+## Comparing clients side by side
+
+The **Compare** view (accessible via the `host-compare` route) renders all your project's clients as columns in a matrix so you can spot configuration drift at a glance.
+
+### What the matrix shows
+
+Each row is a single `HostConfigDtoV2` field, grouped into three sections that mirror the focus-dialog tabs:
+
+- **Agent** — model, system prompt, temperature, tool-approval settings
+- **MCP Protocol** — protocol versions, client capabilities, request timeout, default headers
+- **Apps** — sandbox CSP mode, host capabilities, permission policy, display modes, theme
+
+### Selecting and filtering columns
+
+At the top of the view, every client in the project appears as a chip. Click a chip to toggle that client's column on or off. When you have more than six clients, the overflow clients are accessible through a **More** menu with a searchable list.
+
+Your selection is saved in `sessionStorage` per project, so it persists across page reloads within the same browser session.
+
+### Diverging-only filter
+
+Toggle **Only diverging** to hide rows where every selected client has the same value. This makes it easy to focus on the fields that actually differ between your host configurations.
+
+Rows with at least one differing value show a colored gutter on the left edge so they stand out even when the filter is off.
+
+### Removing a column
+
+When two or more clients are selected, each column header shows a remove button (×). Clicking it deselects that client without affecting the others.
+
 ## Managing Clients
 
 From the Clients index page:
