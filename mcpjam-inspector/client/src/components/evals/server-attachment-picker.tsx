@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Check, ChevronDown, Loader2, Plus, Server } from "lucide-react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { toast } from "sonner";
@@ -58,6 +58,22 @@ export function ServerAttachmentPicker({
   const createServerAttachment = useMutation(
     "serverAttachments:createServerAttachment" as any
   );
+
+  // The optimistic record must not outlive the in-flight create window
+  // — otherwise switching to another suite (which feeds a new `value`,
+  // potentially null) would strand it and show a prior attachment as
+  // if it were persisted on the new suite. Clear as soon as the live
+  // query reflects the row, with a bounded fallback so a parent reset
+  // mid-flight still releases it.
+  useEffect(() => {
+    if (!justCreated) return;
+    if (serverAttachments.some((s) => s._id === justCreated._id)) {
+      setJustCreated(null);
+      return;
+    }
+    const t = setTimeout(() => setJustCreated(null), 3000);
+    return () => clearTimeout(t);
+  }, [justCreated, serverAttachments]);
 
   const selectedAttachment = useMemo(() => {
     // `value` lags behind onChange when the parent persists through a
