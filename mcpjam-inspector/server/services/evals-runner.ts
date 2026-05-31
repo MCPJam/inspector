@@ -15,6 +15,12 @@ import {
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
 import {
+  applyVisibilityPolicyAndCountSignals,
+  buildHostIterationMetadata,
+  type HostExecutionPolicy,
+  type ToolExposureSignals,
+} from "./evals/host-execution-policy.js";
+import {
   finalizePassedForEval,
   isMcpAppTool,
   type MCPClientManager,
@@ -83,6 +89,37 @@ import type {
   EvalStreamEvent,
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
+
+/**
+ * Turn a non-OK backend stream response into a human-readable message. The
+ * Convex stream endpoint returns structured JSON for guardrails like the daily
+ * spend cap — e.g. { code: "user_rate_limit", error: "Daily MCPJam model limit
+ * reached. Use BYOK or try again tomorrow.", details: "Try again in N minutes." }.
+ * Surface that instead of the bare HTTP status text ("Too Many Requests"), and
+ * flag 429s as expected guardrails (not faults) so callers can log them quietly.
+ */
+function describeBackendStreamError(
+  status: number,
+  bodyText: string,
+): { message: string; code?: string; expected: boolean } {
+  const expected = status === 429;
+  try {
+    const body = JSON.parse(bodyText) as {
+      code?: string;
+      error?: string;
+      details?: string;
+    };
+    if (body?.error) {
+      const message = body.details
+        ? `${body.error} ${body.details}`
+        : body.error;
+      return { message, code: body.code, expected };
+    }
+  } catch {
+    // body wasn't JSON — fall through to the generic shape
+  }
+  return { message: `Backend stream error: ${status} ${bodyText}`, expected };
+}
 
 export type EvalTestCase = {
   title: string;
@@ -159,6 +196,13 @@ export type RunEvalSuiteOptions = {
    * preset. Absent/undefined preserves SEP-1865 honest behavior.
    */
   suiteInjectOpenAiCompat?: boolean;
+  /**
+   * Host execution policy extracted from the run's hostConfig snapshot.
+   * When present, the runner applies visibility filtering, computes tool
+   * exposure signals, and stamps scalar metadata on each iteration for the
+   * cross-host dashboard.
+   */
+  hostExecutionPolicy?: HostExecutionPolicy;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1076,6 +1120,10 @@ type RunIterationBaseParams = {
    * (absent/undefined or false) leaves snapshots un-shimmed.
    */
   injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy from the run's hostConfig snapshot. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
+  toolSignals?: ToolExposureSignals;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1277,6 +1325,8 @@ const runIterationWithAiSdk = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1601,6 +1651,14 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1704,6 +1762,14 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1737,6 +1803,8 @@ const runIterationViaBackend = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1925,12 +1993,20 @@ const runIterationViaBackend = async ({
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -2246,6 +2322,14 @@ const runIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -2279,6 +2363,10 @@ const runTestCase = async (params: {
   compareRunId?: string;
   /** Suite-level compat-runtime flag; forwarded to each iteration. */
   injectOpenAiCompat?: boolean;
+  /** Host execution policy for metadata stamping. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for metadata stamping. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -2297,6 +2385,8 @@ const runTestCase = async (params: {
     abortSignal,
     compareRunId,
     injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2393,6 +2483,8 @@ const runTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2424,6 +2516,8 @@ const runTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2450,6 +2544,8 @@ const runTestCase = async (params: {
       compareRunId,
       precreatedIterationId,
       injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2472,6 +2568,7 @@ export const runEvalSuiteWithAiSdk = async ({
   testCaseId,
   compareRunId,
   suiteInjectOpenAiCompat,
+  hostExecutionPolicy,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2495,7 +2592,28 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         }));
 
-  const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+  // When a host policy is present we need the full tool set (including
+  // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+  //   1. Count `toolsTotalBefore` honestly, and
+  //   2. Keep app-only tools when the host opted out of visibility filtering.
+  // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+  // sees a partial set — drops are reported as 0 even when tools were hidden.
+  const tools = (hostExecutionPolicy
+    ? await mcpClientManager.getToolsForAiSdk(serverIds, {
+        includeAppOnly: true,
+      })
+    : await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+
+  // Apply visibility filtering when a host policy is present. The filter
+  // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+  // runners see the post-filter set.
+  const resolvedToolSignals = hostExecutionPolicy
+    ? applyVisibilityPolicyAndCountSignals(
+        tools as Record<string, unknown>,
+        mcpClientManager,
+        hostExecutionPolicy,
+      )
+    : undefined;
 
   // Note: Iterations are now pre-created in startSuiteRunWithRecorder
   // This code is no longer needed as precreateIterationsForRun is called there
@@ -2549,6 +2667,8 @@ export const runEvalSuiteWithAiSdk = async ({
         runId,
         abortSignal: abortController.signal,
         injectOpenAiCompat,
+        hostPolicy: hostExecutionPolicy,
+        toolSignals: resolvedToolSignals,
       }),
     );
 
@@ -2708,6 +2828,8 @@ const streamIterationWithAiSdk = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3112,6 +3234,14 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -3239,6 +3369,14 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -3273,6 +3411,8 @@ const streamIterationViaBackend = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3468,12 +3608,20 @@ const streamIterationViaBackend = async ({
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -4015,6 +4163,14 @@ const streamIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -4054,6 +4210,10 @@ export const streamTestCase = async (params: {
    * off (SEP-1865 honest behavior).
    */
   injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy (mirrors runEvalSuiteWithAiSdk). */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for the stream run. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -4073,6 +4233,8 @@ export const streamTestCase = async (params: {
     emit,
     compareRunId,
     injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -4173,6 +4335,8 @@ export const streamTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4205,6 +4369,8 @@ export const streamTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4232,6 +4398,8 @@ export const streamTestCase = async (params: {
       compareRunId,
       precreatedIterationId,
       injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }

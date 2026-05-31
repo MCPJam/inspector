@@ -1,4 +1,5 @@
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
+import { cn } from "@/lib/utils";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { AccuracyChart } from "./accuracy-chart";
 
@@ -37,9 +38,10 @@ export function SuiteRunsChartGrid({
 }: SuiteRunsChartGridProps) {
   const isSdk = suiteSource === "sdk";
   const metricLabel = isSdk ? "Pass Rate" : "Accuracy";
+  const showModelChart = modelStats.length > 1;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className={cn("grid gap-4", showModelChart && "lg:grid-cols-2")}>
       <div className="rounded-xl border bg-card text-card-foreground">
         <div className="px-4 pt-3 pb-2">
           <div className="text-xs font-medium text-muted-foreground">
@@ -57,14 +59,14 @@ export function SuiteRunsChartGrid({
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card text-card-foreground">
-        <div className="px-4 pt-3 pb-2">
-          <div className="text-xs font-medium text-muted-foreground">
-            Performance by model
+      {showModelChart ? (
+        <div className="rounded-xl border bg-card text-card-foreground">
+          <div className="px-4 pt-3 pb-2">
+            <div className="text-xs font-medium text-muted-foreground">
+              Performance by model
+            </div>
           </div>
-        </div>
-        <div className="px-4 pb-4">
-          {modelStats.length > 1 ? (
+          <div className="px-4 pb-4">
             <ChartContainer
               config={modelChartConfig}
               className="aspect-auto h-32 w-full"
@@ -145,13 +147,9 @@ export function SuiteRunsChartGrid({
                 />
               </BarChart>
             </ChartContainer>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              No model data available.
-            </p>
-          )}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
