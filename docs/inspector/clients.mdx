@@ -73,6 +73,31 @@ Once saved, a Client shows up in the picker at the top of every consumer:
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
 
+## Server attachments
+
+A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple *which servers are active* from the Client configuration itself, so you can swap the server set without touching the model or prompt settings.
+
+### Eval suites
+
+When you create an eval suite, you can pick a server attachment in the **Servers** section of the create dialog. All hosts attached to the suite run against that same server set. You can also change the attachment later from the suite header.
+
+- If no attachment is selected, the suite header shows an amber indicator. Runs will be rejected at start until an attachment is picked.
+- Click the attachment pill in the suite header to open the picker and switch to a different attachment or create a new one inline.
+
+**Creating an attachment inline:**
+
+1. Open the server attachment picker (suite create dialog or suite header).
+2. Click **Create new attachment…** in the dropdown.
+3. Enter a name (e.g. `Production servers`) and check the servers to include.
+4. Click **Create**. The new attachment is selected immediately.
+
+### Chatboxes
+
+The **Servers** section on the chatbox Publish tab shows which project servers the chatbox connects to. Click **Edit servers** to open the attachment editor and update the selection.
+
+- If no servers are picked, the chatbox displays an amber warning. Chat sessions started from that chatbox will have no tools until at least one server is selected.
+- The server pick is sticky — editing the client's model or system prompt does not change it.
+
 ## Managing Clients
 
 From the Clients index page:
