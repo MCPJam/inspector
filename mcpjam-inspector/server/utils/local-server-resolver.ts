@@ -11,6 +11,8 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import { exportSingleServerForInspection } from "./export-helpers.js";
+import { ConvexHttpClient } from "convex/browser";
 import { setRequestLogContext } from "./request-logger.js";
 import {
   type InternalLogContext,
@@ -879,7 +881,50 @@ export async function executeLocalServerConnect(
     );
   }
 
+  // Fire-and-forget: persist an inspection snapshot for this server so the
+  // backend's `getLatestInspection` picks up reconnect-time changes (port of
+  // PR #1731's `use-inspection-coordinator`). Failures here never affect the
+  // connect response; the connect succeeded regardless.
+  void recordConnectInspection(mcpClientManager, {
+    convexBearer: bearer,
+    projectId,
+    serverConvexId: serverId,
+    managerKey: serverDisplayName,
+  }).catch((error) => {
+    logger.debug("Failed to persist connect-time inspection", {
+      serverId: serverDisplayName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
   return c.json(
     buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName)
   );
+}
+
+async function recordConnectInspection(
+  manager: MCPClientManager,
+  args: {
+    convexBearer: string | undefined;
+    projectId: string;
+    serverConvexId: string;
+    managerKey: string;
+  },
+): Promise<void> {
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl || !args.convexBearer) {
+    return;
+  }
+  const snapshot = await exportSingleServerForInspection(
+    manager,
+    args.managerKey,
+    args.serverConvexId,
+    { logPrefix: "connect-inspection" },
+  );
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(args.convexBearer);
+  await client.mutation("serverInspections:recordFromConnect" as any, {
+    projectId: args.projectId,
+    snapshot,
+  });
 }
