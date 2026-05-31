@@ -2,6 +2,10 @@ import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "./helpers";
+import {
+  runDetailMetaLabelClass,
+  runDetailSupportingClass,
+} from "./run-detail-typography";
 
 export type DurationDatum = {
   name: string;
@@ -42,7 +46,7 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
           tickLine={false}
           axisLine={false}
           tickMargin={6}
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 12 }}
           width={44}
           tickFormatter={(v: number) =>
             v >= 60 ? `${Math.round(v / 60)}m` : `${v}s`
@@ -97,7 +101,7 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
           tickLine={false}
           axisLine={false}
           tickMargin={6}
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 12 }}
           width={48}
           tickFormatter={(v: number) =>
             v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`
@@ -148,13 +152,9 @@ export function RunMetricsBarCharts({
   const durationSection = showDuration ? (
     <div className={cn("min-w-0", !singleChart && "lg:pr-4")}>
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Avg duration by test
-        </h3>
+        <h3 className={runDetailMetaLabelClass}>Avg duration by test</h3>
         {singleChart ? (
-          <span className="text-[10px] text-muted-foreground/60">
-            {CHART_HINT}
-          </span>
+          <span className={runDetailSupportingClass}>{CHART_HINT}</span>
         ) : null}
       </div>
       <DurationBarBlock data={durationData} />
@@ -164,13 +164,9 @@ export function RunMetricsBarCharts({
   const tokensSection = showTokens ? (
     <div className={cn("min-w-0", !singleChart && "lg:pl-4")}>
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Avg tokens by test
-        </h3>
+        <h3 className={runDetailMetaLabelClass}>Avg tokens by test</h3>
         {singleChart ? (
-          <span className="text-[10px] text-muted-foreground/60">
-            {CHART_HINT}
-          </span>
+          <span className={runDetailSupportingClass}>{CHART_HINT}</span>
         ) : null}
       </div>
       <TokensBarBlock data={tokensData} />
@@ -188,7 +184,7 @@ export function RunMetricsBarCharts({
 
   return (
     <div className="mt-2 rounded-lg border border-border/25 bg-muted/10 p-3">
-      <p className="mb-3 text-[10px] text-muted-foreground/70">{CHART_HINT}</p>
+      <p className={cn("mb-3", runDetailSupportingClass)}>{CHART_HINT}</p>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-border/30">
         {durationSection}
         {tokensSection}

@@ -119,6 +119,11 @@ interface SuiteHeaderProps {
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
+   * When true, run title / badge / stats live in {@link RunAccuracyHeroBand};
+   * this header row is actions-only.
+   */
+  omitRunDetailIdentity?: boolean;
+  /**
    * Transient per-run iteration count (1-10). Applied to both Run-all-cases
    * and per-case runs triggered from this suite view; does NOT mutate the
    * persisted `EvalCase.runs` defaults.
@@ -164,6 +169,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onSuiteServerAttachmentUpdate,
     projectHosts = [],
     runDetailKpiStrip,
+    omitRunDetailIdentity = false,
   } = props;
 
   const showTestCaseCtas =
@@ -310,6 +316,31 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   }
 
   if (viewMode === "run-detail" && selectedRunDetails) {
+    const badgeMetricLabel =
+      suite.source === "sdk" ? "Pass Rate" : "Accuracy";
+
+    if (omitRunDetailIdentity) {
+      return hideRunActions ? null : (
+        <div className="mb-4 flex min-w-0 justify-end">
+          <RunDetailPlaygroundActions
+            suite={suite}
+            selectedRun={selectedRunDetails}
+            readOnlyConfig={readOnlyConfig}
+            onReplayRun={onReplayRun}
+            onRerun={onRerun}
+            onCancelRun={onCancelRun}
+            rerunningSuiteId={rerunningSuiteId}
+            replayingRunId={replayingRunId}
+            cancellingRunId={cancellingRunId}
+            hasServersConfigured={hasServersConfigured}
+            missingServers={missingServers}
+            showCloseButton
+            onBackToOverview={() => onViewModeChange("overview")}
+          />
+        </div>
+      );
+    }
+
     return (
       <div
         className={cn(
@@ -332,7 +363,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             <PassCriteriaBadge
               run={selectedRunDetails}
               variant="compact"
-              metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+              metricLabel={badgeMetricLabel}
             />
             {selectedRunDetails.replayedFromRunId ? (
               <span

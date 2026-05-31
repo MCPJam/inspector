@@ -193,9 +193,9 @@ export function AiTriageCard({
           </span>
         </div>
         <div className="mt-1.5 flex items-center gap-3">
-          <span className="text-lg font-semibold tabular-nums">
+          <span className="font-mono text-xl font-semibold tabular-nums leading-none">
             {passRate}
-            <span className="text-xs font-normal text-muted-foreground">%</span>
+            <span className="text-sm font-medium text-muted-foreground">%</span>
           </span>
           <Progress value={passRate} className="h-2 flex-1" />
         </div>

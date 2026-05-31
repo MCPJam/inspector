@@ -115,6 +115,7 @@ export function useSuiteData(
           runIdDisplay: formatRunId(run._id),
           passRate,
           label: formatTime(run.completedAt ?? run.createdAt),
+          runNumber: run.runNumber,
         };
       })
       .filter(
@@ -125,6 +126,7 @@ export function useSuiteData(
           runIdDisplay: string;
           passRate: number;
           label: string;
+          runNumber: number;
         } => item !== null,
       );
     return data;

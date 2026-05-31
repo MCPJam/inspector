@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -26,6 +27,24 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
   useQuery: () => undefined,
   useAction: () => vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({
+    children,
+    className,
+  }: {
+    children: ReactNode;
+    className?: string;
+  }) => (
+    <div data-testid="run-detail-resizable-group" className={className}>
+      {children}
+    </div>
+  ),
+  ResizablePanel: ({ children }: { children: ReactNode }) => (
+    <div data-testid="run-detail-resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="run-detail-resizable-handle" />,
 }));
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
@@ -106,6 +125,16 @@ function defaultRunInsightsReturn() {
 describe("RunDetailView", () => {
   beforeEach(() => {
     vi.mocked(useRunInsights).mockReturnValue(defaultRunInsightsReturn());
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
   });
 
   it("uses a vertically scrollable root so expanded triage can exceed the viewport", () => {
@@ -128,7 +157,7 @@ describe("RunDetailView", () => {
     expect(root).not.toHaveClass("overflow-hidden");
   });
 
-  it("places single-row KPI dashboard above breakdown charts", () => {
+  it("places body KPI strip and accuracy hero above charts in the insight rail", () => {
     render(
       <RunDetailView
         selectedRunDetails={makeRun()}
@@ -145,22 +174,14 @@ describe("RunDetailView", () => {
     const durationChartHeading = screen.getByRole("heading", {
       name: "Avg duration by test",
     });
-    const accuracyLabel = screen.getByText("Accuracy");
-    const passRateCard = accuracyLabel.parentElement;
-    expect(passRateCard).not.toBeNull();
-    expect(
-      within(passRateCard as HTMLElement).getByText("100%"),
-    ).toBeInTheDocument();
-    const kpiBlock = accuracyLabel.closest(".space-y-6");
-    expect(kpiBlock).not.toBeNull();
-    expect(
-      within(kpiBlock as HTMLElement).getByText("Passed"),
-    ).toBeInTheDocument();
-    expect(
-      within(kpiBlock as HTMLElement).getByText("Failed"),
-    ).toBeInTheDocument();
+    const rail = screen.getByRole("complementary");
+    expect(screen.getByText("Passed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText("Total")).toBeInTheDocument();
     expect(screen.getByText("Duration")).toBeInTheDocument();
+    expect(screen.getByText(/^100$/)).toBeInTheDocument();
+    expect(within(rail).queryByText(/Accuracy/)).not.toBeInTheDocument();
+    const accuracyLabel = screen.getByText(/Accuracy · this run/);
     expect(
       accuracyLabel.compareDocumentPosition(durationChartHeading) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -192,7 +213,18 @@ describe("RunDetailView", () => {
     expect(screen.queryByText(/1 passed · 0 failed · 100%/)).not.toBeInTheDocument();
   });
 
-  it("keeps run-level KPIs and bar charts visible above the iteration list", () => {
+  it("keeps run-level KPIs and bar charts visible with the iteration list in a resizable two-column layout", () => {
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: query.includes("min-width: 1024px"),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
     render(
       <RunDetailView
         selectedRunDetails={makeRun()}
@@ -206,16 +238,20 @@ describe("RunDetailView", () => {
       />,
     );
 
-    const accuracyKpi = screen.getByText("Accuracy");
-    expect(
-      within(accuracyKpi.parentElement as HTMLElement).getByText("100%"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Avg duration by test" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Avg tokens by test" }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Test cases/)).toBeInTheDocument();
+    expect(screen.getByText(/p50 \/ p95 · fail/i)).toBeInTheDocument();
+    expect(
+      screen.getByTestId("run-detail-resizable-group"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByTestId("run-detail-resizable-panel")).toHaveLength(2);
+    expect(screen.getByTestId("run-detail-resizable-handle")).toBeInTheDocument();
   });
 
   it("hides chart section when there is no duration or token data", () => {
@@ -339,18 +375,21 @@ describe("RunDetailView", () => {
     expect(onSortChange).toHaveBeenCalledWith("result");
   });
 
-  it("uses the same “Last run” column label as the suite cases table in the iteration sidebar", () => {
+  it("shows grouped case metric columns in the iteration sidebar", () => {
     render(
       <RunIterationsSidebar
-        caseGroupsForSelectedRun={[makeIteration()]}
+        caseGroupsForSelectedRun={[
+          makeIteration({ testCaseId: "tc-1", startedAt: 0, updatedAt: 1500 }),
+        ]}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
       />,
     );
-    expect(screen.getByText("Case name")).toBeInTheDocument();
-    expect(screen.getByText("Last run")).toBeInTheDocument();
+    expect(screen.getByText("Case")).toBeInTheDocument();
+    expect(screen.getByText("P50")).toBeInTheDocument();
+    expect(screen.getByText("P95")).toBeInTheDocument();
   });
 
   it("keeps the main run list aligned with the suite cases table: no Overview row, sort in the header row", () => {
@@ -379,10 +418,12 @@ describe("RunDetailView", () => {
     ).toBeInTheDocument();
   });
 
-  it("exposes view-iteration aria-label on the full iteration row button", () => {
+  it("exposes view-case aria-label on grouped case row button", () => {
     render(
       <RunIterationsSidebar
-        caseGroupsForSelectedRun={[makeIteration()]}
+        caseGroupsForSelectedRun={[
+          makeIteration({ testCaseId: "tc-1", result: "passed" }),
+        ]}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -392,7 +433,7 @@ describe("RunDetailView", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "View iteration details: Test A, Passed, gpt-4",
+        name: "View Test A: 1 of 1 passed",
       }),
     ).toBeInTheDocument();
   });
