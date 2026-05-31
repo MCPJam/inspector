@@ -113,14 +113,18 @@ describe("RunDetailView", () => {
     const durationChartHeading = screen.getByRole("heading", {
       name: "Avg duration by test",
     });
-    const accuracyLabel = screen.getByText("Accuracy");
+    // The KPI dashboard and the AI triage card both surface "Accuracy"/"Passed"
+    // labels, so scope to the KPI strip via the dashboard-only "Total" stat.
+    const kpiBlock = screen.getByText("Total").closest(".flex-nowrap");
+    expect(kpiBlock).not.toBeNull();
+    const accuracyLabel = within(kpiBlock as HTMLElement).getByText(
+      "Accuracy",
+    );
     const passRateCard = accuracyLabel.parentElement;
     expect(passRateCard).not.toBeNull();
     expect(
       within(passRateCard as HTMLElement).getByText("100%"),
     ).toBeInTheDocument();
-    const kpiBlock = accuracyLabel.closest(".space-y-6");
-    expect(kpiBlock).not.toBeNull();
     expect(
       within(kpiBlock as HTMLElement).getByText("Passed"),
     ).toBeInTheDocument();
@@ -174,7 +178,9 @@ describe("RunDetailView", () => {
       />,
     );
 
-    const accuracyKpi = screen.getByText("Accuracy");
+    const accuracyKpi = within(
+      screen.getByText("Total").closest(".flex-nowrap") as HTMLElement,
+    ).getByText("Accuracy");
     expect(
       within(accuracyKpi.parentElement as HTMLElement).getByText("100%"),
     ).toBeInTheDocument();
