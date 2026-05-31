@@ -149,7 +149,7 @@ describe("useServerForm", () => {
     );
   });
 
-  it("sends a replacement header patch after stored headers are revealed", async () => {
+  it("keeps revealed Bearer Authorization as a custom header without changing auth type", async () => {
     const server = {
       name: "Revealed header server",
       config: {
@@ -173,7 +173,57 @@ describe("useServerForm", () => {
         Authorization: "Bearer old-token",
         "X-Api-Key": "secret",
       });
-      result.current.setBearerToken("new-token");
+    });
+
+    expect(result.current.authType).toBe("none");
+    expect(result.current.bearerToken).toBe("");
+    expect(result.current.customHeaders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "Authorization",
+          value: "Bearer old-token",
+        }),
+        expect.objectContaining({ key: "X-Api-Key", value: "secret" }),
+      ])
+    );
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.buildFormData()).toMatchObject({
+      headers: {
+        Authorization: "Bearer old-token",
+        "X-Api-Key": "secret",
+      },
+    });
+    expect(result.current.buildFormData().secretPatch?.headers).toBeUndefined();
+  });
+
+  it("sends a replacement header patch after revealed headers are edited", async () => {
+    const server = {
+      name: "Edited revealed header server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      hasHeaders: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.hasStoredHeaders).toBe(true);
+    });
+
+    act(() => {
+      result.current.revealStoredHeaders({
+        Authorization: "Bearer old-token",
+        "X-Api-Key": "secret",
+      });
+    });
+
+    act(() => {
+      result.current.updateCustomHeader(0, "value", "Bearer new-token");
     });
 
     expect(result.current.validateForm()).toBeNull();
@@ -216,7 +266,10 @@ describe("useServerForm", () => {
     expect(result.current.authType).toBe("none");
     expect(result.current.customHeaders).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "Authorization", value: "Basic abc123" }),
+        expect.objectContaining({
+          key: "Authorization",
+          value: "Basic abc123",
+        }),
         expect.objectContaining({ key: "X-Api-Key", value: "secret" }),
       ])
     );
