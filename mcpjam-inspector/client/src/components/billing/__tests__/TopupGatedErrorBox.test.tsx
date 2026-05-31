@@ -3,14 +3,7 @@ import { render, screen } from "@testing-library/react";
 
 import { TopupGatedErrorBox } from "../TopupGatedErrorBox";
 
-let presetsState:
-  | Array<{
-      packageId: string;
-      priceCents: number;
-      displayPrice: string;
-      displayCredits: string;
-    }>
-  | undefined;
+let presetsState: Array<{ amountCents: number; amountUsd: string }> | undefined;
 let presetsLoadingState: boolean;
 let presetQueryShouldThrow = false;
 
@@ -29,7 +22,7 @@ vi.mock("@/hooks/useCreditTopup", () => ({
     }
     if (presetQueryShouldThrow) {
       throw new Error(
-        "Could not find public function for 'billing:getCreditTopupPresets'"
+        "Could not find public function for 'billing:getCreditTopupPresets'",
       );
     }
     return { presets: presetsState, isLoading: presetsLoadingState };
@@ -51,69 +44,66 @@ const RATE_LIMIT_PROPS = {
 describe("TopupGatedErrorBox", () => {
   beforeEach(() => {
     presetsState = [
-      {
-        packageId: "credits_500",
-        priceCents: 500,
-        displayPrice: "$5",
-        displayCredits: "500 credits",
-      },
-      {
-        packageId: "credits_1000",
-        priceCents: 1000,
-        displayPrice: "$10",
-        displayCredits: "1,000 credits",
-      },
-      {
-        packageId: "credits_2000",
-        priceCents: 2000,
-        displayPrice: "$20",
-        displayCredits: "2,000 credits",
-      },
+      { amountCents: 500, amountUsd: "$5" },
+      { amountCents: 1000, amountUsd: "$10" },
+      { amountCents: 2000, amountUsd: "$20" },
     ];
     presetsLoadingState = false;
     presetQueryShouldThrow = false;
   });
 
-  it("does not render the Buy credits CTA when canTopUp is false", () => {
+  it("does not render the Top up CTA when canTopUp is false", () => {
     render(
       <TopupGatedErrorBox
         {...RATE_LIMIT_PROPS}
         canTopUp={false}
         onTopUp={vi.fn()}
-      />
+      />,
     );
     expect(
-      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
+      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
     ).not.toBeInTheDocument();
   });
 
-  it("renders the Buy credits CTA when canTopUp is true and presets are available", () => {
+  it("renders the Top up CTA when canTopUp is true and presets are available", () => {
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        onTopUp={vi.fn()}
+      />,
     );
     expect(
-      screen.getByRole("button", { name: /Buy credits to keep chatting/ })
+      screen.getByRole("button", { name: /Top up to keep chatting/ }),
     ).toBeInTheDocument();
   });
 
-  it("hides the Buy credits CTA when canTopUp is true but presets are empty", () => {
+  it("hides the Top up CTA when canTopUp is true but presets are empty", () => {
     presetsState = [];
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        onTopUp={vi.fn()}
+      />,
     );
     expect(
-      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
+      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
     ).not.toBeInTheDocument();
   });
 
-  it("hides the Buy credits CTA while presets are still loading", () => {
+  it("hides the Top up CTA while presets are still loading", () => {
     presetsState = undefined;
     presetsLoadingState = true;
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        onTopUp={vi.fn()}
+      />,
     );
     expect(
-      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
+      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -122,15 +112,19 @@ describe("TopupGatedErrorBox", () => {
     // Suppress React's expected error log noise from the boundary catch.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        onTopUp={vi.fn()}
+      />,
     );
     expect(
-      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
+      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
     ).not.toBeInTheDocument();
     // The error copy is still rendered so the user understands what
     // happened, just without the gated Top-up CTA.
     expect(
-      screen.getAllByText(/Provider unavailable/).length
+      screen.getAllByText(/Provider unavailable/).length,
     ).toBeGreaterThanOrEqual(1);
     errorSpy.mockRestore();
   });

@@ -94,8 +94,8 @@ export function MCPJamLimitDialog() {
               <DialogTitle>You've used up your free guest credits.</DialogTitle>
               <DialogDescription>
                 Sign in to get{" "}
-                <strong className="text-foreground font-medium">15×</strong> the
-                free credits.
+                <strong className="text-foreground font-medium">15×</strong>{" "}
+                the free credits.
               </DialogDescription>
             </DialogHeader>
             <Button onClick={() => signIn()} className="w-full">
@@ -116,7 +116,7 @@ export function MCPJamLimitDialog() {
               <DialogTitle>You've run out of free daily credits</DialogTitle>
               <DialogDescription>
                 {billingUiEnabled
-                  ? "Buy credits or bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."
+                  ? "Top up or bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."
                   : "Bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."}
               </DialogDescription>
             </DialogHeader>
@@ -126,7 +126,7 @@ export function MCPJamLimitDialog() {
               </Button>
               {billingUiEnabled && (
                 <Button type="button" onClick={handleTopUp}>
-                  Buy credits
+                  Top up
                 </Button>
               )}
             </DialogFooter>

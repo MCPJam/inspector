@@ -32,11 +32,10 @@ describe("useCreditBalance", () => {
     mocks.workosAuth.user = null;
     mocks.workosAuth.isLoading = false;
     mocks.queryResult = {
-      availableCredits: 0,
+      paidPercentRemaining: null,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: 1_777_777_777_000,
-      walletLocked: false,
     };
     mocks.useQuery.mockImplementation((_name: unknown, args: unknown) =>
       args === "skip" ? undefined : mocks.queryResult
@@ -58,7 +57,7 @@ describe("useCreditBalance", () => {
     expect(result.current.hasWorkOsUser).toBe(false);
   });
 
-  it("fetches guest balances when includeGuests is enabled without an org", () => {
+  it("fetches guest balances when includeGuests is enabled", () => {
     mocks.convexAuth.isAuthenticated = true;
 
     const { result } = renderHook(() =>
@@ -67,43 +66,25 @@ describe("useCreditBalance", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
     expect(result.current.balance).toEqual({
-      availableCredits: 0,
+      paidPercentRemaining: null,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: 1_777_777_777_000,
-      walletLocked: false,
     });
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.hasWorkOsUser).toBe(false);
   });
 
-  it("fetches signed-in org balances without includeGuests", () => {
-    mocks.convexAuth.isAuthenticated = true;
-    mocks.workosAuth.user = { id: "user_123" };
-
-    const { result } = renderHook(() =>
-      useCreditBalance({ organizationId: "org-1" })
-    );
-
-    expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {
-      organizationId: "org-1",
-    });
-    expect(result.current.balance?.freeDailyPercentUsed).toBe(65);
-    expect(result.current.isAuthenticated).toBe(true);
-    expect(result.current.hasWorkOsUser).toBe(true);
-  });
-
-  it("skips signed-in fetches until an organization is selected", () => {
+  it("fetches signed-in balances without includeGuests", () => {
     mocks.convexAuth.isAuthenticated = true;
     mocks.workosAuth.user = { id: "user_123" };
 
     const { result } = renderHook(() => useCreditBalance());
 
-    expect(mocks.useQuery).toHaveBeenCalledWith(
-      "billing:getCreditBalance",
-      "skip"
-    );
-    expect(result.current.balance).toBeUndefined();
+    expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
+    expect(result.current.balance?.freeDailyPercentUsed).toBe(65);
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.hasWorkOsUser).toBe(true);
   });
 });

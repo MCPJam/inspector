@@ -28,17 +28,16 @@ vi.mock("posthog-js/react", () => ({
 }));
 
 function makeEntry(
-  overrides: Partial<PaymentHistoryEntry> & { id: string }
+  overrides: Partial<PaymentHistoryEntry> & { id: string },
 ): PaymentHistoryEntry {
   return {
     id: overrides.id,
     sessionId: overrides.sessionId ?? `cs_${overrides.id}`,
-    pricePaidCents: overrides.pricePaidCents ?? 1000,
-    displayCredits: overrides.displayCredits ?? "1,000 credits",
+    paidAmountCents: overrides.paidAmountCents ?? 1000,
     status: overrides.status ?? "succeeded",
     occurredAt: overrides.occurredAt ?? Date.now(),
-    ...(overrides.reversedPaidCents !== undefined
-      ? { reversedPaidCents: overrides.reversedPaidCents }
+    ...(overrides.reversedAmountCents !== undefined
+      ? { reversedAmountCents: overrides.reversedAmountCents }
       : {}),
     ...(overrides.receiptUrl !== undefined
       ? { receiptUrl: overrides.receiptUrl }
@@ -70,12 +69,10 @@ describe("PaymentsHistorySection", () => {
     it("renders nothing and fires no telemetry when the flag is off", () => {
       flagState = false;
       hookState = populated;
-      const { container } = render(
-        <PaymentsHistorySection organizationId="org-1" canViewHistory />
-      );
+      const { container } = render(<PaymentsHistorySection />);
       expect(container.firstChild).toBeNull();
       const calls = captureMock.mock.calls.filter(
-        (c) => c[0] === "credit_topup_history_viewed"
+        (c) => c[0] === "credit_topup_history_viewed",
       );
       expect(calls).toHaveLength(0);
     });
@@ -83,12 +80,10 @@ describe("PaymentsHistorySection", () => {
     it("renders nothing and fires no telemetry while the flag is undefined (bootstrap)", () => {
       flagState = undefined;
       hookState = populated;
-      const { container } = render(
-        <PaymentsHistorySection organizationId="org-1" canViewHistory />
-      );
+      const { container } = render(<PaymentsHistorySection />);
       expect(container.firstChild).toBeNull();
       const calls = captureMock.mock.calls.filter(
-        (c) => c[0] === "credit_topup_history_viewed"
+        (c) => c[0] === "credit_topup_history_viewed",
       );
       expect(calls).toHaveLength(0);
     });
@@ -96,9 +91,9 @@ describe("PaymentsHistorySection", () => {
 
   describe("loading + empty states", () => {
     it("renders loading skeletons while the query is in flight", () => {
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
       expect(
-        screen.getByTestId("payments-history-loading")
+        screen.getByTestId("payments-history-loading"),
       ).toBeInTheDocument();
     });
 
@@ -111,7 +106,7 @@ describe("PaymentsHistorySection", () => {
         isLoading: false,
         isAuthenticated: true,
       };
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
       const empty = screen.getByTestId("payments-history-empty");
       expect(empty).toHaveTextContent(/No payments yet/);
       expect(within(empty).queryByRole("button")).not.toBeInTheDocument();
@@ -123,8 +118,7 @@ describe("PaymentsHistorySection", () => {
       makeEntry({
         id: "1",
         sessionId: "cs_succeeded_with_link",
-        pricePaidCents: 2500,
-        displayCredits: "2,500 credits",
+        paidAmountCents: 2500,
         status: "succeeded",
         receiptUrl: "https://pay.stripe.com/receipts/abc",
         occurredAt: Date.UTC(2026, 4, 22),
@@ -132,24 +126,21 @@ describe("PaymentsHistorySection", () => {
       makeEntry({
         id: "2",
         sessionId: "cs_legacy_succeeded",
-        pricePaidCents: 1000,
-        displayCredits: "1,000 credits",
+        paidAmountCents: 1000,
         status: "succeeded",
         occurredAt: Date.UTC(2026, 4, 14),
       }),
       makeEntry({
         id: "3",
         sessionId: "cs_pending",
-        pricePaidCents: 5000,
-        displayCredits: "5,000 credits",
+        paidAmountCents: 5000,
         status: "pending",
         occurredAt: Date.UTC(2026, 4, 10),
       }),
       makeEntry({
         id: "4",
         sessionId: "cs_failed",
-        pricePaidCents: 2500,
-        displayCredits: "2,500 credits",
+        paidAmountCents: 2500,
         status: "failed",
         occurredAt: Date.UTC(2026, 4, 3),
       }),
@@ -164,14 +155,14 @@ describe("PaymentsHistorySection", () => {
     });
 
     it("renders one row per entry with status-appropriate receipt copy", () => {
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
       // Each entry is rendered TWICE: once in the desktop table (sm+) and
       // once in the mobile stacked layout (<sm). Tailwind hides one via CSS
       // but jsdom doesn't apply CSS visibility, so getAllBy* returns both
       // copies. We assert the doubled count to lock in the dual-render.
       // Succeeded + URL → "View receipt" (1 entry × 2 layouts = 2 links)
       expect(
-        screen.getAllByRole("link", { name: /View receipt/ })
+        screen.getAllByRole("link", { name: /View receipt/ }),
       ).toHaveLength(2);
       // Succeeded + no URL → "Not available"
       expect(screen.getAllByText(/Not available/)).toHaveLength(2);
@@ -182,11 +173,11 @@ describe("PaymentsHistorySection", () => {
     });
 
     it("renders the receipt link with full safety attributes", () => {
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
       const link = screen.getAllByRole("link", { name: /View receipt/ })[0];
       expect(link).toHaveAttribute(
         "href",
-        "https://pay.stripe.com/receipts/abc"
+        "https://pay.stripe.com/receipts/abc",
       );
       expect(link).toHaveAttribute("target", "_blank");
       expect(link).toHaveAttribute("rel", "noopener noreferrer");
@@ -196,11 +187,11 @@ describe("PaymentsHistorySection", () => {
     });
 
     it("fires credit_topup_receipt_opened on receipt click (no URL prop, no status prop)", async () => {
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
       const link = screen.getAllByRole("link", { name: /View receipt/ })[0];
       await userEvent.click(link);
       const call = captureMock.mock.calls.find(
-        (c) => c[0] === "credit_topup_receipt_opened"
+        (c) => c[0] === "credit_topup_receipt_opened",
       );
       expect(call).toBeDefined();
       const props = call?.[1] as Record<string, unknown>;
@@ -211,9 +202,9 @@ describe("PaymentsHistorySection", () => {
     });
 
     it("fires credit_topup_history_viewed once with bucketed entry_count", () => {
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
       const calls = captureMock.mock.calls.filter(
-        (c) => c[0] === "credit_topup_history_viewed"
+        (c) => c[0] === "credit_topup_history_viewed",
       );
       expect(calls).toHaveLength(1);
       const props = calls[0][1] as Record<string, unknown>;
@@ -228,9 +219,9 @@ describe("PaymentsHistorySection", () => {
         isLoading: false,
         isAuthenticated: true,
       };
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
       const calls = captureMock.mock.calls.filter(
-        (c) => c[0] === "credit_topup_history_viewed"
+        (c) => c[0] === "credit_topup_history_viewed",
       );
       expect(calls).toHaveLength(0);
     });
@@ -246,7 +237,7 @@ describe("PaymentsHistorySection", () => {
         isLoading: false,
         isAuthenticated: true,
       };
-      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      render(<PaymentsHistorySection />);
     }
 
     it("renders a Refunded badge for a fully refunded payment", () => {
@@ -254,9 +245,9 @@ describe("PaymentsHistorySection", () => {
         makeEntry({
           id: "r1",
           status: "refunded",
-          pricePaidCents: 500,
-          reversedPaidCents: 500,
-        })
+          paidAmountCents: 500,
+          reversedAmountCents: 500,
+        }),
       );
       expect(screen.getAllByText("Refunded")).toHaveLength(2);
       // Must not also read as Succeeded.
@@ -268,9 +259,9 @@ describe("PaymentsHistorySection", () => {
         makeEntry({
           id: "r2",
           status: "partially_refunded",
-          pricePaidCents: 2500,
-          reversedPaidCents: 1000,
-        })
+          paidAmountCents: 2500,
+          reversedAmountCents: 1000,
+        }),
       );
       const badges = screen.getAllByText("Partially refunded");
       expect(badges).toHaveLength(2);
@@ -283,9 +274,9 @@ describe("PaymentsHistorySection", () => {
         makeEntry({
           id: "r3",
           status: "disputed",
-          pricePaidCents: 500,
-          reversedPaidCents: 500,
-        })
+          paidAmountCents: 500,
+          reversedAmountCents: 500,
+        }),
       );
       expect(screen.getAllByText("Disputed")).toHaveLength(2);
       expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();

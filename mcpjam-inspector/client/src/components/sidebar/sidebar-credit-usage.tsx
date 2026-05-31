@@ -12,7 +12,6 @@ import { cn } from "@/lib/utils";
 
 interface SidebarCreditUsageProps {
   className?: string;
-  organizationId?: string | null;
   includeGuests?: boolean;
   variant?: "strip" | "full";
   onClick?: () => void;
@@ -20,13 +19,11 @@ interface SidebarCreditUsageProps {
 
 export function SidebarCreditUsage({
   className,
-  organizationId,
   includeGuests = false,
   variant = "strip",
   onClick,
 }: SidebarCreditUsageProps = {}) {
   const { balance, isLoading, hasWorkOsUser } = useCreditBalance({
-    organizationId,
     includeGuests,
   });
 
@@ -40,6 +37,10 @@ export function SidebarCreditUsage({
   const resetText = balance
     ? formatCreditResetText(balance.freeDailyResetAt)
     : null;
+  const paidPercentUsed =
+    balance?.paidPercentRemaining != null
+      ? Math.round(100 - balance.paidPercentRemaining)
+      : 0;
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
   const showGuestUpgradeHint =
     variant === "strip" && includeGuests && !hasWorkOsUser && !isLoading;
@@ -72,16 +73,13 @@ export function SidebarCreditUsage({
         />
         {variant === "full" && !isLoading && hasPaidHistory && balance ? (
           <SidebarUsageRow
-            label="Shared paid credits"
-            percentText={`${balance.availableCredits.toLocaleString()}`}
-            helperText="shared credits"
-            // Absolute credit count, not a percentage — render no progress
-            // bar (a permanently 0%-filled bar reads as a bug).
-            showBar={false}
-            fillPercent={0}
+            label="Paid credits"
+            percentText={`${paidPercentUsed}% used`}
+            helperText={null}
+            fillPercent={paidPercentUsed}
             isLoading={false}
             testId="sidebar-usage-paid"
-            tooltip="Shared across your organization. Spent after the free daily credits run out."
+            tooltip="Used only after your free daily credits run out."
           />
         ) : null}
       </div>
@@ -134,8 +132,6 @@ interface SidebarUsageRowProps {
   fillPercent: number;
   isLoading: boolean;
   testId: string;
-  /** Render the progress bar. Off for absolute counts with no denominator. */
-  showBar?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
@@ -148,7 +144,6 @@ function SidebarUsageRow({
   fillPercent,
   isLoading,
   testId,
-  showBar = true,
   tooltip,
 }: SidebarUsageRowProps) {
   return (
@@ -185,13 +180,11 @@ function SidebarUsageRow({
           {isLoading ? <Skeleton className="h-3 w-12" /> : percentText}
         </span>
       </div>
-      {showBar ? (
-        isLoading ? (
-          <Skeleton className="h-1.5 w-full rounded-full" />
-        ) : (
-          <Progress className="h-1.5 bg-primary/15" value={fillPercent} />
-        )
-      ) : null}
+      {isLoading ? (
+        <Skeleton className="h-1.5 w-full rounded-full" />
+      ) : (
+        <Progress className="h-1.5 bg-primary/15" value={fillPercent} />
+      )}
       {helperText && !isLoading ? (
         <span className="truncate text-[10px] leading-none text-muted-foreground">
           {helperText}

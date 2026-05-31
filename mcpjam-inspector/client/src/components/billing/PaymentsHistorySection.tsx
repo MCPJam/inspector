@@ -47,21 +47,13 @@ function bucketEntryCount(count: number): string {
   return "20+";
 }
 
-export function PaymentsHistorySection({
-  organizationId,
-  canViewHistory = false,
-}: {
-  organizationId?: string | null;
-  canViewHistory?: boolean;
-}) {
+export function PaymentsHistorySection() {
   // Hooks must be called unconditionally before any early-return — flag check
   // happens after. PostHog's `useFeatureFlagEnabled` can return `undefined`
   // during bootstrap; treat anything other than `true` as off so we don't
   // flash content before the flag resolves.
   const flagEnabled = useFeatureFlagEnabled("billing-entitlements-ui");
-  const { entries, isLoading } = usePaymentsHistory(
-    canViewHistory ? organizationId : null
-  );
+  const { entries, isLoading } = usePaymentsHistory();
   const posthog = usePostHog();
   const viewedRef = useRef(false);
 
@@ -84,7 +76,7 @@ export function PaymentsHistorySection({
     });
   }, [flagEnabled, isLoading, posthog, safeEntries]);
 
-  if (flagEnabled !== true || !canViewHistory) return null;
+  if (flagEnabled !== true) return null;
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">
@@ -116,7 +108,6 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
             <TableRow>
               <TableHead>Date</TableHead>
               <TableHead>Amount</TableHead>
-              <TableHead>Credits</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Receipt</TableHead>
             </TableRow>
@@ -128,10 +119,7 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
                   {formatDate(entry.occurredAt)}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                  {formatUsd(entry.pricePaidCents)}
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-sm">
-                  {entry.displayCredits}
+                  {formatUsd(entry.paidAmountCents)}
                 </TableCell>
                 <TableCell>
                   <StatusBadge entry={entry} />
@@ -160,11 +148,8 @@ function MobileRow({ entry }: { entry: PaymentHistoryEntry }) {
       <div className="flex items-center justify-between text-sm">
         <span>{formatDate(entry.occurredAt)}</span>
         <span className="tabular-nums font-medium">
-          {formatUsd(entry.pricePaidCents)}
+          {formatUsd(entry.paidAmountCents)}
         </span>
-      </div>
-      <div className="text-xs text-muted-foreground">
-        {entry.displayCredits}
       </div>
       <div className="flex items-center justify-between">
         <StatusBadge entry={entry} />
@@ -202,9 +187,9 @@ function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
     const isPartial = status === "partially_refunded";
     // Hover detail like "$3 of $5 refunded" when we know the reversed amount.
     const detail =
-      typeof entry.reversedPaidCents === "number"
-        ? `${formatUsd(entry.reversedPaidCents)} of ${formatUsd(
-            entry.pricePaidCents
+      typeof entry.reversedAmountCents === "number"
+        ? `${formatUsd(entry.reversedAmountCents)} of ${formatUsd(
+            entry.paidAmountCents,
           )} refunded`
         : undefined;
     return (
@@ -241,7 +226,7 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
   if (entry.receiptUrl) {
     const ageDays = Math.max(
       0,
-      Math.round((Date.now() - entry.occurredAt) / (24 * 60 * 60 * 1000))
+      Math.round((Date.now() - entry.occurredAt) / (24 * 60 * 60 * 1000)),
     );
     return (
       <a
@@ -251,7 +236,7 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
         referrerPolicy="no-referrer"
         data-ph-no-capture
         aria-label={`View receipt for ${formatDate(
-          entry.occurredAt
+          entry.occurredAt,
         )} payment (opens in new tab)`}
         className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
         onClick={() => {
