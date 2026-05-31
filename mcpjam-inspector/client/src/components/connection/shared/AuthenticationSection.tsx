@@ -111,6 +111,7 @@ export function AuthenticationSection({
   const [isRevealingClientSecret, setIsRevealingClientSecret] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
   const [didCopyRevealedSecret, setDidCopyRevealedSecret] = useState(false);
+  const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
 
   const canRevealClientSecret =
     hasStoredClientSecret &&
@@ -237,13 +238,32 @@ export function AuthenticationSection({
             <label className="block text-sm font-medium text-foreground pt-3">
               Bearer Token
             </label>
-            <Input
-              type="password"
-              value={bearerToken}
-              onChange={(e) => onBearerTokenChange(e.target.value)}
-              placeholder="Enter your bearer token"
-              className="h-10"
-            />
+            <div className="relative">
+              <Input
+                type={isBearerTokenVisible ? "text" : "password"}
+                value={bearerToken}
+                onChange={(e) => onBearerTokenChange(e.target.value)}
+                placeholder="Enter your bearer token"
+                className="h-10 pr-10"
+              />
+              <button
+                type="button"
+                aria-label={
+                  isBearerTokenVisible ? "Hide bearer token" : "Show bearer token"
+                }
+                title={
+                  isBearerTokenVisible ? "Hide bearer token" : "Show bearer token"
+                }
+                onClick={() => setIsBearerTokenVisible((prev) => !prev)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+              >
+                {isBearerTokenVisible ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </div>
         )}
 

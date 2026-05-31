@@ -417,7 +417,7 @@ function DeltaPill({
       )}
     >
       {formatSignedMetric(diff.delta, format)}
-      {diff.percentDelta !== null
+      {format !== "percent" && diff.percentDelta !== null
         ? ` ${formatSignedPercent(diff.percentDelta)}`
         : ""}
     </span>

@@ -547,6 +547,7 @@ export function RunDetailView({
         failedGeneration={serverQualityFailedGeneration}
         error={serverQualityError}
         onRetry={() => requestServerQuality(true)}
+        source={source}
       />
     ) : null;
 

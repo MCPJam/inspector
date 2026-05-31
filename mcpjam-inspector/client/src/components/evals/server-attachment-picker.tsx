@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Check, ChevronDown, Loader2, Plus, Server } from "lucide-react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { toast } from "sonner";
@@ -46,15 +46,47 @@ export function ServerAttachmentPicker({
     new Set()
   );
   const [isCreating, setIsCreating] = useState(false);
+  // Optimistic record for the row we just created — the live
+  // `serverAttachments` query takes a beat to refetch, and without
+  // this fallback the trigger keeps the amber "pick one" styling
+  // even though `value` already points at the new id, which makes
+  // users think the save failed.
+  const [justCreated, setJustCreated] = useState<EvalServerAttachment | null>(
+    null,
+  );
 
   const createServerAttachment = useMutation(
     "serverAttachments:createServerAttachment" as any
   );
 
-  const selectedAttachment = useMemo(
-    () => (value ? serverAttachments.find((s) => s._id === value) : null),
-    [value, serverAttachments]
-  );
+  // The optimistic record must not outlive the in-flight create window
+  // — otherwise switching to another suite (which feeds a new `value`,
+  // potentially null) would strand it and show a prior attachment as
+  // if it were persisted on the new suite. Clear as soon as the live
+  // query reflects the row, with a bounded fallback so a parent reset
+  // mid-flight still releases it.
+  useEffect(() => {
+    if (!justCreated) return;
+    if (serverAttachments.some((s) => s._id === justCreated._id)) {
+      setJustCreated(null);
+      return;
+    }
+    const t = setTimeout(() => setJustCreated(null), 3000);
+    return () => clearTimeout(t);
+  }, [justCreated, serverAttachments]);
+
+  const selectedAttachment = useMemo(() => {
+    // `value` lags behind onChange when the parent persists through a
+    // remote mutation (e.g. suite overview bar → updateSuite). Fall
+    // back to justCreated._id so the trigger reflects the new
+    // attachment immediately instead of flashing the amber state.
+    const effectiveId = value ?? justCreated?._id ?? null;
+    if (!effectiveId) return null;
+    const fromQuery = serverAttachments.find((s) => s._id === effectiveId);
+    if (fromQuery) return fromQuery;
+    if (justCreated && justCreated._id === effectiveId) return justCreated;
+    return null;
+  }, [value, serverAttachments, justCreated]);
 
   const handleSelect = useCallback(
     (attachment: EvalServerAttachment) => {
@@ -81,11 +113,20 @@ export function ServerAttachmentPicker({
     if (!name) return;
     setIsCreating(true);
     try {
+      const pickedServerIds = Array.from(createServerIds);
       const result = (await createServerAttachment({
         projectId,
         name,
-        serverIds: Array.from(createServerIds),
+        serverIds: pickedServerIds,
       })) as { _id: string };
+      setJustCreated({
+        _id: result._id,
+        name,
+        serverIds: pickedServerIds,
+        resolvedServerNames: projectServers
+          .filter((s) => pickedServerIds.includes(s._id))
+          .map((s) => s.name),
+      });
       onChange(result._id);
       setOpen(false);
       setShowCreate(false);
@@ -104,6 +145,7 @@ export function ServerAttachmentPicker({
     createServerAttachment,
     onChange,
     projectId,
+    projectServers,
   ]);
 
   const triggerLabel = selectedAttachment
@@ -114,7 +156,19 @@ export function ServerAttachmentPicker({
     : null;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          // Reopen should always land back on the attachment list, not
+          // a half-filled create form from the last session.
+          setShowCreate(false);
+          setCreateName("");
+          setCreateServerIds(new Set());
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -202,8 +256,11 @@ export function ServerAttachmentPicker({
         ) : (
           <div className="space-y-3 p-1">
             <div className="space-y-1">
-              <Label className="text-[11px]">Attachment name</Label>
+              <Label htmlFor="server-attachment-name" className="text-[11px]">
+                Attachment name
+              </Label>
               <Input
+                id="server-attachment-name"
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
                 placeholder="e.g. Production servers"
