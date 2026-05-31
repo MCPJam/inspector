@@ -64,7 +64,7 @@ export function SidebarCreditUsage({
             variant === "full" ? " used" : ""
           }`}
           eyebrowText={
-            showGuestUpgradeHint ? "Sign in for 15× the free daily credits" : null
+            showGuestUpgradeHint ? "Sign in for 15× the credits" : null
           }
           helperText={resetText}
           fillPercent={balance ? balance.freeDailyPercentUsed : 0}

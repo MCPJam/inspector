@@ -48,7 +48,7 @@ describe("SidebarCreditUsage", () => {
     expect(dailyRow).toHaveTextContent("12%");
     expect(dailyRow).toHaveTextContent("resets in 3h");
     expect(
-      screen.queryByText(/15× the free daily credits/i)
+      screen.queryByText(/15× the credits/i)
     ).not.toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe("SidebarCreditUsage", () => {
     expect(paidRow).toHaveTextContent("75% used");
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
     expect(
-      screen.queryByText(/15× the free daily credits/i)
+      screen.queryByText(/15× the credits/i)
     ).not.toBeInTheDocument();
   });
 
@@ -113,7 +113,7 @@ describe("SidebarCreditUsage", () => {
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(screen.getByTestId("sidebar-credit-usage")).toBeInTheDocument();
     expect(dailyRow).toHaveTextContent(
-      "Sign in for 15× the free daily credits"
+      "Sign in for 15× the credits"
     );
     expect(dailyRow).toHaveTextContent("Free daily credits");
     expect(dailyRow).toHaveTextContent("65%");
