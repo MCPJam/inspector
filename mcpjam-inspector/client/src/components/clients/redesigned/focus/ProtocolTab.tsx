@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
+import { hostConfigField } from "@/lib/host-config-field-schema";
 import {
   Select,
   SelectContent,
@@ -33,6 +34,11 @@ interface ProtocolTabProps {
     updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
+  /**
+   * When true, the protocol-version dropdown and JSON editor render
+   * non-editable. See `BehaviorTab` for the same prop on its surface.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -253,8 +259,13 @@ function applyJsonToDraft(
   };
 }
 
-export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
+export function ProtocolTab({
+  draft,
+  onDraftChange,
+  readOnly = false,
+}: ProtocolTabProps) {
   const [jsonMode, setJsonMode] = useState<JsonEditorMode>("edit");
+  const effectiveJsonMode: JsonEditorMode = readOnly ? "view" : jsonMode;
   const { content, onRawChange } = useJsonDraftBuffer({
     draft,
     serialize: protocolToJson,
@@ -294,6 +305,9 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
     });
   };
 
+  // Shared with the cross-host comparison matrix via the field schema.
+  const fProtocolVersion = hostConfigField("mcpProtocolVersion");
+
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
       {statelessMcpEnabled ? (
@@ -303,13 +317,14 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
               className="text-[12px] font-medium"
               title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
             >
-              Protocol version
+              {fProtocolVersion.label}
             </span>
             <Select
               value={selectedDropdownValue}
               onValueChange={(next) => {
                 setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
               }}
+              disabled={readOnly}
             >
               <SelectTrigger className="h-9 text-xs">
                 <SelectValue placeholder="Latest" />
@@ -329,13 +344,14 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
         <JsonEditor
           rawContent={content}
           onRawChange={onRawChange}
-          mode={jsonMode}
-          onModeChange={setJsonMode}
-          showModeToggle
+          mode={effectiveJsonMode}
+          onModeChange={readOnly ? undefined : setJsonMode}
+          showModeToggle={!readOnly}
           showToolbar
           showLineNumbers
           autoFormatOnEdit={false}
           height="100%"
+          readOnly={readOnly}
         />
       </div>
     </div>

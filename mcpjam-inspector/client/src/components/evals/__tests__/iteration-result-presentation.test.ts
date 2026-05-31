@@ -65,10 +65,9 @@ describe("getIterationResultBadgeClass", () => {
 });
 
 describe("suitePassCriteriaCompactBadgeClassNames", () => {
-  it("uses high-contrast destructive styling for failed suite outcome", () => {
+  it("uses rose styling for failed suite outcome", () => {
     const classes = suitePassCriteriaCompactBadgeClassNames("failed");
-    expect(classes).toContain("text-destructive");
-    expect(classes).toContain("border-destructive");
+    expect(classes).toContain("rose");
     expect(classes).toContain("text-[10px]");
   });
 

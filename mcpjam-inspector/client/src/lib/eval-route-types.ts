@@ -1,4 +1,8 @@
-export type SuiteOverviewView = "runs" | "test-cases" | "executions";
+export type SuiteOverviewView =
+  | "runs"
+  | "test-cases"
+  | "executions"
+  | "cross-host";
 
 /**
  * Unified eval hash routes for Playground (`#/evals`) and CI/CD (`#/ci-evals`).
@@ -21,6 +25,7 @@ export type EvalRoute =
       runId: string;
       iteration?: string;
       insightsFocus?: boolean;
+      compareToRunId?: string;
     }
   | { type: "test-detail"; suiteId: string; testId: string; iteration?: string }
   | {
