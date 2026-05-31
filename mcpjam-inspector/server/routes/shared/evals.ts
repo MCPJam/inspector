@@ -1204,10 +1204,14 @@ export async function streamEvalTestCaseWithManager(
   // full tool set (including app-only) so the policy can both filter and
   // count drops honestly. Without this, app-only tools are pre-stripped by
   // getToolsForAiSdk and host visibility signals are blank.
-  const tools = (await clientManager.getToolsForAiSdk(
-    resolvedServerIds,
-    suiteHostPolicy ? { includeAppOnly: true } : undefined,
-  )) as Record<string, any>;
+  const tools = (suiteHostPolicy
+    ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
+        includeAppOnly: true,
+      })
+    : await clientManager.getToolsForAiSdk(resolvedServerIds)) as Record<
+    string,
+    any
+  >;
   const streamToolSignals = suiteHostPolicy
     ? applyVisibilityPolicyAndCountSignals(
         tools as Record<string, unknown>,

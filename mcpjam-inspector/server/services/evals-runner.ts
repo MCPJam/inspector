@@ -2598,10 +2598,11 @@ export const runEvalSuiteWithAiSdk = async ({
   //   2. Keep app-only tools when the host opted out of visibility filtering.
   // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
   // sees a partial set — drops are reported as 0 even when tools were hidden.
-  const tools = (await mcpClientManager.getToolsForAiSdk(
-    serverIds,
-    hostExecutionPolicy ? { includeAppOnly: true } : undefined,
-  )) as ToolSet;
+  const tools = (hostExecutionPolicy
+    ? await mcpClientManager.getToolsForAiSdk(serverIds, {
+        includeAppOnly: true,
+      })
+    : await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
 
   // Apply visibility filtering when a host policy is present. The filter
   // mutates `tools` in place (same as prepareChatV2) so downstream iteration
