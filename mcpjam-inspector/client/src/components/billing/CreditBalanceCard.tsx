@@ -98,7 +98,7 @@ export function CreditBalanceCard({
         </ErrorBoundary>
 
         <UsageRow
-          label="Daily limit"
+          label="Free daily credits"
           rightText={
             isLoading || !balance
               ? null
@@ -122,7 +122,7 @@ export function CreditBalanceCard({
             fillPercent={paidPercentUsed}
             isLoading={false}
             testId="usage-paid"
-            tooltip="Used only after your daily free quota runs out."
+            tooltip="Used only after your free daily credits run out."
           />
         )}
       </CardContent>

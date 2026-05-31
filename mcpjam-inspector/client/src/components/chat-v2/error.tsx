@@ -119,7 +119,7 @@ export function ErrorBox({
   const isAuthError = code === "auth_error";
 
   const errorLabel = isMCPJamModelLimit
-    ? "Daily MCPJam model limit reached"
+    ? "Free daily credits used up"
     : isPlatformError
       ? "MCPJam platform issue"
       : "An error occurred";

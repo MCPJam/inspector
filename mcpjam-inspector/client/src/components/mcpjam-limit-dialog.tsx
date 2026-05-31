@@ -91,11 +91,11 @@ export function MCPJamLimitDialog() {
         >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>You've used today's free guest limit</DialogTitle>
+              <DialogTitle>You've used up your free guest credits.</DialogTitle>
               <DialogDescription>
                 Sign in to get{" "}
                 <strong className="text-foreground font-medium">15×</strong>{" "}
-                daily usage.
+                the free credits.
               </DialogDescription>
             </DialogHeader>
             <Button onClick={() => signIn()} className="w-full">
@@ -113,7 +113,7 @@ export function MCPJamLimitDialog() {
         >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>You've hit your daily credit limit</DialogTitle>
+              <DialogTitle>You've run out of free daily credits</DialogTitle>
               <DialogDescription>
                 {billingUiEnabled
                   ? "Top up or bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."

@@ -89,7 +89,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (s) => s.title === "LLM Usage",
     );
     const rateLimitRow = llmUsage?.rows.find(
-      (r) => r.label === "Daily rate limit / user",
+      (r) => r.label === "Free daily credits / user",
     );
 
     expect(rateLimitRow?.team).toEqual({

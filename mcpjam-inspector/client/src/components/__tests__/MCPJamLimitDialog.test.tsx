@@ -73,7 +73,7 @@ describe("MCPJamLimitDialog", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: /you've used today's free guest limit/i,
+        name: /you've used up your free guest credits/i,
       }),
     ).toBeInTheDocument();
     expect(screen.getByText(/15×/i)).toBeInTheDocument();
@@ -116,7 +116,7 @@ describe("MCPJamLimitDialog", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: /you've hit your daily credit limit/i,
+        name: /you've run out of free daily credits/i,
       }),
     ).toBeInTheDocument();
     expect(
