@@ -123,6 +123,26 @@ When you click on a run:
   - Tokens per Test (averaged across models)
   - Performance by Model
 
+### Run compare view
+
+Select two runs to compare them side-by-side. The compare view shows:
+
+- **Run summary** - Pass rate (or accuracy for UI suites), passed/failed/total counts with deltas between the base and compare run
+- **Metrics** - Wall duration, token counts (total, input, output, cached, reasoning), and estimated cost, each with a signed delta
+- **Cases list** - Every test case sorted so changed and failing rows appear first. Each row shows a status label:
+
+| Status | Meaning |
+|---|---|
+| Passed | Unchanged — passed in both runs |
+| Still failing | Unchanged — failed in both runs |
+| Regressed | Passed in base, failed in compare |
+| Fixed | Failed in base, passed in compare |
+| New | Case only exists in the compare run |
+| Removed | Case only exists in the base run |
+| Changed | Config changed between runs |
+
+Each case row also shows a **Config changed** badge when the test configuration differed between runs, and base vs compare panels with iteration counts, tool call counts, and a **View trace** button to open the representative iteration trace.
+
 ### Test Case Detail View
 
 When you click on a test case:
