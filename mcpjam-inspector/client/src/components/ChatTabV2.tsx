@@ -457,11 +457,11 @@ export function ChatTabV2({
   });
   const senderProfileByUserId = useMemo(
     () => buildProjectOwnerProfileByUserId(senderActiveMembers),
-    [senderActiveMembers],
+    [senderActiveMembers]
   );
   const currentUserForSender = useQuery(
     "users:getCurrentUser" as any,
-    isConvexAuthenticated ? ({} as any) : "skip",
+    isConvexAuthenticated ? ({} as any) : "skip"
   ) as { _id?: string } | undefined;
   const senderFallbackUserId =
     reactiveHistorySession?.userId ??
@@ -475,7 +475,7 @@ export function ChatTabV2({
         profileByUserId: senderProfileByUserId,
         fallbackOwnerUserId: senderFallbackUserId,
       }),
-    [senderProfileByUserId, senderFallbackUserId],
+    [senderProfileByUserId, senderFallbackUserId]
   );
   // Stamp the current user onto live outgoing prompts in shared sessions so
   // the transcript can attribute them immediately, before persistence
@@ -2773,6 +2773,7 @@ export function ChatTabV2({
           onOpenChange={handleTopupDialogOpenChange}
           chatSessionId={chatSessionId}
           lastUserMessage={pendingResendMessage}
+          organizationId={organizationId}
           source="chat_banner"
         />
       )}
