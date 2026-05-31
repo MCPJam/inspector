@@ -193,15 +193,52 @@ export function useCrossHostData(
       }
     }
 
-    // Build matrix: caseId → hostId → CellData
-    // Only include iterations from active runs that have a namedHostId
-    const rawMatrix = new Map<string, Map<string, EvalIteration[]>>();
+    // Rank runs newest-first by completedAt ?? createdAt so cells can be
+    // pinned to the latest run per (case, host). Reruns against the same host
+    // would otherwise pile every historical iteration into one cell —
+    // contradicting the "Last run" semantics shown by the by-case toggle and
+    // polluting tokens/latency/chips with stale runs.
+    const runRank = new Map<string, number>();
+    [...runs]
+      .sort((a, b) => {
+        const tA = a.completedAt ?? a.createdAt ?? 0;
+        const tB = b.completedAt ?? b.createdAt ?? 0;
+        return tB - tA;
+      })
+      .forEach((r, i) => runRank.set(r._id, i));
 
+    // First pass: pick the latest active run per (caseId, hostId)
+    const winningRunByCell = new Map<string, Map<string, string>>();
     for (const iter of allIterations) {
       if (!iter.suiteRunId || !activeRunIds.has(iter.suiteRunId)) continue;
       const hostId = runHostMap.get(iter.suiteRunId);
       if (!hostId) continue;
       const caseId = iter.testCaseId ?? `__no_case_${iter._id}`;
+
+      let byHost = winningRunByCell.get(caseId);
+      if (!byHost) {
+        byHost = new Map();
+        winningRunByCell.set(caseId, byHost);
+      }
+      const current = byHost.get(hostId);
+      const iterRank = runRank.get(iter.suiteRunId) ?? Number.POSITIVE_INFINITY;
+      const currentRank = current
+        ? runRank.get(current) ?? Number.POSITIVE_INFINITY
+        : Number.POSITIVE_INFINITY;
+      if (!current || iterRank < currentRank) {
+        byHost.set(hostId, iter.suiteRunId);
+      }
+    }
+
+    // Second pass: collect iterations only from the winning run per cell
+    const rawMatrix = new Map<string, Map<string, EvalIteration[]>>();
+    for (const iter of allIterations) {
+      if (!iter.suiteRunId || !activeRunIds.has(iter.suiteRunId)) continue;
+      const hostId = runHostMap.get(iter.suiteRunId);
+      if (!hostId) continue;
+      const caseId = iter.testCaseId ?? `__no_case_${iter._id}`;
+
+      if (winningRunByCell.get(caseId)?.get(hostId) !== iter.suiteRunId) continue;
 
       let byHost = rawMatrix.get(caseId);
       if (!byHost) {
