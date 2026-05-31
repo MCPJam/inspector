@@ -124,6 +124,44 @@ When you click on a run:
   - Tokens per Test (averaged across models)
   - Performance by Model
 
+### AI Triage
+
+The AI Triage panel appears on every completed run and replaces the previous "Server quality" narrative with a ranked, actionable list of fixes.
+
+**How it works:**
+
+1. After a run completes, MCPJam analyzes your server's tool definitions and the workflow patterns observed across iterations.
+2. The panel ranks issues by impact — highest failure count first, then by severity (poor > needs improvement for tools; excessive > inefficient > acceptable for workflows).
+3. Each issue shows its category (`tool description` or `workflow`) and a **Copy** button.
+
+**Copying fix prompts:**
+
+- **Copy** (per row) — copies a single fix prompt for that issue. The prompt includes the category, affected tool or test case, issues identified, suggested changes, and optional evidence and confidence metadata from the judge.
+- **Copy top 3** (header button) — copies a combined prompt for the top three issues, separated by `---`, so you can paste the whole thing into a coding agent in one shot.
+
+**Metadata fields in fix prompts:**
+
+| Field | Description |
+|---|---|
+| Judge confidence | `high`, `medium`, or `low` — how certain the analysis is |
+| Attribution | Which layer caused the issue (`server_design`, `agent_behavior`, etc.). A warning is shown when attribution is not `server_design`, prompting you to verify against the trace before changing server code. |
+| Evidence | Specific observations from the run that support the finding |
+| Pattern / Reference | An optional Arcade pattern slug and deep-link when the judge matched a known anti-pattern |
+
+**Status states:**
+
+| State | Meaning |
+|---|---|
+| Analyzing… | Analysis is in progress |
+| N suggested fixes | Issues found; ranked list is shown |
+| All clean | All tools rated good and all workflows optimal |
+| Summary only | The judge returned no per-tool or per-workflow breakdown (analysis may have been truncated — retry to get a full breakdown) |
+| Analysis failed | Generation failed; use the **Retry** button |
+
+<Tip>
+  Paste a copied fix prompt directly into Claude, Cursor, or any coding agent. For tool rows, the prompt includes the current tool description and input schema so the agent has the exact shape to edit against.
+</Tip>
+
 ### Test Case Detail View
 
 When you click on a test case:
