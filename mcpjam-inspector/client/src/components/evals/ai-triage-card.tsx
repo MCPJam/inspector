@@ -163,7 +163,7 @@ export function AiTriageCard({
             variant="outline"
             size="sm"
             className="h-7 gap-1 text-xs"
-            disabled={!hasRows}
+            disabled={!hasRows || pending}
             onClick={() =>
               copyWithToast(
                 buildTopNPrompt(topRows),
@@ -181,15 +181,28 @@ export function AiTriageCard({
         <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
           <span>{metricLabel}</span>
           <span className="tabular-nums">
-            {passFailStats.passed} passed · {passFailStats.failed} failed
+            {passFailStats.total === 0
+              ? "No cases recorded yet"
+              : `${passFailStats.passed} passed · ${passFailStats.failed} failed`}
           </span>
         </div>
         <div className="mt-1.5 flex items-center gap-3">
           <span className="text-lg font-semibold tabular-nums">
-            {passRate}
-            <span className="text-xs font-normal text-muted-foreground">%</span>
+            {passFailStats.total === 0 ? (
+              <span className="text-muted-foreground">—</span>
+            ) : (
+              <>
+                {passRate}
+                <span className="text-xs font-normal text-muted-foreground">
+                  %
+                </span>
+              </>
+            )}
           </span>
-          <Progress value={passRate} className="h-2 flex-1" />
+          <Progress
+            value={passFailStats.total === 0 ? 0 : passRate}
+            className="h-2 flex-1"
+          />
         </div>
       </div>
 
