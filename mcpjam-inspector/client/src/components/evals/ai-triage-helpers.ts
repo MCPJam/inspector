@@ -86,7 +86,8 @@ function collectAffectedCaseKeysForTool(
   toolName: string,
   workflowInsights: WorkflowInsight[],
 ): string[] {
-  const needle = toolName.toLowerCase();
+  const needle = toolName.trim().toLowerCase();
+  if (!needle) return [];
   const out = new Set<string>();
   for (const w of workflowInsights) {
     if (!w.caseKey) continue;
@@ -137,6 +138,7 @@ export function unifyTriageRows({
 
   for (const t of tools) {
     if (t.rating === "good") continue;
+    if (!t.toolName?.trim()) continue;
     const affected = collectAffectedCaseKeysForTool(t.toolName, workflows);
     const failureCount = countTerminalFailedForCaseKeys(
       iterations,

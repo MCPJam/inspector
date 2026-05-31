@@ -24,6 +24,7 @@ export interface AiTriageCardProps {
   failedGeneration: boolean;
   error: string | null;
   onRetry: () => void;
+  source?: "ui" | "sdk";
 }
 
 const TOP_N = 3;
@@ -83,6 +84,7 @@ export function AiTriageCard({
   failedGeneration,
   error,
   onRetry,
+  source,
 }: AiTriageCardProps) {
   const rows = useMemo(
     () => unifyTriageRows({ serverQuality, iterations }),
@@ -107,7 +109,8 @@ export function AiTriageCard({
     [run, iterations],
   );
 
-  const metricLabel = run.source === "sdk" ? "Pass rate" : "Accuracy";
+  const metricLabel =
+    (source ?? run.source) === "sdk" ? "Pass Rate" : "Accuracy";
 
   const hasRows = rows.length > 0;
   // Distinguish "judge returned insights, all good/optimal" (arrays populated,
@@ -124,7 +127,7 @@ export function AiTriageCard({
     if (pending) return "Analyzing…";
     if (error || failedGeneration) return "Analysis failed";
     if (!serverQuality && requested) return "Requesting analysis…";
-    if (!serverQuality) return "Run a completed suite to see triage";
+    if (!serverQuality) return "Waiting for analysis…";
     if (!hasRows) return noInsights ? "Summary only" : "All clean";
     return `${rows.length} suggested fix${rows.length === 1 ? "" : "es"}`;
   })();
