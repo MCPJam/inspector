@@ -7,7 +7,7 @@ export type EvalRoutePrefix = "/evals" | "/ci-evals";
 export function parseEvalRouteFromUrl(
   prefix: EvalRoutePrefix,
   pathname: string,
-  search = "",
+  search = ""
 ): EvalRoute | null {
   const normalizedPathname = pathname.startsWith("/")
     ? pathname
@@ -20,7 +20,7 @@ export function parseEvalRouteFromUrl(
   }
 
   const params = new URLSearchParams(
-    search.startsWith("?") ? search : search ? `?${search}` : "",
+    search.startsWith("?") ? search : search ? `?${search}` : ""
   );
   const segments = normalizedPathname.replace(/^\/+/, "").split("/");
   const routeRoot = prefix.replace(/^\/+/, "");
@@ -73,6 +73,9 @@ export function parseEvalRouteFromUrl(
       runId: decodePathSegment(rest[1]),
       iteration: params.get("iteration") || undefined,
       ...(insightsFocus ? { insightsFocus: true } : {}),
+      ...(params.get("compareTo")
+        ? { compareToRunId: params.get("compareTo") || undefined }
+        : {}),
     };
   }
 
@@ -116,7 +119,7 @@ export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {
 
   return useMemo(
     () => parseEvalRouteFromUrl(prefix, pathname, search) ?? { type: "list" },
-    [prefix, pathname, search],
+    [prefix, pathname, search]
   );
 }
 
@@ -129,7 +132,11 @@ export function useCiEvalsRouteFromUrl(): EvalRoute {
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {
-  return value === "test-cases" || value === "executions" ? value : "runs";
+  return value === "test-cases" ||
+    value === "executions" ||
+    value === "cross-host"
+    ? value
+    : "runs";
 }
 
 function parseTruthyParam(value: string | null): boolean {

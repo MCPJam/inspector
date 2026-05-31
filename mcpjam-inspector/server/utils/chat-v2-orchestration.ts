@@ -51,8 +51,11 @@ const DEFAULT_TEMPERATURE = 0.7;
  *
  * The visibility array defaults to `["model", "app"]` per SEP-1865, so a
  * tool with no visibility metadata is treated as visible to both.
+ *
+ * Exported so eval runner can apply the same filter and compute visibility
+ * drop counts for cross-host dashboard metadata.
  */
-function filterAppOnlyTools(
+export function filterAppOnlyTools(
   tools: ToolSet,
   manager: InstanceType<typeof MCPClientManager>
 ): void {

@@ -12,6 +12,7 @@ import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { EvalSuite } from "./types";
+import { ServerAttachmentPicker } from "./server-attachment-picker";
 
 export interface SuiteOverviewHostBarProps {
   suite: EvalSuite;
@@ -23,6 +24,7 @@ export interface SuiteOverviewHostBarProps {
   projectHosts: HostListItem[];
   readOnly?: boolean;
   onUpdate?: (attachments: HostAttachmentDraft[]) => Promise<void>;
+  onUpdateServerAttachment?: (serverAttachmentId: string) => Promise<void>;
   /** Merged with the outer bar container (e.g. tighter padding in {@link SuiteHeader}). */
   className?: string;
   /**
@@ -37,6 +39,7 @@ export function SuiteOverviewClientBar({
   projectHosts,
   readOnly = false,
   onUpdate,
+  onUpdateServerAttachment,
   className,
   containerVariant = "panel",
 }: SuiteOverviewHostBarProps) {
@@ -170,6 +173,10 @@ export function SuiteOverviewClientBar({
     </DropdownMenu>
   );
 
+  const showServersSection = Boolean(
+    suite.projectId && (editable || suite.serverAttachment),
+  );
+
   // The bar always renders (per the empty-state decision in the plan) so the
   // "Attach host" affordance is discoverable even on suites with no hosts.
   return (
@@ -183,21 +190,49 @@ export function SuiteOverviewClientBar({
     >
       <div
         className={cn(
-          "flex min-h-9 items-center gap-2 px-1 sm:px-2",
-          containerVariant === "inline" &&
-            "w-full min-w-0 max-w-full overflow-hidden",
+          "flex min-h-9 flex-wrap items-center gap-x-4 gap-y-2 px-1 sm:px-2",
+          containerVariant === "inline" && "w-full min-w-0 max-w-full",
         )}
       >
+        {showServersSection ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              Servers
+            </span>
+            {editable && suite.projectId && onUpdateServerAttachment ? (
+              <ServerAttachmentPicker
+                projectId={suite.projectId}
+                value={suite.serverAttachmentId ?? null}
+                onChange={onUpdateServerAttachment}
+              />
+            ) : suite.serverAttachment ? (
+              <span className="flex h-8 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-xs font-medium text-foreground">
+                <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                {suite.serverAttachment.name}
+                <span className="text-[10px] text-muted-foreground">
+                  · {suite.serverAttachment.serverIds.length} server
+                  {suite.serverAttachment.serverIds.length === 1 ? "" : "s"}
+                </span>
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         <div
           className={cn(
             "flex min-w-0 items-center gap-2",
-            containerVariant === "panel" ? "flex-1" : "w-full flex-1",
+            containerVariant === "inline" ? "min-w-0 flex-1" : "flex-1",
           )}
         >
+          {showServersSection ? (
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              Hosts
+            </span>
+          ) : null}
           <div
             className={cn(
               "flex min-w-0 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-              containerVariant === "panel" ? "flex-1" : "min-w-0 flex-1",
+              containerVariant === "inline" ? "min-w-0 flex-1" : "flex-1",
             )}
           >
             {attachments.length === 0 ? (
@@ -207,9 +242,6 @@ export function SuiteOverviewClientBar({
             ) : null}
 
             {attachments.map((attachment) => {
-              // Prefer the server-resolved name (catches host renames) and
-              // fall back to the project-host-list name, then the id, so the
-              // pill never renders empty even during initial load.
               const label =
                 hostNameByAttachment.get(attachment.namedHostId) ??
                 projectHosts.find((h) => h.hostId === attachment.namedHostId)
@@ -218,7 +250,7 @@ export function SuiteOverviewClientBar({
               return (
                 <div
                   key={attachment.namedHostId}
-                  className="flex h-8 max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-foreground"
+                  className="flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-foreground"
                 >
                   <Globe className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
@@ -236,13 +268,8 @@ export function SuiteOverviewClientBar({
                             <MoreHorizontal className="h-3.5 w-3.5" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent
-                          align="start"
-                          className="w-52"
-                        >
-                          <DropdownMenuItem
-                            onSelect={() => openHostsPage()}
-                          >
+                        <DropdownMenuContent align="start" className="w-52">
+                          <DropdownMenuItem onSelect={() => openHostsPage()}>
                             Open in Hosts page
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
@@ -260,9 +287,7 @@ export function SuiteOverviewClientBar({
                         type="button"
                         className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                         aria-label={`Remove ${label}`}
-                        onClick={() =>
-                          void handleRemove(attachment.namedHostId)
-                        }
+                        onClick={() => void handleRemove(attachment.namedHostId)}
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>

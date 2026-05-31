@@ -8,6 +8,7 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "./client-attachments-editor";
+import { ServerAttachmentPicker } from "./server-attachment-picker";
 
 export type CreateSuitePayload = {
   name: string;
@@ -19,6 +20,8 @@ export type CreateSuitePayload = {
    * no longer a suite-level flat server list or model override.
    */
   hostAttachments?: HostAttachmentDraft[];
+  /** Standalone server attachment shared across all runs of this suite. */
+  serverAttachmentId?: string;
 };
 
 type CreateSuiteDialogProps = {
@@ -41,6 +44,9 @@ export function CreateSuiteDialog({
   const [hostAttachments, setHostAttachments] = useState<
     HostAttachmentDraft[]
   >([]);
+  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
+    null,
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -48,6 +54,7 @@ export function CreateSuiteDialog({
       setName("");
       setDescription("");
       setHostAttachments([]);
+      setServerAttachmentId(null);
       setIsSaving(false);
     }
   }, [open]);
@@ -65,6 +72,7 @@ export function CreateSuiteDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
+        ...(serverAttachmentId ? { serverAttachmentId } : {}),
       });
     } catch {
       // onSubmit surfaces its own error toast; keep the dialog open so the
@@ -109,21 +117,39 @@ export function CreateSuiteDialog({
           </div>
 
           {hostsEnabled && projectId ? (
-            <div className="space-y-2">
-              <div>
-                <h3 className="text-sm font-medium text-foreground">Clients</h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Attach clients to run this suite against. Each attachment fans
-                  out into its own run when you click "Run all clients". You can
-                  attach more clients later from the suite header.
-                </p>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Servers</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Pick a named server attachment that all hosts will run
+                    against. You can create a new attachment inline or change it
+                    later.
+                  </p>
+                </div>
+                <ServerAttachmentPicker
+                  projectId={projectId}
+                  value={serverAttachmentId}
+                  onChange={setServerAttachmentId}
+                  disabled={isSaving}
+                />
               </div>
-              <ClientAttachmentsEditor
-                projectId={projectId}
-                value={hostAttachments}
-                onChange={setHostAttachments}
-                disabled={isSaving}
-              />
+              <div className="space-y-2">
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Clients</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Attach clients to run this suite against. Each attachment fans
+                    out into its own run when you click "Run all clients". You can
+                    attach more clients later from the suite header.
+                  </p>
+                </div>
+                <ClientAttachmentsEditor
+                  projectId={projectId}
+                  value={hostAttachments}
+                  onChange={setHostAttachments}
+                  disabled={isSaving}
+                />
+              </div>
             </div>
           ) : null}
         </div>
