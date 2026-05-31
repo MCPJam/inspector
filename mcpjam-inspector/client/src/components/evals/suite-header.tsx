@@ -212,6 +212,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   const handleServerAttachmentUpdate = useCallback(
     async (serverAttachmentId: string) => {
+      // Picker calls this synchronously inside onClick — don't rethrow,
+      // or the unawaited promise becomes an unhandled rejection. The
+      // toast is the user-facing signal; the suite row will reconcile
+      // from the live Convex subscription on retry.
       try {
         await updateSuite({
           suiteId: suite._id,
@@ -222,7 +226,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         toast.error(
           getBillingErrorMessage(error, "Failed to update server attachment"),
         );
-        throw error;
       }
     },
     [suite._id, updateSuite],

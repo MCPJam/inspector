@@ -46,15 +46,26 @@ export function ServerAttachmentPicker({
     new Set()
   );
   const [isCreating, setIsCreating] = useState(false);
+  // Optimistic record for the row we just created — the live
+  // `serverAttachments` query takes a beat to refetch, and without
+  // this fallback the trigger keeps the amber "pick one" styling
+  // even though `value` already points at the new id, which makes
+  // users think the save failed.
+  const [justCreated, setJustCreated] = useState<EvalServerAttachment | null>(
+    null,
+  );
 
   const createServerAttachment = useMutation(
     "serverAttachments:createServerAttachment" as any
   );
 
-  const selectedAttachment = useMemo(
-    () => (value ? serverAttachments.find((s) => s._id === value) : null),
-    [value, serverAttachments]
-  );
+  const selectedAttachment = useMemo(() => {
+    if (!value) return null;
+    const fromQuery = serverAttachments.find((s) => s._id === value);
+    if (fromQuery) return fromQuery;
+    if (justCreated && justCreated._id === value) return justCreated;
+    return null;
+  }, [value, serverAttachments, justCreated]);
 
   const handleSelect = useCallback(
     (attachment: EvalServerAttachment) => {
@@ -81,11 +92,20 @@ export function ServerAttachmentPicker({
     if (!name) return;
     setIsCreating(true);
     try {
+      const pickedServerIds = Array.from(createServerIds);
       const result = (await createServerAttachment({
         projectId,
         name,
-        serverIds: Array.from(createServerIds),
+        serverIds: pickedServerIds,
       })) as { _id: string };
+      setJustCreated({
+        _id: result._id,
+        name,
+        serverIds: pickedServerIds,
+        resolvedServerNames: projectServers
+          .filter((s) => pickedServerIds.includes(s._id))
+          .map((s) => s.name),
+      });
       onChange(result._id);
       setOpen(false);
       setShowCreate(false);
@@ -104,6 +124,7 @@ export function ServerAttachmentPicker({
     createServerAttachment,
     onChange,
     projectId,
+    projectServers,
   ]);
 
   const triggerLabel = selectedAttachment
