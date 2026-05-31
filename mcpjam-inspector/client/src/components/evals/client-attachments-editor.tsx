@@ -1,15 +1,27 @@
-import { useMemo } from "react";
-import { Loader2, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Globe, Plus, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { ClientPicker } from "@/components/clients/ClientPicker";
-import { useHost, useHostList, type HostListItem } from "@/hooks/useClients";
-import { useProjectServers } from "@/hooks/useViews";
+import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
+import { useHostList, type HostListItem } from "@/hooks/useClients";
 
 export type HostAttachmentDraft = {
   namedHostId: string;
+  /**
+   * The attachment's full server pick from the project pool. PR B
+   * model: no required/optional split, no inheritance from the bound
+   * host's hostConfig. Empty array = "user hasn't picked yet" (eval
+   * runs reject empty at run-start).
+   *
+   * The field name on the wire is still `enabledOptionalServerIds`
+   * because the suite-update mutation pre-dates this rename; PR B
+   * accepts both `enabledOptionalServerIds` and `selectedServerIds`
+   * and prefers the latter. The frontend draft type follows the
+   * legacy name to minimize churn in parent components that read
+   * `EvalSuite.hostAttachments`; rename in cleanup PR.
+   */
   enabledOptionalServerIds: string[];
 };
 
@@ -28,6 +40,7 @@ export function ClientAttachmentsEditor({
 }: HostAttachmentsEditorProps) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts } = useHostList({ isAuthenticated, projectId });
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   const attachedIds = useMemo(
     () => new Set(value.map((attachment) => attachment.namedHostId)),
@@ -52,32 +65,12 @@ export function ClientAttachmentsEditor({
     onChange(value.filter((_, i) => i !== index));
   };
 
-  const handleToggleOptional = (
-    index: number,
-    serverId: string,
-    enabled: boolean,
-  ) => {
-    onChange(
-      value.map((attachment, i) => {
-        if (i !== index) return attachment;
-        const current = new Set(attachment.enabledOptionalServerIds);
-        if (enabled) current.add(serverId);
-        else current.delete(serverId);
-        return {
-          ...attachment,
-          enabledOptionalServerIds: Array.from(current),
-        };
-      }),
-    );
-  };
-
   return (
     <div className="space-y-3">
       <div className="space-y-2">
         {value.length === 0 ? (
           <div className="rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
-            No hosts attached. Without a host, the suite runs against its
-            flat server list. Attach one or more hosts to fan runs out across
+            No hosts attached. Attach one or more hosts to fan runs out across
             them.
           </div>
         ) : (
@@ -86,12 +79,7 @@ export function ClientAttachmentsEditor({
               key={attachment.namedHostId}
               attachment={attachment}
               hostName={hostsById.get(attachment.namedHostId)?.name}
-              projectId={projectId}
-              isAuthenticated={isAuthenticated}
               onRemove={() => handleRemoveAttachment(index)}
-              onToggleOptional={(serverId, enabled) =>
-                handleToggleOptional(index, serverId, enabled)
-              }
               disabled={disabled}
             />
           ))
@@ -100,23 +88,45 @@ export function ClientAttachmentsEditor({
 
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Attach a client</Label>
-        <ClientPicker
-          projectId={projectId}
-          value={null}
-          onChange={handleAddHost}
-          location="eval_runner"
-          placeholder={
-            attachedIds.size === hosts.length && hosts.length > 0
-              ? "All clients attached"
-              : "Choose a client to attach"
-          }
-          includeNone={false}
-          disabled={
-            disabled ||
-            (attachedIds.size === hosts.length && hosts.length > 0)
-          }
-        />
+        <div className="flex items-center gap-2">
+          <div className="flex-1 min-w-0">
+            <ClientPicker
+              projectId={projectId}
+              value={null}
+              onChange={handleAddHost}
+              location="eval_runner"
+              placeholder={
+                attachedIds.size === hosts.length && hosts.length > 0
+                  ? "All clients attached"
+                  : "Choose a client to attach"
+              }
+              includeNone={false}
+              disabled={
+                disabled ||
+                (attachedIds.size === hosts.length && hosts.length > 0)
+              }
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setCreateDialogOpen(true)}
+            disabled={disabled}
+            className="shrink-0"
+          >
+            <Plus className="mr-1 h-4 w-4" />
+            Create new
+          </Button>
+        </div>
       </div>
+
+      <CreateClientDialog
+        isOpen={createDialogOpen}
+        onClose={() => setCreateDialogOpen(false)}
+        projectId={projectId}
+        onCreated={handleAddHost}
+      />
     </div>
   );
 }
@@ -124,76 +134,26 @@ export function ClientAttachmentsEditor({
 type HostAttachmentRowProps = {
   attachment: HostAttachmentDraft;
   hostName: string | undefined;
-  projectId: string;
-  isAuthenticated: boolean;
   onRemove: () => void;
-  onToggleOptional: (serverId: string, enabled: boolean) => void;
   disabled: boolean;
 };
 
 function HostAttachmentRow({
   attachment,
   hostName,
-  projectId,
-  isAuthenticated,
   onRemove,
-  onToggleOptional,
   disabled,
 }: HostAttachmentRowProps) {
-  const { host, isLoading } = useHost({
-    isAuthenticated,
-    hostId: attachment.namedHostId,
-  });
-  const { servers: projectServers = [] } = useProjectServers({
-    isAuthenticated,
-    projectId,
-  });
-
-  const enabledSet = useMemo(
-    () => new Set(attachment.enabledOptionalServerIds),
-    [attachment.enabledOptionalServerIds],
-  );
-
-  const optionalServers = useMemo(() => {
-    if (!host) return [];
-    return host.config.optionalServerIds.map((serverId) => {
-      const server = projectServers.find(
-        (candidate) => candidate._id === serverId,
-      );
-      return {
-        id: serverId,
-        name: server?.name ?? serverId,
-      };
-    });
-  }, [host, projectServers]);
-
-  const requiredServers = useMemo(() => {
-    if (!host) return [];
-    return host.config.serverIds.map((serverId) => {
-      const server = projectServers.find(
-        (candidate) => candidate._id === serverId,
-      );
-      return server?.name ?? serverId;
-    });
-  }, [host, projectServers]);
+  const displayName = hostName ?? attachment.namedHostId;
 
   return (
-    <div className="rounded-xl border bg-card/60 p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-foreground">
-              {hostName ?? host?.name ?? "Loading…"}
-            </span>
-            {isLoading ? (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            ) : null}
-          </div>
-          {requiredServers.length > 0 ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Always: {requiredServers.join(", ")}
-            </p>
-          ) : null}
+    <div className="rounded-xl border bg-card/60">
+      <div className="flex items-center justify-between gap-2 p-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate text-sm font-medium text-foreground">
+            {displayName}
+          </span>
         </div>
         <Button
           type="button"
@@ -201,39 +161,11 @@ function HostAttachmentRow({
           size="icon"
           onClick={onRemove}
           disabled={disabled}
-          aria-label={`Remove ${hostName ?? "host"}`}
+          aria-label={`Remove ${displayName}`}
         >
           <X className="h-4 w-4" />
         </Button>
       </div>
-
-      {optionalServers.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Optional servers
-          </Label>
-          <div className="space-y-1">
-            {optionalServers.map((server) => {
-              const isEnabled = enabledSet.has(server.id);
-              return (
-                <label
-                  key={server.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent/30"
-                >
-                  <Checkbox
-                    checked={isEnabled}
-                    onCheckedChange={(checked) =>
-                      onToggleOptional(server.id, checked === true)
-                    }
-                    disabled={disabled}
-                  />
-                  <span className="truncate">{server.name}</span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

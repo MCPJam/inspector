@@ -12,6 +12,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
+import { ChatboxServersSection } from "@/components/chatboxes/ChatboxServersSection";
 import { useChatboxByHostId } from "@/hooks/useChatboxes";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -273,6 +274,13 @@ export function ChatboxesTab({
                   </Button>
                 ) : null}
               </div>
+              <ChatboxServersSection
+                chatboxId={chatbox.chatboxId}
+                projectId={chatbox.projectId}
+                hostId={chatbox.namedHostId}
+                isAuthenticated={effectiveAuth}
+                currentServerIds={chatbox.servers.map((s) => s.serverId)}
+              />
               <ChatboxShareSection chatbox={chatbox} />
             </div>
           </div>

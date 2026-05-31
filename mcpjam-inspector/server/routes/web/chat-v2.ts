@@ -35,6 +35,7 @@ import {
   stampSenderUserIdsOnSessionMessages,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
+import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
@@ -413,6 +414,30 @@ chatV2.post("/", async (c) => {
               turnTrace: PersistedTurnTrace
             ) => {
               const isDirectChat = !isChatboxSession;
+              // Capture the live tool catalog the chat saw, so the backend
+              // can fan it out to per-server `serverInspections` rows. Runs
+              // in the post-stream cleanup so its N concurrent listTools
+              // round-trips don't add latency to the user-visible response.
+              // Unknown ids (server disconnected mid-chat) are filtered out
+              // so the snapshot doesn't end up `partial` and get rejected.
+              // Defensive: a snapshot failure must never block the persist.
+              let toolSnapshot: unknown;
+              try {
+                const knownIds =
+                  typeof manager.hasServer === "function"
+                    ? selectedServerIds.filter((id) => manager.hasServer(id))
+                    : selectedServerIds;
+                if (knownIds.length > 0) {
+                  toolSnapshot =
+                    await exportConnectedServerToolSnapshotForEvalAuthoring(
+                      manager,
+                      knownIds,
+                      { logPrefix: "chat-v2.persist" }
+                    );
+                }
+              } catch {
+                toolSnapshot = undefined;
+              }
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId,
@@ -431,6 +456,7 @@ chatV2.post("/", async (c) => {
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
+                ...(toolSnapshot ? { toolSnapshot } : {}),
                 ...(isDirectChat
                   ? {
                       directVisibility: body.directVisibility,
@@ -563,6 +589,23 @@ chatV2.post("/", async (c) => {
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory, turnTrace) => {
               const isDirectChat = !isChatboxSession;
+              let toolSnapshot: unknown;
+              try {
+                const knownIds =
+                  typeof manager.hasServer === "function"
+                    ? selectedServerIds.filter((id) => manager.hasServer(id))
+                    : selectedServerIds;
+                if (knownIds.length > 0) {
+                  toolSnapshot =
+                    await exportConnectedServerToolSnapshotForEvalAuthoring(
+                      manager,
+                      knownIds,
+                      { logPrefix: "chat-v2.persist" }
+                    );
+                }
+              } catch {
+                toolSnapshot = undefined;
+              }
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
@@ -580,6 +623,7 @@ chatV2.post("/", async (c) => {
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
+                ...(toolSnapshot ? { toolSnapshot } : {}),
                 ...(isDirectChat
                   ? {
                       directVisibility: body.directVisibility,
