@@ -210,6 +210,27 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     }
   }, [editedName, suite.name, suite._id, updateSuite]);
 
+  const handleServerAttachmentUpdate = useCallback(
+    async (serverAttachmentId: string) => {
+      // Picker calls this synchronously inside onClick — don't rethrow,
+      // or the unawaited promise becomes an unhandled rejection. The
+      // toast is the user-facing signal; the suite row will reconcile
+      // from the live Convex subscription on retry.
+      try {
+        await updateSuite({
+          suiteId: suite._id,
+          serverAttachmentId,
+        });
+        toast.success("Server attachment updated");
+      } catch (error) {
+        toast.error(
+          getBillingErrorMessage(error, "Failed to update server attachment"),
+        );
+      }
+    },
+    [suite._id, updateSuite],
+  );
+
   const handleNameKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") {
@@ -389,6 +410,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       projectHosts={projectHosts}
       readOnly={readOnlyConfig}
       onUpdate={onSuiteHostAttachmentsUpdate}
+      onUpdateServerAttachment={handleServerAttachmentUpdate}
     />
   );
 
