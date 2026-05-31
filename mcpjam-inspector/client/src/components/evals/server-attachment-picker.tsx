@@ -60,10 +60,15 @@ export function ServerAttachmentPicker({
   );
 
   const selectedAttachment = useMemo(() => {
-    if (!value) return null;
-    const fromQuery = serverAttachments.find((s) => s._id === value);
+    // `value` lags behind onChange when the parent persists through a
+    // remote mutation (e.g. suite overview bar → updateSuite). Fall
+    // back to justCreated._id so the trigger reflects the new
+    // attachment immediately instead of flashing the amber state.
+    const effectiveId = value ?? justCreated?._id ?? null;
+    if (!effectiveId) return null;
+    const fromQuery = serverAttachments.find((s) => s._id === effectiveId);
     if (fromQuery) return fromQuery;
-    if (justCreated && justCreated._id === value) return justCreated;
+    if (justCreated && justCreated._id === effectiveId) return justCreated;
     return null;
   }, [value, serverAttachments, justCreated]);
 
@@ -235,8 +240,11 @@ export function ServerAttachmentPicker({
         ) : (
           <div className="space-y-3 p-1">
             <div className="space-y-1">
-              <Label className="text-[11px]">Attachment name</Label>
+              <Label htmlFor="server-attachment-name" className="text-[11px]">
+                Attachment name
+              </Label>
               <Input
+                id="server-attachment-name"
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
                 placeholder="e.g. Production servers"
