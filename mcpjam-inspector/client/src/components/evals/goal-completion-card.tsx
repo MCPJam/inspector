@@ -53,7 +53,14 @@ function parseThreshold(input: string): number {
 }
 
 function formatScore(score: number): string {
-  return `${Math.round(clampThreshold(score) * 100)}%`;
+  // Don't route the score through clampThreshold: its NaN→DEFAULT_THRESHOLD
+  // fallback is right for the threshold input but would render a corrupt/NaN
+  // score as "70%" (the pass cutoff). Show a neutral dash instead, and clamp
+  // finite scores into [0,1].
+  if (!Number.isFinite(score)) {
+    return "—";
+  }
+  return `${Math.round(Math.min(1, Math.max(0, score)) * 100)}%`;
 }
 
 function ScoreBadge({ passed }: { passed: boolean }) {
