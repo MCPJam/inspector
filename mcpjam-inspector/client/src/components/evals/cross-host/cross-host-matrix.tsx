@@ -4,6 +4,11 @@ import {
   runCaseListHeadClassName,
   runCaseTitleClassName,
 } from "../run-case-list-shared";
+import {
+  evalSurfaceCellClass,
+  evalSurfaceHeaderClass,
+  evalSurfaceRowHoverClass,
+} from "../eval-surface-chrome";
 import { HostCell } from "./host-cell";
 import type { CrossHostData, HostColumn } from "./use-cross-host-data";
 
@@ -62,7 +67,8 @@ export function CrossHostMatrix({
           <tr className={runCaseListHeadClassName}>
             <th
               className={cn(
-                "sticky left-0 z-20 min-w-[14rem] border-b border-r border-border/60 bg-muted/60 text-left",
+                "sticky left-0 z-20 min-w-[14rem] border-b border-r border-border/60 text-left",
+                evalSurfaceHeaderClass,
                 runCaseTitleClassName,
                 "px-4 py-2.5 font-sans text-base font-semibold normal-case tracking-normal text-foreground sm:text-lg",
               )}
@@ -75,7 +81,10 @@ export function CrossHostMatrix({
             {hostColumns.map((col) => (
               <th
                 key={col.hostId}
-                className="border-b border-r border-border/60 bg-muted/60 text-center align-bottom"
+                className={cn(
+                  "border-b border-r border-border/60 text-center align-bottom",
+                  evalSurfaceHeaderClass,
+                )}
               >
                 <HostColumnHeader col={col} />
               </th>
@@ -91,9 +100,8 @@ export function CrossHostMatrix({
                 key={row.caseId}
                 data-testid={`test-case-row-${row.caseId}`}
                 className={cn(
-                  "transition-colors",
-                  onTestCaseClick &&
-                    "cursor-pointer hover:bg-muted/50 focus-within:bg-muted/50",
+                  onTestCaseClick && "cursor-pointer",
+                  onTestCaseClick && evalSurfaceRowHoverClass,
                 )}
                 tabIndex={onTestCaseClick ? 0 : undefined}
                 role={onTestCaseClick ? "button" : undefined}
@@ -125,7 +133,10 @@ export function CrossHostMatrix({
                 {hostColumns.map((col) => (
                   <td
                     key={col.hostId}
-                    className="border-r border-border/40 align-top bg-background/50"
+                    className={cn(
+                      "border-r border-border/50 align-top",
+                      evalSurfaceCellClass,
+                    )}
                   >
                     <HostCell data={byHost?.get(col.hostId)} />
                   </td>

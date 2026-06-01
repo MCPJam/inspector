@@ -32,18 +32,33 @@ function iterationOutcome(iteration: EvalIteration): RunCaseIterationOutcome {
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
+  return String(Math.round(n));
 }
 
-function formatLatencyPair(p50Ms: number | null, p95Ms: number | null): string | null {
-  const parts: string[] = [];
-  if (p50Ms !== null) {
-    parts.push(`p50 ${formatRunCaseLatencyMs(p50Ms)}`);
-  }
-  if (p95Ms !== null) {
-    parts.push(`p95 ${formatRunCaseLatencyMs(p95Ms)}`);
-  }
-  return parts.length > 0 ? parts.join(" · ") : null;
+function HostCellMetric({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col items-center gap-0.5 text-center">
+      <span className="font-mono text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/90">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "font-mono text-[11px] font-medium tabular-nums leading-none text-foreground/90",
+          valueClassName,
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
 }
 
 export function HostCell({ data }: HostCellProps) {
@@ -60,13 +75,34 @@ export function HostCell({ data }: HostCellProps) {
     );
   }
 
-  const accuracy =
+  const accuracyLabel =
     data.passRate !== null ? `${Math.round(data.passRate)}%` : null;
-  const latencyLine = formatLatencyPair(data.p50LatencyMs, data.p95LatencyMs);
-  const tokenLine = data.totalTokens > 0 ? `${formatTokens(data.totalTokens)} tok` : null;
-  const detailParts = [latencyLine, tokenLine].filter(
-    (part): part is string => part != null,
-  );
+  const accuracyBadge =
+    accuracyLabel != null ? (
+      <span
+        className={cn(
+          "font-mono text-xs font-semibold tabular-nums leading-none",
+          passRateColorClass(data.passRate),
+        )}
+      >
+        {accuracyLabel}
+      </span>
+    ) : null;
+
+  const p50Value =
+    data.p50LatencyMs !== null
+      ? formatRunCaseLatencyMs(data.p50LatencyMs)
+      : null;
+  const p95Value =
+    data.p95LatencyMs !== null
+      ? formatRunCaseLatencyMs(data.p95LatencyMs)
+      : null;
+  const avgTokensValue =
+    data.avgTokensPerIteration !== null
+      ? `${formatTokens(data.avgTokensPerIteration)} tok`
+      : null;
+
+  const hasMetrics = p50Value || p95Value || avgTokensValue;
 
   return (
     <div className="flex min-h-[4.5rem] flex-col gap-2 px-3 py-2.5">
@@ -75,24 +111,32 @@ export function HostCell({ data }: HostCellProps) {
         passed={data.passCount}
         total={data.totalCount}
         maxVisible={8}
+        headerEnd={accuracyBadge}
       />
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        {accuracy ? (
-          <span
-            className={cn(
-              "font-mono text-xs font-semibold tabular-nums",
-              passRateColorClass(data.passRate),
-            )}
-          >
-            {accuracy}
-          </span>
-        ) : null}
-        {detailParts.length > 0 ? (
-          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-            {detailParts.join(" · ")}
-          </span>
-        ) : null}
-      </div>
+      {hasMetrics ? (
+        <div
+          className="grid w-full grid-cols-3 gap-1 border-t border-border/50 pt-2"
+          aria-label="Latency and token metrics"
+        >
+          <HostCellMetric
+            label="p50"
+            value={p50Value ?? "—"}
+            valueClassName={!p50Value ? "text-muted-foreground/50" : undefined}
+          />
+          <HostCellMetric
+            label="p95"
+            value={p95Value ?? "—"}
+            valueClassName={!p95Value ? "text-muted-foreground/50" : undefined}
+          />
+          <HostCellMetric
+            label="avg"
+            value={avgTokensValue ?? "—"}
+            valueClassName={
+              !avgTokensValue ? "text-muted-foreground/50" : undefined
+            }
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

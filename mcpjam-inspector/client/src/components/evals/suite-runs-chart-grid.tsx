@@ -11,6 +11,10 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis 
 import type { DotProps } from "recharts";
 import { passRateColorClass } from "./suite-overview-presentation";
 import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
+import {
+  evalSurfaceCardClass,
+  evalSurfaceHeaderClass,
+} from "./eval-surface-chrome";
 
 const modelChartConfig = {
   passRate: {
@@ -207,9 +211,14 @@ export function SuiteRunsChartGrid({
 
   return (
     <div className={cn("grid gap-4", showModelChart && "lg:grid-cols-2")}>
-      <div className="rounded-xl border bg-card text-card-foreground">
-        <div className="px-4 pt-3 pb-2">
-          <div className="text-xs font-medium text-muted-foreground">
+      <div className={evalSurfaceCardClass}>
+        <div
+          className={cn(
+            evalSurfaceHeaderClass,
+            "rounded-t-2xl px-4 py-2.5",
+          )}
+        >
+          <div className="text-xs font-semibold tracking-tight text-foreground">
             {isSdk ? "Pass rate" : "Suite accuracy"}
           </div>
         </div>
@@ -225,7 +234,7 @@ export function SuiteRunsChartGrid({
               <div className="flex shrink-0 flex-col justify-center">
                 <span
                   className={cn(
-                    "text-4xl font-bold tabular-nums tracking-tight",
+                    "font-metric text-4xl font-bold tabular-nums tracking-tight",
                     passRateColorClass(latest.passRate),
                   )}
                 >
@@ -340,9 +349,14 @@ export function SuiteRunsChartGrid({
       </div>
 
       {showModelChart ? (
-        <div className="rounded-xl border bg-card text-card-foreground">
-          <div className="px-4 pt-3 pb-2">
-            <div className="text-xs font-medium text-muted-foreground">
+        <div className={evalSurfaceCardClass}>
+          <div
+            className={cn(
+              evalSurfaceHeaderClass,
+              "rounded-t-2xl px-4 py-2.5",
+            )}
+          >
+            <div className="text-xs font-semibold tracking-tight text-foreground">
               Performance by model
             </div>
           </div>

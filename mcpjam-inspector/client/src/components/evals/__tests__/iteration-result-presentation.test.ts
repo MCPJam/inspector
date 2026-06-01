@@ -60,14 +60,14 @@ describe("getIterationResultBadgeClass", () => {
           status: "completed",
         }),
       ),
-    ).toContain("rose");
+    ).toContain("red-800");
   });
 });
 
 describe("suitePassCriteriaCompactBadgeClassNames", () => {
-  it("uses rose styling for failed suite outcome", () => {
+  it("uses chart-aligned red styling for failed suite outcome", () => {
     const classes = suitePassCriteriaCompactBadgeClassNames("failed");
-    expect(classes).toContain("rose");
+    expect(classes).toContain("red-800");
     expect(classes).toContain("text-[10px]");
   });
 

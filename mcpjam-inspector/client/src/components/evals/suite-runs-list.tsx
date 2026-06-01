@@ -20,6 +20,11 @@ import {
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";
+import {
+  evalSurfaceCardClass,
+  evalSurfaceHeaderClass,
+  evalSurfaceRowHoverClass,
+} from "./eval-surface-chrome";
 
 /** Shared column template: run label flexes; Acc/Dur/Time share equal width. */
 const RUNS_LIST_ROW_GRID =
@@ -93,15 +98,13 @@ export function SuiteRunsList({
 
   return (
     <div
-      className={cn(
-        "flex min-h-0 flex-col rounded-xl border bg-card text-card-foreground",
-        className,
-      )}
+      className={cn("flex min-h-0 flex-col", evalSurfaceCardClass, className)}
     >
       <div
         className={cn(
           RUNS_LIST_ROW_GRID,
-          "shrink-0 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground",
+          evalSurfaceHeaderClass,
+          "shrink-0 rounded-t-2xl px-4 py-2 text-xs font-medium text-muted-foreground",
         )}
       >
         <div className="min-w-0 truncate">Run</div>
@@ -181,7 +184,8 @@ export function SuiteRunsList({
                   onClick={() => onRunClick(run._id)}
                   className={cn(
                     RUNS_LIST_ROW_GRID,
-                    "px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+                    "px-4 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+                    evalSurfaceRowHoverClass,
                   )}
                   aria-label={`Open run ${formatRunId(run._id)}`}
                 >

@@ -20,7 +20,8 @@ export type CellData = {
   p50LatencyMs: number | null;
   /** 95th percentile latency across completed iterations in this cell, in ms. */
   p95LatencyMs: number | null;
-  totalTokens: number;
+  /** Mean `tokensUsed` per iteration in this cell (all iterations in the latest run). */
+  avgTokensPerIteration: number | null;
 };
 
 export type CrossHostData = {
@@ -99,6 +100,8 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   const passRate = completed > 0 ? (passCount / completed) * 100 : null;
   const p50LatencyMs = median(latencySamples);
   const p95LatencyMs = percentile(latencySamples, 95);
+  const avgTokensPerIteration =
+    totalCount > 0 && totalTokens > 0 ? totalTokens / totalCount : null;
 
   return {
     iterations,
@@ -109,7 +112,7 @@ function buildCellData(iterations: EvalIteration[]): CellData {
     passRate,
     p50LatencyMs,
     p95LatencyMs,
-    totalTokens,
+    avgTokensPerIteration,
   };
 }
 

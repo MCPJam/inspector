@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { Network } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
+import { cn } from "@/lib/utils";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
+import { evalSurfaceCardClass } from "../eval-surface-chrome";
 import { CrossHostMatrix } from "./cross-host-matrix";
 import { useCrossHostData } from "./use-cross-host-data";
 
@@ -117,7 +119,7 @@ export function CrossHostDashboard({
         className={
           expanded
             ? "min-h-0 flex-1 overflow-hidden"
-            : "overflow-hidden rounded-xl border bg-card"
+            : cn("overflow-hidden", evalSurfaceCardClass)
         }
       >
         <CrossHostMatrix

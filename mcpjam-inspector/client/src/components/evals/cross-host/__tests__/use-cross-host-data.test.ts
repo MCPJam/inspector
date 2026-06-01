@@ -141,6 +141,30 @@ describe("useCrossHostData", () => {
     expect(c2Cell?.failCount).toBe(1);
   });
 
+  it("computes average tokens per iteration in a cell", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const run = makeRun("r1", "h1");
+    const iter1 = makeIteration("i1", {
+      suiteRunId: "r1",
+      testCaseId: "c1",
+      result: "passed",
+    });
+    const iter2 = {
+      ...makeIteration("i2", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      tokensUsed: 300,
+    } as EvalIteration;
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [run], [iter1, iter2]),
+    );
+    const cell = result.current.matrix.get("c1")?.get("h1");
+    expect(cell?.avgTokensPerIteration).toBe(200);
+  });
+
   it("adds historical fallback column for namedHostId no longer attached", () => {
     const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
     const cases = [makeCase("c1")];
