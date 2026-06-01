@@ -30,7 +30,9 @@ To start testing your MCP server:
 5. **Run Tests** - Click Run to execute all test cases, or run individual tests from the test case view
 
 <Info>
-  When using auto-generate, Claude Haiku creates realistic test scenarios from your tool definitions, including both positive cases (tools that should be called) and negative cases (tools that should NOT be called).
+  When using auto-generate, the AI generates realistic test scenarios from your tool definitions, including both positive cases (tools that should be called) and negative cases (tools that should NOT be called).
+
+  If your suite has a saved server attachment with two or more servers, the generator automatically produces coverage for each server individually **and** at least one cross-server case that chains tools across both servers. Suites without a saved attachment fall back to the previous behavior (all available servers treated as a single pool).
 </Info>
 
 ## Test Case Structure
