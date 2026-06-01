@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -120,14 +121,12 @@ export function CreditTopupDialog({
                         : "border-border hover:border-foreground/40"
                     )}
                   >
-                    <span className="text-lg font-semibold leading-tight">
+                    <span className="flex items-center gap-1 text-lg font-semibold leading-tight">
+                      <CoinStackIcon aria-hidden="true" className="size-4" />
                       {creditsAmount}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       credits
-                    </span>
-                    <span className="mt-0.5 text-xs text-muted-foreground">
-                      {preset.displayPrice}
                     </span>
                   </button>
                 );

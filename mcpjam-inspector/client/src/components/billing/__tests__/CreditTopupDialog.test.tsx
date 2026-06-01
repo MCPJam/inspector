@@ -73,13 +73,13 @@ describe("CreditTopupDialog", () => {
     );
 
     expect(
-      screen.getByRole("radio", { name: /500.*\$5/ })
+      screen.getByRole("radio", { name: /500\s*credits/ })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: /1,000.*\$10/ })
+      screen.getByRole("radio", { name: /1,000\s*credits/ })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: /2,000.*\$20/ })
+      screen.getByRole("radio", { name: /2,000\s*credits/ })
     ).toBeInTheDocument();
   });
 
@@ -96,7 +96,7 @@ describe("CreditTopupDialog", () => {
     );
 
     expect(
-      screen.getByRole("radio", { name: /500.*\$5/ })
+      screen.getByRole("radio", { name: /500\s*credits/ })
     ).toHaveAttribute("aria-checked", "true");
     expect(
       screen.getByText(/Add credits to your organization/)
@@ -131,7 +131,7 @@ describe("CreditTopupDialog", () => {
     );
 
     await user.click(
-      screen.getByRole("radio", { name: /1,000.*\$10/ })
+      screen.getByRole("radio", { name: /1,000\s*credits/ })
     );
     await user.click(
       screen.getByRole("button", { name: /Continue with \$10/ })
@@ -164,7 +164,7 @@ describe("CreditTopupDialog", () => {
     );
 
     await user.click(
-      screen.getByRole("radio", { name: /1,000.*\$10/ })
+      screen.getByRole("radio", { name: /1,000\s*credits/ })
     );
     await user.click(
       screen.getByRole("button", { name: /Continue with \$10/ })
@@ -211,7 +211,7 @@ describe("CreditTopupDialog", () => {
 
     expect(screen.getByText(/Loading amounts/)).toBeInTheDocument();
     expect(
-      screen.queryByRole("radio", { name: /500.*\$5/ })
+      screen.queryByRole("radio", { name: /500\s*credits/ })
     ).not.toBeInTheDocument();
   });
 

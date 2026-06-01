@@ -17,6 +17,7 @@ import {
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
@@ -33,6 +34,7 @@ export function MCPJamLimitDialog() {
   // first by useOrganizationQueries.
   const { sortedOrganizations } = useOrganizationQueries({ isAuthenticated });
   const appNavigate = useAppNavigate();
+  const creditsUiEnabled = useCreditTopupsUiEnabled();
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
@@ -67,7 +69,7 @@ export function MCPJamLimitDialog() {
   const isKnownNonManager = billingOrg
     ? !canManageOrgCredits(billingOrg)
     : false;
-  const canBuyCredits = !isKnownNonManager;
+  const canBuyCredits = creditsUiEnabled && !isKnownNonManager;
 
   const handleTopUp = () => {
     const orgId = resolveBillingOrgId();
@@ -129,7 +131,7 @@ export function MCPJamLimitDialog() {
             <DialogHeader>
               <DialogTitle>You've hit the org free credit limit</DialogTitle>
               <DialogDescription data-testid="limit-dialog-description">
-                {isKnownNonManager
+                {creditsUiEnabled && isKnownNonManager
                   ? "Ask your org admin to top up credits."
                   : canBuyCredits
                   ? "Top up or bring your own key to allow your org to keep using MCPJam."

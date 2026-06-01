@@ -6,7 +6,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
+import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 import { formatCreditResetText } from "@/lib/credit-usage";
 import { cn } from "@/lib/utils";
 
@@ -25,10 +27,16 @@ export function SidebarCreditUsage({
   variant = "strip",
   onClick,
 }: SidebarCreditUsageProps = {}) {
+  const creditsUiEnabled = useCreditTopupsUiEnabled();
   const { balance, isLoading, hasWorkOsUser } = useCreditBalance({
     organizationId,
     includeGuests,
+    enabled: creditsUiEnabled,
   });
+
+  if (!creditsUiEnabled) {
+    return null;
+  }
 
   if (!isLoading && !balance) {
     return null;
@@ -74,6 +82,8 @@ export function SidebarCreditUsage({
               : 0
           }
           isLoading={isLoading}
+          // Signed-in only — guests don't get the coin accent.
+          showCoin={hasWorkOsUser}
           testId="sidebar-usage-daily"
         />
         {variant === "full" && !isLoading && hasPaidHistory && balance ? (
@@ -84,6 +94,7 @@ export function SidebarCreditUsage({
             // Absolute credit count, not a percentage — render no progress
             // bar (a permanently 0%-filled bar reads as a bug).
             showBar={false}
+            showCoin
             fillPercent={0}
             isLoading={false}
             testId="sidebar-usage-paid"
@@ -142,6 +153,8 @@ interface SidebarUsageRowProps {
   testId: string;
   /** Render the progress bar. Off for absolute counts with no denominator. */
   showBar?: boolean;
+  /** Prefix the value with a coin icon — used for credit-balance amounts. */
+  showCoin?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
@@ -155,6 +168,7 @@ function SidebarUsageRow({
   isLoading,
   testId,
   showBar = true,
+  showCoin = false,
   tooltip,
 }: SidebarUsageRowProps) {
   return (
@@ -187,8 +201,17 @@ function SidebarUsageRow({
             </Tooltip>
           ) : null}
         </span>
-        <span className="shrink-0 text-muted-foreground">
-          {isLoading ? <Skeleton className="h-3 w-12" /> : percentText}
+        <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+          {isLoading ? (
+            <Skeleton className="h-3 w-12" />
+          ) : (
+            <>
+              {showCoin ? (
+                <CoinStackIcon aria-hidden="true" className="size-3 shrink-0" />
+              ) : null}
+              {percentText}
+            </>
+          )}
         </span>
       </div>
       {showBar ? (

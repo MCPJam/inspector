@@ -16,12 +16,17 @@ let balanceState:
     }
   | undefined = undefined;
 let isLoadingState = false;
+let creditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
     balance: balanceState,
     isLoading: isLoadingState,
   }),
+}));
+
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditsFlagState,
 }));
 
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
@@ -57,7 +62,15 @@ describe("CreditBalanceCard", () => {
       walletLocked: false,
     };
     isLoadingState = false;
+    creditsFlagState = true;
     window.location.hash = "";
+  });
+
+  it("renders nothing when the credits UI flag is off", () => {
+    creditsFlagState = false;
+    const { container } = render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders a skeleton state while balance is loading", () => {

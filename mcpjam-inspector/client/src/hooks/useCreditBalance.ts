@@ -54,11 +54,13 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
 interface UseCreditBalanceOptions {
   organizationId?: string | null;
   includeGuests?: boolean;
+  enabled?: boolean;
 }
 
 export function useCreditBalance({
   organizationId,
   includeGuests = false,
+  enabled = true,
 }: UseCreditBalanceOptions = {}) {
   const { isAuthenticated: hasConvexIdentity, isLoading: isConvexAuthLoading } =
     useConvexAuth();
@@ -66,6 +68,7 @@ export function useCreditBalance({
   const hasWorkOsUser = !!user;
   const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
   const shouldFetchBalance =
+    enabled &&
     !isAuthLoading &&
     hasConvexIdentity &&
     (hasWorkOsUser ? !!organizationId : includeGuests);
@@ -81,7 +84,8 @@ export function useCreditBalance({
   const balance = useMemo(() => normalizeBalance(raw), [raw]);
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
-  const isLoading = isAuthLoading || (shouldFetchBalance && raw === undefined);
+  const isLoading =
+    enabled && (isAuthLoading || (shouldFetchBalance && raw === undefined));
   return {
     balance,
     isLoading,

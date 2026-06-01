@@ -78,6 +78,7 @@ import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrent
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
 import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
+import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -385,10 +386,12 @@ function OrganizationPage({
     "billing-entitlements-ui"
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const creditsUiEnabled = useCreditTopupsUiEnabled();
+  const billingSectionEnabled = billingUiEnabled || creditsUiEnabled;
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
-      : section === "billing"
+      : billingSectionEnabled && section === "billing"
       ? "billing"
       : "overview";
   const memberInviteGate = resolveBillingGateState({
@@ -995,19 +998,21 @@ function OrganizationPage({
             >
               Models
             </button>
-            <button
-              type="button"
-              onClick={() => navigateToSection("billing")}
-              aria-current={activeSection === "billing" ? "page" : undefined}
-              className={cn(
-                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                activeSection === "billing"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Billing
-            </button>
+            {billingSectionEnabled ? (
+              <button
+                type="button"
+                onClick={() => navigateToSection("billing")}
+                aria-current={activeSection === "billing" ? "page" : undefined}
+                className={cn(
+                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                  activeSection === "billing"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Billing
+              </button>
+            ) : null}
           </nav>
         </Card>
 
@@ -1021,6 +1026,7 @@ function OrganizationPage({
             <OrganizationBillingSection
               organizationId={organization._id}
               showPlanBilling={billingUiEnabled}
+              showCredits={creditsUiEnabled}
               billingStatus={billingStatus}
               organizationName={organization.name}
               canManageCredits={canEdit || organization.isCreator === true}
@@ -1195,20 +1201,30 @@ function OrganizationPage({
               </CardContent>
             </Card>
 
-            {billingUiEnabled ? (
+            {billingSectionEnabled ? (
               <Card className="border-border/60">
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center gap-2 text-xl">
                     <CreditCard className="size-4 text-muted-foreground" />
-                    Billing
+                    {billingUiEnabled ? "Billing" : "Credits"}
                   </CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Review your plan here or open the billing view for the full
-                    pricing matrix, checkout, and subscription management.
+                    {billingUiEnabled
+                      ? "Review your plan here or open the billing view for the full pricing matrix, checkout, and subscription management."
+                      : "Review shared organization credits and buy more credits."}
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-3 pt-0">
-                  {isLoadingBilling ? (
+                  {!billingUiEnabled ? (
+                    <Button
+                      size="default"
+                      className="h-10 px-5"
+                      variant="outline"
+                      onClick={handleViewBilling}
+                    >
+                      View credits
+                    </Button>
+                  ) : isLoadingBilling ? (
                     <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
                       Loading billing details...
                     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Info } from "lucide-react";
+import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -14,6 +15,7 @@ import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { formatCreditResetText } from "@/lib/credit-usage";
+import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
 /** Pulls the limit-modal redirect flag out of the current URL and clears it
@@ -49,7 +51,11 @@ export function CreditBalanceCard({
   canManageCredits = false,
   chatSessionId,
 }: CreditBalanceCardProps = {}) {
-  const { balance, isLoading } = useCreditBalance({ organizationId });
+  const creditsUiEnabled = useCreditTopupsUiEnabled();
+  const { balance, isLoading } = useCreditBalance({
+    organizationId,
+    enabled: creditsUiEnabled,
+  });
   const [isTopupOpen, setIsTopupOpen] = useState(false);
   const [topupSource, setTopupSource] =
     useState<CreditTopupSource>("billing_page");
@@ -63,22 +69,24 @@ export function CreditBalanceCard({
   // reopen the dialog. Source is recorded as `limit_modal` so the funnel can
   // attribute the top-up back to the limit-hit that triggered the redirect.
   useEffect(() => {
+    if (!creditsUiEnabled) return;
     if (consumeTopupFlag()) {
       setArrivedFromLimitModal(true);
     }
-  }, []);
+  }, [creditsUiEnabled]);
 
   // Open the dialog only once we know the user can manage credits. A member
   // who can't top up keeps `arrivedFromLimitModal` true and instead sees the
   // "ask an admin" hint below — not a silent dead-end where the flag was
   // consumed but nothing happened.
   useEffect(() => {
+    if (!creditsUiEnabled) return;
     if (arrivedFromLimitModal && canManageCredits) {
       setTopupSource("limit_modal");
       setIsTopupOpen(true);
       setArrivedFromLimitModal(false);
     }
-  }, [arrivedFromLimitModal, canManageCredits]);
+  }, [arrivedFromLimitModal, canManageCredits, creditsUiEnabled]);
 
   const handleManualTopup = () => {
     setTopupSource("billing_page");
@@ -86,6 +94,8 @@ export function CreditBalanceCard({
   };
 
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
+
+  if (!creditsUiEnabled) return null;
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">
@@ -146,20 +156,20 @@ export function CreditBalanceCard({
                 100
           }
           isLoading={isLoading}
+          showCoin
           testId="usage-daily"
         />
 
         {!isLoading && hasPaidHistory && balance && (
           <div
-            className="rounded-md border border-border/60 bg-muted/20 px-3 py-2"
+            className="flex items-center justify-between gap-2"
             data-testid="usage-paid"
           >
-            <p className="text-xs font-medium text-muted-foreground">
-              Shared paid credits
-            </p>
-            <p className="mt-1 text-lg font-semibold">
+            <span className="text-xs font-medium">Shared paid credits</span>
+            <span className="flex items-center gap-1 text-xs font-medium">
+              <CoinStackIcon aria-hidden="true" className="size-3" />
               {balance.availableCredits.toLocaleString()} credits
-            </p>
+            </span>
           </div>
         )}
 
@@ -197,6 +207,8 @@ interface UsageRowProps {
   fillPercent: number;
   isLoading: boolean;
   testId?: string;
+  /** Prefix the value with a coin icon — matches the credit-amount rows. */
+  showCoin?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
@@ -207,6 +219,7 @@ function UsageRow({
   fillPercent,
   isLoading,
   testId,
+  showCoin = false,
   tooltip,
 }: UsageRowProps) {
   return (
@@ -233,11 +246,16 @@ function UsageRow({
             </Tooltip>
           ) : null}
         </span>
-        <span className="text-muted-foreground">
+        <span className="flex items-center gap-1 text-muted-foreground">
           {isLoading || rightText == null ? (
             <Skeleton className="h-3 w-24" />
           ) : (
-            rightText
+            <>
+              {showCoin ? (
+                <CoinStackIcon aria-hidden="true" className="size-3" />
+              ) : null}
+              {rightText}
+            </>
           )}
         </span>
       </div>

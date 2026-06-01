@@ -15,6 +15,7 @@ let balanceState:
   | undefined;
 let isLoadingState = false;
 let hasWorkOsUserState = true;
+let creditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -22,6 +23,10 @@ vi.mock("@/hooks/useCreditBalance", () => ({
     isLoading: isLoadingState,
     hasWorkOsUser: hasWorkOsUserState,
   }),
+}));
+
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditsFlagState,
 }));
 
 describe("SidebarCreditUsage", () => {
@@ -39,6 +44,7 @@ describe("SidebarCreditUsage", () => {
     };
     isLoadingState = false;
     hasWorkOsUserState = true;
+    creditsFlagState = true;
   });
 
   afterEach(() => {
@@ -54,6 +60,14 @@ describe("SidebarCreditUsage", () => {
     expect(dailyRow).toHaveTextContent("36 / 300");
     expect(dailyRow).toHaveTextContent("resets in 3h");
     expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when the credits UI flag is off", () => {
+    creditsFlagState = false;
+
+    const { container } = render(<SidebarCreditUsage />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("keeps the sidebar strip focused on daily limits for paid users", () => {

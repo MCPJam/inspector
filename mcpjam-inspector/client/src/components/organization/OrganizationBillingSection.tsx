@@ -422,6 +422,7 @@ function BillingIntervalToggle({
 interface OrganizationBillingSectionProps {
   organizationId: string;
   showPlanBilling: boolean;
+  showCredits: boolean;
   billingStatus: OrganizationBillingStatus | undefined;
   organizationName: string;
   canManageCredits: boolean;
@@ -450,6 +451,7 @@ interface OrganizationBillingSectionProps {
 export function OrganizationBillingSection({
   organizationId,
   showPlanBilling,
+  showCredits,
   billingStatus,
   organizationName,
   canManageCredits,
@@ -465,7 +467,7 @@ export function OrganizationBillingSection({
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
-  useCreditTopupReturnFlowBilling();
+  useCreditTopupReturnFlowBilling({ enabled: showCredits });
 
   const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
@@ -679,19 +681,23 @@ export function OrganizationBillingSection({
         ) : null}
       </Dialog>
 
-      <ErrorBoundary fallback={null}>
-        <CreditBalanceCard
-          organizationId={organizationId}
-          canManageCredits={canManageCredits}
-        />
-      </ErrorBoundary>
+      {showCredits ? (
+        <>
+          <ErrorBoundary fallback={null}>
+            <CreditBalanceCard
+              organizationId={organizationId}
+              canManageCredits={canManageCredits}
+            />
+          </ErrorBoundary>
 
-      <ErrorBoundary fallback={null}>
-        <PaymentsHistorySection
-          organizationId={organizationId}
-          canViewHistory={canManageCredits}
-        />
-      </ErrorBoundary>
+          <ErrorBoundary fallback={null}>
+            <PaymentsHistorySection
+              organizationId={organizationId}
+              canViewHistory={canManageCredits}
+            />
+          </ErrorBoundary>
+        </>
+      ) : null}
 
       {showPlanBilling ? (
         <>
