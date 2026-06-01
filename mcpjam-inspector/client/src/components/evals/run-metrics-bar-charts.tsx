@@ -1,18 +1,15 @@
-import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
+import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip } from "@/components/ui/chart";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "./helpers";
+import type { DurationChartDatum, TokensChartDatum } from "./run-chart-data";
+import {
+  runDetailSectionLabelClass,
+  runDetailSupportingClass,
+} from "./run-detail-typography";
 
-export type DurationDatum = {
-  name: string;
-  duration: number;
-  durationSeconds: number;
-};
-
-export type TokensDatum = {
-  name: string;
-  tokens: number;
-};
+export type DurationDatum = DurationChartDatum;
+export type TokensDatum = TokensChartDatum;
 
 export interface RunMetricsBarChartsProps {
   durationData: DurationDatum[];
@@ -20,18 +17,63 @@ export interface RunMetricsBarChartsProps {
   hasTokenData: boolean;
 }
 
+const METRICS_CHART_HEIGHT_CLASS =
+  "aspect-auto h-16 w-full max-h-[4.5rem] sm:h-[4.5rem]";
+
+const durationChartConfig = {
+  p50Seconds: {
+    label: "p50",
+    color: "var(--chart-1)",
+  },
+  p95TailSeconds: {
+    label: "p95 tail",
+    color: "color-mix(in oklch, var(--chart-1) 45%, transparent)",
+  },
+} as const;
+
+const tokensChartConfig = {
+  inputP50: {
+    label: "Input p50",
+    color: "var(--chart-2)",
+  },
+  outputP50: {
+    label: "Output p50",
+    color: "var(--chart-3)",
+  },
+  inputP95Tail: {
+    label: "Input p95 tail",
+    color: "color-mix(in oklch, var(--chart-2) 45%, transparent)",
+  },
+  outputP95Tail: {
+    label: "Output p95 tail",
+    color: "color-mix(in oklch, var(--chart-3) 45%, transparent)",
+  },
+} as const;
+
+function formatTokenAxis(v: number): string {
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return `${Math.round(v)}`;
+}
+
+function formatTokenCount(v: number): string {
+  return Math.round(v).toLocaleString();
+}
+
+const metricsLegendProps = {
+  content: (
+    <ChartLegendContent className="gap-3 pt-0 pb-0 text-[9px] [&>div]:gap-1" />
+  ),
+  verticalAlign: "top" as const,
+  height: 14,
+};
+
 function DurationBarBlock({ data }: { data: DurationDatum[] }) {
   return (
     <ChartContainer
-      config={{
-        durationSeconds: {
-          label: "Duration",
-          color: "var(--chart-1)",
-        },
-      }}
-      className="aspect-auto h-[min(120px,18vh)] w-full max-h-[140px]"
+      config={durationChartConfig}
+      className={METRICS_CHART_HEIGHT_CLASS}
     >
-      <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+      <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
         <CartesianGrid
           strokeDasharray="3 3"
           vertical={false}
@@ -41,9 +83,9 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
         <YAxis
           tickLine={false}
           axisLine={false}
-          tickMargin={6}
-          tick={{ fontSize: 11 }}
-          width={44}
+          tickMargin={4}
+          tick={{ fontSize: 10 }}
+          width={36}
           tickFormatter={(v: number) =>
             v >= 60 ? `${Math.round(v / 60)}m` : `${v}s`
           }
@@ -57,18 +99,31 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
               <div className="rounded-lg border bg-background p-2 shadow-sm">
                 <div className="text-xs font-semibold">{row.name}</div>
                 <div className="text-xs text-muted-foreground">
-                  {formatDuration(row.duration)}
+                  p50 {formatDuration(row.p50Ms)}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  p95 {formatDuration(row.p95Ms)}
                 </div>
               </div>
             );
           }}
         />
+        <ChartLegend {...metricsLegendProps} />
         <Bar
-          dataKey="durationSeconds"
-          fill="var(--color-durationSeconds)"
+          dataKey="p50Seconds"
+          stackId="latency"
+          fill="var(--color-p50Seconds)"
+          radius={[0, 0, 0, 0]}
+          isAnimationActive={false}
+          maxBarSize={32}
+        />
+        <Bar
+          dataKey="p95TailSeconds"
+          stackId="latency"
+          fill="var(--color-p95TailSeconds)"
           radius={[4, 4, 0, 0]}
           isAnimationActive={false}
-          maxBarSize={52}
+          maxBarSize={32}
         />
       </BarChart>
     </ChartContainer>
@@ -78,15 +133,10 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
 function TokensBarBlock({ data }: { data: TokensDatum[] }) {
   return (
     <ChartContainer
-      config={{
-        tokens: {
-          label: "Tokens",
-          color: "var(--chart-2)",
-        },
-      }}
-      className="aspect-auto h-[min(120px,18vh)] w-full max-h-[140px]"
+      config={tokensChartConfig}
+      className={METRICS_CHART_HEIGHT_CLASS}
     >
-      <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+      <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
         <CartesianGrid
           strokeDasharray="3 3"
           vertical={false}
@@ -96,103 +146,130 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
         <YAxis
           tickLine={false}
           axisLine={false}
-          tickMargin={6}
-          tick={{ fontSize: 11 }}
-          width={48}
-          tickFormatter={(v: number) =>
-            v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`
-          }
+          tickMargin={4}
+          tick={{ fontSize: 10 }}
+          width={40}
+          tickFormatter={formatTokenAxis}
         />
         <ChartTooltip
           cursor={false}
           content={({ active, payload }) => {
             if (!active || !payload?.length) return null;
             const row = payload[0].payload as TokensDatum;
+            const inputP95 = row.inputP50 + row.inputP95Tail;
+            const outputP95 = row.outputP50 + row.outputP95Tail;
             return (
               <div className="rounded-lg border bg-background p-2 shadow-sm">
                 <div className="text-xs font-semibold">{row.name}</div>
                 <div className="text-xs text-muted-foreground">
-                  {Math.round(row.tokens).toLocaleString()} tokens (avg)
+                  Input p50 {formatTokenCount(row.inputP50)} · p95{" "}
+                  {formatTokenCount(inputP95)}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Output p50 {formatTokenCount(row.outputP50)} · p95{" "}
+                  {formatTokenCount(outputP95)}
                 </div>
               </div>
             );
           }}
         />
-        <Bar
-          dataKey="tokens"
-          fill="var(--color-tokens)"
-          radius={[4, 4, 0, 0]}
-          isAnimationActive={false}
-          maxBarSize={52}
-        />
+        <ChartLegend {...metricsLegendProps} />
+        {(
+          [
+            "inputP50",
+            "outputP50",
+            "inputP95Tail",
+            "outputP95Tail",
+          ] as const
+        ).map((key) => (
+          <Bar
+            key={key}
+            dataKey={key}
+            stackId="tokens"
+            fill={`var(--color-${key})`}
+            radius={key === "outputP95Tail" || key === "inputP95Tail" ? [4, 4, 0, 0] : 0}
+            isAnimationActive={false}
+            maxBarSize={32}
+          />
+        ))}
       </BarChart>
     </ChartContainer>
   );
 }
 
-const CHART_HINT = "Hover a bar for test names.";
+/** Shown once per chart block — belongs on the section title row, not as a banner above the grid. */
+const CHART_HINT = "Hover for test name";
 
-/** Side-by-side duration / token bars with minimal chrome (one shared hint when both show). */
+const metricsChartsChromeClass =
+  "rounded-md border border-border/25 bg-muted/10 p-2";
+
+function MetricsChartSectionHeader({
+  title,
+  showInteractionHint = false,
+}: {
+  title: string;
+  showInteractionHint?: boolean;
+}) {
+  return (
+    <div className="mb-1 flex min-w-0 items-baseline justify-between gap-2">
+      <h3 className={runDetailSectionLabelClass}>{title}</h3>
+      {showInteractionHint ? (
+        <span className={cn(runDetailSupportingClass, "shrink-0 text-right")}>
+          {CHART_HINT}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** Side-by-side latency / token percentile stacks with minimal chrome. */
 export function RunMetricsBarCharts({
   durationData,
   tokensData,
   hasTokenData,
 }: RunMetricsBarChartsProps) {
   const showDuration = durationData.length > 0;
-  const showTokens = hasTokenData;
+  const showTokens = hasTokenData && tokensData.length > 0;
   if (!showDuration && !showTokens) return null;
 
   const chartCount = (showDuration ? 1 : 0) + (showTokens ? 1 : 0);
   const singleChart = chartCount === 1;
 
+  const showHintOnDuration = showDuration;
+  const showHintOnTokens = showTokens && !showDuration;
+
   const durationSection = showDuration ? (
-    <div className={cn("min-w-0", !singleChart && "lg:pr-4")}>
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Avg duration by test
-        </h3>
-        {singleChart ? (
-          <span className="text-[10px] text-muted-foreground/60">
-            {CHART_HINT}
-          </span>
-        ) : null}
-      </div>
+    <div className={cn("min-w-0", !singleChart && "lg:pr-3")}>
+      <MetricsChartSectionHeader
+        title="Latency by test (p50 / p95)"
+        showInteractionHint={showHintOnDuration}
+      />
       <DurationBarBlock data={durationData} />
     </div>
   ) : null;
 
   const tokensSection = showTokens ? (
-    <div className={cn("min-w-0", !singleChart && "lg:pl-4")}>
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Avg tokens by test
-        </h3>
-        {singleChart ? (
-          <span className="text-[10px] text-muted-foreground/60">
-            {CHART_HINT}
-          </span>
-        ) : null}
-      </div>
+    <div className={cn("min-w-0", !singleChart && "lg:pl-3")}>
+      <MetricsChartSectionHeader
+        title="Tokens by test (p50 / p95)"
+        showInteractionHint={showHintOnTokens}
+      />
       <TokensBarBlock data={tokensData} />
     </div>
   ) : null;
 
-  if (singleChart) {
-    return (
-      <div className="mt-2 rounded-lg border border-border/25 bg-muted/10 p-3">
-        {durationSection}
-        {tokensSection}
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-2 rounded-lg border border-border/25 bg-muted/10 p-3">
-      <p className="mb-3 text-[10px] text-muted-foreground/70">{CHART_HINT}</p>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-border/30">
-        {durationSection}
-        {tokensSection}
-      </div>
+  const chartGrid = (
+    <div
+      className={cn(
+        singleChart
+          ? "min-w-0"
+          : "grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-border/30",
+      )}
+    >
+      {durationSection}
+      {tokensSection}
     </div>
   );
+
+  return <div className={metricsChartsChromeClass}>{chartGrid}</div>;
 }

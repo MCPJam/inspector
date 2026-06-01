@@ -198,19 +198,19 @@ export function RunDetailKpiStrip({
               stat.stripCellClass,
             )}
           >
-            <div className="text-[10px] font-medium leading-none text-muted-foreground">
+            <div className="text-xs font-medium leading-none text-muted-foreground">
               {stat.label}
             </div>
             <div
               className={cn(
-                "mt-1 text-sm font-semibold tabular-nums leading-none tracking-tight sm:text-base",
+                "mt-1 text-sm font-semibold tabular-nums leading-none tracking-tight",
                 stat.valueClass,
               )}
             >
               {stat.value}
             </div>
             {stat.detail ? (
-              <div className="mt-0.5 line-clamp-2 text-[10px] text-muted-foreground/70">
+              <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground/70">
                 {stat.detail}
               </div>
             ) : null}

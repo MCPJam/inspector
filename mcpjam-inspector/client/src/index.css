@@ -1004,3 +1004,15 @@
 @theme inline {
   --font-code: var(--font-code);
 }
+
+/*
+ * Metric/display numerals for eval dashboards (accuracy, deltas, counts).
+ * IBM Plex Mono gives the stats an instrument-panel character with true
+ * tabular figures so trend columns stay aligned. Generates the `font-metric`
+ * utility. Falls back to the system mono stack offline.
+ */
+@theme {
+  --font-metric:
+    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}

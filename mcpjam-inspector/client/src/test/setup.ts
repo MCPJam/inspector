@@ -38,6 +38,11 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
 // cmdk / Command dialogs call scrollIntoView on active items
 Element.prototype.scrollIntoView = vi.fn();
 
+// Radix UI primitives (Select, etc.) call Pointer Capture APIs that JSDOM lacks
+Element.prototype.hasPointerCapture = vi.fn(() => false);
+Element.prototype.setPointerCapture = vi.fn();
+Element.prototype.releasePointerCapture = vi.fn();
+
 // CodeMirror measures DOM Range geometry, which JSDOM does not implement.
 if (typeof Range !== "undefined") {
   const rect = {

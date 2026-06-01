@@ -33,14 +33,22 @@ export function getSidebarRunInsightsPassRateLabel(
   return `${pct}%`;
 }
 
+export type RunHeaderCompactStatsVariant = "full" | "operational";
+
 export function RunHeaderCompactStats({
   run,
   statsOverride,
   className,
+  variant = "full",
 }: {
   run: EvalSuiteRun;
   statsOverride?: RunHeaderCompactStatsOverride;
   className?: string;
+  /**
+   * `operational` — pass/fail counts and duration only (accuracy lives in
+   * {@link RunAccuracyHeroBand} on run detail).
+   */
+  variant?: RunHeaderCompactStatsVariant;
 }) {
   const isInProgress = run.status === "running" || run.status === "pending";
 
@@ -77,11 +85,14 @@ export function RunHeaderCompactStats({
   }
 
   const pct = normalizePassRatePercent(summary.passRate);
+  const countsLine = `${summary.passed.toLocaleString()} passed · ${summary.failed.toLocaleString()} failed`;
 
   return (
     <p className={cn("text-xs text-muted-foreground tabular-nums", className)}>
-      {summary.passed.toLocaleString()} passed ·{" "}
-      {summary.failed.toLocaleString()} failed · {pct}% · {durationText}
+      {variant === "operational"
+        ? countsLine
+        : `${countsLine} · ${pct}%`}
+      {durationText !== "—" ? ` · ${durationText}` : ""}
     </p>
   );
 }

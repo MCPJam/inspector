@@ -14,6 +14,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
+import { buildIterationUsageMetadata } from "./evals/iteration-usage-metadata";
 import {
   applyVisibilityPolicyAndCountSignals,
   buildHostIterationMetadata,
@@ -1069,7 +1070,10 @@ async function finishIterationDirectly(
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
-      metadata: params.metadata,
+      metadata: {
+        ...(params.metadata ?? {}),
+        ...buildIterationUsageMetadata(params.usage),
+      },
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
