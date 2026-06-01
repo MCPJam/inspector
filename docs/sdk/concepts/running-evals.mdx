@@ -168,6 +168,27 @@ await test.run(agent, {
 
 See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
 
+### Predicate gate
+
+`successPredicates` lets you express richer pass/fail criteria beyond tool-call matching — without an LLM judge. Predicates are pure functions of the iteration transcript, so they produce the same verdict every time and are safe to use as a CI release gate.
+
+A case passes iff **all** predicates pass. An absent or empty list means no predicate gate.
+
+The eight built-in predicate types:
+
+| Type | What it checks |
+|------|----------------|
+| `toolCalledWith` | A specific tool was called with matching args (partial/exact/ignore mode) |
+| `toolCalledAtLeastOnce` | A tool was called at least once |
+| `toolNeverCalled` | A forbidden tool was never called |
+| `responseContains` | The final assistant message contains a substring |
+| `responseMatches` | The final assistant message matches a regex |
+| `noToolErrors` | No tool produced an error (MCP `isError` or transport failure) |
+| `finalAssistantMessageNonEmpty` | The final assistant message is non-empty |
+| `tokenBudgetUnder` | Total token usage is strictly under a budget |
+
+Predicates are authored in the corpus JSON (V1) and threaded through the runner automatically. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example.
+
 ### Suite Results
 
 ```typescript
