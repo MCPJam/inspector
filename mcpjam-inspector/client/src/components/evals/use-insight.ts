@@ -36,6 +36,11 @@ export interface InsightHookResult<TResult> {
   cancelInsight: () => void;
 }
 
+/** Result freshness marker shared by every insight payload. */
+function resultGeneratedAt(result: unknown): number | undefined {
+  return (result as { generatedAt?: number } | undefined)?.generatedAt;
+}
+
 function classifyInsightError(err: unknown): {
   unavailable: boolean;
   message: string;
@@ -60,12 +65,19 @@ export function useInsight<TResult extends { summary?: string }>(
   const [requested, setRequested] = useState(false);
   const hasAutoAttemptedRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
+  // The result `generatedAt` captured at request time. Lets us clear the
+  // optimistic `requested` flag the instant a NEW result lands — even when a
+  // reactive update skips an observable `pending` frame — so the controls
+  // never stay stuck disabled.
+  const latestResultStampRef = useRef<number | undefined>(undefined);
+  const requestedAtStampRef = useRef<number | undefined>(undefined);
 
   const requestMut = useMutation(config.requestMutation as any);
   const cancelMut = useMutation(config.cancelMutation as any);
 
   const status = run ? config.getStatus(run) : undefined;
   const result = run ? config.getResult(run) : undefined;
+  latestResultStampRef.current = resultGeneratedAt(result);
 
   const canRequest =
     run != null &&
@@ -79,6 +91,7 @@ export function useInsight<TResult extends { summary?: string }>(
         return;
       }
       setError(null);
+      requestedAtStampRef.current = latestResultStampRef.current;
       setRequested(true);
       requestMut({ suiteRunId: run._id, force, ...extraArgs } as any).catch(
         (err: unknown) => {
@@ -110,20 +123,26 @@ export function useInsight<TResult extends { summary?: string }>(
       setError(null);
       setRequested(false);
       hasAutoAttemptedRef.current = false;
+      requestedAtStampRef.current = undefined;
     }
   }, [runKey]);
 
   // Clear the optimistic "requested" flag once the job actually starts (status
-  // flips to `pending`); `pending` then drives the disabled state. Clearing on
-  // `completed`/`failed` instead re-enabled a re-run/retry trigger in the gap
-  // between the click and the status flip (those statuses still hold the prior
-  // result), which let a second request slip through. The request mutation's
-  // catch handles the case where the job never reaches `pending`.
+  // flips to `pending`) OR once a fresh result lands (its `generatedAt` advances
+  // past the value captured at request time). Clearing on `completed`/`failed`
+  // alone re-enabled a re-run/retry trigger in the click→`pending` gap (those
+  // statuses still hold the prior result); clearing on `pending` alone could
+  // stick if a reactive update skipped the `pending` frame. Together they keep
+  // the controls correct in both cases; the request mutation's catch covers a
+  // request that never starts.
   useEffect(() => {
-    if (status === "pending") {
+    if (
+      status === "pending" ||
+      resultGeneratedAt(result) !== requestedAtStampRef.current
+    ) {
       setRequested(false);
     }
-  }, [status, run?._id]);
+  }, [status, result, run?._id]);
 
   // Auto-request on first view of a completed run with no insight.
   useEffect(() => {
