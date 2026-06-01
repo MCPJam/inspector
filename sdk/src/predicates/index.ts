@@ -10,6 +10,12 @@ export {
   allPredicatesPassed,
 } from "./evaluate.js";
 export { argMatch } from "./argMatcher.js";
+export {
+  buildIterationTranscript,
+  extractFinalAssistantMessage,
+  type BuildTranscriptInput,
+} from "./transcript.js";
+export { extractToolErrors } from "../eval-tool-execution.js";
 export type {
   Predicate,
   PredicateType,

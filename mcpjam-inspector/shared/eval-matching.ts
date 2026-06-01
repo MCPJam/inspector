@@ -122,6 +122,7 @@ export {
   evaluatePredicate,
   evaluatePredicates,
   allPredicatesPassed,
+  buildIterationTranscript,
 } from "@mcpjam/sdk/predicates";
 export type {
   Predicate,

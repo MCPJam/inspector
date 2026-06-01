@@ -52,6 +52,10 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
+import {
+  buildIterationTranscript,
+  evaluatePredicates,
+} from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import {
   createSuiteRunRecorder,
@@ -1628,10 +1632,21 @@ const runIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: accumulatedUsage,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
 
     const usage: UsageTotals = {
@@ -1660,6 +1675,7 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
         ...(hostPolicy && toolSignals
           ? buildHostIterationMetadata(
               hostPolicy,
@@ -2302,11 +2318,22 @@ const runIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: accumulatedUsage,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
@@ -2331,6 +2358,7 @@ const runIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,
@@ -3211,10 +3239,21 @@ const streamIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: accumulatedUsage,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
 
     const usageFinal: UsageTotals = {
@@ -3243,6 +3282,7 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
         ...(hostPolicy && toolSignals
           ? buildHostIterationMetadata(
               hostPolicy,
@@ -4143,11 +4183,22 @@ const streamIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: accumulatedUsage,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
@@ -4172,6 +4223,7 @@ const streamIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,
