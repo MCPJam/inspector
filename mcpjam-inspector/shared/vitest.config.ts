@@ -9,6 +9,11 @@ const sdkSkillReferenceEntry = path.resolve(
   "../sdk/src/skill-reference.ts",
 );
 const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
+const sdkPredicatesEntry = path.resolve(
+  rootDir,
+  "../sdk/src/predicates/index.ts",
+);
+const sdkCorpusEntry = path.resolve(rootDir, "../sdk/src/corpus/index.ts");
 
 export default defineConfig({
   define: {
@@ -51,6 +56,8 @@ export default defineConfig({
       },
       { find: "@mcpjam/sdk/operations", replacement: sdkOperationsEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
+      { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/corpus", replacement: sdkCorpusEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
       { find: "@/shared", replacement: path.resolve(__dirname, "./") },
     ],

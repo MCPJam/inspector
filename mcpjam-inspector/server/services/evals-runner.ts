@@ -146,6 +146,15 @@ export type EvalTestCase = {
    */
   matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
   /**
+   * Optional state-based predicate gate evaluated over the iteration
+   * transcript after tool-call matching. Definitions are runtime/corpus data
+   * in V1 (carried on the case object through the runner, like `matchOptions`);
+   * verdicts are persisted to `testIteration.metadata.predicates`. A case
+   * passes the predicate gate iff every predicate passes; an absent/empty list
+   * is no gate. See `shared/predicates`.
+   */
+  successPredicates?: import("@/shared/eval-matching").Predicate[];
+  /**
    * Per-Run override layered on top of the suite's hostConfig. Carries
    * the editor's in-place tweaks (locale, timezone, hostContext,
    * hostCapabilitiesOverride, hostStyle, etc.) for this iteration only.

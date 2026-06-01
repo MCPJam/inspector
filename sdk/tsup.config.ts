@@ -17,6 +17,8 @@ export default defineConfig({
     "src/skill-reference.ts",
     "src/model-factory.ts",
     "src/matchers.ts",
+    "src/predicates/index.ts",
+    "src/corpus/index.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],
