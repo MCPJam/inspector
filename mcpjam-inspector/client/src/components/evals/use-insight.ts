@@ -122,19 +122,26 @@ export function useInsight<TResult extends { summary?: string }>(
       runIdRef.current = runKey;
       setError(null);
       setRequested(false);
+      // Availability is re-assessed per run: a run-specific or transient failure
+      // (e.g. "Suite run not found", a transient "Server Error") must not keep
+      // the panel hidden for every later run in the same mounted view.
+      setUnavailable(false);
       hasAutoAttemptedRef.current = false;
       requestedAtStampRef.current = undefined;
     }
   }, [runKey]);
 
-  // Clear the optimistic "requested" flag once the job actually starts (status
-  // flips to `pending`) OR once a fresh result lands (its `generatedAt` advances
-  // past the value captured at request time). Clearing on `completed`/`failed`
-  // alone re-enabled a re-run/retry trigger in the click→`pending` gap (those
-  // statuses still hold the prior result); clearing on `pending` alone could
-  // stick if a reactive update skipped the `pending` frame. Together they keep
-  // the controls correct in both cases; the request mutation's catch covers a
-  // request that never starts.
+  // Clear the optimistic "requested" flag once the job has demonstrably
+  // progressed — but NOT in the click→`pending` gap where a stale terminal
+  // result still lingers (clearing there would re-enable a re-run/retry trigger
+  // and allow a duplicate request). Progress is either:
+  //   - status flips to `pending` (job started); or
+  //   - a fresh result lands — its `generatedAt` advances past the value
+  //     captured at request time.
+  // Both completion AND failure write a fresh `generatedAt` (the failed
+  // fallback in each *Action's catch stamps Date.now()), so a re-run that ends
+  // in failure clears here too; the request mutation's catch covers a request
+  // that errors before it ever starts.
   useEffect(() => {
     if (
       status === "pending" ||

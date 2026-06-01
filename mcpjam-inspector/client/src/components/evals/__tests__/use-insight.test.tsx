@@ -1,9 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 
-vi.mock("convex/react", () => ({
-  useMutation: () => vi.fn().mockResolvedValue(undefined),
+const { requestMutationMock } = vi.hoisted(() => ({
+  requestMutationMock: vi.fn(),
 }));
+
+vi.mock("convex/react", () => ({
+  useMutation: () => requestMutationMock,
+}));
+
+beforeEach(() => {
+  requestMutationMock.mockReset();
+  requestMutationMock.mockResolvedValue(undefined);
+});
 
 import { useInsight } from "../use-insight";
 import type { EvalSuiteRun } from "../types";
@@ -77,5 +86,50 @@ describe("useInsight requested lifecycle", () => {
 
     rerender({ run: makeRun({ goalCompletionStatus: "pending" }) });
     expect(result.current.requested).toBe(false);
+  });
+
+  it("clears `requested` when a re-run ends in failure (fresh fallback result)", () => {
+    const prior = {
+      goalCompletionStatus: "completed" as const,
+      goalCompletion: { summary: "x", generatedAt: 100 },
+    };
+    const { result, rerender } = renderHook(
+      ({ run }) => useInsight(run, config, { autoRequest: false }),
+      { initialProps: { run: makeRun(prior) } },
+    );
+
+    act(() => result.current.requestInsight(true));
+    expect(result.current.requested).toBe(true);
+
+    // The judge job fails: the backend writes a fresh failed fallback (new
+    // generatedAt) alongside status "failed", so the controls must re-enable.
+    rerender({
+      run: makeRun({
+        goalCompletionStatus: "failed",
+        goalCompletion: { summary: "failed fallback", generatedAt: 200 },
+      }),
+    });
+    expect(result.current.requested).toBe(false);
+    expect(result.current.failedGeneration).toBe(true);
+  });
+
+  it("resets `unavailable` when the run changes", async () => {
+    // A run-specific failure (the backend throws "Suite run not found") matches
+    // the unavailable heuristic; it must not keep the panel hidden for later
+    // runs viewed in the same mounted hook.
+    requestMutationMock.mockRejectedValueOnce(new Error("Suite run not found"));
+    const { result, rerender } = renderHook(
+      ({ run }) => useInsight(run, config, { autoRequest: false }),
+      { initialProps: { run: makeRun({ _id: "run-1" }) } },
+    );
+
+    await act(async () => {
+      result.current.requestInsight(false);
+      await Promise.resolve();
+    });
+    expect(result.current.unavailable).toBe(true);
+
+    rerender({ run: makeRun({ _id: "run-2" }) });
+    expect(result.current.unavailable).toBe(false);
   });
 });
