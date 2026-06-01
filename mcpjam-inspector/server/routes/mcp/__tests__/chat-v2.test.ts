@@ -865,6 +865,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
+          projectId: "project_123",
           directVisibility: "project",
           selectedServers: ["Asana", "GitHub"],
           // Real Convex server Ids parallel to `selectedServers`. Without
@@ -878,6 +879,16 @@ describe("POST /api/mcp/chat-v2", () => {
 
         expect(res.status).toBe(200);
         await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+        expect(streamCall).toBeDefined();
+        expect(
+          JSON.parse(String((streamCall![1] as RequestInit).body ?? "{}"))
+        ).toMatchObject({
+          projectId: "project_123",
+        });
 
         const ingestCall = vi
           .mocked(global.fetch)

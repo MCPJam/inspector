@@ -66,11 +66,11 @@ function getPlanColumnCta(params: {
   isBillingActionPending: boolean;
   onDowngradePlan: (
     plan: OrganizationPlan,
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => void;
   onStartPlanChange: (
     plan: "team",
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   billingInterval: BillingInterval;
 }): {
@@ -142,7 +142,7 @@ function getPlanColumnCta(params: {
 function formatCurrency(
   amount: number,
   currency: string,
-  maximumFractionDigits: number,
+  maximumFractionDigits: number
 ): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
@@ -161,7 +161,7 @@ function formatBillingDate(timestampMs: number): string {
 }
 
 function getDeferredTrialBillingCopy(
-  billingStatus: OrganizationBillingStatus | undefined,
+  billingStatus: OrganizationBillingStatus | undefined
 ): string | null {
   const deferredTrialBillingStartsAt =
     billingStatus?.deferredTrialBillingStartsAt;
@@ -170,7 +170,7 @@ function getDeferredTrialBillingCopy(
   }
 
   return `$0 today. First bill charged in advance on ${formatBillingDate(
-    deferredTrialBillingStartsAt,
+    deferredTrialBillingStartsAt
   )}.`;
 }
 
@@ -179,7 +179,7 @@ function formatPlanPriceLabel(
   _plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
-  interval: BillingInterval,
+  interval: BillingInterval
 ): string {
   if (amountInCents == null) {
     return interval === "annual" ? "Custom annual" : "Custom pricing";
@@ -189,13 +189,17 @@ function formatPlanPriceLabel(
     return `${formatCurrency(amountInCents / 100, currency, 0)}/seat/mo`;
   }
   const monthlyEquivalentDollars = amountInCents / 12 / 100;
-  return `${formatCurrency(Math.round(monthlyEquivalentDollars), currency, 0)}/seat/mo`;
+  return `${formatCurrency(
+    Math.round(monthlyEquivalentDollars),
+    currency,
+    0
+  )}/seat/mo`;
 }
 
 function formatPerSeatCadence(
   plan: OrganizationPlan,
   entry: PlanCatalog["plans"][OrganizationPlan],
-  interval: BillingInterval,
+  interval: BillingInterval
 ): string {
   if (plan === "free") {
     return "No credit card required";
@@ -218,8 +222,8 @@ function PlanPriceDisplay({ label }: { label: string }) {
   const suffix = label.endsWith(PER_SEAT_MO_SUFFIX)
     ? PER_SEAT_MO_SUFFIX
     : label.endsWith(PER_MO_SUFFIX)
-      ? PER_MO_SUFFIX
-      : null;
+    ? PER_MO_SUFFIX
+    : null;
   const amount = suffix ? label.slice(0, -suffix.length) : label;
 
   return (
@@ -358,7 +362,7 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
     <span
       className={cn(
         "block w-full text-center text-sm text-muted-foreground",
-        cell.emphasize && "font-semibold text-foreground",
+        cell.emphasize && "font-semibold text-foreground"
       )}
     >
       {cell.text}
@@ -387,7 +391,7 @@ function BillingIntervalToggle({
           "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:gap-2 sm:px-3",
           billingInterval === "annual"
             ? "bg-background text-foreground shadow-sm"
-            : "text-muted-foreground",
+            : "text-muted-foreground"
         )}
         onClick={() => onBillingIntervalChange("annual")}
       >
@@ -405,7 +409,7 @@ function BillingIntervalToggle({
           "shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:px-3",
           billingInterval === "monthly"
             ? "bg-background text-foreground shadow-sm"
-            : "text-muted-foreground",
+            : "text-muted-foreground"
         )}
         onClick={() => onBillingIntervalChange("monthly")}
       >
@@ -416,8 +420,12 @@ function BillingIntervalToggle({
 }
 
 interface OrganizationBillingSectionProps {
+  organizationId: string;
+  showPlanBilling: boolean;
+  showCredits: boolean;
   billingStatus: OrganizationBillingStatus | undefined;
   organizationName: string;
+  canManageCredits: boolean;
   planCatalog: PlanCatalog | undefined;
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
@@ -426,23 +434,27 @@ interface OrganizationBillingSectionProps {
   isOpeningPortal: boolean;
   onDowngradePlan: (
     plan: OrganizationPlan,
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   onStartPlanChange: (
     plan: "team",
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   onStartAutoPlanChange?: (
     plan: "team",
-    billingInterval: BillingInterval,
+    billingInterval: BillingInterval
   ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
 }
 
 export function OrganizationBillingSection({
+  organizationId,
+  showPlanBilling,
+  showCredits,
   billingStatus,
   organizationName,
+  canManageCredits,
   planCatalog,
   isLoadingBilling,
   isLoadingPlanCatalog,
@@ -455,7 +467,7 @@ export function OrganizationBillingSection({
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
-  useCreditTopupReturnFlowBilling();
+  useCreditTopupReturnFlowBilling({ enabled: showCredits });
 
   const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
@@ -481,6 +493,9 @@ export function OrganizationBillingSection({
   }, [billingStatus?.billingInterval]);
 
   useEffect(() => {
+    if (!showPlanBilling) {
+      return;
+    }
     if (!checkoutIntent) {
       autoCheckoutStartedForKeyRef.current = null;
       return;
@@ -514,7 +529,7 @@ export function OrganizationBillingSection({
           toast.error(
             !billingStatus.canManageBilling
               ? "Only organization owners can start checkout."
-              : "Checkout isn't available in this environment.",
+              : "Checkout isn't available in this environment."
           );
           onCheckoutIntentConsumed?.();
         }
@@ -523,7 +538,7 @@ export function OrganizationBillingSection({
 
       const intentGuard = guardCheckoutIntentAgainstBillingStatus(
         billingStatus,
-        checkoutIntent.plan,
+        checkoutIntent.plan
       );
       if (!intentGuard.proceed) {
         if (!cancelled && autoCheckoutStartedForKeyRef.current !== intentKey) {
@@ -548,7 +563,7 @@ export function OrganizationBillingSection({
       try {
         await (onStartAutoPlanChange ?? onStartPlanChange)(
           checkoutIntent.plan,
-          checkoutIntent.interval,
+          checkoutIntent.interval
         );
         if (!cancelled) {
           onCheckoutIntentConsumed?.();
@@ -574,6 +589,7 @@ export function OrganizationBillingSection({
     onStartAutoPlanChange,
     onStartPlanChange,
     planCatalog,
+    showPlanBilling,
   ]);
 
   const currentPlan = billingStatus?.plan ?? "free";
@@ -665,224 +681,265 @@ export function OrganizationBillingSection({
         ) : null}
       </Dialog>
 
-      <ErrorBoundary fallback={null}>
-        <CreditBalanceCard />
-      </ErrorBoundary>
-
-      <ErrorBoundary fallback={null}>
-        <PaymentsHistorySection />
-      </ErrorBoundary>
-
-      {checkoutIntent ? (
-        <div
-          className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
-          data-testid="billing-deep-link-redirect"
-        >
-          <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-          Redirecting to checkout…
-        </div>
-      ) : null}
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-          <CreditCard
-            className="size-5 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-          Plans & Billing
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Compare plans, review your current subscription, and start billing
-          changes for {organizationName}.
-        </p>
-      </div>
-
-      {isLoadingBilling ? (
-        <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-          Loading billing details...
-        </div>
-      ) : billingStatus ? (
+      {showCredits ? (
         <>
-          {!billingConfigured ? (
-            <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-              Billing is not configured in this environment. Plans are visible,
-              but purchase actions are unavailable.
-            </div>
-          ) : null}
-          {!canManageBilling ? (
-            <p className="text-sm text-muted-foreground">
-              Only organization owners can manage billing changes. Admins can
-              review plan details here.
-            </p>
-          ) : null}
+          <ErrorBoundary fallback={null}>
+            <CreditBalanceCard
+              organizationId={organizationId}
+              canManageCredits={canManageCredits}
+            />
+          </ErrorBoundary>
+
+          <ErrorBoundary fallback={null}>
+            <PaymentsHistorySection
+              organizationId={organizationId}
+              canViewHistory={canManageCredits}
+            />
+          </ErrorBoundary>
         </>
       ) : null}
 
-      <Card className="border-border/60 py-6 shadow-sm">
-        <CardContent className="px-0 pb-0 pt-0">
-          {isLoadingPlanCatalog || !planCatalog ? (
-            <div className="px-4 py-6 sm:px-6">
-              <div className="mb-4 space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-                  Compare plans
-                </p>
-                <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                  Compare Free vs Team
-                </CardTitle>
-                <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                  {ORG_COMPARE_PLANS_NOTE}
-                </p>
-              </div>
-              <div className="mb-4">
-                <BillingIntervalToggle
-                  billingInterval={billingInterval}
-                  onBillingIntervalChange={setBillingInterval}
-                  annualDiscountPct={annualDiscountPct}
-                />
-              </div>
-              <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                Loading plan catalog...
-              </div>
+      {showPlanBilling ? (
+        <>
+          {checkoutIntent ? (
+            <div
+              className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+              data-testid="billing-deep-link-redirect"
+            >
+              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+              Redirecting to checkout…
             </div>
-          ) : (
-            <div className="relative w-full overflow-x-auto overscroll-x-contain">
-              <div className="min-w-[44rem] px-4 pb-6 sm:px-6">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
-                      <TableHead className="sticky left-0 z-20 h-full min-h-0 w-[26%] min-w-[11rem] whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top">
-                        <div className="flex h-full min-h-[11rem] flex-col">
-                          <div className="flex min-h-0 flex-1 flex-col">
-                            <div className="space-y-1 pr-1">
-                              <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-                                Compare plans
-                              </p>
-                              <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                                Compare Free vs Team
-                              </CardTitle>
-                              <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                                {ORG_COMPARE_PLANS_NOTE}
-                              </p>
-                            </div>
-                            <div className="min-h-0 flex-1" aria-hidden />
-                          </div>
-                          <div className="shrink-0">
-                            <BillingIntervalToggle
-                              billingInterval={billingInterval}
-                              onBillingIntervalChange={setBillingInterval}
-                              annualDiscountPct={annualDiscountPct}
-                            />
-                          </div>
-                        </div>
-                      </TableHead>
-                      {PLAN_ORDER.map((plan) => {
-                        const entry = planCatalog.plans[plan];
-                        const isEnterprisePlan = plan === "enterprise";
-                        const displayCents =
-                          plan === "free" || isEnterprisePlan
-                            ? null
-                            : getDisplayPriceCentsForPlan(
-                                plan,
-                                billingInterval,
-                                entry,
-                              );
-                        const priceLabel = isEnterprisePlan
-                          ? "Custom"
-                          : plan === "free"
-                            ? "$0"
-                            : formatPlanPriceLabel(
-                                plan,
-                                displayCents,
-                                planCatalog.currency,
-                                billingInterval,
-                              );
-                        const priceSubtext = isEnterprisePlan
-                          ? formatPerSeatCadence(plan, entry, billingInterval)
-                          : plan === "free"
-                            ? "No credit card required"
-                            : formatPerSeatCadence(
-                                plan,
-                                entry,
-                                billingInterval,
-                              );
-                        const cta = getPlanColumnCta({
-                          plan,
-                          currentPlan,
-                          entry,
-                          billingConfigured,
-                          canManageBilling,
-                          isBillingActionPending,
-                          onDowngradePlan: (
-                            targetPlan,
-                            targetBillingInterval,
-                          ) =>
-                            void onDowngradePlan(
-                              targetPlan,
-                              targetBillingInterval,
-                            ),
-                          onStartPlanChange,
-                          billingInterval,
-                        });
-                        const showPlanChangeSpinner =
-                          pendingPlanChangeTarget === plan &&
-                          (cta.label === "Upgrade" ||
-                            cta.label === "Downgrade") &&
-                          (plan === "team");
-                        const showCtaSpinner = showPlanChangeSpinner;
-                        const isPopular = plan === POPULAR_PLAN;
-                        const showDeferredTrialBillingCopy =
-                          deferredTrialBillingCopy != null &&
-                          cta.label === "Upgrade" &&
-                          !cta.disabled &&
-                          !cta.tooltip &&
-                          (plan === "team");
-                        return (
-                          <TableHead
-                            key={plan}
-                            className={cn(
-                              "h-full min-h-0 whitespace-normal px-3 pt-5 pb-4 text-center align-top",
-                              isPopular &&
-                                "border-x border-primary/35 bg-primary/[0.06]",
-                            )}
-                          >
-                            <div className="mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col">
-                              <div className="flex min-h-0 flex-1 flex-col items-center gap-3">
-                                <div className="flex flex-wrap items-center justify-center gap-2">
-                                  <span className="text-base font-semibold">
-                                    {entry.displayName}
-                                  </span>
-                                  {isPopular ? (
-                                    <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
-                                      Popular
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                                <div className="w-full space-y-1 text-center">
-                                  <PlanPriceDisplay label={priceLabel} />
-                                  <p className="text-xs leading-snug text-muted-foreground">
-                                    {priceSubtext}
+          ) : null}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+              <CreditCard
+                className="size-5 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
+              Plans & Billing
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Compare plans, review your current subscription, and start billing
+              changes for {organizationName}.
+            </p>
+          </div>
+
+          {isLoadingBilling ? (
+            <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+              Loading billing details...
+            </div>
+          ) : billingStatus ? (
+            <>
+              {!billingConfigured ? (
+                <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                  Billing is not configured in this environment. Plans are
+                  visible, but purchase actions are unavailable.
+                </div>
+              ) : null}
+              {!canManageBilling ? (
+                <p className="text-sm text-muted-foreground">
+                  Only organization owners can manage billing changes. Admins
+                  can review plan details here.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+
+          <Card className="border-border/60 py-6 shadow-sm">
+            <CardContent className="px-0 pb-0 pt-0">
+              {isLoadingPlanCatalog || !planCatalog ? (
+                <div className="px-4 py-6 sm:px-6">
+                  <div className="mb-4 space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+                      Compare plans
+                    </p>
+                    <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
+                      Compare Free vs Team
+                    </CardTitle>
+                    <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                      {ORG_COMPARE_PLANS_NOTE}
+                    </p>
+                  </div>
+                  <div className="mb-4">
+                    <BillingIntervalToggle
+                      billingInterval={billingInterval}
+                      onBillingIntervalChange={setBillingInterval}
+                      annualDiscountPct={annualDiscountPct}
+                    />
+                  </div>
+                  <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                    Loading plan catalog...
+                  </div>
+                </div>
+              ) : (
+                <div className="relative w-full overflow-x-auto overscroll-x-contain">
+                  <div className="min-w-[44rem] px-4 pb-6 sm:px-6">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
+                          <TableHead className="sticky left-0 z-20 h-full min-h-0 w-[26%] min-w-[11rem] whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top">
+                            <div className="flex h-full min-h-[11rem] flex-col">
+                              <div className="flex min-h-0 flex-1 flex-col">
+                                <div className="space-y-1 pr-1">
+                                  <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+                                    Compare plans
                                   </p>
-                                  {entry.seatMinimum ? (
-                                    <p className="text-xs leading-snug text-muted-foreground">
-                                      {entry.seatMinimum} seat minimum
-                                    </p>
-                                  ) : null}
-                                  {showDeferredTrialBillingCopy ? (
-                                    <p className="text-[11px] font-medium leading-tight text-muted-foreground">
-                                      {deferredTrialBillingCopy}
-                                    </p>
-                                  ) : null}
+                                  <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
+                                    Compare Free vs Team
+                                  </CardTitle>
+                                  <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                                    {ORG_COMPARE_PLANS_NOTE}
+                                  </p>
                                 </div>
+                                <div className="min-h-0 flex-1" aria-hidden />
                               </div>
-                              {cta.tooltip ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
+                              <div className="shrink-0">
+                                <BillingIntervalToggle
+                                  billingInterval={billingInterval}
+                                  onBillingIntervalChange={setBillingInterval}
+                                  annualDiscountPct={annualDiscountPct}
+                                />
+                              </div>
+                            </div>
+                          </TableHead>
+                          {PLAN_ORDER.map((plan) => {
+                            const entry = planCatalog.plans[plan];
+                            const isEnterprisePlan = plan === "enterprise";
+                            const displayCents =
+                              plan === "free" || isEnterprisePlan
+                                ? null
+                                : getDisplayPriceCentsForPlan(
+                                    plan,
+                                    billingInterval,
+                                    entry
+                                  );
+                            const priceLabel = isEnterprisePlan
+                              ? "Custom"
+                              : plan === "free"
+                              ? "$0"
+                              : formatPlanPriceLabel(
+                                  plan,
+                                  displayCents,
+                                  planCatalog.currency,
+                                  billingInterval
+                                );
+                            const priceSubtext = isEnterprisePlan
+                              ? formatPerSeatCadence(
+                                  plan,
+                                  entry,
+                                  billingInterval
+                                )
+                              : plan === "free"
+                              ? "No credit card required"
+                              : formatPerSeatCadence(
+                                  plan,
+                                  entry,
+                                  billingInterval
+                                );
+                            const cta = getPlanColumnCta({
+                              plan,
+                              currentPlan,
+                              entry,
+                              billingConfigured,
+                              canManageBilling,
+                              isBillingActionPending,
+                              onDowngradePlan: (
+                                targetPlan,
+                                targetBillingInterval
+                              ) =>
+                                void onDowngradePlan(
+                                  targetPlan,
+                                  targetBillingInterval
+                                ),
+                              onStartPlanChange,
+                              billingInterval,
+                            });
+                            const showPlanChangeSpinner =
+                              pendingPlanChangeTarget === plan &&
+                              (cta.label === "Upgrade" ||
+                                cta.label === "Downgrade") &&
+                              plan === "team";
+                            const showCtaSpinner = showPlanChangeSpinner;
+                            const isPopular = plan === POPULAR_PLAN;
+                            const showDeferredTrialBillingCopy =
+                              deferredTrialBillingCopy != null &&
+                              cta.label === "Upgrade" &&
+                              !cta.disabled &&
+                              !cta.tooltip &&
+                              plan === "team";
+                            return (
+                              <TableHead
+                                key={plan}
+                                className={cn(
+                                  "h-full min-h-0 whitespace-normal px-3 pt-5 pb-4 text-center align-top",
+                                  isPopular &&
+                                    "border-x border-primary/35 bg-primary/[0.06]"
+                                )}
+                              >
+                                <div className="mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col">
+                                  <div className="flex min-h-0 flex-1 flex-col items-center gap-3">
+                                    <div className="flex flex-wrap items-center justify-center gap-2">
+                                      <span className="text-base font-semibold">
+                                        {entry.displayName}
+                                      </span>
+                                      {isPopular ? (
+                                        <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
+                                          Popular
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                    <div className="w-full space-y-1 text-center">
+                                      <PlanPriceDisplay label={priceLabel} />
+                                      <p className="text-xs leading-snug text-muted-foreground">
+                                        {priceSubtext}
+                                      </p>
+                                      {entry.seatMinimum ? (
+                                        <p className="text-xs leading-snug text-muted-foreground">
+                                          {entry.seatMinimum} seat minimum
+                                        </p>
+                                      ) : null}
+                                      {showDeferredTrialBillingCopy ? (
+                                        <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+                                          {deferredTrialBillingCopy}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  {cta.tooltip ? (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          className="w-full shrink-0 rounded-lg"
+                                          size="sm"
+                                          variant={cta.variant}
+                                          aria-disabled={true}
+                                          tabIndex={0}
+                                          onClick={undefined}
+                                        >
+                                          {showCtaSpinner ? (
+                                            <>
+                                              <Loader2 className="size-4 animate-spin" />
+                                              Loading...
+                                            </>
+                                          ) : (
+                                            cta.label
+                                          )}
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent
+                                        side="top"
+                                        className="max-w-[14rem] text-center"
+                                      >
+                                        {cta.tooltip}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ) : (
                                     <Button
                                       className="w-full shrink-0 rounded-lg"
                                       size="sm"
                                       variant={cta.variant}
-                                      aria-disabled={true}
-                                      tabIndex={0}
-                                      onClick={undefined}
+                                      disabled={cta.disabled}
+                                      onClick={cta.onClick}
                                     >
                                       {showCtaSpinner ? (
                                         <>
@@ -893,95 +950,74 @@ export function OrganizationBillingSection({
                                         cta.label
                                       )}
                                     </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent
-                                    side="top"
-                                    className="max-w-[14rem] text-center"
-                                  >
-                                    {cta.tooltip}
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : (
-                                <Button
-                                  className="w-full shrink-0 rounded-lg"
-                                  size="sm"
-                                  variant={cta.variant}
-                                  disabled={cta.disabled}
-                                  onClick={cta.onClick}
-                                >
-                                  {showCtaSpinner ? (
-                                    <>
-                                      <Loader2 className="size-4 animate-spin" />
-                                      Loading...
-                                    </>
-                                  ) : (
-                                    cta.label
                                   )}
-                                </Button>
-                              )}
-                            </div>
-                          </TableHead>
-                        );
-                      })}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(compareSections ?? []).map((section) => (
-                      <Fragment key={section.title}>
-                        <TableRow className="border-b hover:bg-transparent">
-                          <TableCell
-                            className="bg-muted/40 py-2.5 pl-4"
-                            colSpan={PLAN_ORDER.length + 1}
-                          >
-                            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              {section.title}
-                            </div>
-                          </TableCell>
+                                </div>
+                              </TableHead>
+                            );
+                          })}
                         </TableRow>
-                        {section.rows.map((row, rowIndex) => {
-                          const cells: ComparePlanCell[] = [
-                            row.free,
-                            row.team,
-                            row.enterprise,
-                          ];
-                          return (
-                            <TableRow
-                              key={`${section.title}-${rowIndex}-${row.label}`}
-                              className="border-b"
-                            >
-                              <TableCell className="sticky left-0 z-10 max-w-[14rem] bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
-                                <ComparePlanRowLabel
-                                  label={row.label}
-                                  tooltipKey={row.tooltipKey}
-                                />
+                      </TableHeader>
+                      <TableBody>
+                        {(compareSections ?? []).map((section) => (
+                          <Fragment key={section.title}>
+                            <TableRow className="border-b hover:bg-transparent">
+                              <TableCell
+                                className="bg-muted/40 py-2.5 pl-4"
+                                colSpan={PLAN_ORDER.length + 1}
+                              >
+                                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                  {section.title}
+                                </div>
                               </TableCell>
-                              {PLAN_ORDER.map((plan, i) => {
-                                const isPopular = plan === POPULAR_PLAN;
-                                return (
-                                  <TableCell
-                                    key={plan}
-                                    className={cn(
-                                      "max-w-[13rem] whitespace-normal px-3 py-3 text-center align-middle text-sm",
-                                      isPopular &&
-                                        "border-x border-primary/35 bg-primary/[0.06]",
-                                    )}
-                                  >
-                                    <ComparePlanMatrixCell cell={cells[i]!} />
-                                  </TableCell>
-                                );
-                              })}
                             </TableRow>
-                          );
-                        })}
-                      </Fragment>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                            {section.rows.map((row, rowIndex) => {
+                              const cells: ComparePlanCell[] = [
+                                row.free,
+                                row.team,
+                                row.enterprise,
+                              ];
+                              return (
+                                <TableRow
+                                  key={`${section.title}-${rowIndex}-${row.label}`}
+                                  className="border-b"
+                                >
+                                  <TableCell className="sticky left-0 z-10 max-w-[14rem] bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
+                                    <ComparePlanRowLabel
+                                      label={row.label}
+                                      tooltipKey={row.tooltipKey}
+                                    />
+                                  </TableCell>
+                                  {PLAN_ORDER.map((plan, i) => {
+                                    const isPopular = plan === POPULAR_PLAN;
+                                    return (
+                                      <TableCell
+                                        key={plan}
+                                        className={cn(
+                                          "max-w-[13rem] whitespace-normal px-3 py-3 text-center align-middle text-sm",
+                                          isPopular &&
+                                            "border-x border-primary/35 bg-primary/[0.06]"
+                                        )}
+                                      >
+                                        <ComparePlanMatrixCell
+                                          cell={cells[i]!}
+                                        />
+                                      </TableCell>
+                                    );
+                                  })}
+                                </TableRow>
+                              );
+                            })}
+                          </Fragment>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
     </div>
   );
 }

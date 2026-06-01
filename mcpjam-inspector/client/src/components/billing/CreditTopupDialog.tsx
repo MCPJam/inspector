@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -21,6 +22,7 @@ interface CreditTopupDialogProps {
   onOpenChange: (open: boolean) => void;
   chatSessionId: string;
   lastUserMessage: string;
+  organizationId?: string | null;
   /** Surface the user came from. Forwarded to telemetry events. */
   source: CreditTopupSource;
 }
@@ -30,35 +32,38 @@ export function CreditTopupDialog({
   onOpenChange,
   chatSessionId,
   lastUserMessage,
+  organizationId,
   source,
 }: CreditTopupDialogProps) {
   const { presets, presetsLoading, startCheckout, isStartingCheckout } =
     useCreditTopup();
-  const [selectedAmountCents, setSelectedAmountCents] = useState<number | null>(
-    null,
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(
+    null
   );
 
   useEffect(() => {
     if (!open) {
-      setSelectedAmountCents(null);
+      setSelectedPackageId(null);
     }
   }, [open]);
 
   useEffect(() => {
-    if (open && presets && selectedAmountCents === null) {
-      setSelectedAmountCents(presets[0]?.amountCents ?? null);
+    if (open && presets && selectedPackageId === null) {
+      setSelectedPackageId(presets[0]?.packageId ?? null);
     }
-  }, [open, presets, selectedAmountCents]);
+  }, [open, presets, selectedPackageId]);
 
   const selectedPreset: CreditTopupPreset | undefined = presets?.find(
-    (preset) => preset.amountCents === selectedAmountCents,
+    (preset) => preset.packageId === selectedPackageId
   );
 
   const handleConfirm = async () => {
-    if (!selectedPreset) return;
+    if (!selectedPreset || !organizationId) return;
     try {
       await startCheckout({
-        amountCents: selectedPreset.amountCents,
+        organizationId,
+        packageId: selectedPreset.packageId,
+        priceCents: selectedPreset.priceCents,
         chatSessionId,
         lastUserMessage,
         source,
@@ -79,10 +84,10 @@ export function CreditTopupDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Top up to keep chatting</DialogTitle>
+          <DialogTitle>Buy credits to keep chatting</DialogTitle>
           <DialogDescription>
-            Add credit to your account so you can keep using MCPJam models
-            without waiting for your free daily credits to reset.
+            Add credits to your organization so the team can keep using MCPJam
+            models without waiting for your free daily credits to reset.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -92,27 +97,37 @@ export function CreditTopupDialog({
             </div>
           ) : !presets || presets.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              Top-up amounts are unavailable right now. Please try again later.
+              Credit packages are unavailable right now. Please try again later.
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-2" role="radiogroup">
               {presets.map((preset) => {
-                const isSelected = preset.amountCents === selectedAmountCents;
+                const isSelected = preset.packageId === selectedPackageId;
+                const creditsAmount = preset.displayCredits.replace(
+                  /\s*credits\s*$/i,
+                  ""
+                );
                 return (
                   <button
-                    key={preset.amountCents}
+                    key={preset.packageId}
                     type="button"
                     role="radio"
                     aria-checked={isSelected}
-                    onClick={() => setSelectedAmountCents(preset.amountCents)}
+                    onClick={() => setSelectedPackageId(preset.packageId)}
                     className={cn(
                       "flex flex-col items-center justify-center rounded-md border px-3 py-3 text-sm font-medium transition-colors",
                       isSelected
                         ? "border-primary bg-primary/10 text-foreground"
-                        : "border-border hover:border-foreground/40",
+                        : "border-border hover:border-foreground/40"
                     )}
                   >
-                    <span className="text-base">{preset.amountUsd}</span>
+                    <span className="flex items-center gap-1 text-lg font-semibold leading-tight">
+                      <CoinStackIcon aria-hidden="true" className="size-4" />
+                      {creditsAmount}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      credits
+                    </span>
                   </button>
                 );
               })}
@@ -131,13 +146,13 @@ export function CreditTopupDialog({
           <Button
             type="button"
             onClick={handleConfirm}
-            disabled={!selectedPreset || isStartingCheckout}
+            disabled={!selectedPreset || !organizationId || isStartingCheckout}
           >
             {isStartingCheckout
               ? "Redirecting…"
               : selectedPreset
-                ? `Continue with ${selectedPreset.amountUsd}`
-                : "Continue"}
+              ? `Continue with ${selectedPreset.displayPrice}`
+              : "Continue"}
           </Button>
         </DialogFooter>
       </DialogContent>

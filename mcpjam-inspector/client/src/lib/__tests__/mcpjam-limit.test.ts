@@ -12,6 +12,7 @@ beforeEach(() => {
     hasPendingLimit: false,
     isOpen: false,
     intent: null,
+    organizationId: null,
     pendingInput: null,
   });
 });
@@ -150,6 +151,25 @@ describe("isMCPJamModelLimitError", () => {
     expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
   });
 
+  it("captures the org id from wrapped signed-in usage limit hits", () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+    });
+
+    expect(
+      notifyMCPJamLimitError({
+        message:
+          'Backend stream error: 429 {"code":"user_rate_limit","error":"Daily credit limit reached.","limitKind":"total","organizationId":"org-a"}',
+      }),
+    ).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().organizationId).toBe("org-a");
+  });
+
   it("does not open the modal for concurrency-throttle errors", () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",
@@ -218,6 +238,7 @@ describe("isMCPJamModelLimitError", () => {
       JSON.stringify({
         code: "mcpjam_rate_limit",
         error: "Daily usage limit reached.",
+        organizationId: "org-from-response",
       }),
       { status: 429 },
     );
@@ -226,6 +247,9 @@ describe("isMCPJamModelLimitError", () => {
       true,
     );
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().organizationId).toBe(
+      "org-from-response",
+    );
     await expect(response.text()).resolves.toContain("mcpjam_rate_limit");
   });
 
