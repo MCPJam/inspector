@@ -57,7 +57,11 @@ export function JudgesSection({
   description = "Advisory LLM-as-judge scorers that grade run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
 }: JudgesSectionProps) {
   const gc = value?.goalCompletion;
-  const enabled = gc?.enabled === true;
+  // Treat absence as "enabled" to mirror GOAL_COMPLETION_DEFAULTS
+  // (`enabled: true`). Only an explicit `enabled: false` switches the
+  // suite to off; otherwise the toggle reads as on by default so users
+  // see the configuration affordance instead of an opt-in gate.
+  const enabled = gc?.enabled !== false;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
   const threshold = gc?.threshold ?? DEFAULT_THRESHOLD;
   const autoRun = gc?.autoRun === true;
@@ -146,7 +150,13 @@ export function JudgesSection({
           <Switch
             checked={enabled}
             onCheckedChange={(checked: boolean) =>
-              update({ enabled: checked || undefined })
+              // Persist EXPLICIT true/false. `undefined` means "inherit the
+              // default" — which is `enabled: true` — so writing
+              // `enabled: undefined` here would silently re-enable a suite
+              // the user just disabled. Write `false` to disable, `true` to
+              // re-enable; let `pruneEmpty` decide later when to drop the
+              // record entirely.
+              update({ enabled: checked })
             }
             aria-label="Enable Goal Completion judge for this suite"
           />

@@ -152,13 +152,14 @@ export function GoalCompletionCard({
   const suiteConfig = run.configSnapshot?.judgeConfig?.goalCompletion;
   const suiteModel = suiteConfig?.judgeModel ?? DEFAULT_JUDGE_MODEL;
   const suiteThreshold = suiteConfig?.threshold ?? DEFAULT_THRESHOLD;
-  // Judge is "configured" iff the suite snapshot has `enabled: true`. When
-  // false (or absent — older runs without a snapshot), the action would
-  // short-circuit to a no-op grading anyway, so the card hides the run
-  // controls and shows a "Configure on suite" CTA instead. Without this
-  // gate, clicking Run judge on an unconfigured run spends an LLM call to
-  // grade zero cases.
-  const isJudgeConfigured = suiteConfig?.enabled === true;
+  // Treat "no explicit choice" as enabled (matches GOAL_COMPLETION_DEFAULTS
+  // on the backend: `enabled: true`). Only an explicit `enabled: false` on
+  // the suite snapshot hides the run controls behind the "Configure on
+  // suite" CTA. This keeps the judge discoverable on every suite by default
+  // while still respecting an owner who actively turned it off.
+  // Cost remains gated by the explicit Run judge click + `autoRun: false`
+  // default — an enabled-but-un-clicked judge spends nothing.
+  const isJudgeConfigured = suiteConfig?.enabled !== false;
   // The persisted run override (`run.judgeConfigOverride.goalCompletion`)
   // tells the trend story (this data point isn't graded against the suite
   // contract). Surfacing it prominently is how the comparability promise

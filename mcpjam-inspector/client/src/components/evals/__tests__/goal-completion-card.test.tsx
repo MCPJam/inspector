@@ -237,10 +237,12 @@ describe("GoalCompletionCard", () => {
     expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, true);
   });
 
-  it("hides run controls and shows a Configure-on-suite CTA when the snapshot doesn't enable the judge", () => {
-    // Without this gate the user could click Run judge on an unconfigured
-    // run — the backend would filter every case out and still spend an
-    // LLM call to "grade" nothing. Show the CTA instead.
+  it("renders run controls by default when the snapshot says nothing (judge is on by default)", () => {
+    // V2 default: GOAL_COMPLETION_DEFAULTS.enabled = true. A snapshot
+    // without `judgeConfig.goalCompletion.enabled` (older runs, or a
+    // suite the owner never touched) resolves to enabled and surfaces
+    // the run controls — NOT the "Configure on suite" CTA. Cost is
+    // still gated by the explicit click + autoRun: false default.
     const unconfiguredRun = makeRun({
       configSnapshot: { tests: [], environment: { servers: [] } },
     });
@@ -252,21 +254,17 @@ describe("GoalCompletionCard", () => {
       />,
     );
     expect(
-      screen.queryByRole("button", { name: /Run judge/i }),
+      screen.getByRole("button", { name: /Run judge/i }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(/Goal completion isn't enabled for this suite/i),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/Goal completion isn't enabled for this suite/i),
-    ).toBeInTheDocument();
-    // CTA points at the actual UI affordance (the gear button on the suite
-    // header) — not just generic "Suite settings", which had no visible
-    // entry point in the inspector until the gear shipped.
-    expect(
-      screen.getByText(/Open suite settings.*button next to the suite name/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/enable Goal completion under/i)).toBeInTheDocument();
   });
 
-  it("hides run controls when the snapshot has goal completion explicitly disabled", () => {
+  it("hides run controls and shows a Configure-on-suite CTA only when the suite explicitly disabled the judge", () => {
+    // The CTA path is now reserved for an explicit `enabled: false` on
+    // the snapshot — the owner actively turned the judge off. Older
+    // runs without any judgeConfig get the default-on path above.
     const disabledRun = makeRun({
       configSnapshot: {
         tests: [],
@@ -280,6 +278,15 @@ describe("GoalCompletionCard", () => {
     expect(
       screen.queryByRole("button", { name: /Run judge/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Goal completion isn't enabled for this suite/i),
+    ).toBeInTheDocument();
+    // CTA points at the actual UI affordance (the gear button on the suite
+    // header) — not just generic "Suite settings", which had no visible
+    // entry point in the inspector until the gear shipped.
+    expect(
+      screen.getByText(/Open suite settings.*button next to the suite name/i),
+    ).toBeInTheDocument();
   });
 
   it("renders a prominent override banner when the run carries a judge override", () => {
