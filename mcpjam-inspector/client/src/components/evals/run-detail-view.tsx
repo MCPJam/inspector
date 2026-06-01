@@ -420,6 +420,9 @@ export function RunDetailView({
   const goalCompletionPanel =
     selectedRunDetails.status === "completed" && !goalCompletionUnavailable ? (
       <GoalCompletionCard
+        // Remount per run so the model/threshold inputs reset to the new run's
+        // settings instead of sticking from the previously viewed run.
+        key={selectedRunDetails._id}
         run={selectedRunDetails}
         iterations={caseGroupsForSelectedRun}
         goalCompletion={goalCompletionResult ?? null}

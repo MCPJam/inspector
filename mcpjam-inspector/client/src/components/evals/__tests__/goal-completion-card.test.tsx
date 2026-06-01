@@ -134,4 +134,30 @@ describe("GoalCompletionCard", () => {
       screen.getByText(/Grading final answers against expected output/i),
     ).toBeInTheDocument();
   });
+
+  it("disables running once a request is in flight (no duplicate judge calls)", () => {
+    // After a click, `requested` is true before the run doc flips to pending;
+    // the button must already be disabled so a second click can't double-spend.
+    render(<GoalCompletionCard {...baseProps} requested onRun={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
+  });
+
+  it("forces a re-request when retrying a failed run", async () => {
+    const onRun = vi.fn();
+    const user = userEvent.setup();
+    // Failed with no stored result: the main control must still pass force.
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        failedGeneration
+        goalCompletion={null}
+        onRun={onRun}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Run judge/i }));
+    expect(onRun).toHaveBeenCalledWith(
+      { judgeModel: "openai/gpt-5.4-mini", threshold: 0.7 },
+      true,
+    );
+  });
 });

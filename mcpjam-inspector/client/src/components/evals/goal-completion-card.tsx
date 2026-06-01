@@ -17,6 +17,8 @@ import type { GoalCompletionRequestArgs } from "./use-goal-completion";
 
 /** Managed default judge model (mirrors GOAL_COMPLETION_MODEL in the backend). */
 const DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
+// A reasonable starting cutoff only — LLM-as-judge scores aren't comparable
+// across domains, so teams should recalibrate this against a labeled set.
 const DEFAULT_THRESHOLD = 0.7;
 
 export interface GoalCompletionCardProps {
@@ -156,7 +158,7 @@ export function GoalCompletionCard({
             size="sm"
             className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
             onClick={() => handleRun(true)}
-            disabled={!completedRun || pending}
+            disabled={!completedRun || pending || requested}
           >
             <RotateCw className="h-3 w-3" />
             Retry
@@ -210,8 +212,12 @@ export function GoalCompletionCard({
           type="button"
           size="sm"
           className="h-8 gap-1 text-xs"
-          onClick={() => handleRun(Boolean(goalCompletion))}
-          disabled={!completedRun || pending}
+          // force when re-grading an existing result OR retrying a failed run,
+          // so the shared insight lifecycle re-requests instead of no-opping.
+          onClick={() => handleRun(Boolean(goalCompletion) || failedGeneration)}
+          // `requested` blocks the gap between click and the run doc flipping to
+          // `pending`, so a double-click can't spend a second judge call.
+          disabled={!completedRun || pending || requested}
         >
           {pending ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -221,6 +227,12 @@ export function GoalCompletionCard({
           {runLabel}
         </Button>
       </div>
+
+      <p className="px-3 pb-3 text-[11px] text-muted-foreground/70">
+        Threshold is the advisory pass cutoff (score ≥ threshold). Calibrate it
+        per suite against a labeled set — LLM-judge scores are not comparable
+        across domains.
+      </p>
 
       <div className="border-t border-border/50">
         {pending ? (
