@@ -110,6 +110,8 @@ describe("GoalCompletionCard", () => {
 
     // Joins caseKey -> human title from the iterations.
     expect(screen.getByText("Weather lookup")).toBeInTheDocument();
+    // ck-2 has no matching iteration, so it falls back to the caseKey itself.
+    expect(screen.getByText("ck-2")).toBeInTheDocument();
     expect(screen.getByText("80%")).toBeInTheDocument();
     expect(screen.getByText("30%")).toBeInTheDocument();
     expect(screen.getByText("meets goal")).toBeInTheDocument();

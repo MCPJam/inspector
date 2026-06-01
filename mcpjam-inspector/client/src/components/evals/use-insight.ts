@@ -113,9 +113,14 @@ export function useInsight<TResult extends { summary?: string }>(
     }
   }, [runKey]);
 
-  // Clear optimistic "requested" flag once the server status catches up.
+  // Clear the optimistic "requested" flag once the job actually starts (status
+  // flips to `pending`); `pending` then drives the disabled state. Clearing on
+  // `completed`/`failed` instead re-enabled a re-run/retry trigger in the gap
+  // between the click and the status flip (those statuses still hold the prior
+  // result), which let a second request slip through. The request mutation's
+  // catch handles the case where the job never reaches `pending`.
   useEffect(() => {
-    if (status === "completed" || status === "failed") {
+    if (status === "pending") {
       setRequested(false);
     }
   }, [status, run?._id]);

@@ -72,6 +72,11 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => <div data-testid="run-detail-resizable-handle" />,
 }));
 
+// The panel derives the judge's org scope from shared app state.
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({ projects: {}, activeProjectId: null }),
+}));
+
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
     _id: "run-1",
