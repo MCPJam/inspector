@@ -53,6 +53,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { HostListItem } from "@/hooks/useClients";
+import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -64,6 +65,7 @@ interface SuiteHeaderProps {
     opts?: {
       matchOptionsOverride?: EvalMatchOptions;
       iterationOverride?: number;
+      refreshSnapshot?: boolean;
     },
   ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
@@ -73,7 +75,7 @@ interface SuiteHeaderProps {
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;
   cancellingRunId: string | null;
-  runsViewMode?: "runs" | "test-cases";
+  runsViewMode?: SuiteOverviewView;
   runs?: EvalSuiteRun[];
   allIterations?: EvalIteration[];
   aggregate?: SuiteAggregate | null;
@@ -208,6 +210,27 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       setEditedName(suite.name);
     }
   }, [editedName, suite.name, suite._id, updateSuite]);
+
+  const handleServerAttachmentUpdate = useCallback(
+    async (serverAttachmentId: string) => {
+      // Picker calls this synchronously inside onClick — don't rethrow,
+      // or the unawaited promise becomes an unhandled rejection. The
+      // toast is the user-facing signal; the suite row will reconcile
+      // from the live Convex subscription on retry.
+      try {
+        await updateSuite({
+          suiteId: suite._id,
+          serverAttachmentId,
+        });
+        toast.success("Server attachment updated");
+      } catch (error) {
+        toast.error(
+          getBillingErrorMessage(error, "Failed to update server attachment"),
+        );
+      }
+    },
+    [suite._id, updateSuite],
+  );
 
   const handleNameKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -388,6 +411,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       projectHosts={projectHosts}
       readOnly={readOnlyConfig}
       onUpdate={onSuiteHostAttachmentsUpdate}
+      onUpdateServerAttachment={handleServerAttachmentUpdate}
     />
   );
 
@@ -695,6 +719,33 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 Setup SDK
               </Button>
+            ) : null}
+
+            {!hideRunActions && !readOnlyConfig && hasServersConfigured ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 text-muted-foreground"
+                      disabled={isRerunning}
+                      onClick={() =>
+                        onRerun(suite, { refreshSnapshot: true })
+                      }
+                    >
+                      <RotateCw
+                        className={`h-3.5 w-3.5 shrink-0 ${isRerunning ? "animate-spin" : ""}`}
+                        aria-hidden
+                      />
+                      Update snapshot
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent variant="muted" side="bottom" className="max-w-[16rem]">
+                  Re-saves the suite&apos;s current server list as the frozen execution snapshot and starts a run.
+                </TooltipContent>
+              </Tooltip>
             ) : null}
 
             {!hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (

@@ -6,19 +6,8 @@ import type {
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
 import { CORS_ORIGINS } from "../../config.js";
-import {
-  CHATGPT_APPS_SANDBOX_PROXY_HTML,
-  MCP_APPS_SANDBOX_PROXY_HTML,
-} from "../apps/SandboxProxyHtml.bundled.js";
-import {
-  injectOpenAICompat,
-  injectScripts,
-  buildCspHeader,
-  buildCspMetaContent,
-  buildChatGptRuntimeHead,
-  normalizeWidgetCspMeta,
-  type CspMode,
-} from "../../utils/widget-helpers.js";
+import { MCP_APPS_SANDBOX_PROXY_HTML } from "../apps/SandboxProxyHtml.bundled.js";
+import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import {
   projectServerSchema,
   withEphemeralConnection,
@@ -63,8 +52,7 @@ function extractLegacyOpenAICspHosted(
 // Mimetypes accepted by the hosted-mode widget-content route. Mirrors
 // the local route in routes/apps/mcp-apps/index.ts — see the long-form
 // comment there for rationale (SEP-1865 canonical + two legacy Apps SDK
-// forms, kept for backward compat with widgets that worked on the old
-// ChatGPTAppRenderer path).
+// forms).
 const SKYBRIDGE_MIMETYPE = "text/html+skybridge";
 const PLAIN_HTML_MIMETYPE = "text/html";
 const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
@@ -113,22 +101,20 @@ const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   toolName: z.string().min(1),
   theme: z.enum(["light", "dark"]).optional(),
   cspMode: z.enum(["permissive", "widget-declared"]).optional(),
+  // Default false: Claude/Cursor/Codex-style hosts don't expose
+  // `window.openai`. ChatGPT/Copilot and MCPJam dev host configs flip
+  // this on per request via the resolver in the renderer.
+  injectOpenAiCompat: z.boolean().optional().default(false),
+  // Per-method `window.openai.*` capability surface — client-resolved
+  // and forwarded verbatim. The hosted server doesn't own the active
+  // host config (capability resolution stays client-side), so this is
+  // a passthrough into `injectOpenAICompat`. `z.unknown()` because the
+  // SDK runtime accepts a sparse partial — strict validation lives on
+  // the client where the type is known.
+  openAiCompatCapabilities: z.record(z.string(), z.unknown()).optional(),
   template: z.string().optional(),
   viewMode: z.string().optional(),
   viewParams: z.record(z.string(), z.unknown()).optional(),
-});
-
-const chatgptAppsWidgetContentSchema = projectServerSchema.extend({
-  uri: z.string().min(1),
-  toolInput: z.record(z.string(), z.unknown()).default({}),
-  toolOutput: z.unknown().optional(),
-  toolResponseMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
-  toolId: z.string().min(1),
-  toolName: z.string().min(1),
-  theme: z.enum(["light", "dark"]).optional(),
-  cspMode: z.enum(["permissive", "widget-declared"]).optional(),
-  locale: z.string().optional(),
-  deviceType: z.enum(["mobile", "tablet", "desktop"]).optional(),
 });
 
 // ── Sandbox Proxy Routes ─────────────────────────────────────────────
@@ -146,14 +132,6 @@ apps.get("/mcp-apps/sandbox-proxy", (c) => {
   c.header("Content-Security-Policy", buildFrameAncestors());
   c.res.headers.delete("X-Frame-Options");
   return c.body(MCP_APPS_SANDBOX_PROXY_HTML);
-});
-
-apps.get("/chatgpt-apps/sandbox-proxy", (c) => {
-  c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Cache-Control", "public, max-age=3600");
-  c.header("Content-Security-Policy", buildFrameAncestors());
-  c.res.headers.delete("X-Frame-Options");
-  return c.body(CHATGPT_APPS_SANDBOX_PROXY_HTML);
 });
 
 // ── MCP Apps Widget Content ──────────────────────────────────────────
@@ -230,17 +208,28 @@ apps.post("/mcp-apps/widget-content", async (c) =>
           ? (resourceMeta["openai/widgetPrefersBorder"] as boolean)
           : undefined);
 
-      html = injectOpenAICompat(html, {
-        toolId: body.toolId,
-        toolName: body.toolName,
-        toolInput: body.toolInput ?? {},
-        toolOutput: body.toolOutput,
-        toolResponseMetadata: body.toolResponseMetadata ?? null,
-        initialWidgetState: body.initialWidgetState ?? null,
-        theme: body.theme,
-        viewMode: body.viewMode,
-        viewParams: body.viewParams,
-      });
+      // Mirror the local CLI route's behavior: only inject the
+      // OpenAI Apps SDK shim when the caller has opted in. Hosted
+      // chatboxes resolve this from the active host config's
+      // `mcpProfile.apps.compatRuntime` (preset fallback applied),
+      // so SEP-1865-native hosts get clean HTML by default.
+      const shouldInjectOpenAiCompat = body.injectOpenAiCompat === true;
+      if (shouldInjectOpenAiCompat) {
+        html = injectOpenAICompat(html, {
+          toolId: body.toolId,
+          toolName: body.toolName,
+          toolInput: body.toolInput ?? {},
+          toolOutput: body.toolOutput,
+          toolResponseMetadata: body.toolResponseMetadata ?? null,
+          initialWidgetState: body.initialWidgetState ?? null,
+          theme: body.theme,
+          viewMode: body.viewMode,
+          viewParams: body.viewParams,
+          capabilities: body.openAiCompatCapabilities as
+            | Parameters<typeof injectOpenAICompat>[1]["capabilities"]
+            | undefined,
+        });
+      }
 
       return {
         html,
@@ -249,6 +238,12 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
         prefersBorder: prefersBorderFromMeta,
+        injectedOpenAiCompat: shouldInjectOpenAiCompat,
+        injectedOpenAiCompatCapabilities:
+          shouldInjectOpenAiCompat &&
+          body.openAiCompatCapabilities !== undefined
+            ? body.openAiCompatCapabilities
+            : undefined,
         mimeType: contentMimeType,
         mimeTypeValid,
         mimeTypeWarning,
@@ -257,114 +252,10 @@ apps.post("/mcp-apps/widget-content", async (c) =>
   ),
 );
 
-// ── ChatGPT Apps Widget Content ──────────────────────────────────────
-
-apps.post("/chatgpt-apps/widget-content", async (c) =>
-  withEphemeralConnection(
-    c,
-    chatgptAppsWidgetContentSchema,
-    async (manager, body) => {
-      const content = await manager.readResource(body.serverId, {
-        uri: body.uri,
-      });
-      const contentsArray = Array.isArray((content as any)?.contents)
-        ? (content as any).contents
-        : [];
-      const firstContent = contentsArray[0];
-      if (!firstContent) {
-        throw new WebRouteError(
-          404,
-          ErrorCode.NOT_FOUND,
-          "No HTML content found",
-        );
-      }
-
-      const htmlContent = extractHtmlFromResourceContent(firstContent);
-      if (!htmlContent) {
-        throw new WebRouteError(
-          404,
-          ErrorCode.NOT_FOUND,
-          "No HTML content found",
-        );
-      }
-
-      const resourceMeta = firstContent?._meta as
-        | Record<string, unknown>
-        | undefined;
-      const widgetCspRaw = normalizeWidgetCspMeta(resourceMeta);
-      const effectiveCspMode = body.cspMode ?? "permissive";
-      const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw, {
-        frameAncestors: buildFrameAncestors(),
-      });
-
-      const runtimeConfig = {
-        toolId: body.toolId,
-        toolName: body.toolName,
-        toolInput: body.toolInput,
-        toolOutput: body.toolOutput ?? null,
-        toolResponseMetadata: body.toolResponseMetadata ?? null,
-        theme: body.theme ?? "dark",
-        locale: body.locale ?? "en-US",
-        deviceType: body.deviceType ?? "desktop",
-        viewMode: "inline",
-        viewParams: {},
-        useMapPendingCalls: true,
-      };
-
-      const runtimeHeadContent = buildChatGptRuntimeHead({
-        htmlContent,
-        runtimeConfig,
-      });
-
-      // Inject CSP meta tag before scripts for blob URL enforcement in hosted mode.
-      // In local mode, CSP is enforced via HTTP headers on the widget-content response.
-      // In hosted mode, the HTML is returned as JSON and loaded as a blob URL,
-      // which has no HTTP headers. The meta tag provides equivalent enforcement.
-      // Per CSP spec, the meta tag should appear before any scripts in <head>.
-      let cspMetaTag = "";
-      if (cspConfig.headerString) {
-        const metaCspContent = buildCspMetaContent(cspConfig.headerString);
-        cspMetaTag = `<meta http-equiv="Content-Security-Policy" content="${metaCspContent.replace(/"/g, "&quot;")}">`;
-      }
-
-      const modifiedHtml = injectScripts(
-        htmlContent,
-        cspMetaTag + runtimeHeadContent,
-      );
-
-      return {
-        html: modifiedHtml,
-        csp: {
-          mode: cspConfig.mode,
-          connectDomains: cspConfig.connectDomains,
-          resourceDomains: cspConfig.resourceDomains,
-          frameDomains: cspConfig.frameDomains,
-          headerString: cspConfig.headerString,
-          widgetDeclared: widgetCspRaw ?? null,
-        },
-        widgetDescription: resourceMeta?.["openai/widgetDescription"] as
-          | string
-          | undefined,
-        prefersBorder:
-          ((resourceMeta?.ui as { prefersBorder?: boolean } | undefined)
-            ?.prefersBorder as boolean | undefined) ??
-          (resourceMeta?.["openai/widgetPrefersBorder"] as
-            | boolean
-            | undefined) ??
-          true,
-        closeWidget:
-          (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ??
-          false,
-      };
-    },
-  ),
-);
-
 // ── File stubs (not supported in hosted mode) ────────────────────────
-// Canonical `/files/*` plus legacy `/chatgpt-apps/*` aliases. The client
-// short-circuits hosted-mode uploads/downloads before hitting the server
-// (see client widget-file-messages.ts), so these are belt-and-suspenders.
-// Drop the chatgpt-apps aliases in Phase 4.
+// The client short-circuits hosted-mode uploads/downloads before hitting
+// the server (see client widget-file-messages.ts), so these are
+// belt-and-suspenders.
 
 const fileUploadStub = async (c: any) =>
   handleRoute(c, async () => {
@@ -388,8 +279,5 @@ const fileDownloadStub = async (c: any) =>
 
 apps.post("/files/upload-file", fileUploadStub);
 apps.get("/files/file/:fileId", fileDownloadStub);
-
-apps.post("/chatgpt-apps/upload-file", fileUploadStub);
-apps.get("/chatgpt-apps/file/:id", fileDownloadStub);
 
 export default apps;

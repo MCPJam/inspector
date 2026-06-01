@@ -2,7 +2,10 @@ import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import {
+  getDefaultClientCapabilities,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
@@ -10,6 +13,13 @@ export interface ApiContext {
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
+  /**
+   * Resolved MCP profile pins. Single-server hosted routes forward these
+   * fields so ephemeral managers use the same wire mode as connect/validate.
+   */
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
@@ -36,11 +46,31 @@ const EMPTY_CONTEXT: ApiContext = {
 
 let apiContext: ApiContext = EMPTY_CONTEXT;
 let cachedBearerToken: { token: string; expiresAt: number } | null = null;
+let apiContextRevision = 0;
+const apiContextListeners = new Set<() => void>();
 
 const TOKEN_CACHE_TTL_MS = 30_000;
 
 export function resetTokenCache() {
   cachedBearerToken = null;
+}
+
+function notifyApiContextChanged() {
+  apiContextRevision += 1;
+  for (const listener of apiContextListeners) {
+    listener();
+  }
+}
+
+export function subscribeApiContext(listener: () => void): () => void {
+  apiContextListeners.add(listener);
+  return () => {
+    apiContextListeners.delete(listener);
+  };
+}
+
+export function getApiContextRevision(): number {
+  return apiContextRevision;
 }
 
 function assertHostedMode() {
@@ -98,6 +128,7 @@ export function setApiContext(next: ApiContext | null): void {
       }
     : EMPTY_CONTEXT;
   resetTokenCache();
+  notifyApiContextChanged();
 }
 
 /**
@@ -116,7 +147,7 @@ export function setApiContext(next: ApiContext | null): void {
  */
 export function injectHostedServerMapping(
   serverName: string,
-  serverId: string,
+  serverId: string
 ): void {
   apiContext = {
     ...apiContext,
@@ -125,6 +156,7 @@ export function injectHostedServerMapping(
       [serverName]: serverId,
     },
   };
+  notifyApiContextChanged();
 }
 
 export function getHostedProjectId(): string {
@@ -134,7 +166,7 @@ export function getHostedProjectId(): string {
   if (!projectId) {
     throw new BootstrapNotReadyError(
       "provisioning-project",
-      "hosted projectId is not in the API context yet",
+      "hosted projectId is not in the API context yet"
     );
   }
 
@@ -151,15 +183,13 @@ export function getHostedProjectId(): string {
  * resolve to a Convex Id. Callers handle null by using the legacy shape.
  */
 export function tryResolveProjectServer(
-  serverNameOrId: string,
+  serverNameOrId: string
 ): { projectId: string; serverId: string } | null {
   const projectId = apiContext.projectId;
   if (!projectId) return null;
   const direct = apiContext.serverIdsByName[serverNameOrId];
   if (direct) return { projectId, serverId: direct };
-  if (
-    Object.values(apiContext.serverIdsByName).includes(serverNameOrId)
-  ) {
+  if (Object.values(apiContext.serverIdsByName).includes(serverNameOrId)) {
     return { projectId, serverId: serverNameOrId };
   }
   return null;
@@ -169,7 +199,9 @@ export function tryResolveProjectServer(
  * Long alphanumeric refs are usually Convex/legacy document ids. Never echo
  * them in user-visible error strings; short names and slugs may still be shown.
  */
-function shouldIncludeHostedRefInNotFoundError(serverNameOrId: string): boolean {
+function shouldIncludeHostedRefInNotFoundError(
+  serverNameOrId: string
+): boolean {
   const t = serverNameOrId.trim();
   if (t.length < 1) {
     return false;
@@ -190,9 +222,7 @@ export function resolveHostedServerId(serverNameOrId: string): string {
   if (mapped) return mapped;
 
   // Allow direct server IDs for callers that already resolved names.
-  if (
-    Object.values(apiContext.serverIdsByName).includes(serverNameOrId)
-  ) {
+  if (Object.values(apiContext.serverIdsByName).includes(serverNameOrId)) {
     return serverNameOrId;
   }
 
@@ -218,7 +248,7 @@ export function resolveHostedServerIds(serverNamesOrIds: string[]): string[] {
 
 function findHostedServerName(serverId: string): string | undefined {
   return Object.entries(apiContext.serverIdsByName).find(
-    ([, mappedId]) => mappedId === serverId,
+    ([, mappedId]) => mappedId === serverId
   )?.[0];
 }
 
@@ -229,7 +259,7 @@ function findHostedServerName(serverId: string): string | undefined {
  * (for example, the server was removed from the project).
  */
 export function tryGetHostedServerDisplayName(
-  serverNameOrId: string,
+  serverNameOrId: string
 ): string | undefined {
   if (!HOSTED_MODE) {
     return undefined;
@@ -248,7 +278,7 @@ export function tryGetHostedServerDisplayName(
 }
 
 export function normalizeHostedServerNames(
-  serverNamesOrIds: string[],
+  serverNamesOrIds: string[]
 ): string[] {
   assertHostedMode();
 
@@ -268,7 +298,7 @@ export function normalizeHostedServerNames(
     const serverName =
       apiContext.serverIdsByName[trimmed] !== undefined
         ? trimmed
-        : (findHostedServerName(trimmed) ?? trimmed);
+        : findHostedServerName(trimmed) ?? trimmed;
     const dedupeKey = serverName.toLowerCase();
     if (seen.has(dedupeKey)) {
       continue;
@@ -282,7 +312,7 @@ export function normalizeHostedServerNames(
 }
 
 function resolveHostedServerEntries(
-  serverNamesOrIds: string[],
+  serverNamesOrIds: string[]
 ): Array<{ serverId: string; serverName: string }> {
   const seen = new Set<string>();
   const resolved: Array<{ serverId: string; serverName: string }> = [];
@@ -297,7 +327,7 @@ function resolveHostedServerEntries(
       serverName:
         apiContext.serverIdsByName[serverNameOrId] !== undefined
           ? serverNameOrId
-          : (findHostedServerName(serverId) ?? serverNameOrId),
+          : findHostedServerName(serverId) ?? serverNameOrId,
     });
   }
 
@@ -321,7 +351,7 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
 }
 
 export function buildServerRequest(
-  serverNameOrId: string,
+  serverNameOrId: string
 ): Record<string, unknown> {
   // Single hosted path: every request — guest or authed — carries
   // {projectId, serverId}. UI surfaces gate on `useAppReady()` so this
@@ -345,16 +375,24 @@ export function buildServerRequest(
     serverName:
       apiContext.serverIdsByName[serverNameOrId] !== undefined
         ? serverNameOrId
-        : (findHostedServerName(serverId) ?? serverNameOrId),
+        : findHostedServerName(serverId) ?? serverNameOrId,
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
     ...(apiContext.clientCapabilities
       ? { clientCapabilities: apiContext.clientCapabilities }
       : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(apiContext.mcpProtocolVersionsByServerId?.[serverId]
+      ? {
+          mcpProtocolVersion:
+            apiContext.mcpProtocolVersionsByServerId[serverId],
+        }
+      : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion)
-      ? { accessVersion }
-      : {}),
+    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
@@ -363,6 +401,9 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -374,6 +415,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
+  const protocolVersions = buildBatchProtocolVersionMap(serverIds);
   const chatboxId = getHostedChatboxId();
   const accessVersion = getHostedChatboxAccessVersion();
   const accessScope = getHostedAccessScope();
@@ -384,11 +426,80 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     ...(apiContext.clientCapabilities
       ? { clientCapabilities: apiContext.clientCapabilities }
       : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(protocolVersions
+      ? { mcpProtocolVersionsByServerId: protocolVersions }
+      : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion)
-      ? { accessVersion }
+    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+  };
+}
+
+/**
+ * `App.tsx` validates host profile pins and per-server overrides before
+ * populating `apiContext.mcpProtocolVersionsByServerId`, so this helper only
+ * filters the already-resolved map down to the requested server ids.
+ */
+function buildBatchProtocolVersionMap(
+  serverIds: string[]
+): Record<string, McpProtocolVersion> | undefined {
+  const source = apiContext.mcpProtocolVersionsByServerId;
+  if (!source) return undefined;
+  const filtered: Record<string, McpProtocolVersion> = {};
+  for (const id of serverIds) {
+    const pin = source[id];
+    if (pin) filtered[id] = pin;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
+export function buildResolvedServerBatchRequest(input: {
+  projectId: string;
+  serverIds: string[];
+  serverNames: string[];
+  oauthTokens?: Record<string, string>;
+  accessScope?: HostedAccessScope;
+  chatboxId?: string;
+  accessVersion?: number;
+}): {
+  projectId: string;
+  serverIds: string[];
+  serverNames: string[];
+  clientCapabilities?: Record<string, unknown>;
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  oauthTokens?: Record<string, string>;
+  accessScope?: HostedAccessScope;
+  chatboxId?: string;
+  accessVersion?: number;
+} {
+  assertClientConfigSynced();
+  const protocolVersions = buildBatchProtocolVersionMap(input.serverIds);
+  return {
+    projectId: input.projectId,
+    serverIds: input.serverIds,
+    serverNames: input.serverNames,
+    ...(apiContext.clientCapabilities
+      ? { clientCapabilities: apiContext.clientCapabilities }
+      : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(protocolVersions
+      ? { mcpProtocolVersionsByServerId: protocolVersions }
+      : {}),
+    ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
+    ...(input.accessScope ? { accessScope: input.accessScope } : {}),
+    ...(input.chatboxId ? { chatboxId: input.chatboxId } : {}),
+    ...(input.chatboxId && Number.isFinite(input.accessVersion)
+      ? { accessVersion: input.accessVersion }
       : {}),
   };
 }
@@ -398,6 +509,9 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   serverIds: string[];
   serverNames: string[];
   clientCapabilities?: Record<string, unknown>;
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -409,6 +523,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
+  const protocolVersions = buildBatchProtocolVersionMap(serverIds);
   const chatboxId = getHostedChatboxId();
   const accessVersion = getHostedChatboxAccessVersion();
   const accessScope = getHostedAccessScope();
@@ -420,17 +535,22 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     ...(apiContext.clientCapabilities
       ? { clientCapabilities: apiContext.clientCapabilities }
       : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(protocolVersions
+      ? { mcpProtocolVersionsByServerId: protocolVersions }
+      : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion)
-      ? { accessVersion }
-      : {}),
+    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
 export function buildHostedOAuthTokensMap(
-  serverIds: string[],
+  serverIds: string[]
 ): Record<string, string> | undefined {
   const map: Record<string, string> = {};
   for (const id of serverIds) {

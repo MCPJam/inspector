@@ -5,6 +5,7 @@ import {
   scrubMetaAndStructuredContentFromToolResult,
 } from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
+import { isAbortError } from "./abort-errors";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -44,6 +45,22 @@ function buildIndexWithAliases(tools: ToolsMap): ToolsMap {
   return index;
 }
 
+const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+
+function isSkippableClientFulfilledToolCall(
+  toolName: string,
+  tool: unknown,
+  skipNonExecutableTools: boolean | undefined,
+): boolean {
+  return (
+    skipNonExecutableTools === true &&
+    APP_TOOL_ALIAS_REGEX.test(toolName) &&
+    !!tool &&
+    typeof tool === "object" &&
+    typeof (tool as { execute?: unknown }).execute !== "function"
+  );
+}
+
 export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   const toolCallIds = new Set<string>();
   const toolResultIds = new Set<string>();
@@ -64,15 +81,55 @@ export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   return false;
 };
 
-type ExecuteToolCallOptions =
-  | { tools: ToolsMap }
-  | { toolsets: Toolsets }
-  | { clientManager: MCPClientManager; serverIds?: string[] };
+type ExecuteToolCallOptionsBase = {
+  /**
+   * When provided, `tool.execute(input, { ..., abortSignal })` receives the
+   * signal so each tool implementation can self-cancel its in-flight work.
+   * Abort propagates as a thrown `AbortError`; it is NOT stored as a
+   * tool-result error (that would poison conversation history with a fake
+   * model-visible failure).
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Optional predicate that limits which tool calls get executed in this
+   * pass. Unresolved tool calls whose `toolName` returns `false` are
+   * skipped (left unresolved) — they will neither execute nor get an
+   * error tool-result. Used by progressive discovery to run meta-tool
+   * calls before pausing the turn for approval on real MCP tools.
+   */
+  filterToolName?: (toolName: string) => boolean;
+  /**
+   * SEP-1865 App-Provided Tools: when true, tool calls whose name isn't in
+   * the tool index OR whose tool entry has no `execute` function are SKIPPED
+   * (no result written, no throw). Used by the MCPJam free-model handler so
+   * that mixed steps containing both server tools and app-aliased tools
+   * execute the server tools server-side and leave the app tool calls
+   * unresolved — the caller then pauses and lets the client fulfill them
+   * in-iframe via `useChat.onToolCall`.
+   *
+   * Without this flag, app aliases would either trigger "Tool not found" or
+   * `tool.execute is not a function`, corrupting the conversation history.
+   */
+  skipNonExecutableTools?: boolean;
+};
+
+type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
+  (
+    | { tools: ToolsMap }
+    | { toolsets: Toolsets }
+    | { clientManager: MCPClientManager; serverIds?: string[] }
+  );
 
 export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options: ExecuteToolCallOptions,
 ): Promise<ModelMessage[]> {
+  const signal = options.abortSignal;
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : Object.assign(new Error("Aborted"), { name: "AbortError" });
+  }
   // Build tools with serverId metadata
   let tools: ToolsMap = {};
 
@@ -119,12 +176,43 @@ export async function executeToolCallsFromMessages(
     for (const content of (msg as any).content) {
       if (
         content?.type === "tool-call" &&
-        !existingToolResultIds.has(content.toolCallId)
+        !existingToolResultIds.has(content.toolCallId) &&
+        (!options.filterToolName ||
+          options.filterToolName(content.toolName as string))
       ) {
+        if (signal?.aborted) {
+          throw signal.reason instanceof Error
+            ? signal.reason
+            : Object.assign(new Error("Aborted"), { name: "AbortError" });
+        }
         try {
           const toolName: string = content.toolName;
           const tool = index[toolName];
-          if (!tool) throw new Error(`Tool '${toolName}' not found`);
+          const directTool = tools[toolName];
+          if (!tool) {
+            if (
+              isSkippableClientFulfilledToolCall(
+                toolName,
+                directTool,
+                options.skipNonExecutableTools,
+              )
+            ) {
+              continue;
+            }
+            throw new Error(`Tool '${toolName}' not found`);
+          }
+          if (typeof tool.execute !== "function") {
+            if (
+              isSkippableClientFulfilledToolCall(
+                toolName,
+                tool,
+                options.skipNonExecutableTools,
+              )
+            ) {
+              continue;
+            }
+            throw new Error(`Tool '${toolName}' has no execute function`);
+          }
           const toolCall = content as {
             input?: unknown;
             args?: unknown;
@@ -133,7 +221,18 @@ export async function executeToolCallsFromMessages(
           const result = await tool.execute(input, {
             toolCallId: content.toolCallId,
             messages,
+            ...(signal ? { abortSignal: signal } : {}),
           });
+
+          // If a tool ignored the signal (or returned `result` after the
+          // signal fired) the result must NOT be serialized into a
+          // tool-result — that would persist into conversation history
+          // and look like a completed tool call to the next turn.
+          if (signal?.aborted) {
+            throw signal.reason instanceof Error
+              ? signal.reason
+              : Object.assign(new Error("Aborted"), { name: "AbortError" });
+          }
 
           let output: ToolResultPart;
           if (result !== undefined && result !== null) {
@@ -203,6 +302,13 @@ export async function executeToolCallsFromMessages(
           resultsByAssistantIdx.get(i)!.push(toolResultMessage);
           allNewResults.push(toolResultMessage);
         } catch (error: any) {
+          // Abort errors must propagate — they represent user/client
+          // cancellation, NOT a tool failure. Capturing them as an
+          // error-text result would persist a phantom "tool failed" into
+          // conversation history.
+          if (isAbortError(error)) {
+            throw error;
+          }
           const errorOutput: ToolResultPart = {
             type: "error-text",
             value: error instanceof Error ? error.message : String(error),

@@ -178,7 +178,24 @@ async function runClientChecks(
       async (manager, serverId) => {
         const client = manager.getClient(serverId);
         if (!client) {
-          throw new Error("Underlying MCP client is unavailable after connect");
+          // `getClient()` returns `undefined` for stateless-preview
+          // connections (no wrapped upstream `Client`). The client-check
+          // suite is written against the upstream `Client` surface, so
+          // it can't run against a stateless adapter yet — surface this
+          // as N/A for every selected client check rather than throwing
+          // a confusing "Underlying MCP client is unavailable" error.
+          // Wiring the suite through `getManagedClient()` is a separate
+          // follow-up.
+          const managed = manager.getManagedClient(serverId);
+          const reason = managed
+            ? "Client-side conformance checks are not yet wired through the 2026-07-28 stateless preview adapter."
+            : "Underlying MCP client is unavailable after connect";
+          if (managed) {
+            return selectedClientChecks.map((check) =>
+              skippedResult(check, reason),
+            );
+          }
+          throw new Error(reason);
         }
 
         const initializationInfo = manager.getInitializationInfo(serverId);

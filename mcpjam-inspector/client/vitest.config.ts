@@ -22,6 +22,11 @@ const mcpSdkSharedAuthEntry = path.resolve(
 export default defineConfig({
   define: {
     __MCPJAM_SDK_VERSION__: JSON.stringify("test"),
+    // Mirrors the Vite build-time constant injected into `client-templates`
+    // and `mcp-apps-renderer`. Tests that exercise the host-style seed
+    // (e.g. via the render-gate scope wrapper) need this defined or the
+    // codex/mcpjam templates throw a `ReferenceError`.
+    __APP_VERSION__: JSON.stringify("test"),
   },
   plugins: [
     {

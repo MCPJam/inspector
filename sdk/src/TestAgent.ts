@@ -28,7 +28,10 @@ import type {
   EvalWidgetSnapshotInput,
   MCPServerReplayConfig,
 } from "./eval-reporting-types.js";
-import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
+import {
+  ensureJsonSchemaObject,
+  isAppOnlyTool,
+} from "./mcp-client-manager/tool-converters.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -60,6 +63,15 @@ export interface TestAgentConfig {
     | Record<string, CustomProvider>;
   /** Optional MCP client manager for capturing MCP App replay snapshots */
   mcpClientManager?: MCPClientManager;
+  /**
+   * When true, the agent injects the OpenAI Apps SDK `window.openai`
+   * shim into captured widget HTML so replays under hosts that expect
+   * that surface (ChatGPT/Copilot or MCPJam's dev surface) render
+   * unchanged. Defaults to `false` — Claude/Cursor/Codex-style hosts
+   * don't expose `window.openai`, and snapshots should match what the
+   * live host would have produced. Tests that need the shim must opt in.
+   */
+  injectOpenAiCompat?: boolean;
 }
 
 // Re-export PromptOptions for backward compatibility
@@ -79,10 +91,7 @@ function convertToToolSet(tools: Tool[]): ToolSet {
   const toolSet: ToolSet = {};
   for (const tool of tools) {
     // Filter out app-only tools (visibility: ["app"]) per SEP-1865
-    const visibility = (tool._meta?.ui as any)?.visibility as
-      | Array<"model" | "app">
-      | undefined;
-    if (visibility && visibility.length === 1 && visibility[0] === "app") {
+    if (isAppOnlyTool(tool._meta as Record<string, unknown> | undefined)) {
       continue;
     }
 
@@ -147,6 +156,7 @@ export class TestAgent implements EvalAgent {
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
+  private readonly injectOpenAiCompat: boolean;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -175,6 +185,7 @@ export class TestAgent implements EvalAgent {
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
     this.mcpClientManager = config.mcpClientManager;
+    this.injectOpenAiCompat = config.injectOpenAiCompat === true;
 
     // Parse the model string once to extract provider/model metadata
     try {
@@ -287,17 +298,22 @@ export class TestAgent implements EvalAgent {
         return;
       }
 
-      // Inject the OpenAI compat runtime so stored blobs are self-contained
-      // (identical to what the server injects for live widgets and Views)
-      snapshot.widgetHtml = injectOpenAICompat(snapshot.widgetHtml ?? "", {
-        toolId: toolCallId,
-        toolName: params.toolName,
-        toolInput: params.toolInput ?? {},
-        toolOutput: params.toolOutput,
-        theme: "dark",
-        viewMode: "inline",
-        viewParams: {},
-      });
+      // Optionally inject the OpenAI Apps SDK `window.openai` shim into
+      // the captured HTML. Default off so snapshots match SEP-1865
+      // honest behavior; callers emulating ChatGPT/Copilot or MCPJam's
+      // dev surface opt in via `TestAgentConfig.injectOpenAiCompat`.
+      if (this.injectOpenAiCompat) {
+        snapshot.widgetHtml = injectOpenAICompat(snapshot.widgetHtml ?? "", {
+          toolId: toolCallId,
+          toolName: params.toolName,
+          toolInput: params.toolInput ?? {},
+          toolOutput: params.toolOutput,
+          theme: "dark",
+          viewMode: "inline",
+          viewParams: {},
+        });
+      }
+      snapshot.injectedOpenAiCompat = this.injectOpenAiCompat;
 
       params.snapshotBuffer.set(toolCallId, snapshot);
     } catch (error) {
@@ -708,6 +724,8 @@ export class TestAgent implements EvalAgent {
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
+      injectOpenAiCompat:
+        options.injectOpenAiCompat ?? this.injectOpenAiCompat,
     });
   }
 

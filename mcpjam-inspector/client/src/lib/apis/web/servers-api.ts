@@ -30,6 +30,16 @@ export type HostedServerValidateContext = {
    * semantic.
    */
   supportedProtocolVersions?: string[];
+  /**
+   * Pinned MCP protocol version resolved client-side from
+   * `hostConfig.mcpProfile.mcpProtocolVersion` + per-server override.
+   * Sent verbatim to the hosted route, which forwards it onto
+   * `HttpServerConfig.mcpProtocolVersion` so the SDK factory routes
+   * stateless versions through `StatelessMcpHttpPreviewClient`. Without
+   * this, hosted connects always ran the legacy `initialize` handshake
+   * regardless of the client toggle.
+   */
+  mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
 };
 
 export interface HostedServerValidateResponse {
@@ -88,6 +98,9 @@ export async function validateHostedServer(
               supportedProtocolVersions:
                 hostedContext.supportedProtocolVersions,
             }
+          : {}),
+        ...(hostedContext.mcpProtocolVersion
+          ? { mcpProtocolVersion: hostedContext.mcpProtocolVersion }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

@@ -1762,6 +1762,7 @@ export function useProjectState({
   return {
     remoteProjects,
     isLoadingProjects,
+    activeProjectServersFlatProjectId: resolvedActiveProjectIdForServers,
     activeProjectServersFlat,
     // True while the bulk server query is in flight for the picker's
     // non-active projects. Consumers (e.g. ProjectManagementDialog) gate

@@ -8,7 +8,7 @@ import {
   type HostTemplateId,
 } from "@/lib/client-templates";
 import type { ChatUiOverride, HostThemeMode } from "@/lib/client-styles";
-import { saveSelectedModelId } from "@/lib/selected-model-storage";
+import { replaceLeadModelId } from "@/lib/selected-model-storage";
 import {
   getCanonicalModelId,
   isModelSupported,
@@ -47,7 +47,7 @@ type HostConfigForPlayground = Pick<
  * empty — returns `undefined`, which the caller treats as "leave the
  * picker alone."
  */
-function resolvePlaygroundModelId(
+export function resolvePlaygroundModelId(
   desiredModelId: string | undefined,
   hostStyle: string,
 ): string | undefined {
@@ -122,9 +122,15 @@ export function applyHostConfigToPlayground(
   // stale persisted ids onto the host's template default before saving;
   // returns undefined when nothing usable resolves (e.g. MCPJam host),
   // and we leave the picker alone in that case.
+  //
+  // `replaceLeadModelId` preserves the compare-column count: it swaps the
+  // new lead into slot 0 (or rotates it forward if already present)
+  // without adding or removing columns. The product rule is "column count
+  // is a workspace preference, not a host property" — switching hosts
+  // must never grow or shrink the multi-model grid.
   const modelId = resolvePlaygroundModelId(config.modelId, config.hostStyle);
   if (modelId) {
-    saveSelectedModelId(modelId);
+    replaceLeadModelId(modelId);
   }
 
   useHostContextStore.getState().applyHostTemplate(config.hostContext ?? {});

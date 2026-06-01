@@ -12,10 +12,16 @@ import {
 import type { UIMessage } from "@ai-sdk/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { MessageView } from "./message-view";
+import { isHiddenInternalMessage } from "./thread-helpers";
+import type {
+  AppToolInvocation,
+  AppToolInvocationUpdate,
+} from "./app-tool-invocations";
+import { AppToolInvocationPart } from "./parts/app-tool-invocation-part";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ModelDefinition } from "@/shared/types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
@@ -53,7 +59,34 @@ type MessageViewPassthroughProps = Omit<
   | "onExitPip"
   | "onRequestFullscreen"
   | "onExitFullscreen"
+  | "onRequestTeardown"
+  | "tornDownWidgetIds"
+  | "onAppToolInvocationChange"
+  | "senderAvatar"
+  | "showSenderAvatar"
 >;
+
+/**
+ * Surfaces both legacy (UIMessage.metadata) and persisted (top-level) sender
+ * ids. Persisted reads route through `transcriptToUIMessages`, which copies
+ * the field into `metadata`; the top-level field is only present on freshly
+ * constructed UIMessages that haven't been re-hydrated yet.
+ */
+export function getMessageSenderUserId(message: UIMessage): string | undefined {
+  const top = (message as { senderUserId?: unknown }).senderUserId;
+  if (typeof top === "string" && top.length > 0) return top;
+  const metadata = (message as { metadata?: { senderUserId?: unknown } })
+    .metadata;
+  if (
+    metadata &&
+    typeof metadata === "object" &&
+    typeof metadata.senderUserId === "string" &&
+    metadata.senderUserId.length > 0
+  ) {
+    return metadata.senderUserId;
+  }
+  return undefined;
+}
 
 export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   messages: UIMessage[];
@@ -61,15 +94,18 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   sendFollowUpMessage?: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  appToolInvocations?: AppToolInvocation[];
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId?: string | null;
   fullscreenWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
   navigationKey?: string | number | null;
@@ -79,8 +115,15 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   isLoading?: boolean;
   lastRenderableMessageId?: string | null;
   getMessageWrapperProps?: (
-    args: MessageWrapperArgs,
+    args: MessageWrapperArgs
   ) => MessageWrapperProps | undefined;
+  /**
+   * When true, attribute each user message to its sender via a small avatar
+   * above the bubble (shared-session sessions only). The transcript coalesces
+   * consecutive prompts from the same sender into one avatar row.
+   */
+  showSenderAvatars?: boolean;
+  resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
 }
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T) {
@@ -93,7 +136,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T) {
 }
 
 function findNearestScrollableAncestor(
-  element: HTMLElement,
+  element: HTMLElement
 ): HTMLElement | null {
   let container: HTMLElement | null = element.parentElement;
 
@@ -113,7 +156,7 @@ function findNearestScrollableAncestor(
 
 function resolveScrollViewport(
   element: HTMLElement,
-  viewportRef?: RefObject<HTMLElement | null>,
+  viewportRef?: RefObject<HTMLElement | null>
 ): HTMLElement | null {
   return viewportRef?.current ?? findNearestScrollableAncestor(element);
 }
@@ -138,14 +181,14 @@ function scrollMessageToViewportPosition(params: {
     TRANSCRIPT_TOP_INSET_MAX_PX,
     Math.max(
       TRANSCRIPT_TOP_INSET_MIN_PX,
-      Math.round(viewport.clientHeight * 0.08),
-    ),
+      Math.round(viewport.clientHeight * 0.08)
+    )
   );
   const centeredOffset = Math.max(
     0,
     (viewport.clientHeight -
       Math.min(targetRect.height, viewport.clientHeight)) /
-      2,
+      2
   );
   const shouldTopAnchor =
     targetRect.height >= viewport.clientHeight * TRANSCRIPT_TALL_MESSAGE_RATIO;
@@ -154,11 +197,11 @@ function scrollMessageToViewportPosition(params: {
   const correction = targetRect.top - desiredTop;
   const maxScrollTop = Math.max(
     0,
-    viewport.scrollHeight - viewport.clientHeight,
+    viewport.scrollHeight - viewport.clientHeight
   );
   const nextScrollTop = Math.min(
     maxScrollTop,
-    Math.max(0, viewport.scrollTop + correction),
+    Math.max(0, viewport.scrollTop + correction)
   );
 
   viewport.scrollTo({
@@ -167,7 +210,19 @@ function scrollMessageToViewportPosition(params: {
   });
 }
 
+function getMessageToolCallIds(message: UIMessage): Set<string> {
+  const ids = new Set<string>();
+  for (const part of message.parts ?? []) {
+    const toolCallId = (part as { toolCallId?: unknown }).toolCallId;
+    if (typeof toolCallId === "string" && toolCallId.length > 0) {
+      ids.add(toolCallId);
+    }
+  }
+  return ids;
+}
+
 export function TranscriptThread({
+  chatSessionId,
   messages,
   model,
   sendFollowUpMessage = NOOP,
@@ -175,15 +230,18 @@ export function TranscriptThread({
   toolServerMap,
   onWidgetStateChange,
   onModelContextUpdate,
+  appToolInvocations = [],
+  onAppToolInvocationChange,
   pipWidgetId = null,
   fullscreenWidgetId = null,
   onRequestPip = NOOP,
   onExitPip = NOOP,
   onRequestFullscreen = NOOP,
   onExitFullscreen = NOOP,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
@@ -200,6 +258,8 @@ export function TranscriptThread({
   lastRenderableMessageId = null,
   getMessageWrapperProps,
   renderUserMessageActions,
+  showSenderAvatars = false,
+  resolveSenderAvatar,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -214,8 +274,20 @@ export function TranscriptThread({
     "claude";
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
-    [highlightedMessageIds],
+    [highlightedMessageIds]
   );
+  const appToolInvocationsByParentId = useMemo(() => {
+    const grouped = new Map<string, AppToolInvocation[]>();
+    for (const invocation of appToolInvocations) {
+      const existing = grouped.get(invocation.parentToolCallId);
+      if (existing) {
+        existing.push(invocation);
+      } else {
+        grouped.set(invocation.parentToolCallId, [invocation]);
+      }
+    }
+    return grouped;
+  }, [appToolInvocations]);
   const shouldUseContentVisibility =
     focusMessageId === null &&
     highlightedMessageIds.length === 0 &&
@@ -357,7 +429,7 @@ export function TranscriptThread({
       }}
       className={cn("min-w-0", contentClassName)}
     >
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         const isFocused = message.id === focusMessageId;
         const isHighlighted = highlightedMessageIdSet.has(message.id);
         const wrapperProps =
@@ -367,6 +439,35 @@ export function TranscriptThread({
             isHighlighted,
           }) ?? {};
         const { className, ...restWrapperProps } = wrapperProps;
+        const senderUserId =
+          showSenderAvatars && message.role === "user"
+            ? getMessageSenderUserId(message)
+            : undefined;
+        const senderAvatar =
+          showSenderAvatars && message.role === "user" && resolveSenderAvatar
+            ? resolveSenderAvatar(senderUserId)
+            : undefined;
+        // Coalesce consecutive prompts: render an avatar only on the first
+        // user message of a run by a given sender. `undefined`-vs-`undefined`
+        // counts as the same author so legacy single-author threads collapse.
+        let showSenderAvatarForMessage = false;
+        if (showSenderAvatars && message.role === "user" && senderAvatar) {
+          let prevUserSenderId: string | undefined;
+          let hadPrevUser = false;
+          for (let i = index - 1; i >= 0; i -= 1) {
+            const prior = messages[i];
+            if (prior.role !== "user") continue;
+            // Skip hidden internal messages (model-context-*, widget-state-*):
+            // they're never rendered, so they shouldn't break coalescing
+            // between two visible prompts from the same sender.
+            if (isHiddenInternalMessage(prior)) continue;
+            hadPrevUser = true;
+            prevUserSenderId = getMessageSenderUserId(prior);
+            break;
+          }
+          showSenderAvatarForMessage =
+            !hadPrevUser || prevUserSenderId !== senderUserId;
+        }
         const claudeFooterMode =
           isClaudeFamily &&
           message.role === "assistant" &&
@@ -375,6 +476,13 @@ export function TranscriptThread({
               ? "animated"
               : "static"
             : "none";
+        const messageToolCallIds = getMessageToolCallIds(message);
+        const messageAppToolInvocations =
+          messageToolCallIds.size > 0
+            ? Array.from(messageToolCallIds).flatMap(
+                (id) => appToolInvocationsByParentId.get(id) ?? []
+              )
+            : [];
 
         return (
           <div
@@ -389,7 +497,7 @@ export function TranscriptThread({
             className={cn(
               (isFocused || isHighlighted) &&
                 "relative rounded-xl border border-primary/30 bg-primary/5 p-2",
-              className,
+              className
             )}
             style={
               shouldUseContentVisibility && !isFocused && !isHighlighted
@@ -426,6 +534,7 @@ export function TranscriptThread({
               />
             ) : null}
             <MessageView
+              chatSessionId={chatSessionId}
               message={message}
               model={model}
               onSendFollowUp={sendFollowUpMessage}
@@ -433,17 +542,17 @@ export function TranscriptThread({
               toolServerMap={toolServerMap}
               onWidgetStateChange={onWidgetStateChange}
               onModelContextUpdate={onModelContextUpdate}
+              onAppToolInvocationChange={onAppToolInvocationChange}
               pipWidgetId={pipWidgetId}
               fullscreenWidgetId={fullscreenWidgetId}
               onRequestPip={onRequestPip}
               onExitPip={onExitPip}
               onRequestFullscreen={onRequestFullscreen}
               onExitFullscreen={onExitFullscreen}
+              onRequestTeardown={onRequestTeardown}
+              tornDownWidgetIds={tornDownWidgetIds}
               displayMode={displayMode}
               onDisplayModeChange={onDisplayModeChange}
-              selectedProtocolOverrideIfBothExists={
-                selectedProtocolOverrideIfBothExists
-              }
               onToolApprovalResponse={onToolApprovalResponse}
               toolRenderOverrides={toolRenderOverrides}
               showSaveViewButton={showSaveViewButton}
@@ -452,7 +561,19 @@ export function TranscriptThread({
               reasoningDisplayMode={reasoningDisplayMode}
               claudeFooterMode={claudeFooterMode}
               renderUserMessageActions={renderUserMessageActions}
+              senderAvatar={senderAvatar}
+              showSenderAvatar={showSenderAvatarForMessage}
             />
+            {messageAppToolInvocations.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {messageAppToolInvocations.map((invocation) => (
+                  <AppToolInvocationPart
+                    key={invocation.id}
+                    invocation={invocation}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

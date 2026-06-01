@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type RefObject,
+} from "react";
 import { cn } from "@/lib/utils";
 import {
   useChatboxHostStyle,
@@ -13,7 +19,6 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicator";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import {
@@ -26,8 +31,18 @@ import {
   getLastRenderableConversationMessage,
   hasRenderableConversationContent,
 } from "./thread/thread-helpers";
+import {
+  WidgetSurfaceHost,
+  WidgetSurfaceHostProvider,
+} from "./thread/mcp-apps/widget-surface-host";
+import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
+import type {
+  AppToolInvocation,
+  AppToolInvocationUpdate,
+} from "./thread/app-tool-invocations";
 
 interface ThreadProps {
+  chatSessionId?: string;
   messages: UIMessage[];
   sendFollowUpMessage: (text: string) => void;
   model: ModelDefinition;
@@ -40,7 +55,7 @@ interface ThreadProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
@@ -50,7 +65,6 @@ interface ThreadProps {
   fullscreenChatDisabled?: boolean;
   fullscreenChatSendBlocked?: boolean;
   onFullscreenChatStop?: () => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
@@ -69,9 +83,45 @@ interface ThreadProps {
    * is active; other consumers can omit it.
    */
   renderUserMessageActions?: TranscriptThreadProps["renderUserMessageActions"];
+  /**
+   * Per-message sender attribution in shared sessions. Both must be supplied
+   * for avatars to render; otherwise the transcript looks identical to today.
+   */
+  showSenderAvatars?: TranscriptThreadProps["showSenderAvatars"];
+  resolveSenderAvatar?: TranscriptThreadProps["resolveSenderAvatar"];
+}
+
+function getWidgetOwnershipIds(toolCallId: string, displayWidgetId?: string) {
+  const ids = new Set<string>([toolCallId]);
+  if (displayWidgetId) ids.add(displayWidgetId);
+
+  const surfaces = useWidgetSurfaceStore.getState().surfaces;
+  const surface =
+    surfaces.get(displayWidgetId ?? "") ?? surfaces.get(toolCallId);
+  if (surface) {
+    for (const registeredToolCallId of surface.registrations.keys()) {
+      ids.add(registeredToolCallId);
+    }
+  }
+
+  return ids;
+}
+
+function getMessageToolCallIds(messages: UIMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.parts ?? []) {
+      const toolCallId = (part as { toolCallId?: unknown }).toolCallId;
+      if (typeof toolCallId === "string" && toolCallId.length > 0) {
+        ids.add(toolCallId);
+      }
+    }
+  }
+  return ids;
 }
 
 export function Thread({
+  chatSessionId,
   messages,
   sendFollowUpMessage,
   model,
@@ -88,7 +138,6 @@ export function Thread({
   fullscreenChatDisabled = false,
   fullscreenChatSendBlocked = isLoading,
   onFullscreenChatStop,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
@@ -102,20 +151,58 @@ export function Thread({
   contentClassName,
   getMessageWrapperProps,
   renderUserMessageActions,
+  showSenderAvatars,
+  resolveSenderAvatar,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
-    null,
+    null
   );
+  const [tornDownWidgetIds, setTornDownWidgetIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [fullscreenChatInput, setFullscreenChatInput] = useState("");
+  const [appToolInvocations, setAppToolInvocations] = useState<
+    AppToolInvocation[]
+  >([]);
+
+  const handleAppToolInvocationChange = useCallback(
+    (invocation: AppToolInvocationUpdate) => {
+      setAppToolInvocations((current) => {
+        const index = current.findIndex((item) => item.id === invocation.id);
+        if (index === -1) {
+          return [...current, invocation];
+        }
+        const next = [...current];
+        next[index] = invocation;
+        return next;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    setAppToolInvocations([]);
+  }, [chatSessionId]);
+
+  useEffect(() => {
+    const liveToolCallIds = getMessageToolCallIds(messages);
+    setAppToolInvocations((current) => {
+      const next = current.filter((invocation) =>
+        liveToolCallIds.has(invocation.parentToolCallId)
+      );
+      return next.length === current.length ? current : next;
+    });
+  }, [messages]);
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
   };
 
   const handleExitPip = (toolCallId: string) => {
-    if (pipWidgetId === toolCallId) {
+    const ownershipIds = getWidgetOwnershipIds(toolCallId);
+    if (pipWidgetId !== null && ownershipIds.has(pipWidgetId)) {
       setPipWidgetId(null);
     }
   };
@@ -126,11 +213,50 @@ export function Thread({
   };
 
   const handleExitFullscreen = (toolCallId: string) => {
-    if (fullscreenWidgetId === toolCallId) {
+    const ownershipIds = getWidgetOwnershipIds(toolCallId);
+    if (fullscreenWidgetId !== null && ownershipIds.has(fullscreenWidgetId)) {
       setFullscreenWidgetId(null);
       onFullscreenChange?.(false);
     }
   };
+
+  const handleRequestTeardown = useCallback(
+    (toolCallId: string, displayWidgetId?: string) => {
+      const ownershipIds = getWidgetOwnershipIds(toolCallId, displayWidgetId);
+      setTornDownWidgetIds((prev) => {
+        let changed = false;
+        const next = new Set(prev);
+        for (const id of ownershipIds) {
+          if (next.has(id)) continue;
+          next.add(id);
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+      // Mirror `handleExitPip` / `handleExitFullscreen`: if the widget that
+      // asked for teardown was the one currently in PIP or fullscreen, clear
+      // that state too. Persistent surfaces claim fullscreen/PiP under
+      // `displayWidgetId` (the surface id), but `tornDownWidgetIds` is keyed
+      // by tool-call ids — expand the surface to all active registrations so
+      // the old row cannot keep the shared iframe alive after teardown.
+      const matchesOwnership = (current: string | null) =>
+        current !== null && ownershipIds.has(current);
+      setPipWidgetId((current) => (matchesOwnership(current) ? null : current));
+      // Keep the updater pure (StrictMode double-invokes); fire the
+      // fullscreen callback once, outside, based on the same ownership check.
+      const clearedFullscreen = matchesOwnership(fullscreenWidgetId);
+      setFullscreenWidgetId((current) =>
+        matchesOwnership(current) ? null : current
+      );
+      if (clearedFullscreen) {
+        onFullscreenChange?.(false);
+      }
+      if (matchesOwnership(pipWidgetId) || clearedFullscreen) {
+        onDisplayModeChange?.("inline");
+      }
+    },
+    [fullscreenWidgetId, onDisplayModeChange, onFullscreenChange, pipWidgetId]
+  );
 
   const showFullscreenChatOverlay =
     enableFullscreenChatOverlay && fullscreenWidgetId !== null;
@@ -156,7 +282,7 @@ export function Thread({
     chatboxHostTheme === "dark";
   const lastRenderableMessage = useMemo(
     () => getLastRenderableConversationMessage(messages),
-    [messages],
+    [messages]
   );
   const hasVisibleAssistantResponse =
     lastRenderableMessage?.role === "assistant" &&
@@ -178,87 +304,96 @@ export function Thread({
     : undefined;
 
   return (
-    <div
-      className={cn(
-        "flex-1 min-h-0 min-w-0 pb-4",
-        isChatgptDark && "text-[#DFDFDF]",
-      )}
-      style={
-        chatgptFamilyDarkBackground
-          ? { backgroundColor: chatgptFamilyDarkBackground }
-          : undefined
-      }
-    >
-      {/* Fixed spacer to reserve space for PIP widget */}
-      {pipWidgetId && (
-        <div className="h-[480px] flex-shrink-0 pointer-events-none" />
-      )}
-      <TranscriptThread
-        messages={messages}
-        model={model}
-        sendFollowUpMessage={sendFollowUpMessage}
-        toolsMetadata={toolsMetadata}
-        toolServerMap={toolServerMap}
-        onWidgetStateChange={onWidgetStateChange}
-        onModelContextUpdate={onModelContextUpdate}
-        pipWidgetId={pipWidgetId}
-        fullscreenWidgetId={fullscreenWidgetId}
-        onRequestPip={handleRequestPip}
-        onExitPip={handleExitPip}
-        onRequestFullscreen={handleRequestFullscreen}
-        onExitFullscreen={handleExitFullscreen}
-        displayMode={displayMode}
-        onDisplayModeChange={onDisplayModeChange}
-        selectedProtocolOverrideIfBothExists={
-          selectedProtocolOverrideIfBothExists
+    <WidgetSurfaceHostProvider>
+      <div
+        className={cn(
+          "flex-1 min-h-0 min-w-0 pb-4",
+          isChatgptDark && "text-[#DFDFDF]"
+        )}
+        style={
+          chatgptFamilyDarkBackground
+            ? { backgroundColor: chatgptFamilyDarkBackground }
+            : undefined
         }
-        onToolApprovalResponse={onToolApprovalResponse}
-        toolRenderOverrides={toolRenderOverrides}
-        showSaveViewButton={showSaveViewButton}
-        minimalMode={minimalMode}
-        interactive={interactive}
-        reasoningDisplayMode={reasoningDisplayMode}
-        focusMessageId={focusMessageId}
-        highlightedMessageIds={highlightedMessageIds}
-        navigationKey={navigationKey}
-        viewportRef={viewportRef}
-        isLoading={isLoading}
-        lastRenderableMessageId={lastRenderableMessageId}
-        contentClassName={
-          contentClassName ??
-          "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
-        }
-        getMessageWrapperProps={getMessageWrapperProps}
-        renderUserMessageActions={renderUserMessageActions}
-      />
-      {shouldShowStandaloneThinkingIndicator && (
-        <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
-          <ThinkingIndicator model={model} />
-        </div>
-      )}
-
-      {showFullscreenChatOverlay && (
-        <FullscreenChatOverlay
+      >
+        {/* Fixed spacer to reserve space for PIP widget */}
+        {pipWidgetId && (
+          <div className="h-[480px] flex-shrink-0 pointer-events-none" />
+        )}
+        <TranscriptThread
+          chatSessionId={chatSessionId}
           messages={messages}
-          modelProvider={model.provider}
-          open={isFullscreenChatOpen}
-          onOpenChange={setIsFullscreenChatOpen}
-          input={fullscreenChatInput}
-          onInputChange={setFullscreenChatInput}
-          placeholder={fullscreenChatPlaceholder}
-          disabled={fullscreenChatDisabled}
-          canSend={canSendFullscreenChat}
-          isThinking={isLoading}
-          onStop={onFullscreenChatStop}
-          onSend={() => {
-            if (!canSendFullscreenChat) return;
-            const text = fullscreenChatInput;
-            setIsFullscreenChatOpen(true);
-            setFullscreenChatInput("");
-            sendFollowUpMessage(text);
-          }}
+          model={model}
+          sendFollowUpMessage={sendFollowUpMessage}
+          toolsMetadata={toolsMetadata}
+          toolServerMap={toolServerMap}
+          onWidgetStateChange={onWidgetStateChange}
+          onModelContextUpdate={onModelContextUpdate}
+          appToolInvocations={appToolInvocations}
+          onAppToolInvocationChange={handleAppToolInvocationChange}
+          pipWidgetId={pipWidgetId}
+          fullscreenWidgetId={fullscreenWidgetId}
+          onRequestPip={handleRequestPip}
+          onExitPip={handleExitPip}
+          onRequestFullscreen={handleRequestFullscreen}
+          onExitFullscreen={handleExitFullscreen}
+          onRequestTeardown={handleRequestTeardown}
+          tornDownWidgetIds={tornDownWidgetIds}
+          displayMode={displayMode}
+          onDisplayModeChange={onDisplayModeChange}
+          onToolApprovalResponse={onToolApprovalResponse}
+          toolRenderOverrides={toolRenderOverrides}
+          showSaveViewButton={showSaveViewButton}
+          minimalMode={minimalMode}
+          interactive={interactive}
+          reasoningDisplayMode={reasoningDisplayMode}
+          focusMessageId={focusMessageId}
+          highlightedMessageIds={highlightedMessageIds}
+          navigationKey={navigationKey}
+          viewportRef={viewportRef}
+          isLoading={isLoading}
+          lastRenderableMessageId={lastRenderableMessageId}
+          contentClassName={
+            contentClassName ??
+            "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+          }
+          getMessageWrapperProps={getMessageWrapperProps}
+          renderUserMessageActions={renderUserMessageActions}
+          showSenderAvatars={showSenderAvatars}
+          resolveSenderAvatar={resolveSenderAvatar}
         />
-      )}
-    </div>
+        <WidgetSurfaceHost chatSessionId={chatSessionId} />
+
+        {shouldShowStandaloneThinkingIndicator && (
+          <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
+            <ThinkingIndicator model={model} />
+          </div>
+        )}
+
+        {showFullscreenChatOverlay && (
+          <FullscreenChatOverlay
+            chatSessionId={chatSessionId}
+            messages={messages}
+            modelProvider={model.provider}
+            open={isFullscreenChatOpen}
+            onOpenChange={setIsFullscreenChatOpen}
+            input={fullscreenChatInput}
+            onInputChange={setFullscreenChatInput}
+            placeholder={fullscreenChatPlaceholder}
+            disabled={fullscreenChatDisabled}
+            canSend={canSendFullscreenChat}
+            isThinking={isLoading}
+            onStop={onFullscreenChatStop}
+            onSend={() => {
+              if (!canSendFullscreenChat) return;
+              const text = fullscreenChatInput;
+              setIsFullscreenChatOpen(true);
+              setFullscreenChatInput("");
+              sendFollowUpMessage(text);
+            }}
+          />
+        )}
+      </div>
+    </WidgetSurfaceHostProvider>
   );
 }

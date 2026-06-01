@@ -76,6 +76,7 @@ export type EvalWidgetSnapshotInput = {
   prefersBorder: boolean;
   widgetHtml?: string;
   widgetHtmlBlobId?: string;
+  injectedOpenAiCompat?: boolean;
 };
 
 export type EvalResultInput = {

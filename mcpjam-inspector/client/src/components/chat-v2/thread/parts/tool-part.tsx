@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import {
   Box,
   Check,
@@ -22,6 +29,7 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
 import {
   getToolNameFromType,
   getToolStateMeta,
@@ -34,7 +42,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { CspDebugPanel } from "../csp-debug-panel";
+import { CspWorkbench } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
@@ -50,6 +58,7 @@ const SAVE_VIEW_REDIRECTED_KEY = "mcpjam-save-view-redirected";
 
 export function ToolPart({
   part,
+  chatSessionId,
   uiType,
   displayMode,
   pipWidgetId,
@@ -70,6 +79,7 @@ export function ToolPart({
   minimalMode = false,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
+  chatSessionId?: string;
   uiType?: UIType | null;
   displayMode?: DisplayMode;
   pipWidgetId?: string | null;
@@ -100,6 +110,12 @@ export function ToolPart({
   const label = isDynamicTool(part)
     ? part.toolName
     : getToolNameFromType((part as any).type);
+
+  // SEP-1865 App-Provided Tools: opaque `app_<hash>` aliases are resolved
+  // through the shared app-tool registry/log helper so UI never leaks the
+  // model-facing alias when a human-readable tool name is available.
+  const appToolAttribution = useAppToolAttribution(label, chatSessionId);
+  const displayLabel = appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
@@ -137,7 +153,7 @@ export function ToolPart({
   const [paramsExpanded, setParamsExpanded] = useState(false);
   const isExpanded = !hideDiagnosticsUI && userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "csp" | "context" | null
+    "data" | "state" | "sandbox" | "context" | null
   >("data");
 
   const inputData = (part as any).input;
@@ -152,7 +168,7 @@ export function ToolPart({
     .traceDisplayMode;
   const hasAttachedTraceDisplay = Boolean(
     traceDisplayText &&
-    (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
+      (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown")
   );
   const hasInput = inputData !== undefined && inputData !== null;
   const paramCount = useMemo(() => {
@@ -168,12 +184,12 @@ export function ToolPart({
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined,
+    toolCallId ? s.widgets.get(toolCallId) : undefined
   );
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
-    [hostContext],
+    [hostContext]
   );
   const hasWidgetDebug = !!widgetDebugInfo;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
@@ -196,7 +212,7 @@ export function ToolPart({
 
   const debugOptions = useMemo(() => {
     const options: {
-      tab: "data" | "state" | "csp" | "context";
+      tab: "data" | "state" | "sandbox" | "context";
       icon: typeof Database;
       label: string;
       badge?: number;
@@ -216,9 +232,9 @@ export function ToolPart({
     }
 
     options.push({
-      tab: "csp",
+      tab: "sandbox",
       icon: Shield,
-      label: "CSP",
+      label: "Sandbox",
       badge: widgetDebugInfo?.csp?.violations?.length,
     });
 
@@ -229,7 +245,7 @@ export function ToolPart({
     widgetDebugInfo?.modelContext,
   ]);
 
-  const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
+  const handleDebugClick = (tab: "data" | "state" | "sandbox" | "context") => {
     if (activeDebugTab === tab) {
       setActiveDebugTab(null);
       setUserExpanded(false);
@@ -308,8 +324,8 @@ export function ToolPart({
                 isDisabled
                   ? "text-muted-foreground/30 cursor-not-allowed"
                   : isActive
-                    ? "bg-background text-foreground shadow-sm cursor-pointer"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                  ? "bg-background text-foreground shadow-sm cursor-pointer"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -331,18 +347,18 @@ export function ToolPart({
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "State"
-            : tab === "csp"
-              ? "CSP"
-              : "Context";
+          ? "State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
-            ? "Widget State"
-            : tab === "csp"
-              ? "CSP"
-              : "Model Context";
+          ? "Widget State"
+          : tab === "sandbox"
+          ? "Sandbox"
+          : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -358,8 +374,8 @@ export function ToolPart({
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
                   : badge && badge > 0
-                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                  ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -386,8 +402,8 @@ export function ToolPart({
   const saveViewAriaLabel = isSaving
     ? "Saving view"
     : canSaveView
-      ? "Save as View"
-      : saveDisabledReason || "No output to save";
+    ? "Save as View"
+    : saveDisabledReason || "No output to save";
 
   const renderSaveViewButton = () => (
     <span className="relative inline-flex items-center">
@@ -420,6 +436,25 @@ export function ToolPart({
       </Tooltip>
     </span>
   );
+
+  const toggleExpanded = () => {
+    if (hideDiagnosticsUI) {
+      return;
+    }
+    setUserExpanded((prev) => {
+      const willExpand = !prev;
+      if (willExpand && activeDebugTab === null) {
+        setActiveDebugTab("data");
+      }
+      return willExpand;
+    });
+  };
+
+  const handleHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleExpanded();
+  };
 
   const renderToolInput = () =>
     hasInput ? (
@@ -515,8 +550,8 @@ export function ToolPart({
               approvalVisualState === "approved"
                 ? "border-success/40 bg-success/10"
                 : approvalVisualState === "denied"
-                  ? "border-destructive/40 bg-destructive/10"
-                  : "border-border/60 bg-muted/30",
+                ? "border-destructive/40 bg-destructive/10"
+                : "border-border/60 bg-muted/30"
             )}
           >
             <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">
@@ -524,8 +559,13 @@ export function ToolPart({
               <span>Run</span>
             </span>
             <span className="font-mono text-[13px] text-foreground truncate min-w-0">
-              {label}
+              {displayLabel}
             </span>
+            {appToolAttribution && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                from {appToolAttribution.appName}
+              </span>
+            )}
 
             {approvalVisualState === "pending" && (
               <>
@@ -540,7 +580,7 @@ export function ToolPart({
                     <ChevronDown
                       className={cn(
                         "h-3 w-3 transition-transform",
-                        paramsExpanded && "rotate-180",
+                        paramsExpanded && "rotate-180"
                       )}
                     />
                   </button>
@@ -590,20 +630,18 @@ export function ToolPart({
             )}
           </div>
 
-          {paramsExpanded &&
-            hasInput &&
-            approvalVisualState === "pending" && (
-              <div className="w-full rounded-lg border border-border/40 bg-muted/20 max-h-[300px] overflow-auto">
-                <JsonEditor
-                  height="100%"
-                  viewOnly
-                  value={inputData}
-                  className="p-2 text-[11px]"
-                  collapsible
-                  defaultExpandDepth={2}
-                />
-              </div>
-            )}
+          {paramsExpanded && hasInput && approvalVisualState === "pending" && (
+            <div className="w-full rounded-lg border border-border/40 bg-muted/20 max-h-[300px] overflow-auto">
+              <JsonEditor
+                height="100%"
+                viewOnly
+                value={inputData}
+                className="p-2 text-[11px]"
+                collapsible
+                defaultExpandDepth={2}
+              />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -611,21 +649,12 @@ export function ToolPart({
 
   return (
     <div className="@container rounded-lg border text-xs border-border/50 bg-background/70">
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={hideDiagnosticsUI ? -1 : 0}
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
-        onClick={() => {
-          if (hideDiagnosticsUI) {
-            return;
-          }
-          setUserExpanded((prev) => {
-            const willExpand = !prev;
-            if (willExpand && activeDebugTab === null) {
-              setActiveDebugTab("data");
-            }
-            return willExpand;
-          });
-        }}
+        onClick={toggleExpanded}
+        onKeyDown={handleHeaderKeyDown}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
@@ -638,8 +667,13 @@ export function ToolPart({
               className={`${mcpIconClassName} shrink-0`}
             />
             <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
-              {label}
+              {displayLabel}
             </span>
+            {appToolAttribution && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0">
+                from {appToolAttribution.appName}
+              </span>
+            )}
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground">
@@ -675,15 +709,18 @@ export function ToolPart({
                 {renderSaveViewButton()}
               </>
             )}
-          {toolState && StatusIcon && state !== "output-available" && state !== "input-available" && (
-            <span
-              className="inline-flex h-5 w-5 items-center justify-center"
-              title={toolState.label}
-            >
-              <StatusIcon className={toolState.className} />
-              <span className="sr-only">{toolState.label}</span>
-            </span>
-          )}
+          {toolState &&
+            StatusIcon &&
+            state !== "output-available" &&
+            state !== "input-available" && (
+              <span
+                className="inline-flex h-5 w-5 items-center justify-center"
+                title={toolState.label}
+              >
+                <StatusIcon className={toolState.className} />
+                <span className="sr-only">{toolState.label}</span>
+              </span>
+            )}
           {!needsApproval && !hideDiagnosticsUI && (
             <ChevronDown
               className={`h-4 w-4 transition-transform duration-150 ${
@@ -692,7 +729,7 @@ export function ToolPart({
             />
           )}
         </span>
-      </button>
+      </div>
 
       {isExpanded && (
         <div className="border-t border-border/40 px-3 py-3">
@@ -732,9 +769,19 @@ export function ToolPart({
                   </div>
                 </div>
               )}
-              {hasWidgetDebug && activeDebugTab === "csp" && (
-                <CspDebugPanel
-                  cspInfo={widgetDebugInfo.csp}
+              {hasWidgetDebug && activeDebugTab === "sandbox" && (
+                <CspWorkbench
+                  sandboxInfo={
+                    widgetDebugInfo.csp
+                      ? {
+                          ...widgetDebugInfo.csp,
+                          applied: widgetDebugInfo.applied,
+                          lifecycle: widgetDebugInfo.lifecycle,
+                          mounts: widgetDebugInfo.mounts,
+                          hostInfo: widgetDebugInfo.hostInfo ?? null,
+                        }
+                      : undefined
+                  }
                   protocol={widgetDebugInfo.protocol}
                 />
               )}
@@ -748,7 +795,7 @@ export function ToolPart({
                       <div className="text-[9px] text-muted-foreground/50">
                         Updated:{" "}
                         {new Date(
-                          widgetDebugInfo.modelContext.updatedAt,
+                          widgetDebugInfo.modelContext.updatedAt
                         ).toLocaleTimeString()}
                       </div>
                     )}

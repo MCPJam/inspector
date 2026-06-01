@@ -13,6 +13,7 @@ import { extractMethod } from "@/stores/traffic-log-store";
 import {
   AppBridge,
   PostMessageTransport,
+  type McpUiHostCapabilities,
   type McpUiHostContext,
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
@@ -23,6 +24,7 @@ import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { resolveHostInfo } from "@/lib/client-config-v2";
+import { useAppToolsRegistry } from "./app-tools-registry";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -34,6 +36,28 @@ export interface McpAppsModalProps {
   template: string | null;
   params: Record<string, unknown>;
   registerBridgeHandlers: (bridge: AppBridge) => void;
+  /**
+   * SEP-1865 App-Provided Tools: the modal mounts its own AppBridge
+   * against a fresh iframe. Because the modal overrides
+   * `bridge.oninitialized` to suppress inline-only side effects, the
+   * inline registration path (which lives inside that handler) is
+   * skipped. The modal calls this helper directly after handshake — and
+   * again on every `notifications/tools/list_changed` — so the model
+   * sees the app's tools while the modal is the active surface for this
+   * tool call. Inline + modal coexist in `useAppToolsRegistry` via
+   * `surface`-keyed dedup; the registry's active-bridge fallback
+   * restores inline when the modal unregisters on teardown.
+   */
+  refreshAppProvidedTools: (
+    bridge: AppBridge,
+    bridgeId: string,
+    options?: {
+      force?: boolean;
+      surface?: "inline" | "modal";
+      getIframeElement?: () => HTMLIFrameElement | null;
+      isLive?: () => boolean;
+    }
+  ) => Promise<void>;
   widgetCsp: McpUiResourceCsp | undefined;
   widgetPermissions: McpUiResourcePermissions | undefined;
   widgetPermissive: boolean;
@@ -46,6 +70,28 @@ export interface McpAppsModalProps {
   toolCallId: string;
   toolName: string;
   cspMode: CspMode;
+  /**
+   * Resolved compat-runtime flag the inline renderer already computed
+   * for this host. The modal mounts its own iframe and fetches its own
+   * HTML; passing the flag down (rather than re-resolving here) keeps
+   * the modal and inline fetches in lockstep so the modal can't end up
+   * shimmed while the inline view isn't (or vice versa).
+   */
+  injectOpenAiCompat: boolean;
+  /**
+   * Resolved MCP Apps `HostCapabilities` blob the inline renderer
+   * already computed via `resolveEffectiveHostCapabilities`. Pass-down
+   * mirrors {@link injectOpenAiCompat}: the modal mounts its own
+   * AppBridge and we want inline + modal to advertise an identical
+   * surface to the widget. Previously the modal hardcoded `{ openLinks,
+   * serverTools, serverResources, logging, updateModelContext, message }`
+   * — that masked Copilot's M365-published subset (which strips
+   * `serverResources` / `logging`) and any user override in
+   * `mcpProfile.apps.mcpAppsOverrides`. The `sandbox` slice is composed
+   * separately at AppBridge construction from the widget-level CSP /
+   * permissions props.
+   */
+  effectiveHostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
   toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
   toolOutputRef: React.RefObject<unknown>;
   themeModeRef: React.RefObject<string>;
@@ -67,6 +113,7 @@ export function McpAppsModal({
   template,
   params,
   registerBridgeHandlers,
+  refreshAppProvidedTools,
   widgetCsp,
   widgetPermissions,
   widgetPermissive,
@@ -79,6 +126,8 @@ export function McpAppsModal({
   toolCallId,
   toolName,
   cspMode,
+  injectOpenAiCompat,
+  effectiveHostCapabilities,
   toolInputRef,
   toolOutputRef,
   themeModeRef,
@@ -88,6 +137,12 @@ export function McpAppsModal({
   const [modalHtml, setModalHtml] = useState<string | null>(null);
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
   const modalBridgeRef = useRef<AppBridge | null>(null);
+  // SEP-1865 App-Provided Tools: per-modal-bridge identity. Distinct
+  // from the renderer's inline ref so inline + modal can coexist in
+  // `useAppToolsRegistry` and `surface`-keyed dedup keeps each surface's
+  // tools separate. Cleared on teardown so `isLive` short-circuits any
+  // in-flight `listTools` after the modal closes.
+  const modalAppToolsBridgeIdRef = useRef<string | null>(null);
   // Same scope as the inline renderer — `ActiveMcpProfileProvider` wraps
   // both. Used to resolve `hostInfo` for the modal's AppBridge handshake.
   const activeMcpProfile = useActiveMcpProfile();
@@ -105,6 +160,15 @@ export function McpAppsModal({
       // Clean up when modal closes
       modalBridgeRef.current?.close().catch(() => {});
       modalBridgeRef.current = null;
+      // SEP-1865 App-Provided Tools: drop this modal's registration so
+      // the next chat POST snapshot omits its aliases and the registry's
+      // active-bridge fallback restores any coexisting inline surface.
+      if (modalAppToolsBridgeIdRef.current) {
+        useAppToolsRegistry
+          .getState()
+          .unregisterInstance(modalAppToolsBridgeIdRef.current);
+        modalAppToolsBridgeIdRef.current = null;
+      }
       setModalHtml(null);
       return;
     }
@@ -120,6 +184,7 @@ export function McpAppsModal({
           toolName,
           theme: themeModeRef.current,
           cspMode,
+          injectOpenAiCompat,
           template: template ?? undefined,
           viewMode: "modal",
           viewParams: params,
@@ -140,6 +205,7 @@ export function McpAppsModal({
     toolCallId,
     toolName,
     cspMode,
+    injectOpenAiCompat,
     toolInputRef,
     toolOutputRef,
     themeModeRef,
@@ -158,16 +224,16 @@ export function McpAppsModal({
       name: "mcpjam-inspector",
       version: __APP_VERSION__,
     }) as { name: string; version: string };
+    // Vendor-trait HostCapabilities come from the inline renderer's
+    // resolver (matrix-derived + user override). Sandbox is composed
+    // here from the widget-level resource CSP / permissions per
+    // SEP-1865 (sandbox is per-resource, not a vendor trait — see
+    // HostMcpProfile.mcpAppsCapabilities doc).
     const bridge = new AppBridge(
       null,
       resolvedHostInfo,
       {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        updateModelContext: {},
-        message: {},
+        ...effectiveHostCapabilities,
         sandbox: {
           csp: widgetPermissive ? undefined : widgetCsp,
           permissions: widgetPermissions,
@@ -203,7 +269,14 @@ export function McpAppsModal({
       }
     };
 
-    // Override oninitialized so it doesn't set the main isReady state
+    // Override oninitialized so it doesn't set the main isReady state.
+    // SEP-1865 App-Provided Tools: this replaces (not wraps) the
+    // inline handler set by `registerBridgeHandlers`, so we have to
+    // re-run the parts of that handler that matter for the modal
+    // bridge — currently the app-tools registration. Inline state
+    // mutations (setIsReady, setReinitCount, display-mode publish,
+    // etc.) intentionally stay skipped: the modal has its own
+    // lifecycle and must not steer the inline renderer's React state.
     bridge.oninitialized = () => {
       // Send tool input/output to the modal bridge after initialization
       const resolvedToolInput = toolInputRef.current ?? {};
@@ -211,14 +284,35 @@ export function McpAppsModal({
       if (toolOutputRef.current) {
         bridge.sendToolResult(toolOutputRef.current as CallToolResult);
       }
+
+      const appCaps = bridge.getAppCapabilities();
+      if (appCaps?.tools) {
+        const bridgeId =
+          modalAppToolsBridgeIdRef.current ?? crypto.randomUUID();
+        modalAppToolsBridgeIdRef.current = bridgeId;
+        void refreshAppProvidedTools(bridge, bridgeId, {
+          surface: "modal",
+          getIframeElement: () =>
+            modalSandboxRef.current?.getIframeElement() ?? null,
+          isLive: () => modalAppToolsBridgeIdRef.current === bridgeId,
+        });
+      }
     };
 
     modalBridgeRef.current = bridge;
+    const pendingRpcMethods = new Map<string | number, string>();
 
     const transport = new LoggingTransport(
       new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
       {
         onSend: (message) => {
+          const request = message as { id?: string | number; method?: string };
+          if (
+            typeof request.method === "string" &&
+            (typeof request.id === "string" || typeof request.id === "number")
+          ) {
+            pendingRpcMethods.set(request.id, request.method);
+          }
           addUiLog({
             widgetId: `${toolCallId}-modal`,
             serverId,
@@ -229,12 +323,44 @@ export function McpAppsModal({
           });
         },
         onReceive: (message) => {
+          const response = message as {
+            id?: string | number;
+            result?: unknown;
+            error?: unknown;
+          };
+          const correlatedMethod =
+            (response.result !== undefined || response.error !== undefined) &&
+            (typeof response.id === "string" || typeof response.id === "number")
+              ? pendingRpcMethods.get(response.id)
+              : undefined;
+          if (correlatedMethod && response.id !== undefined) {
+            pendingRpcMethods.delete(response.id);
+          }
+          const method =
+            correlatedMethod ?? extractMethod(message, "mcp-apps");
+          // SEP-1865 App-Provided Tools: re-list when the modal app
+          // signals a tools-list change. Mirrors the inline renderer's
+          // `onReceive` hook so a `tool.update()` / `enable()` /
+          // `disable()` from the modal app is reflected in the chat
+          // snapshot's advertised aliases.
+          if (method === "notifications/tools/list_changed") {
+            const bridgeId = modalAppToolsBridgeIdRef.current;
+            if (bridgeId) {
+              void refreshAppProvidedTools(bridge, bridgeId, {
+                force: true,
+                surface: "modal",
+                getIframeElement: () =>
+                  modalSandboxRef.current?.getIframeElement() ?? null,
+                isLive: () => modalAppToolsBridgeIdRef.current === bridgeId,
+              });
+            }
+          }
           addUiLog({
             widgetId: `${toolCallId}-modal`,
             serverId,
             direction: "ui-to-host",
             protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
+            method,
             message,
           });
         },
@@ -250,6 +376,15 @@ export function McpAppsModal({
     return () => {
       isActive = false;
       modalBridgeRef.current = null;
+      // SEP-1865 App-Provided Tools: unregister on effect teardown
+      // (component unmount or modalHtml refetch). Clearing the ref
+      // first ensures any in-flight `listTools` short-circuits via
+      // `isLive` and doesn't re-register after we've torn down.
+      if (modalAppToolsBridgeIdRef.current) {
+        const bridgeId = modalAppToolsBridgeIdRef.current;
+        modalAppToolsBridgeIdRef.current = null;
+        useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+      }
       bridge.close().catch(() => {});
     };
   }, [
@@ -259,6 +394,7 @@ export function McpAppsModal({
     serverId,
     toolCallId,
     registerBridgeHandlers,
+    refreshAppProvidedTools,
     widgetPermissive,
     widgetCsp,
     widgetPermissions,
@@ -266,6 +402,7 @@ export function McpAppsModal({
     toolInputRef,
     toolOutputRef,
     activeMcpProfile,
+    effectiveHostCapabilities,
   ]);
 
   const handleModalMessage = (event: MessageEvent) => {

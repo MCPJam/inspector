@@ -2,13 +2,13 @@ import * as React from "react";
 import { useState, useMemo } from "react";
 import {
   Hammer,
+  House,
   MessageCircle,
   Settings,
   MessageSquareCode,
   BookOpen,
   FlaskConical,
   Workflow,
-  Anvil,
   Layers,
   ListTodo,
   SquareSlash,
@@ -17,6 +17,7 @@ import {
   Box,
   LayoutGrid,
   GitBranch,
+  GitCompare,
   Puzzle,
   UserPlus,
   ShieldCheck,
@@ -177,11 +178,25 @@ const navigationSections: NavSection[] = [
     id: "connection",
     items: [
       {
+        title: "Home",
+        url: "/home",
+        icon: House,
+        featureFlag: "home-page-enabled",
+      },
+      {
         title: "Connect",
         url: "/servers",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
         matchTabs: ["clients"],
+      },
+      {
+        title: "Compare",
+        url: "/host-compare",
+        icon: GitCompare,
+        // Gated by the same flag as Connect — there's no useful Compare
+        // surface for users who don't have the hosts hub turned on.
+        featureFlag: "hosts-enabled",
       },
       {
         title: "Servers",
@@ -196,27 +211,21 @@ const navigationSections: NavSection[] = [
         featureFlag: "registry-enabled",
       },
       {
-        title: "Chat",
-        url: "/chat-v2",
-        icon: MessageCircle,
-        hiddenByFlag: "playground-tab-enabled",
-      },
-      {
         title: "Chatboxes",
         url: "/chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
       },
       {
-        title: "Chat",
+        title: "Playground",
         url: "/playground",
         icon: MessageCircle,
-        featureFlag: "playground-tab-enabled",
         announcement: {
           id: "playground-tab-rename-2026-05",
           badge: "NEW",
-          title: "Chat just got more powerful",
-          body: "Chat now includes everything from App Builder — generate, preview, and test MCP-powered apps without switching tabs.",
+          title: "Playground just got more powerful",
+          body: "Playground now includes everything from App Builder — generate, preview, and test MCP-powered apps without switching tabs.",
         },
       },
     ],
@@ -224,12 +233,6 @@ const navigationSections: NavSection[] = [
   {
     id: "mcp-apps",
     items: [
-      {
-        title: "App Builder",
-        url: "/app-builder",
-        icon: Anvil,
-        hiddenByFlag: "playground-tab-enabled",
-      },
       {
         title: "Views",
         url: "/views",
@@ -581,11 +584,11 @@ export function MCPSidebar({
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
-  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
+  const homePageEnabled = useFeatureFlagEnabled("home-page-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -649,7 +652,7 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
-      "playground-tab-enabled": playgroundTabEnabled === true,
+      "home-page-enabled": homePageEnabled === true && isAuthenticated,
       xaa: xaaEnabled === true,
     }),
     [
@@ -658,15 +661,12 @@ export function MCPSidebar({
       registryEnabled,
       conformanceEnabled,
       hostsEnabled,
-      playgroundTabEnabled,
+      homePageEnabled,
       xaaEnabled,
       isAuthenticated,
     ]
   );
-  const hubNavHash =
-    isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated
-      ? "#connect"
-      : "#servers";
+  const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
     featureFlags

@@ -218,6 +218,8 @@ export function ChatHistoryRail({
     useState<ArchiveSectionScope | null>(null);
   const [sessionToConvert, setSessionToConvert] =
     useState<ChatHistorySession | null>(null);
+  const canUseProjectSharing =
+    isAuthenticated && sharedThreadsEnabled && Boolean(projectId);
   const { personal, project, loading, error, isReactive, refetch, actions } =
     useChatHistory({
       projectId,
@@ -374,7 +376,7 @@ export function ChatHistoryRail({
                         isActive={session._id === activeSessionId}
                         isAuthenticated={isAuthenticated}
                         isStreaming={isStreaming}
-                        sharedThreadsEnabled={sharedThreadsEnabled}
+                        sharedThreadsEnabled={canUseProjectSharing}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
                         onPrefetch={onPrefetchThread}
@@ -387,7 +389,7 @@ export function ChatHistoryRail({
                   </ThreadSection>
                 </div>
 
-                {isAuthenticated && sharedThreadsEnabled ? (
+                {canUseProjectSharing ? (
                   <ThreadSection
                     headingId="chat-history-shared-threads-heading"
                     title="Shared Sessions"
@@ -412,7 +414,7 @@ export function ChatHistoryRail({
                         isActive={session._id === activeSessionId}
                         isAuthenticated={isAuthenticated}
                         isStreaming={isStreaming}
-                        sharedThreadsEnabled={sharedThreadsEnabled}
+                        sharedThreadsEnabled={canUseProjectSharing}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
                         onPrefetch={onPrefetchThread}

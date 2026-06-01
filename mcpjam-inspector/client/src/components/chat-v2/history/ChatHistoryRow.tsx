@@ -116,6 +116,7 @@ export function ChatHistoryRow({
   const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Refresh relative time every 60s
@@ -247,6 +248,11 @@ export function ChatHistoryRow({
       } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
       onClick={handleClick}
       onPointerEnter={handlePointerEnter}
+      onContextMenu={(e) => {
+        if (isStreaming || isRenaming) return;
+        e.preventDefault();
+        setMenuOpen(true);
+      }}
     >
       {hasProjectOwner ? (
         session.isPinned ? (
@@ -324,7 +330,7 @@ export function ChatHistoryRow({
           <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
             {relativeTime}
           </span>
-          <DropdownMenu>
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger
               disabled={isStreaming}
               className="flex items-center justify-end rounded p-0.5 outline-none transition-opacity hover:bg-accent data-[state=open]:pointer-events-auto data-[state=open]:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 [@media(pointer:fine)]:pointer-events-none [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:z-10 [@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:group-hover:pointer-events-auto [@media(pointer:fine)]:group-hover:opacity-100 [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"

@@ -1,9 +1,11 @@
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
 } from "react";
@@ -24,12 +26,15 @@ import { Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
 import {
+  ADD_SERVER_NODE_ID,
+  SERVERS_HUB_NODE_ID,
   type AddServerPillNodeData,
   type HostMatrixNodeData,
   type HostRedesignViewModel,
   type ServerCardNodeData,
   type ServersHubNodeData,
 } from "../types";
+import { SERVERS_HUB_GAP } from "./canvasBuilder";
 import {
   SERVER_CARD_LAYOUT_ID,
   SNAPPY_CAMERA,
@@ -50,6 +55,7 @@ const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
 const HostMatrixContext = createContext<{
   selectedNodeId: string | null;
   onSelectNode: (id: string) => void;
+  reportMatrixHeight: (height: number) => void;
 } | null>(null);
 
 /* ============================================================
@@ -61,11 +67,32 @@ const HostMatrixNodeRenderer = memo(
   (props: NodeProps<Node<HostMatrixNodeData, "redesignHostMatrix">>) => {
     const { data } = props;
     const ctx = useContext(HostMatrixContext);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const reportMatrixHeight = ctx?.reportMatrixHeight;
+    // Sandbox CSP rows / permissions / View-iframe globals make the card's
+    // height content-driven, so the canvas can't precompute where the
+    // servers hub belongs. ResizeObserver reads the layout box (transform
+    // animations don't pollute it), and the parent shifts the hub + server
+    // cards + branch edges by the delta vs. the static estimate.
+    useEffect(() => {
+      const el = containerRef.current;
+      if (!el || !reportMatrixHeight) return;
+      const ro = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        const box = entry.borderBoxSize?.[0];
+        const h = box ? box.blockSize : entry.contentRect.height;
+        if (h > 0) reportMatrixHeight(h);
+      });
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, [reportMatrixHeight]);
     // Reveal the host card with a brief scale/fade after the page-level
     // crossfade begins. Without this the Cursor card reads as "already
     // there" on click — the demo's host group has the same beat.
     return (
       <motion.div
+        ref={containerRef}
         className="w-full"
         initial={{ opacity: 0, scale: 0.9, y: 40 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -81,6 +108,8 @@ const HostMatrixNodeRenderer = memo(
           sandbox={data.sandbox}
           hostInfo={data.hostInfo}
           appsExtensionAdvertised={data.appsExtensionAdvertised}
+          compatRuntime={data.compatRuntime}
+          mcpAppsBridge={data.mcpAppsBridge}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
         />
@@ -432,9 +461,66 @@ export function RedesignedClientCanvas({
         : viewModel.edges,
     [viewModel.edges, readOnly],
   );
+
+  // Measured height of the host matrix card. The canvasBuilder positions
+  // the servers hub from a static height estimate; we shift the hub +
+  // server cards + add-server pill + branch-edge endpoints by
+  // (measured - estimated) so they always sit `SERVERS_HUB_GAP` below the
+  // card's true bottom. 0 means "not measured yet" — fall through to the
+  // static positions for the initial frame.
+  const [measuredMatrixH, setMeasuredMatrixH] = useState(0);
+  const reportMatrixHeight = useCallback((h: number) => {
+    setMeasuredMatrixH((prev) =>
+      Math.abs(prev - h) < 0.5 ? prev : h,
+    );
+  }, []);
+
+  // The estimated matrix height the builder used is recoverable from the
+  // hub's pre-shift Y: `serversHubY = estimatedMatrixH + SERVERS_HUB_GAP`.
+  // Reading it off the hub keeps the shift in sync with whatever section
+  // toggles (apps extension on/off) the builder applied.
+  const dy = useMemo(() => {
+    if (measuredMatrixH <= 0) return 0;
+    const hub = filteredNodes.find((n) => n.id === SERVERS_HUB_NODE_ID);
+    if (!hub) return 0;
+    const estimatedMatrixH = hub.position.y - SERVERS_HUB_GAP;
+    return measuredMatrixH - estimatedMatrixH;
+  }, [filteredNodes, measuredMatrixH]);
+
+  const shiftedNodes = useMemo(() => {
+    if (dy === 0) return filteredNodes;
+    return filteredNodes.map((node) => {
+      const shouldShift =
+        node.id === SERVERS_HUB_NODE_ID ||
+        node.id === ADD_SERVER_NODE_ID ||
+        node.id.startsWith("server-card:");
+      if (!shouldShift) return node;
+      return {
+        ...node,
+        position: { x: node.position.x, y: node.position.y + dy },
+      };
+    });
+  }, [filteredNodes, dy]);
+
+  const shiftedEdges = useMemo(() => {
+    if (dy === 0) return filteredEdges;
+    return filteredEdges.map((edge) => {
+      if (edge.type !== "hostBranch" || !edge.data) return edge;
+      const d = edge.data as unknown as FixedEdgeData;
+      return {
+        ...edge,
+        data: {
+          ...d,
+          fixedSourceY: d.fixedSourceY + dy,
+          fixedTargetY: d.fixedTargetY + dy,
+        },
+      };
+    });
+  }, [filteredEdges, dy]);
+
   const nodes = useMemo(
     () =>
-      filteredNodes.map((node) =>
+      shiftedNodes.map((node) =>
         node.type === "redesignAddServer" || node.type === "redesignHostMatrix"
           ? node
           : {
@@ -442,7 +528,7 @@ export function RedesignedClientCanvas({
               selected: readOnly ? false : node.id === selectedNodeId,
             },
       ),
-    [filteredNodes, selectedNodeId, readOnly],
+    [shiftedNodes, selectedNodeId, readOnly],
   );
 
   // In read-only mode the matrix sub-regions stopPropagation before
@@ -456,9 +542,10 @@ export function RedesignedClientCanvas({
         ? {
             selectedNodeId: null,
             onSelectNode: () => onRequestEdit?.(),
+            reportMatrixHeight,
           }
-        : { selectedNodeId, onSelectNode },
-    [selectedNodeId, onSelectNode, readOnly, onRequestEdit],
+        : { selectedNodeId, onSelectNode, reportMatrixHeight },
+    [selectedNodeId, onSelectNode, readOnly, onRequestEdit, reportMatrixHeight],
   );
 
   // Hold the canvas edges invisible until the server pills have landed at
@@ -503,7 +590,7 @@ export function RedesignedClientCanvas({
         >
         <ReactFlow
           nodes={nodes}
-          edges={filteredEdges}
+          edges={shiftedEdges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           minZoom={0.55}

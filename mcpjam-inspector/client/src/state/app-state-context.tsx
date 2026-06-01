@@ -24,3 +24,14 @@ export function useSharedAppState(): AppState {
   }
   return ctx;
 }
+
+/**
+ * Non-throwing variant for surfaces that may legitimately render outside
+ * an `AppStateProvider` (test fixtures, isolated previews, transient
+ * bootstrap). Returns `null` instead of throwing — callers MUST handle
+ * the absence themselves. Use sparingly; prefer
+ * {@link useSharedAppState} when the provider is guaranteed.
+ */
+export function useOptionalSharedAppState(): AppState | null {
+  return useContext(AppStateContext);
+}

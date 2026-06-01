@@ -86,9 +86,12 @@ import {
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 import { useProjectServers } from "@/hooks/useViews";
+import { useProjectMembers } from "@/hooks/useProjects";
+import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
+import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -111,6 +114,8 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -121,6 +126,8 @@ interface ChatTabProps {
   onServerToggle?: (serverName: string) => void;
   /** Reconnect a disconnected server. */
   onReconnectServer?: (serverName: string) => Promise<void>;
+  /** Disconnect a connected server (toggle off = unplug). */
+  onDisconnectServer?: (serverName: string) => void;
   /** Add a new server (opens add-server modal). */
   onAddServer?: (formData: import("@/shared/types").ServerFormData) => void;
   onSelectedServerNamesChange?: (names: string[]) => void;
@@ -157,6 +164,7 @@ export function ChatTabV2({
   allServerConfigs,
   onServerToggle,
   onReconnectServer,
+  onDisconnectServer,
   onAddServer,
   onSelectedServerNamesChange,
   onHasMessagesChange,
@@ -197,13 +205,7 @@ export function ChatTabV2({
     { toolCallId: string; state: unknown }[]
   >([]);
   const [modelContextQueue, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+    WidgetModelContextEntry[]
   >([]);
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
     []
@@ -234,6 +236,11 @@ export function ChatTabV2({
   const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
+    string | null
+  >(null);
+  // Cached thread-owner userId so sender-avatar resolution doesn't flash the
+  // current user's avatar before the reactive Convex subscription lands.
+  const [loadedThreadOwnerUserId, setLoadedThreadOwnerUserId] = useState<
     string | null
   >(null);
   const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
@@ -273,6 +280,7 @@ export function ChatTabV2({
     setLoadingHistorySessionId(null);
     invalidatePendingReactiveHistoryLoad();
     setActiveHistorySessionId(null);
+    setLoadedThreadOwnerUserId(null);
   }, [invalidatePendingReactiveHistoryLoad]);
 
   // Filter to only connected servers
@@ -288,12 +296,16 @@ export function ChatTabV2({
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const organizationId = activeProject?.organizationId ?? null;
-  const hostedOrgModelConfig = useQuery(
-    "organizationModelProviders:getVisibleConfig" as any,
-    HOSTED_MODE && isConvexAuthenticated && organizationId
-      ? ({ organizationId } as any)
-      : "skip",
-  ) as { providers: OrgModelProvider[] } | undefined;
+  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
+  const modelConfigOrganizationId = hostedContext?.projectId
+    ? null
+    : organizationId;
+  const hostedOrgModelConfig = useHostedOrgModelConfig({
+    projectId: effectiveHostedProjectId,
+    organizationId: modelConfigOrganizationId,
+  });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -314,10 +326,6 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers]
   );
-  const hostedChatboxId = hostedContext?.chatboxId;
-  const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const effectiveHostedProjectId =
-    hostedContext?.projectId ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxId
@@ -390,9 +398,8 @@ export function ChatTabV2({
     // defaulting to `'claude'` regardless of user choice. Backend
     // ingestion ignores it for chatbox flows (those resolve from the
     // chatbox row), so it's safe to forward unconditionally.
-    hostStyle: hostStyle === "claude" || hostStyle === "chatgpt"
-      ? hostStyle
-      : undefined,
+    hostStyle:
+      hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
       if (reason === "auth-bootstrap" || reason === "hydrate") {
@@ -414,10 +421,7 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail = Boolean(
-    HOSTED_MODE &&
-      !minimalMode &&
-      !hostedChatboxId &&
-      chatHistoryRailEnabled,
+    HOSTED_MODE && !minimalMode && !hostedChatboxId && chatHistoryRailEnabled
   );
   const {
     session: reactiveHistorySession,
@@ -441,6 +445,49 @@ export function ChatTabV2({
 
   const historyRailTakesLayoutSpace =
     showHistoryRail && isHistorySidebarVisible;
+
+  // Shared-session sender attribution: only relevant when the active thread
+  // is project-visible. Members are loaded for authenticated users with a
+  // projectId; otherwise the resolver still works (returns "generic"), but
+  // `showSenderAvatars` is gated on `directVisibility === "project"` so
+  // private sessions stay visually identical to today.
+  const { activeMembers: senderActiveMembers } = useProjectMembers({
+    isAuthenticated: isConvexAuthenticated,
+    projectId: convexProjectId ?? null,
+  });
+  const senderProfileByUserId = useMemo(
+    () => buildProjectOwnerProfileByUserId(senderActiveMembers),
+    [senderActiveMembers],
+  );
+  const currentUserForSender = useQuery(
+    "users:getCurrentUser" as any,
+    isConvexAuthenticated ? ({} as any) : "skip",
+  ) as { _id?: string } | undefined;
+  const senderFallbackUserId =
+    reactiveHistorySession?.userId ??
+    loadedThreadOwnerUserId ??
+    currentUserForSender?._id ??
+    null;
+  const showSenderAvatars = pendingDirectVisibility === "project";
+  const resolveSenderAvatar = useMemo(
+    () =>
+      buildSenderAvatarResolver({
+        profileByUserId: senderProfileByUserId,
+        fallbackOwnerUserId: senderFallbackUserId,
+      }),
+    [senderProfileByUserId, senderFallbackUserId],
+  );
+  // Stamp the current user onto live outgoing prompts in shared sessions so
+  // the transcript can attribute them immediately, before persistence
+  // round-trips Convex. Private sessions skip the field entirely.
+  const outgoingSenderMetadata = useMemo<
+    Record<string, unknown> | undefined
+  >(() => {
+    if (!showSenderAvatars) return undefined;
+    const id = currentUserForSender?._id;
+    if (!id) return undefined;
+    return { senderUserId: id };
+  }, [showSenderAvatars, currentUserForSender?._id]);
   const hasConversationMessages = messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant"
   );
@@ -564,6 +611,7 @@ export function ChatTabV2({
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
+      setLoadedThreadOwnerUserId(null);
       syncResumedVersion(null);
       if (hasConversationMessages) {
         startChatWithMessages(cloneUiMessages(messages), {
@@ -628,6 +676,7 @@ export function ChatTabV2({
         }
       }
       setActiveHistorySessionId(detail._id);
+      setLoadedThreadOwnerUserId(detail.userId ?? null);
       setPendingDirectVisibility(detail.directVisibility);
       syncResumedVersion(detail.version);
       lastAppliedReactiveVersionRef.current = {
@@ -663,6 +712,8 @@ export function ChatTabV2({
             projectId: effectiveHostedProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setLoadedThreadOwnerUserId(detail.session.userId ?? null);
+          setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {
             void markHistorySessionRead(detail.session._id);
@@ -915,6 +966,20 @@ export function ChatTabV2({
     ]
   );
 
+  const clearMultiModelUiState = useCallback(() => {
+    setBroadcastRequest(null);
+    setStopBroadcastRequestId(0);
+    setMultiModelSummaries({});
+    setMultiModelHasMessages({});
+    setMultiAddColumnSeeds({});
+    prevCompareModelIdsRef.current = new Set();
+  }, []);
+
+  const resetMultiModelSessions = useCallback(() => {
+    clearMultiModelUiState();
+    setMultiModelSessionGeneration((previous) => previous + 1);
+  }, [clearMultiModelUiState]);
+
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
       if (isStreaming) return;
@@ -928,6 +993,10 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
+      // Compare lanes hold their own useChatSession state; resetting the
+      // root session alone leaves the visible lane transcripts intact and
+      // the user sees nothing happen after clicking "+" in the rail.
+      resetMultiModelSessions();
       setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
     [
@@ -937,6 +1006,7 @@ export function ChatTabV2({
       ensureDiscardDraftConfirmed,
       hasUnsavedDraft,
       isStreaming,
+      resetMultiModelSessions,
       syncResumedVersion,
     ]
   );
@@ -950,6 +1020,7 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
+      resetMultiModelSessions();
       setPendingDirectVisibility("private");
     },
     [
@@ -957,6 +1028,7 @@ export function ChatTabV2({
       cancelPendingHistorySelection,
       clearComposerDraft,
       hasUnsavedDraft,
+      resetMultiModelSessions,
       syncResumedVersion,
     ]
   );
@@ -976,7 +1048,10 @@ export function ChatTabV2({
         | "unpin";
       session: ChatHistorySession;
     }) => {
-      if (action === "unshare" && session._id === activeHistorySessionId) {
+      if (
+        (action === "share" || action === "unshare") &&
+        session._id === activeHistorySessionId
+      ) {
         try {
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
@@ -1106,12 +1181,16 @@ export function ChatTabV2({
     selectedModel,
     selectedModelIds,
   ]);
+  // Shared (project-visible) sessions are collaborative artifacts; the
+  // multi-model toggle would mutate session state for every collaborator,
+  // so it's hidden in that scope. Single-model selection stays available.
   const canEnableMultiModel =
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
     !hostedChatboxId &&
     !hostedChatboxSurface &&
+    pendingDirectVisibility !== "project" &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
   // the ChatTabV2 messages (which hold the hydrated transcript) are displayed.
@@ -1133,15 +1212,6 @@ export function ChatTabV2({
     },
     []
   );
-
-  const clearMultiModelUiState = useCallback(() => {
-    setBroadcastRequest(null);
-    setStopBroadcastRequestId(0);
-    setMultiModelSummaries({});
-    setMultiModelHasMessages({});
-    setMultiAddColumnSeeds({});
-    prevCompareModelIdsRef.current = new Set();
-  }, []);
 
   useLayoutEffect(() => {
     const prev = prevCompareModeRef.current;
@@ -1489,12 +1559,9 @@ export function ChatTabV2({
         structuredContent?: Record<string, unknown>;
       }
     ) => {
-      // Queue model context to be included in next message
-      setModelContextQueue((prev) => {
-        // Remove any existing context from same widget (overwrite pattern per SEP-1865)
-        const filtered = prev.filter((item) => item.toolCallId !== toolCallId);
-        return [...filtered, { toolCallId, context }];
-      });
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context)
+      );
     },
     []
   );
@@ -1579,7 +1646,9 @@ export function ChatTabV2({
   // Submit blocking with server check
   const submitBlocked = baseSubmitBlocked;
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
-    isMultiModelMode,
+    // Chat tab doesn't have a multi-host axis — its compare mode is
+    // exactly multi-model. Pass through directly.
+    isCompareMode: isMultiModelMode,
     isStreaming,
     multiModelSummaries,
     setStopBroadcastRequestId,
@@ -1651,8 +1720,8 @@ export function ChatTabV2({
   const handleRetryConcurrencyMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
-    sendMessage({ text });
-  }, [sendMessage]);
+    sendMessage({ text, metadata: outgoingSenderMetadata });
+  }, [sendMessage, outgoingSenderMetadata]);
 
   const isConcurrencyThrottle =
     errorMessage?.code === "user_rate_limit" &&
@@ -1664,11 +1733,6 @@ export function ChatTabV2({
     traceVersion: 1 as const,
     messages: [],
   };
-  const resetMultiModelSessions = useCallback(() => {
-    clearMultiModelUiState();
-    setMultiModelSessionGeneration((previous) => previous + 1);
-  }, [clearMultiModelUiState]);
-
   const handleResetAllChats = useCallback(() => {
     posthog.capture("chat_cleared", standardEventProps("chat_tab"));
     baseResetChat();
@@ -1848,7 +1912,9 @@ export function ChatTabV2({
           text: input,
           files,
           prependMessages,
+          widgetModelContext: modelContextQueue,
         });
+        setModelContextQueue([]);
       } else {
         if (promptMessages.length > 0) {
           setMessages((prev) => [...prev, ...promptMessages]);
@@ -1856,29 +1922,6 @@ export function ChatTabV2({
 
         if (skillMessages.length > 0) {
           setMessages((prev) => [...prev, ...skillMessages]);
-        }
-
-        const contextMessages = modelContextQueue.map(
-          ({ toolCallId, context }) => ({
-            id: `model-context-${toolCallId}-${Date.now()}`,
-            role: "user" as const,
-            parts: [
-              {
-                type: "text" as const,
-                text: `Widget ${toolCallId} context: ${JSON.stringify(
-                  context
-                )}`,
-              },
-            ],
-            metadata: {
-              source: "widget-model-context",
-              toolCallId,
-            },
-          })
-        );
-
-        if (contextMessages.length > 0) {
-          setMessages((prev) => [...prev, ...(contextMessages as UIMessage[])]);
         }
 
         posthog.capture("send_message", {
@@ -1893,7 +1936,12 @@ export function ChatTabV2({
           single_model_send: true,
         });
         lastSentUserMessageRef.current = input;
-        sendMessage({ text: input, files });
+        sendMessage({
+          text: input,
+          files,
+          metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
+        });
         setModelContextQueue([]);
       }
 
@@ -1922,7 +1970,9 @@ export function ChatTabV2({
       queueBroadcastRequest({
         text: prompt,
         prependMessages: [],
+        widgetModelContext: modelContextQueue,
       });
+      setModelContextQueue([]);
     } else {
       posthog.capture("send_message", {
         location: "chat_tab",
@@ -1936,7 +1986,12 @@ export function ChatTabV2({
         single_model_send: true,
       });
       lastSentUserMessageRef.current = prompt;
-      sendMessage({ text: prompt });
+      sendMessage({
+        text: prompt,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
     }
     setInput("");
     revokeFileAttachmentUrls(fileAttachments);
@@ -1988,6 +2043,7 @@ export function ChatTabV2({
     allServerConfigs,
     onServerToggle,
     onReconnectServer,
+    onDisconnectServer,
     onAddServer,
     chatboxAttachableServers:
       chatboxOptionalInventory && chatboxOptionalInventory.length > 0
@@ -2257,6 +2313,17 @@ export function ChatTabV2({
                             systemPrompt,
                             temperature,
                             requireToolApproval,
+                            // Forward the host's progressive-discovery
+                            // toggle into each per-model card so the
+                            // backend respects the host setting (auto
+                            // policy is only used when this is
+                            // `undefined`). Without this, multi-model
+                            // chat falls back to auto regardless of
+                            // what BehaviorTab saved.
+                            progressiveToolDiscovery:
+                              executionConfig?.progressiveToolDiscovery,
+                            respectToolVisibility:
+                              executionConfig?.respectToolVisibility,
                           }}
                           hostedContext={{
                             ...hostedContext,
@@ -2278,6 +2345,9 @@ export function ChatTabV2({
                             multiAddColumnSeeds[String(model.id)] ?? null
                           }
                           onTranscriptSync={handleMultiModelTranscriptSync}
+                          showSenderAvatars={showSenderAvatars}
+                          resolveSenderAvatar={resolveSenderAvatar}
+                          outgoingSenderMetadata={outgoingSenderMetadata}
                         />
                       ))}
                     </div>
@@ -2314,6 +2384,7 @@ export function ChatTabV2({
                   !minimalMode && (
                     <div className="flex flex-1 min-h-0 flex-col">
                       <SingleModelTraceDiagnosticsBody
+                        chatSessionId={chatSessionId}
                         activeTraceViewMode={activeTraceViewMode}
                         isThreadEmpty={isThreadEmpty}
                         showLiveTracePending={
@@ -2338,7 +2409,12 @@ export function ChatTabV2({
                           activeTraceViewMode === "chat" && revealedInChat
                             ? (text: string) => {
                                 lastSentUserMessageRef.current = text;
-                                sendMessage({ text });
+                                sendMessage({
+                                  text,
+                                  metadata: outgoingSenderMetadata,
+                                  widgetModelContext: modelContextQueue,
+                                });
+                                setModelContextQueue([]);
                               }
                             : undefined
                         }
@@ -2401,10 +2477,16 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          chatSessionId={chatSessionId}
                           messages={messages}
                           sendFollowUpMessage={(text: string) => {
                             lastSentUserMessageRef.current = text;
-                            sendMessage({ text });
+                            sendMessage({
+                              text,
+                              metadata: outgoingSenderMetadata,
+                              widgetModelContext: modelContextQueue,
+                            });
+                            setModelContextQueue([]);
                           }}
                           model={selectedModel}
                           isLoading={isStreaming}
@@ -2425,15 +2507,16 @@ export function ChatTabV2({
                           renderUserMessageActions={
                             chatSessionId && effectiveHostedProjectId
                               ? (message) => {
-                                  const promptIndex =
-                                    userPromptIndexById.get(message.id);
+                                  const promptIndex = userPromptIndexById.get(
+                                    message.id
+                                  );
                                   if (promptIndex === undefined) return null;
                                   return (
                                     <SaveAsTestCaseAction
                                       chatSessionId={chatSessionId}
                                       promptIndex={promptIndex}
                                       promptPreview={extractUserMessageText(
-                                        message,
+                                        message
                                       )}
                                       projectId={effectiveHostedProjectId}
                                     />
@@ -2441,6 +2524,8 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          showSenderAvatars={showSenderAvatars}
+                          resolveSenderAvatar={resolveSenderAvatar}
                         />
                       </StickToBottom.Content>
                       <ScrollToBottomButton />

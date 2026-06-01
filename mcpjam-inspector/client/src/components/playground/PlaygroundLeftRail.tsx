@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Hammer, History } from "lucide-react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
-import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
+import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
@@ -27,6 +28,20 @@ export function PlaygroundLeftRail() {
     }
   }, [sessionsTabEnabled, activeTab]);
 
+  const posthog = usePostHog();
+  const handleTabClick = useCallback(
+    (next: LeftRailTab) => {
+      if (next === activeTab) return;
+      posthog?.capture("playground_left_rail_tab_changed", {
+        ...standardEventProps("playground_left_rail"),
+        from: activeTab,
+        to: next,
+      });
+      setActiveTab(next);
+    },
+    [activeTab, posthog],
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
@@ -34,14 +49,14 @@ export function PlaygroundLeftRail() {
           icon={Hammer}
           label="Tools"
           isActive={activeTab === "tools"}
-          onClick={() => setActiveTab("tools")}
+          onClick={() => handleTabClick("tools")}
         />
         {sessionsTabEnabled ? (
           <TabButton
             icon={History}
             label="Sessions"
             isActive={activeTab === "sessions"}
-            onClick={() => setActiveTab("sessions")}
+            onClick={() => handleTabClick("sessions")}
           />
         ) : null}
       </div>
@@ -115,17 +130,22 @@ function SessionsBody() {
 }
 
 function ToolsBody() {
-  const state = useAppBuilderStateContext();
-  const isMulti = state.activeServerNames.length > 1;
-
-  if (isMulti) {
+  const state = usePlaygroundStateContext();
+  // The Playground is multi-server by nature: its active set mirrors the
+  // connected servers. Aggregate tools across ALL active servers whenever
+  // there's at least one — not only when there's more than one. Using `> 1`
+  // meant disconnecting down to a single server fell back to the single-
+  // server pane (keyed on the stale `serverName` pointer), so the remaining
+  // server's tools vanished. Only the zero-server case falls back to
+  // PlaygroundLeft for its empty/onboarding state.
+  if (state.activeServerNames.length >= 1) {
     return (
       <MultiServerToolsPaneInner activeServerNames={state.activeServerNames} />
     );
   }
 
-  // Single-server (and zero-server) → reuse the existing PlaygroundLeft, but
-  // suppress its inline LoggerView since the logger lives in the right rail.
+  // Zero-server → reuse the existing PlaygroundLeft (empty/onboarding state),
+  // but suppress its inline LoggerView since the logger lives in the right rail.
   return (
     <PlaygroundLeft
       tools={state.tools}

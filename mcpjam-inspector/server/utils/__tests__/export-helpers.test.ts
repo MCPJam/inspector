@@ -4,6 +4,7 @@ import {
   exportConnectedServerToolSnapshotForEvalAuthoring,
   exportServer,
   renderServerToolSnapshotSection,
+  SERVER_TOOL_SNAPSHOT_VERSION,
 } from "../export-helpers.js";
 
 function createMockManager(overrides: Record<string, any> = {}) {
@@ -207,7 +208,7 @@ describe("exportConnectedServerToolSnapshotForEvalAuthoring", () => {
     );
 
     expect(snapshot).toEqual({
-      version: 1,
+      version: SERVER_TOOL_SNAPSHOT_VERSION,
       capturedAt: expect.any(Number),
       servers: [
         {
@@ -290,6 +291,94 @@ describe("exportConnectedServerToolSnapshotForEvalAuthoring", () => {
       },
     ]);
     expect(manager.listTools).toHaveBeenCalledTimes(3);
+  });
+
+  it("strips Convex-reserved $-prefixed schema keys at every depth", async () => {
+    const manager = createMockManager({
+      listTools: vi.fn().mockResolvedValue({
+        tools: [
+          {
+            name: "json_schema_tool",
+            description: "Carries JSON Schema keywords",
+            inputSchema: {
+              $schema: "http://json-schema.org/draft-07/schema#",
+              $id: "https://example.com/tool",
+              type: "object",
+              properties: {
+                ref: { $ref: "#/$defs/Thing" },
+                _keepMe: { type: "string" },
+              },
+              $defs: { Thing: { type: "number" } },
+            },
+            outputSchema: {
+              $schema: "http://json-schema.org/draft-07/schema#",
+              type: "string",
+            },
+            _meta: { $internal: 1, kept: true },
+          },
+        ],
+      }),
+    });
+
+    const snapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
+      manager,
+      ["srv"],
+    );
+
+    // No `$`-prefixed field name survives anywhere — Convex would otherwise
+    // reject the whole payload at the function-argument boundary.
+    expect(JSON.stringify(snapshot)).not.toContain('"$');
+
+    expect(snapshot.servers[0].tools[0]).toEqual({
+      name: "json_schema_tool",
+      description: "Carries JSON Schema keywords",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ref: {},
+          // `_`-prefixed nested keys are valid in Convex and must survive.
+          _keepMe: { type: "string" },
+        },
+      },
+      outputSchema: { type: "string" },
+      // The `$internal` key inside `_meta` is dropped; siblings are kept.
+      metadata: { kept: true },
+    });
+  });
+
+  it("captures MCP annotation hints + execution.taskSupport, dropping extras", async () => {
+    const manager = createMockManager({
+      listTools: vi.fn().mockResolvedValue({
+        tools: [
+          {
+            name: "delete_thing",
+            description: "Deletes a thing",
+            inputSchema: { type: "object" },
+            annotations: {
+              readOnlyHint: false,
+              destructiveHint: true,
+              title: "Delete Thing",
+              vendorExtra: 1,
+            },
+            execution: { taskSupport: "optional", extra: "x" },
+          },
+        ],
+      }),
+    });
+
+    const snapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
+      manager,
+      ["srv"],
+    );
+
+    expect(snapshot.version).toBe(SERVER_TOOL_SNAPSHOT_VERSION);
+    const tool = snapshot.servers[0].tools[0];
+    // Only the four spec hint booleans survive — no title, no vendor extras.
+    expect(tool.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(tool.execution).toEqual({ taskSupport: "optional" });
   });
 });
 

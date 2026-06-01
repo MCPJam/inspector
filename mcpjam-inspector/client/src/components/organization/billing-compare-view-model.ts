@@ -9,8 +9,6 @@ import type {
   PlanCatalogEntry,
 } from "@/hooks/useOrganizationBilling";
 
-const x: ComparePlanCell = { kind: "x" };
-
 function t(text: string, emphasize?: boolean): ComparePlanCell {
   return { kind: "text", text, emphasize };
 }
@@ -44,40 +42,6 @@ function formatLimitValue(
     return t("Unlimited", emphasize);
   }
   return t(value.toLocaleString(), emphasize);
-}
-
-function formatEvalRuns(
-  plan: OrganizationPlan,
-  entry: PlanCatalogEntry,
-): ComparePlanCell {
-  if (plan === "enterprise") {
-    return t("Custom", true);
-  }
-  const value = entry.limits.maxEvalRunsPerMonth;
-  if (value == null) {
-    return t("Custom", plan === "team");
-  }
-  if (plan === "free") {
-    return t(`${value.toLocaleString()} / mo`);
-  }
-  return t(`${value.toLocaleString()} included`, plan === "team");
-}
-
-function formatDeployments(
-  plan: OrganizationPlan,
-  entry: PlanCatalogEntry,
-): ComparePlanCell {
-  if (plan === "enterprise") {
-    return t("Custom", true);
-  }
-  const value = entry.limits.maxChatboxesPerProject;
-  if (value == null) {
-    return t("Unlimited", plan === "team");
-  }
-  if (value <= 0) {
-    return x;
-  }
-  return t(value.toLocaleString(), plan === "team");
 }
 
 export function buildComparePlanSectionsFromCatalog(
@@ -120,20 +84,6 @@ export function buildComparePlanSectionsFromCatalog(
               true,
             ),
             enterprise: t("Unlimited", true),
-          };
-        case "Evals CI/CD runs":
-          return {
-            ...row,
-            free: formatEvalRuns("free", getEntry(planCatalog, "free")),
-            team: formatEvalRuns("team", getEntry(planCatalog, "team")),
-            enterprise: t("Custom", true),
-          };
-        case "Deployments":
-          return {
-            ...row,
-            free: formatDeployments("free", getEntry(planCatalog, "free")),
-            team: formatDeployments("team", getEntry(planCatalog, "team")),
-            enterprise: t("Custom", true),
           };
         default:
           return row;

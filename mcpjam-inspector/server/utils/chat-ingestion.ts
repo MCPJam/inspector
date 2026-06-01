@@ -21,7 +21,7 @@ const ENRICHMENT_HEADERS_TO_FORWARD = [
  * forwarded to the Convex `/ingest-chat` endpoint.
  */
 export function pickEnrichmentHeaders(
-  reqHeaders: { get(name: string): string | null | undefined } | Headers,
+  reqHeaders: { get(name: string): string | null | undefined } | Headers
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const name of ENRICHMENT_HEADERS_TO_FORWARD) {
@@ -38,6 +38,7 @@ interface ResumeConfig {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  respectToolVisibility?: boolean;
   selectedServers?: string[];
 }
 
@@ -61,6 +62,12 @@ export interface DirectHostConfig {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  /**
+   * Optional SEP-1865 visibility filter switch. Undefined means "use the
+   * spec default" — the backend's hostConfigV2 canonicalizer drops
+   * `undefined` so pre-feature rows stay byte-identical.
+   */
+  respectToolVisibility?: boolean;
   selectedServerIds: string[];
 }
 
@@ -84,6 +91,7 @@ export function buildDirectHostConfig(input: {
   requestedTemperature?: number;
   resolvedTemperature?: number;
   requireToolApproval?: boolean;
+  respectToolVisibility?: boolean;
   selectedServerIds?: string[];
 }): DirectHostConfig {
   const {
@@ -93,6 +101,7 @@ export function buildDirectHostConfig(input: {
     requestedTemperature,
     resolvedTemperature,
     requireToolApproval,
+    respectToolVisibility,
     selectedServerIds,
   } = input;
   return {
@@ -103,9 +112,12 @@ export function buildDirectHostConfig(input: {
       typeof resolvedTemperature === "number"
         ? resolvedTemperature
         : typeof requestedTemperature === "number"
-          ? requestedTemperature
-          : 0.7,
+        ? requestedTemperature
+        : 0.7,
     requireToolApproval: requireToolApproval === true,
+    // Pass through verbatim so undefined-vs-set semantics survive into
+    // the backend canonicalizer (drops undefined; keeps explicit false).
+    respectToolVisibility,
     selectedServerIds: selectedServerIds ?? [],
   };
 }
@@ -158,6 +170,93 @@ interface PersistChatSessionOptions {
   hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
+  /**
+   * Multi-server MCP tool snapshot present when this ingestion fired. The
+   * backend fans it out to per-server `serverInspections` rows for cross-run
+   * diffing. Optional: if absent, the backend skips inspection bookkeeping
+   * for this session/turn.
+   */
+  toolSnapshot?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeSenderUserId(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readSenderUserId(message: unknown): string | undefined {
+  if (!isRecord(message)) {
+    return undefined;
+  }
+
+  const senderUserId = normalizeSenderUserId(message.senderUserId);
+  if (senderUserId) {
+    return senderUserId;
+  }
+
+  const metadata = message.metadata;
+  if (!isRecord(metadata)) {
+    return undefined;
+  }
+
+  return normalizeSenderUserId(metadata.senderUserId);
+}
+
+/**
+ * AI SDK model-message conversion intentionally drops UI-only metadata. For
+ * shared direct sessions, carry the current authenticated user's
+ * `senderUserId` from the incoming UI transcript onto the persisted trace by
+ * user-message ordinal so other collaborators can render the same per-message
+ * avatar after the stream is saved. The incoming transcript is client-
+ * controlled, so the extracted id is only trusted when it matches the
+ * server-authenticated principal for this request.
+ */
+export function stampSenderUserIdsOnSessionMessages(
+  sessionMessages: unknown[],
+  sourceMessages: unknown[],
+  options?: {
+    authenticatedUserId?: string | null;
+  }
+): unknown[] {
+  if (!Array.isArray(sessionMessages) || !Array.isArray(sourceMessages)) {
+    return sessionMessages;
+  }
+
+  const authenticatedUserId = normalizeSenderUserId(
+    options?.authenticatedUserId
+  );
+  const senderUserIdsByUserOrdinal = sourceMessages
+    .filter((message) => isRecord(message) && message.role === "user")
+    .map((message) => {
+      const senderUserId = readSenderUserId(message);
+      return senderUserId === authenticatedUserId ? senderUserId : undefined;
+    });
+
+  if (!senderUserIdsByUserOrdinal.some(Boolean)) {
+    return sessionMessages;
+  }
+
+  let userOrdinal = 0;
+  let changed = false;
+  const stampedMessages = sessionMessages.map((message) => {
+    if (!isRecord(message) || message.role !== "user") {
+      return message;
+    }
+
+    const senderUserId = senderUserIdsByUserOrdinal[userOrdinal];
+    userOrdinal += 1;
+    if (!senderUserId || message.senderUserId === senderUserId) {
+      return message;
+    }
+
+    changed = true;
+    return { ...message, senderUserId };
+  });
+
+  return changed ? stampedMessages : sessionMessages;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -171,12 +270,12 @@ function sanitizeDiagnosticText(text: string): string {
     .replace(
       /(\bauthorization\b\s*[:=]\s*)(bearer\s+)?([^"',\s}]+)/gi,
       (_match, prefix: string, scheme?: string) =>
-        `${prefix}${scheme ?? ""}[redacted-token]`,
+        `${prefix}${scheme ?? ""}[redacted-token]`
     )
     .replace(/\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi, "$1[redacted-token]")
     .replace(
       /(["']?(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)([^"',\s}]+)/gi,
-      "$1[redacted-secret]",
+      "$1[redacted-secret]"
     )
     .replace(/\bsk-[A-Za-z0-9]+\b/g, "[redacted-secret]");
 
@@ -194,7 +293,7 @@ async function readResponsePreview(response: Response): Promise<string> {
 
 export async function persistChatSessionToConvex(
   options: PersistChatSessionOptions,
-  c?: Context,
+  c?: Context
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl || !options.authHeader || !options.chatSessionId) {
@@ -259,6 +358,9 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
         ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
+        ...(options.toolSnapshot
+          ? { toolSnapshot: options.toolSnapshot }
+          : {}),
       }),
     });
 
@@ -315,7 +417,7 @@ export async function persistChatSessionToConvex(
       } else {
         logger.warn(
           "[chat-session-persistence] Timed out persisting chat session",
-          { timeoutMs },
+          { timeoutMs }
         );
       }
       return;
@@ -326,7 +428,7 @@ export async function persistChatSessionToConvex(
       reqLogger.event(
         "chat.session.persist.failed",
         { failureKind: "exception", sourceType: options.sourceType },
-        { error: error instanceof Error ? error : undefined },
+        { error: error instanceof Error ? error : undefined }
       );
     } else {
       logger.warn("[chat-session-persistence] Error persisting chat session", {

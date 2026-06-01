@@ -62,6 +62,9 @@ export function CreditTopupDialog({
         chatSessionId,
         lastUserMessage,
         source,
+        ...(typeof window !== "undefined"
+          ? { returnUrl: window.location.href }
+          : {}),
       });
     } catch (err) {
       const message =
@@ -79,7 +82,7 @@ export function CreditTopupDialog({
           <DialogTitle>Top up to keep chatting</DialogTitle>
           <DialogDescription>
             Add credit to your account so you can keep using MCPJam models
-            without waiting for your daily limit to reset.
+            without waiting for your free daily credits to reset.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">

@@ -24,20 +24,26 @@ import {
 } from "@mcpjam/design-system/accordion";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { RefreshCw } from "lucide-react";
 import { useAggregatedTools } from "@/hooks/use-aggregated-tools";
-import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
+import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
+import { useSharedAppState } from "@/state/app-state-context";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
 import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeader";
 import { TabHeader } from "@/components/ui-playground/TabHeader";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
-import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
-  generateFormFieldsFromSchema,
-  type FormField,
-} from "@/lib/tool-form";
+  detectUIType,
+  getToolVisibility,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
+import { generateFormFieldsFromSchema, type FormField } from "@/lib/tool-form";
 import { cn } from "@/lib/utils";
 
 interface InnerProps {
@@ -50,9 +56,21 @@ interface Selection {
 }
 
 export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
-  const state = useAppBuilderStateContext();
-  const { flat, collidingNames, loadingByServer, refetch } =
-    useAggregatedTools(activeServerNames);
+  const state = usePlaygroundStateContext();
+  const appState = useSharedAppState();
+  const reconnectingServerNames = useMemo(
+    () =>
+      activeServerNames.filter(
+        (name) => appState.servers[name]?.connectionStatus === "connecting"
+      ),
+    [activeServerNames, appState.servers]
+  );
+  const { flat, collidingNames, loadingByServer, refetch } = useAggregatedTools(
+    activeServerNames,
+    {
+      unavailableServerNames: reconnectingServerNames,
+    }
+  );
 
   const [selected, setSelected] = useState<Selection | null>(null);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -66,7 +84,7 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
       flat.find(
         (entry) =>
           entry.serverId === selected.serverId &&
-          entry.toolName === selected.toolName,
+          entry.toolName === selected.toolName
       ) ?? null
     );
   }, [flat, selected]);
@@ -82,7 +100,7 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
     }
     const entry = flat.find(
       (e) =>
-        e.serverId === selected.serverId && e.toolName === selected.toolName,
+        e.serverId === selected.serverId && e.toolName === selected.toolName
     );
     if (entry) {
       setFormFields(generateFormFieldsFromSchema(entry.tool.inputSchema));
@@ -103,8 +121,9 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
     if (!searchQuery.trim()) return flat;
     const query = searchQuery.trim().toLowerCase();
     return flat.filter((entry) => {
-      const haystack =
-        `${entry.toolName} ${entry.tool.description ?? ""}`.toLowerCase();
+      const haystack = `${entry.toolName} ${
+        entry.tool.description ?? ""
+      }`.toLowerCase();
       return haystack.includes(query);
     });
   }, [flat, searchQuery]);
@@ -114,15 +133,15 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   const handleFieldChange = (name: string, value: unknown) => {
     setFormFields((current) =>
       current.map((field) =>
-        field.name === name ? { ...field, value, isSet: true } : field,
-      ),
+        field.name === name ? { ...field, value, isSet: true } : field
+      )
     );
   };
   const handleToggleField = (name: string, isSet: boolean) => {
     setFormFields((current) =>
       current.map((field) =>
-        field.name === name ? { ...field, isSet } : field,
-      ),
+        field.name === name ? { ...field, isSet } : field
+      )
     );
   };
 
@@ -196,7 +215,8 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
             entries={filteredEntries}
             totalCount={flat.length}
             collidingNames={collidingNames}
-            loading={isLoadingAny}
+            loading={isLoadingAny || reconnectingServerNames.length > 0}
+            reconnecting={reconnectingServerNames.length > 0}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             selected={selected}
@@ -231,6 +251,7 @@ interface FlatToolListProps {
   totalCount: number;
   collidingNames: string[];
   loading: boolean;
+  reconnecting: boolean;
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   selected: Selection | null;
@@ -242,6 +263,7 @@ function FlatToolList({
   totalCount,
   collidingNames,
   loading,
+  reconnecting,
   searchQuery,
   onSearchQueryChange,
   selected,
@@ -261,13 +283,15 @@ function FlatToolList({
         {loading && entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin mb-2" />
-            <p className="text-xs text-muted-foreground">Loading tools...</p>
+            <p className="text-xs text-muted-foreground">
+              {reconnecting ? "Reconnecting..." : "Loading tools..."}
+            </p>
           </div>
         ) : entries.length === 0 ? (
           <div className="text-center py-8 px-4">
             <p className="text-xs text-muted-foreground">
               {totalCount === 0
-                ? "No tools found. Try refreshing and make sure the servers are running."
+                ? "No tools found. Try refreshing and make sure the server is running."
                 : "No tools match your search"}
             </p>
           </div>
@@ -294,7 +318,7 @@ function FlatToolList({
                     "w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1",
                     isSelected
                       ? "cursor-pointer bg-primary/10"
-                      : "cursor-pointer hover:bg-muted/50",
+                      : "cursor-pointer hover:bg-muted/50"
                   )}
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
@@ -317,47 +341,63 @@ function FlatToolList({
                       {entry.tool.description}
                     </p>
                   )}
-                  {uiType ? (
-                    <div className="flex items-center gap-1.5 mt-2">
-                      {(uiType === UIType.OPENAI_SDK ||
-                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center">
-                              <img
-                                src="/openai_logo.png"
-                                alt="ChatGPT Apps"
-                                className="h-3.5 w-3.5 object-contain opacity-60"
-                              />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">ChatGPT Apps</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {(uiType === UIType.MCP_APPS ||
-                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
-                        uiType === UIType.MCP_UI) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center">
-                              <img
-                                src="/mcp.svg"
-                                alt="MCP Apps"
-                                className="h-3.5 w-3.5 object-contain opacity-60"
-                              />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">
-                              {uiType === UIType.MCP_UI ? "MCP UI" : "MCP Apps"}
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  ) : null}
+                  {(() => {
+                    const visibility = getToolVisibility(
+                      entry.tool._meta as Record<string, unknown> | undefined
+                    );
+                    const visibilityLabel = `[${visibility
+                      .map((v) => `"${v}"`)
+                      .join(", ")}]`;
+                    return (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        {(uiType === UIType.OPENAI_SDK ||
+                          uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center">
+                                <img
+                                  src="/openai_logo.png"
+                                  alt="ChatGPT Apps"
+                                  className="h-3.5 w-3.5 object-contain opacity-60"
+                                />
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-xs">ChatGPT Apps</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        {(uiType === UIType.MCP_APPS ||
+                          uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+                          uiType === UIType.MCP_UI) && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center">
+                                <img
+                                  src="/mcp.svg"
+                                  alt="MCP Apps"
+                                  className="h-3.5 w-3.5 object-contain opacity-60"
+                                />
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-xs">
+                                {uiType === UIType.MCP_UI
+                                  ? "MCP UI"
+                                  : "MCP Apps"}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        <span
+                          className="font-mono text-[10px] text-muted-foreground"
+                          title={`SEP-1865 visibility: ${visibilityLabel}`}
+                        >
+                          visibility: {visibilityLabel}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </button>
               );
             })}
@@ -387,7 +427,7 @@ function SelectedToolView({
 }: SelectedToolViewProps) {
   const hasParameters = formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(
-    hasParameters ? ["parameters"] : ["description"],
+    hasParameters ? ["parameters"] : ["description"]
   );
 
   useEffect(() => {

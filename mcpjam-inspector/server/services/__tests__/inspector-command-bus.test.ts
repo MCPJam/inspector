@@ -34,7 +34,7 @@ describe("InspectorCommandBus", () => {
     const command: InspectorCommand = {
       id: "cmd-1",
       type: "navigate",
-      payload: { target: "app-builder" },
+      payload: { target: "playground" },
     };
     const pending = bus.submit(command, 1_000);
 
@@ -72,7 +72,7 @@ describe("InspectorCommandBus", () => {
     const command: InspectorCommand = {
       id: "cmd-2",
       type: "navigate",
-      payload: { target: "app-builder" },
+      payload: { target: "playground" },
     };
     const pending = bus.submit(command, 1_000);
 
@@ -92,7 +92,7 @@ describe("InspectorCommandBus", () => {
     const command: InspectorCommand = {
       id: "cmd-same-reconnect",
       type: "navigate",
-      payload: { target: "app-builder" },
+      payload: { target: "playground" },
     };
 
     bus.registerSubscriber(first);
@@ -116,7 +116,7 @@ describe("InspectorCommandBus", () => {
     const command: InspectorCommand = {
       id: "cmd-replaced",
       type: "navigate",
-      payload: { target: "app-builder" },
+      payload: { target: "playground" },
     };
 
     bus.registerSubscriber(first);

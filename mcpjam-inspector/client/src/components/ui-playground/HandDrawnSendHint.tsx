@@ -65,7 +65,7 @@ export function HandDrawnSendHint({
     >
       <div
         className="flex flex-col items-end gap-0"
-        data-testid="app-builder-send-nux-hint"
+        data-testid="playground-send-nux-hint"
       >
         <span
           className="inline-block"

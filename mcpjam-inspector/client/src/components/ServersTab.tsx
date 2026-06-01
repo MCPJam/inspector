@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   Plus,
   FileText,
@@ -66,8 +67,15 @@ import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
-import { useConvexAuth } from "convex/react";
-import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import type {
+  ProjectServerConfigDto,
+  ProjectServerConfigInput,
+} from "@/lib/project-server-config";
+import {
+  resetAutoConnectAttempts,
+  useAutoConnectProjectServers,
+} from "@/hooks/useAutoConnectProjectServers";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
@@ -78,7 +86,11 @@ import {
   writePendingQuickConnect,
   type PendingQuickConnectState,
 } from "@/lib/quick-connect-pending";
-import { useProjectServers as useRemoteProjectServers } from "@/hooks/useProjects";
+import {
+  useProjectServers as useRemoteProjectServers,
+  useProjectMembers,
+  shouldQueryProjectId,
+} from "@/hooks/useProjects";
 import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
@@ -255,26 +267,6 @@ function writePersistedLoggerFocus(input: PersistedLoggerFocus): void {
   } catch {
     // ignore
   }
-}
-
-function ServersSurfaceLoadingState({
-  testId,
-  message,
-}: {
-  testId: string;
-  message: string;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-[320px] items-center justify-center p-8"
-      data-testid={testId}
-    >
-      <div className="text-center">
-        <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="mt-4 text-sm text-muted-foreground">{message}</p>
-      </div>
-    </div>
-  );
 }
 
 function ServersQuickConnectMiniCard({
@@ -542,6 +534,8 @@ interface ServersTabProps {
   organizationId: string | null;
   isBillingContextPending?: boolean;
   isLoadingProjects?: boolean;
+  isAuthHydrating?: boolean;
+  areServersHydrated?: boolean;
   onProjectShared?: (
     sharedProjectId: string,
     sourceProjectId?: string
@@ -564,6 +558,8 @@ export function ServersTab({
   organizationId,
   isBillingContextPending = false,
   isLoadingProjects,
+  isAuthHydrating = false,
+  areServersHydrated = true,
   onProjectShared: _onProjectShared,
   isRegistryEnabled = false,
   onNavigateToRegistry,
@@ -598,6 +594,134 @@ export function ServersTab({
     projectId: sharedProjectIdForHostScope,
     isAuthenticated,
   });
+
+  // Project-wide auto-connect toggle. Single switch in the header that
+  // either enrolls every catalog server in project.serverIds (ON) or
+  // clears the set (OFF). Overrides on still-included servers are
+  // preserved on ON so existing per-server header/timeout config isn't
+  // wiped by a toggle round-trip. Per-server granularity is intentionally
+  // deferred — this is the simplest user-facing surface for the project-
+  // scoped server config rollout.
+  //
+  // Stale-server note: when this is ON and a user adds a new server to
+  // the catalog later, the new server isn't auto-included — they'd
+  // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
+  // newly-added servers in automatically when the toggle is on.
+  // Permission gate for the Auto-connect toggle. Backend
+  // `projectServerConfig:setConfig` requires project admin
+  // (`canManageProjectMembers`); mirror that check on the client so
+  // non-admins see a disabled switch instead of an enabled control that
+  // toasts an authorization error when toggled. Matches the
+  // canManageProjectSettings pattern in ProjectSettingsTab.
+  const { canManageMembers: canManageProjectServers } = useProjectMembers({
+    isAuthenticated,
+    projectId: sharedProjectIdForHostScope,
+  });
+  const projectServerConfigDto = useQuery(
+    "projectServerConfig:getConfig" as any,
+    sharedProjectIdForHostScope && isAuthenticated
+      ? ({ projectId: sharedProjectIdForHostScope } as any)
+      : "skip",
+  ) as ProjectServerConfigDto | null | undefined;
+  const setProjectServerConfigMutation = useMutation(
+    "projectServerConfig:setConfig" as any,
+  ) as unknown as (args: {
+    projectId: string;
+    input: ProjectServerConfigInput;
+  }) => Promise<ProjectServerConfigDto>;
+  const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
+  const catalogServerIds = useMemo(
+    () => (viewProjectServersList ?? []).map((s) => s._id),
+    [viewProjectServersList],
+  );
+  const autoConnectAll = useMemo(() => {
+    if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
+    const enrolled = new Set(projectServerConfigDto.serverIds);
+    if (enrolled.size !== catalogServerIds.length) return false;
+    return catalogServerIds.every((id) => enrolled.has(id));
+  }, [projectServerConfigDto, catalogServerIds]);
+  const handleToggleAutoConnect = useCallback(
+    async (next: boolean) => {
+      if (!sharedProjectIdForHostScope) return;
+      setIsTogglingAutoConnect(true);
+      // Treat an explicit project toggle like a fresh host transition so the
+      // current host re-runs reconciliation instead of reusing stale attempts.
+      resetAutoConnectAttempts(activeProjectId);
+      resetAutoConnectAttempts(sharedProjectIdForHostScope);
+      try {
+        if (next) {
+          // Preserve overrides for servers that remain in the catalog —
+          // backend rejects override keys not in serverIds, so we filter
+          // before sending.
+          const catalogIdSet = new Set(catalogServerIds);
+          const preservedOverrides = Object.fromEntries(
+            Object.entries(projectServerConfigDto?.overrides ?? {}).filter(
+              ([id]) => catalogIdSet.has(id),
+            ),
+          );
+          await setProjectServerConfigMutation({
+            projectId: sharedProjectIdForHostScope,
+            input: {
+              serverIds: catalogServerIds,
+              overrides: preservedOverrides,
+            },
+          });
+        } else {
+          await setProjectServerConfigMutation({
+            projectId: sharedProjectIdForHostScope,
+            input: { serverIds: [], overrides: {} },
+          });
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to update project auto-connect";
+        toast.error(message);
+      } finally {
+        setIsTogglingAutoConnect(false);
+      }
+    },
+    [
+      activeProjectId,
+      sharedProjectIdForHostScope,
+      catalogServerIds,
+      projectServerConfigDto,
+      setProjectServerConfigMutation,
+    ],
+  );
+
+  const renderAutoConnectToggle = () => {
+    // Hide entirely when the project hasn't synced or when there's no
+    // catalog to toggle against. Both states make the switch
+    // semantically meaningless.
+    if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
+    if (catalogServerIds.length === 0) return null;
+    if (projectServerConfigDto === undefined) return null;
+    const disabled = isTogglingAutoConnect || !canManageProjectServers;
+    return (
+      <label
+        className={cn(
+          "flex items-center gap-2 text-xs text-muted-foreground select-none",
+          disabled ? "cursor-not-allowed" : "cursor-pointer",
+        )}
+        title={
+          canManageProjectServers
+            ? "Auto-connect every project server when a host opens"
+            : "Only project admins can change auto-connect"
+        }
+      >
+        <Switch
+          checked={autoConnectAll}
+          disabled={disabled}
+          onCheckedChange={handleToggleAutoConnect}
+          aria-label="Auto-connect project servers"
+        />
+        <span>Auto-connect</span>
+      </label>
+    );
+  };
+
   const previewedHostRequiredNames = useMemo(() => {
     const requiredIds = previewedHost?.config?.serverIds ?? [];
     if (requiredIds.length === 0 || !viewProjectServersList) return [];
@@ -609,7 +733,7 @@ export function ServersTab({
       .filter((name): name is string => !!name);
   }, [previewedHost?.config?.serverIds, viewProjectServersList]);
   useAutoConnectProjectServers({
-    projectId: activeProjectId || null,
+    projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     requiredServerNames: previewedHostRequiredNames,
   });
@@ -1413,6 +1537,7 @@ export function ServersTab({
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
+              {showServerActionsInHostsHeader ? null : renderAutoConnectToggle()}
               {shouldShowBrowseRegistryOnly && onNavigateToRegistry ? (
                 <Button
                   variant="outline"
@@ -1545,6 +1670,7 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">
+          {showServerActionsInHostsHeader ? null : renderAutoConnectToggle()}
           {shouldShowBrowseRegistryOnly && onNavigateToRegistry ? (
             <Button
               variant="outline"
@@ -1583,7 +1709,33 @@ export function ServersTab({
     </div>
   );
 
-  const renderLoadingContent = () => <ServersLoadingSkeleton />;
+  const renderLoadingContent = () => (
+    <ResizablePanelGroup direction="horizontal" className="flex-1">
+      <ResizablePanel
+        defaultSize={isJsonRpcPanelVisible ? 65 : 100}
+        minSize={70}
+      >
+        <ServersLoadingSkeleton />
+      </ResizablePanel>
+      {isJsonRpcPanelVisible ? (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel
+            defaultSize={35}
+            minSize={4}
+            maxSize={50}
+            collapsible={true}
+            collapsedSize={0}
+            onCollapse={toggleJsonRpcPanel}
+          >
+            <div className="h-full bg-background border-l border-border" />
+          </ResizablePanel>
+        </>
+      ) : (
+        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+      )}
+    </ResizablePanelGroup>
+  );
 
   const renderNoProjectContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
@@ -1601,15 +1753,17 @@ export function ServersTab({
 
   return (
     <div className="h-full flex flex-col">
-      {isBillingContextPending ? (
-        <ServersSurfaceLoadingState
-          testId="servers-billing-context-pending"
-          message="Checking your organization access..."
-        />
-      ) : isLoadingProjects ? (
+      {isAuthHydrating ||
+      isBillingContextPending ||
+      isLoadingProjects ||
+      !areServersHydrated ? (
         renderLoadingContent()
       ) : !selectedProject ? (
-        renderNoProjectContent()
+        shouldQueryProjectId(activeProjectId) ? (
+          renderLoadingContent()
+        ) : (
+          renderNoProjectContent()
+        )
       ) : hasAnyServers ? (
         renderConnectedContent()
       ) : (
@@ -1655,11 +1809,24 @@ export function ServersTab({
           projectClientConfig={selectedProject?.clientConfig}
           projectId={hostedProjectId}
           hostedServerId={detailModalHostedServerId}
+          // Servers tab doesn't mount under ActiveMcpProfileProvider,
+          // so surface the host default explicitly from the
+          // previewedHost's `mcpProfile.mcpProtocolVersion` for the chip's
+          // source attribution.
+          hostDefaultMcpProtocolVersion={
+            previewedHost?.config?.mcpProfile?.mcpProtocolVersion
+          }
         />
       )}
 
       {showServerActionsInHostsHeader && hostsConnectAddServerSlot
-        ? createPortal(renderServerActionsMenu(), hostsConnectAddServerSlot)
+        ? createPortal(
+            <>
+              {renderAutoConnectToggle()}
+              {renderServerActionsMenu()}
+            </>,
+            hostsConnectAddServerSlot,
+          )
         : null}
     </div>
   );

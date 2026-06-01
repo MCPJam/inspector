@@ -664,4 +664,52 @@ describe("useChatSession live trace state", () => {
       expect(llm && llm.endMs > llm.startMs).toBe(true);
     });
   });
+
+  it("ignores heartbeat trace events without affecting visible state", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "turn_start",
+          turnId: "turn-hb",
+          promptIndex: 0,
+          startedAtMs: 1000,
+        }),
+      );
+    });
+
+    const envelopeBefore = result.current.liveTraceEnvelope;
+    const eventsBefore = envelopeBefore?.events?.length ?? 0;
+
+    // Fire a flurry of heartbeats — these should NOT mutate state, NOT
+    // appear in the visible event list, and NOT alter the envelope.
+    act(() => {
+      for (let i = 0; i < 5; i += 1) {
+        mockState.chatOnData?.(
+          tracePart({
+            type: "heartbeat",
+            turnId: "turn-hb",
+            promptIndex: 0,
+          }),
+        );
+      }
+    });
+
+    const envelopeAfter = result.current.liveTraceEnvelope;
+    expect(envelopeAfter?.events?.length ?? 0).toBe(eventsBefore);
+    const seenHeartbeat = envelopeAfter?.events?.some(
+      (e: any) => e?.type === "heartbeat",
+    );
+    expect(seenHeartbeat).not.toBe(true);
+  });
 });

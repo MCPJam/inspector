@@ -103,12 +103,38 @@ describe("CreditTopupDialog", () => {
     );
 
     expect(startCheckoutMock).toHaveBeenCalledTimes(1);
-    expect(startCheckoutMock).toHaveBeenCalledWith({
-      amountCents: 1000,
-      chatSessionId: "chat-1",
-      lastUserMessage: "please continue",
-      source: "chat_banner",
-    });
+    expect(startCheckoutMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 1000,
+        chatSessionId: "chat-1",
+        lastUserMessage: "please continue",
+        source: "chat_banner",
+      }),
+    );
+  });
+
+  it("passes the current page URL as returnUrl so Stripe round-trips back to it", async () => {
+    const user = userEvent.setup();
+    render(
+      <CreditTopupDialog
+        open
+        onOpenChange={vi.fn()}
+        chatSessionId="chat-1"
+        lastUserMessage=""
+        source="billing_page"
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: "$10" }));
+    await user.click(
+      screen.getByRole("button", { name: /Continue with \$10/ }),
+    );
+
+    expect(startCheckoutMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        returnUrl: window.location.href,
+      }),
+    );
   });
 
   it("calls onOpenChange(false) when Cancel is clicked", async () => {

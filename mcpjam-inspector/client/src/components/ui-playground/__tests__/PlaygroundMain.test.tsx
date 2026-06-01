@@ -10,6 +10,7 @@ import {
 import { PlaygroundMain } from "../PlaygroundMain";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
+import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -23,6 +24,8 @@ const mockThread = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockTraceViewer = vi.fn();
+const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
+const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
@@ -57,6 +60,10 @@ vi.mock("lucide-react", () => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
+  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
+  // header `leading` slot)
+  Server: () => <span data-testid="icon-server" />,
+  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -152,7 +159,8 @@ vi.mock("convex/react", () => ({
   // `useHost` (and any other Convex-backed hook PlaygroundMain pulls in)
   // calls useQuery. The test doesn't exercise auth flows, so a static
   // null is enough — the consumer treats it as "no host resolved yet".
-  useQuery: () => null,
+  useQuery: (_name: string, args: unknown) =>
+    args === "skip" ? undefined : null,
   useMutation: () => () => Promise.resolve(),
 }));
 
@@ -162,6 +170,12 @@ vi.mock("@/hooks/useViews", () => ({
     serversByName: new Map(),
     serversById: new Map(),
   }),
+}));
+
+vi.mock("@/lib/apis/web/chat-history-api", () => ({
+  getChatHistoryDetail: (...args: unknown[]) =>
+    mockGetChatHistoryDetail(...args),
+  chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
 }));
 
 // Mock useChatSession hook
@@ -197,6 +211,10 @@ const mockUseChatSession = {
   toolServerMap: {},
   tokenUsage: null,
   resetChat: vi.fn(),
+  loadChatSession: vi.fn(async () => undefined),
+  syncResumedVersion: vi.fn(),
+  resumedVersion: null,
+  restoredToolRenderOverrides: {},
   chatSessionId: "chat-session-1",
   liveTraceEnvelope: null,
   requestPayloadHistory: [],
@@ -206,6 +224,7 @@ const mockUseChatSession = {
   requireToolApproval: false,
   setRequireToolApproval: vi.fn(),
   addToolApprovalResponse: vi.fn(),
+  isSessionBootstrapComplete: true,
   isStreaming: false,
   disableForAuthentication: false,
   submitBlocked: false,
@@ -451,7 +470,6 @@ const mockUIPlaygroundStore = {
   setCspMode: vi.fn(),
   mcpAppsCspMode: "widget-declared",
   setMcpAppsCspMode: vi.fn(),
-  selectedProtocol: null,
   capabilities: { hover: true, touch: true },
   setCapabilities: vi.fn(),
 };
@@ -484,6 +502,14 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
     tablet: { width: 768, height: 1024, label: "Tablet", icon: () => null },
     desktop: { width: 1280, height: 800, label: "Desktop", icon: () => null },
   },
+}));
+
+// Stub the playground host picker — its data hooks (Convex auth, host list,
+// previewed-host storage) are out of scope for these PlaygroundMain tests.
+vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
+  PlaygroundHostPicker: () => (
+    <div data-testid="playground-host-picker-stub" />
+  ),
 }));
 
 // Mock traffic log store
@@ -558,6 +584,10 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedChatSessionOptions = null;
+    usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
+    mockGetChatHistoryDetail.mockReset();
+    mockChatHistoryAction.mockReset();
+    mockChatHistoryAction.mockResolvedValue({ ok: true });
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
     mockPreferencesState.hostStyle = "claude";
@@ -629,6 +659,167 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("host-context-theme-toggle")).toBeInTheDocument();
     });
 
+    it("starts shared-session rail chats with project visibility", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+      expect(capturedChatSessionOptions.directVisibility).toBe("private");
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onNewChat({ shared: true }));
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
+      expect(mockUseChatSession.resetChat).toHaveBeenCalled();
+    });
+
+    it("hides the multi-host compare picker after the active session is shared", async () => {
+      const privateSessionLocal = {
+        _id: "history-share-gate-1",
+        chatSessionId: "chat-session-share-gate-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      const sharedSessionLocal = {
+        ...privateSessionLocal,
+        directVisibility: "project" as const,
+        version: 5,
+      };
+      mockGetChatHistoryDetail
+        .mockResolvedValueOnce({
+          ok: true,
+          session: privateSessionLocal,
+          widgetSnapshots: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          session: sharedSessionLocal,
+          widgetSnapshots: [],
+        });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      // Private sessions show the host picker by default.
+      expect(
+        screen.getByTestId("playground-host-picker-stub"),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(privateSessionLocal));
+      });
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("private");
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(
+          bridge?.onSessionAction?.({
+            action: "share",
+            session: privateSessionLocal,
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
+      expect(
+        screen.queryByTestId("playground-host-picker-stub"),
+      ).toBeNull();
+    });
+
+    it("keeps active playground thread visibility in sync after sharing", async () => {
+      const privateSession = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["test-server"],
+        },
+      };
+      const sharedSession = {
+        ...privateSession,
+        directVisibility: "project" as const,
+        version: 5,
+      };
+      mockGetChatHistoryDetail
+        .mockResolvedValueOnce({
+          ok: true,
+          session: privateSession,
+          widgetSnapshots: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          session: sharedSession,
+          widgetSnapshots: [],
+        });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(privateSession));
+      });
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("private");
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(
+          bridge?.onSessionAction?.({
+            action: "share",
+            session: privateSession,
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
+    });
+
     // Removed: "passes the requested loading indicator variant to Thread".
     // PlaygroundMain no longer accepts a `loadingIndicatorVariant` prop —
     // the inner Thread reads the host id from `ChatboxHostStyleProvider`
@@ -691,11 +882,6 @@ describe("PlaygroundMain", () => {
         screen.getByRole("heading", {
           name: /This is your playground for MCP./i,
         }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          /Test prompts, inspect tools, and debug AI-powered apps/i,
-        ),
       ).toBeInTheDocument();
     });
 
@@ -1385,7 +1571,7 @@ describe("PlaygroundMain", () => {
         />,
       );
 
-      const hint = screen.getByTestId("app-builder-send-nux-hint");
+      const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
       expect(hint).toHaveTextContent("Try this prompt with a demo MCP server");
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
@@ -1396,7 +1582,7 @@ describe("PlaygroundMain", () => {
       expect(hint.querySelector("svg")).toBeTruthy();
     });
 
-    it("keeps App Builder send NUX hint visible after server connects", () => {
+    it("keeps Playground send NUX hint visible after server connects", () => {
       mockSharedAppState.servers["test-server"] = {
         connectionStatus: "connected",
       };
@@ -1410,7 +1596,7 @@ describe("PlaygroundMain", () => {
         />,
       );
 
-      expect(screen.getByTestId("app-builder-send-nux-hint")).toHaveTextContent(
+      expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
         "Try this prompt with a demo MCP server",
       );
     });

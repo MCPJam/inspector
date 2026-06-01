@@ -12,18 +12,25 @@ import {
   useChatboxHostStyle,
   useChatboxHostTheme,
 } from "@/contexts/chatbox-client-style-context";
-import { groupAssistantPartsIntoSteps } from "./thread-helpers";
+import {
+  groupAssistantPartsIntoSteps,
+  isHiddenInternalMessage,
+} from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
+import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { CopilotMessageHeader } from "./copilot-message-header";
+import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
+type MessagePart = UIMessage["parts"][number];
 
 interface MessageViewProps {
+  chatSessionId?: string;
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
@@ -35,17 +42,19 @@ interface MessageViewProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
@@ -60,6 +69,16 @@ interface MessageViewProps {
    * sessionId + per-message id.
    */
   renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
+  /**
+   * Resolved sender for this message (shared sessions only). When absent, the
+   * transcript renders today's identical-bubble behavior.
+   */
+  senderAvatar?: ProjectThreadOwnerAvatar;
+  /**
+   * Render the avatar above the bubble. Used by `TranscriptThread` to
+   * coalesce consecutive prompts from the same sender (Slack/Linear style).
+   */
+  showSenderAvatar?: boolean;
 }
 
 function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
@@ -71,28 +90,63 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
   );
 }
 
+function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
+  const candidate = part as {
+    type?: string;
+    toolCallId?: unknown;
+    id?: unknown;
+  };
+  if (
+    typeof candidate.toolCallId === "string" &&
+    candidate.toolCallId.length > 0
+  ) {
+    return `tool-${candidate.toolCallId}`;
+  }
+  if (typeof candidate.id === "string" && candidate.id.length > 0) {
+    return `${candidate.type ?? "part"}-${candidate.id}`;
+  }
+  return `${stepIndex}-${partIndex}`;
+}
+
+function isSameSenderAvatar(
+  prev: ProjectThreadOwnerAvatar | undefined,
+  next: ProjectThreadOwnerAvatar | undefined
+) {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  if (prev.status !== next.status) return false;
+  if (prev.status === "show" && next.status === "show") {
+    return (
+      prev.displayName === next.displayName && prev.imageUrl === next.imageUrl
+    );
+  }
+  return true;
+}
+
 function areMessageViewPropsEqual(
   prev: Readonly<MessageViewProps>,
-  next: Readonly<MessageViewProps>,
+  next: Readonly<MessageViewProps>
 ) {
   return (
     !shouldRerenderMessage(prev.message, next.message) &&
     prev.model === next.model &&
     prev.onSendFollowUp === next.onSendFollowUp &&
     prev.toolsMetadata === next.toolsMetadata &&
+    prev.chatSessionId === next.chatSessionId &&
     prev.toolServerMap === next.toolServerMap &&
     prev.onWidgetStateChange === next.onWidgetStateChange &&
     prev.onModelContextUpdate === next.onModelContextUpdate &&
+    prev.onAppToolInvocationChange === next.onAppToolInvocationChange &&
     prev.pipWidgetId === next.pipWidgetId &&
     prev.fullscreenWidgetId === next.fullscreenWidgetId &&
     prev.onRequestPip === next.onRequestPip &&
     prev.onExitPip === next.onExitPip &&
     prev.onRequestFullscreen === next.onRequestFullscreen &&
     prev.onExitFullscreen === next.onExitFullscreen &&
+    prev.onRequestTeardown === next.onRequestTeardown &&
+    prev.tornDownWidgetIds === next.tornDownWidgetIds &&
     prev.displayMode === next.displayMode &&
     prev.onDisplayModeChange === next.onDisplayModeChange &&
-    prev.selectedProtocolOverrideIfBothExists ===
-      next.selectedProtocolOverrideIfBothExists &&
     prev.onToolApprovalResponse === next.onToolApprovalResponse &&
     prev.toolRenderOverrides === next.toolRenderOverrides &&
     prev.showSaveViewButton === next.showSaveViewButton &&
@@ -100,11 +154,14 @@ function areMessageViewPropsEqual(
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.claudeFooterMode === next.claudeFooterMode &&
-    prev.renderUserMessageActions === next.renderUserMessageActions
+    prev.renderUserMessageActions === next.renderUserMessageActions &&
+    isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
+    prev.showSenderAvatar === next.showSenderAvatar
   );
 }
 
 function MessageViewImpl({
+  chatSessionId,
   message,
   model,
   onSendFollowUp,
@@ -112,15 +169,17 @@ function MessageViewImpl({
   toolServerMap,
   onWidgetStateChange,
   onModelContextUpdate,
+  onAppToolInvocationChange,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
@@ -129,6 +188,8 @@ function MessageViewImpl({
   reasoningDisplayMode = "inline",
   claudeFooterMode = "none",
   renderUserMessageActions,
+  senderAvatar,
+  showSenderAvatar = false,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -143,10 +204,7 @@ function MessageViewImpl({
   // message content (faithful to real M365 Copilot's avatar/name header).
   // Other host styles keep the inspector's existing layout.
   const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
-  // Hide widget state messages (these are internal and sent to the model)
-  if (message.id?.startsWith("widget-state-")) return null;
-  // Hide model context messages (these are internal and sent to the model)
-  if (message.id?.startsWith("model-context-")) return null;
+  if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
 
@@ -159,6 +217,11 @@ function MessageViewImpl({
 
     return (
       <div className="group/user-message flex w-full min-w-0 flex-col items-end gap-2">
+        {showSenderAvatar && senderAvatar ? (
+          <div className="flex max-w-[min(100%,48rem)] justify-end">
+            <SenderAvatar avatar={senderAvatar} />
+          </div>
+        ) : null}
         {/* File attachments above the bubble */}
         {fileParts.length > 0 && (
           <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
@@ -167,22 +230,23 @@ function MessageViewImpl({
                 key={`file-${i}`}
                 part={part}
                 role={role}
+                chatSessionId={chatSessionId}
                 onSendFollowUp={onSendFollowUp}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
                 onModelContextUpdate={onModelContextUpdate}
+                onAppToolInvocationChange={onAppToolInvocationChange}
                 pipWidgetId={pipWidgetId}
                 fullscreenWidgetId={fullscreenWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
                 onRequestFullscreen={onRequestFullscreen}
                 onExitFullscreen={onExitFullscreen}
+                onRequestTeardown={onRequestTeardown}
+                tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
@@ -200,22 +264,23 @@ function MessageViewImpl({
                 key={i}
                 part={part}
                 role={role}
+                chatSessionId={chatSessionId}
                 onSendFollowUp={onSendFollowUp}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
                 onModelContextUpdate={onModelContextUpdate}
+                onAppToolInvocationChange={onAppToolInvocationChange}
                 pipWidgetId={pipWidgetId}
                 fullscreenWidgetId={fullscreenWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
                 onRequestFullscreen={onRequestFullscreen}
                 onExitFullscreen={onExitFullscreen}
+                onRequestTeardown={onRequestTeardown}
+                tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
@@ -275,25 +340,26 @@ function MessageViewImpl({
             <div key={sIdx} className="space-y-3">
               {stepParts.map((part, pIdx) => (
                 <PartSwitch
-                  key={`${sIdx}-${pIdx}`}
+                  key={getPartKey(part, sIdx, pIdx)}
                   part={part}
                   role={role}
+                  chatSessionId={chatSessionId}
                   onSendFollowUp={onSendFollowUp}
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}
                   onWidgetStateChange={onWidgetStateChange}
                   onModelContextUpdate={onModelContextUpdate}
+                  onAppToolInvocationChange={onAppToolInvocationChange}
                   pipWidgetId={pipWidgetId}
                   fullscreenWidgetId={fullscreenWidgetId}
                   onRequestPip={onRequestPip}
                   onExitPip={onExitPip}
                   onRequestFullscreen={onRequestFullscreen}
                   onExitFullscreen={onExitFullscreen}
+                  onRequestTeardown={onRequestTeardown}
+                  tornDownWidgetIds={tornDownWidgetIds}
                   displayMode={displayMode}
                   onDisplayModeChange={onDisplayModeChange}
-                  selectedProtocolOverrideIfBothExists={
-                    selectedProtocolOverrideIfBothExists
-                  }
                   onToolApprovalResponse={onToolApprovalResponse}
                   messageParts={message.parts}
                   toolRenderOverrides={toolRenderOverrides}

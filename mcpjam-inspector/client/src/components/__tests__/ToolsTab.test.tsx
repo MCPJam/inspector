@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
@@ -135,6 +141,157 @@ describe("ToolsTab", () => {
           cursor: undefined,
         });
       });
+    });
+
+    it("does not fetch tools or task capabilities when the server is disconnected", () => {
+      const serverConfig = createServerConfig();
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      expect(mockListTools).not.toHaveBeenCalled();
+      expect(mockGetTaskCapabilities).not.toHaveBeenCalled();
+      expect(
+        screen.getByText("Connect this server to load tools."),
+      ).toBeInTheDocument();
+    });
+
+    it("clears loaded tools when the selected server disconnects", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "test-tool", inputSchema: { type: "object" } }],
+      });
+
+      const { rerender } = render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="connected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("test-tool")).toBeInTheDocument();
+      });
+      expect(mockListTools).toHaveBeenCalledTimes(1);
+
+      rerender(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText("test-tool")).not.toBeInTheDocument();
+      });
+      expect(
+        screen.getByText("Connect this server to load tools."),
+      ).toBeInTheDocument();
+      expect(mockListTools).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a stale tools response after the selected server disconnects", async () => {
+      const serverConfig = createServerConfig();
+      let resolveTools!: (value: {
+        tools: Array<Record<string, unknown>>;
+      }) => void;
+      mockListTools.mockReturnValue(
+        new Promise((resolve) => {
+          resolveTools = resolve;
+        }),
+      );
+
+      const { rerender } = render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="connected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockListTools).toHaveBeenCalledTimes(1);
+      });
+
+      rerender(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      await act(async () => {
+        resolveTools({
+          tools: [{ name: "late-tool", inputSchema: { type: "object" } }],
+        });
+      });
+
+      expect(screen.queryByText("late-tool")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Connect this server to load tools."),
+      ).toBeInTheDocument();
+    });
+
+    it("preserves task capabilities when refreshing tools", async () => {
+      const serverConfig = createServerConfig();
+
+      mockGetTaskCapabilities.mockResolvedValue({
+        supportsToolCalls: true,
+        supportsList: false,
+        supportsCancel: false,
+      });
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "task-tool",
+            inputSchema: { type: "object" },
+            execution: { taskSupport: "optional" },
+          },
+        ],
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="connected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("task-tool")).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(mockGetTaskCapabilities).toHaveBeenCalledWith("test-server");
+      });
+
+      fireEvent.click(screen.getByText("task-tool"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Execute as task")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTitle("Refresh tools"));
+
+      await waitFor(() => {
+        expect(mockListTools).toHaveBeenCalledTimes(2);
+      });
+
+      fireEvent.click(screen.getByText("task-tool"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Execute as task")).toBeInTheDocument();
+      });
+      expect(mockGetTaskCapabilities).toHaveBeenCalledTimes(1);
     });
 
     it("displays tools after fetching", async () => {

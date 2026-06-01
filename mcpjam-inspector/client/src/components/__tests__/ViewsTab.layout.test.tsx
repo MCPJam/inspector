@@ -23,7 +23,6 @@ const {
     safeAreaInsets: { top: 0, bottom: 0, left: 0, right: 0 },
   })),
   mockPlaygroundStoreState: {
-    setSelectedProtocol: vi.fn(),
     setDeviceType: vi.fn(),
     setCustomViewport: vi.fn(),
     updateGlobal: vi.fn(),
@@ -32,13 +31,9 @@ const {
   },
   mockViewMutations: {
     createMcpView: vi.fn(),
-    createOpenaiView: vi.fn(),
     updateMcpView: vi.fn(),
-    updateOpenaiView: vi.fn(),
     removeMcpView: vi.fn(),
-    removeOpenaiView: vi.fn(),
     generateMcpUploadUrl: vi.fn(),
-    generateOpenaiUploadUrl: vi.fn(),
   },
 }));
 
@@ -183,7 +178,7 @@ describe("ViewsTab layout", () => {
     expect(screen.getByText("No saved views yet")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Save tool executions from Chat or App Builder to create reusable views.",
+        "Save tool executions from Chat or Playground to create reusable views.",
       ),
     ).toBeInTheDocument();
   });

@@ -112,10 +112,17 @@ export function isOpenAIAppAndMCPApp(
 export function getToolVisibility(
   toolMeta: Record<string, unknown> | undefined,
 ): Array<"model" | "app"> {
-  const ui = toolMeta?.ui as
-    | { visibility?: Array<"model" | "app"> }
-    | undefined;
-  return ui?.visibility ?? ["model", "app"];
+  const ui =
+    toolMeta?.ui && typeof toolMeta.ui === "object" && !Array.isArray(toolMeta.ui)
+      ? (toolMeta.ui as { visibility?: unknown })
+      : undefined;
+  const visibility = ui?.visibility;
+  if (!Array.isArray(visibility)) return ["model", "app"];
+
+  const normalized = visibility.filter(
+    (scope): scope is "model" | "app" => scope === "model" || scope === "app",
+  );
+  return normalized.length > 0 ? normalized : ["model", "app"];
 }
 
 /**

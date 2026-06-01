@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 
 // Type definitions matching backend
@@ -55,6 +56,14 @@ export interface ViewBase {
   updatedBy?: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Whether the cached widget HTML blob (`widgetHtmlUrl`) was
+   * captured with the OpenAI Apps SDK `window.openai` shim injected.
+   * Surfaced from the backend `mcpAppViews` / `openaiAppViews` row.
+   * Absent on pre-feature rows (`undefined` → renderer falls back to
+   * the live host's compat flag for non-cached fetches).
+   */
+  injectedOpenAiCompat?: boolean;
 }
 
 // MCP-specific view
@@ -154,7 +163,9 @@ export function useViewQueries({
 
 // Mutation hook for view operations
 export function useViewMutations() {
-  // MCP mutations
+  // MCP mutations — canonical write path per SEP-1865. All saved views
+  // live in mcpAppViews after the Phase B backfill; the legacy
+  // openaiAppViews table is being dropped in backend Phase C2.
   const createMcpView = useMutation("mcpAppViews:create" as any);
   const updateMcpView = useMutation("mcpAppViews:update" as any);
   const removeMcpView = useMutation("mcpAppViews:remove" as any);
@@ -162,25 +173,11 @@ export function useViewMutations() {
     "mcpAppViews:generateUploadUrl" as any,
   );
 
-  // OpenAI mutations
-  const createOpenaiView = useMutation("openaiAppViews:create" as any);
-  const updateOpenaiView = useMutation("openaiAppViews:update" as any);
-  const removeOpenaiView = useMutation("openaiAppViews:remove" as any);
-  const generateOpenaiUploadUrl = useMutation(
-    "openaiAppViews:generateUploadUrl" as any,
-  );
-
   return {
-    // MCP
     createMcpView,
     updateMcpView,
     removeMcpView,
     generateMcpUploadUrl,
-    // OpenAI
-    createOpenaiView,
-    updateOpenaiView,
-    removeOpenaiView,
-    generateOpenaiUploadUrl,
   };
 }
 
@@ -192,7 +189,9 @@ export function useProjectServers({
   isAuthenticated: boolean;
   projectId: string | null;
 }) {
-  const enableQuery = isAuthenticated && shouldQueryProjectId(projectId);
+  const isUserReady = useDbUserReady();
+  const enableQuery =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const queryProjectId = projectId?.trim() ?? "";
 
   const servers = useQuery(
@@ -228,6 +227,35 @@ export function useProjectServers({
     serversById,
     isLoading,
   };
+}
+
+export function useProjectServerAttachments({
+  isAuthenticated,
+  projectId,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+}) {
+  const isUserReady = useDbUserReady();
+  const enableQuery =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
+  const queryProjectId = projectId?.trim() ?? "";
+
+  const serverAttachments = useQuery(
+    "serverAttachments:listServerAttachments" as any,
+    enableQuery ? ({ projectId: queryProjectId } as any) : "skip",
+  ) as Array<{
+    _id: string;
+    name: string;
+    serverIds: string[];
+    resolvedServerNames: string[];
+    createdAt: number;
+    updatedAt: number;
+  }> | undefined;
+
+  const isLoading = enableQuery && serverAttachments === undefined;
+
+  return { serverAttachments: serverAttachments ?? [], isLoading };
 }
 
 // Server mutation for creating servers

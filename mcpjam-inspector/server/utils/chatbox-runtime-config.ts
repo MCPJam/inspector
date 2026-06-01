@@ -22,7 +22,15 @@ export type ChatboxRuntimeConfig = {
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
+  // Optional for compatibility with backends that predate SEP-1865
+  // visibility filtering on runtime-config.
+  respectToolVisibility?: boolean;
   hostStyle: string;
+  // Host-level opt-in for progressive MCP tool discovery, mirrored from
+  // the chatbox's pinned HostConfigV2. Optional so a backend older than
+  // mcpjam-backend PR #334 (which adds the field) returns omitted →
+  // undefined and the inspector falls back to its auto policy.
+  progressiveToolDiscovery?: boolean;
 };
 
 export type ChatboxRuntimeConfigResult =

@@ -45,6 +45,12 @@ const createAsyncIterable = (events: any[]) => ({
   },
 });
 
+const createThrowingAsyncIterable = (error: unknown) => ({
+  async *[Symbol.asyncIterator]() {
+    throw error;
+  },
+});
+
 // Mock the AI SDK
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
@@ -453,6 +459,22 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
+    it("passes the inbound abort signal to user-provided streamText calls", async () => {
+      const { streamText } = await import("ai");
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          abortSignal: expect.any(AbortSignal),
+        }),
+      );
+    });
+
     it("includes system prompt when provided", async () => {
       const { streamText } = await import("ai");
 
@@ -491,6 +513,44 @@ describe("POST /api/mcp/chat-v2", () => {
 
       expect(status).toBe(500);
       expect(data.error).toBe("Unexpected error");
+    });
+
+    it("swallows abort errors without emitting a user-visible stream error", async () => {
+      const { streamText } = await import("ai");
+      const abortError = new Error("The operation was aborted");
+      abortError.name = "AbortError";
+      let capturedToUiMessageStreamOnError:
+        | ((error: unknown) => string)
+        | undefined;
+
+      vi.mocked(streamText).mockImplementationOnce(
+        (() => ({
+          toUIMessageStream: vi.fn((options?: { onError?: unknown }) => {
+            capturedToUiMessageStreamOnError = options?.onError as
+              | ((error: unknown) => string)
+              | undefined;
+            return createThrowingAsyncIterable(abortError);
+          }),
+          toUIMessageStreamResponse: vi.fn(),
+        })) as any,
+      );
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+      await expect(lastStreamExecution).resolves.toBeUndefined();
+      expect(capturedCreateUiStreamOnError?.(abortError)).toBe("");
+      expect(capturedToUiMessageStreamOnError?.(abortError)).toBe("");
+      expect(
+        capturedStreamEvents.some(
+          (event) =>
+            event?.type === "data-trace-event" && event.data?.type === "error",
+        ),
+      ).toBe(false);
     });
   });
 
@@ -705,6 +765,43 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result).toBe("Network connection failed");
     });
 
+    it("normalizes retry-exhausted provider overload errors", async () => {
+      const onError = await getOnError("anthropic");
+      const error = new Error("Failed after 3 attempts. Last error: Overloaded");
+
+      const result = JSON.parse(onError(error));
+      expect(result).toEqual({
+        code: "provider_overloaded",
+        message:
+          "That model is temporarily overloaded. Try again in a moment or switch models.",
+        isRetryable: true,
+      });
+    });
+
+    it("normalizes Anthropic overload APICallErrors", async () => {
+      const onError = await getOnError("anthropic");
+      const error = new APICallError({
+        message: "Overloaded",
+        url: "https://api.anthropic.com/v1/messages",
+        requestBodyValues: {},
+        statusCode: 529,
+        responseBody:
+          '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+        isRetryable: true,
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result).toEqual({
+        code: "provider_overloaded",
+        message:
+          "That model is temporarily overloaded. Try again in a moment or switch models.",
+        statusCode: 529,
+        isRetryable: true,
+        details:
+          '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+      });
+    });
+
     it("converts non-Error values to string", async () => {
       const onError = await getOnError("openai");
       const result = onError("something broke");
@@ -740,7 +837,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
@@ -824,7 +921,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
@@ -878,7 +975,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
@@ -933,7 +1030,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
@@ -990,7 +1087,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
@@ -1044,7 +1141,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
@@ -1098,7 +1195,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockImplementation(async (input: RequestInfo | URL) => {
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
           const url = String(input);
           if (url === "https://test-convex.example.com/stream") {
             return createSseResponse([
@@ -1169,7 +1266,7 @@ describe("POST /api/mcp/chat-v2", () => {
             messages: [{ role: "user", content: "Hello" }],
             model: { id, provider },
           });
-          const { status, data } = await expectJson(res);
+          const { status, data } = await expectJson<ErrorResponse>(res);
 
           expect(status).toBe(403);
           expect(data.error).toBe(
@@ -1184,6 +1281,143 @@ describe("POST /api/mcp/chat-v2", () => {
         }
       },
     );
+  });
+
+  describe("Org BYOK Convex routing", () => {
+    beforeEach(async () => {
+      const { isMCPJamProvidedModel } = await import("@/shared/types");
+      vi.mocked(isMCPJamProvidedModel).mockReturnValue(false);
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+    });
+
+    afterEach(() => {
+      delete process.env.CONVEX_HTTP_URL;
+    });
+
+    it("routes cloud org BYOK chat through /stream/org without a service token", async () => {
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          const headers = new Headers(
+            (init as RequestInit | undefined)?.headers,
+          );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
+          expect(headers.get("Authorization")).toBe(
+            "Bearer signed-in-test-token",
+          );
+          const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+          expect(body).toMatchObject({
+            projectId: "project-1",
+            providerKey: "openai",
+            model: "gpt-4-turbo",
+          });
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4-turbo", provider: "openai" },
+          projectId: "project-1",
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("resolves local-runtime org BYOK chat before running locally", async () => {
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org/resolve") {
+          const headers = new Headers(
+            (init as RequestInit | undefined)?.headers,
+          );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
+          expect(headers.get("Authorization")).toBe(
+            "Bearer signed-in-test-token",
+          );
+          const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+          expect(body).toMatchObject({
+            projectId: "project-1",
+            providerKey: "custom:local-one",
+            model: "custom:local-one:m-1",
+          });
+          return Response.json({
+            ok: true,
+            runtimeLocation: "local",
+            provider: {
+              providerKey: "custom:local-one",
+              apiKey: "sk-local",
+              baseUrl: "https://llm.example.com",
+              protocol: "openai-compatible",
+              modelIds: ["m-1"],
+            },
+          });
+        }
+        if (url === "https://test-convex.example.com/stream/org/local-usage") {
+          const headers = new Headers(
+            (init as RequestInit | undefined)?.headers,
+          );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
+          expect(headers.get("Authorization")).toBe(
+            "Bearer signed-in-test-token",
+          );
+          return Response.json({ ok: true });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://test-convex.example.com/stream/org/resolve",
+          expect.anything(),
+        );
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://test-convex.example.com/stream/org/local-usage",
+          expect.anything(),
+        );
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org",
+          ),
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {

@@ -6,7 +6,7 @@
  * (local runtime, API key returned by /stream/org/resolve for this request only).
  *
  * handleHostedOrgChatModel → cloud: wraps handleMCPJamFreeChatModel and
- *   points it at /stream/org with the inspector service token + providerKey.
+ *   points it at /stream/org with the user auth header + providerKey.
  *
  * handleLocalOrgChatModel → local: builds the AI SDK model directly in the
  *   inspector using buildOrgModelFromResolvedConfig, runs streamText with the
@@ -53,16 +53,39 @@ import {
   toTraceRecord,
   writeTraceEvent,
 } from "./live-chat-trace-stream.js";
-import { buildResolvedModelRequestPayload } from "./model-request-payload.js";
+import {
+  buildResolvedModelRequestPayload,
+  normalizeSystemPromptForProvider,
+} from "./model-request-payload.js";
+import {
+  formatProviderOverloadError,
+  isProviderOverloadError,
+} from "./provider-error-normalization.js";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { isAbortError } from "@/shared/abort-errors";
+import {
+  commitNewlyLoaded,
+  gateToolsToActiveSubset,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
+
+// Mirror DEFAULT_MAX_STEPS in mcpjam-stream-handler. Local org BYOK uses
+// the AI SDK's `stepCountIs` instead of a hand-rolled loop, but the
+// per-turn ceiling should match so a user doesn't see fewer steps just
+// because they routed through a local provider.
+const DEFAULT_MAX_STEPS_LOCAL_ORG = 30;
 
 export interface OrgModelHandlerOptions {
   projectId: string;
-  workspaceId?: string;
   providerKey: string;
+  /** Progressive discovery — forwarded into handleMCPJamFreeChatModel. */
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
   modelId: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -72,6 +95,7 @@ export interface OrgModelHandlerOptions {
   tools: ToolSet;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -81,11 +105,11 @@ export interface OrgModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  onLiveTextDelta?: (delta: string) => void;
   /**
    * The end user's Authorization header from the inbound request. Forwarded
    * to /stream/org so Convex can re-authorize the user against the project.
-   * Without this, /stream/org can only authenticate the inspector backend
-   * (via the service token) and will reject the request as unauthenticated.
+   * This is the auth boundary for org BYOK runtime requests.
    */
   authHeader?: string;
   /**
@@ -95,6 +119,20 @@ export interface OrgModelHandlerOptions {
   chatboxId?: string;
   accessVersion?: number;
   clientIp?: string | null;
+  /**
+   * Inbound request abort signal. Forwarded to the wrapped MCPJam handler so
+   * a client disconnect cancels the Convex fetch, the SSE reader, and the
+   * local tool executor end-to-end.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * See MCPJamHandlerOptions.heartbeatIntervalMs. Forwarded as-is.
+   */
+  heartbeatIntervalMs?: number;
+  /**
+   * See MCPJamHandlerOptions.maxSteps. Forwarded as-is.
+   */
+  maxSteps?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,18 +147,39 @@ function toLiveChatTraceUsageLocal(
         totalTokens?: number;
       }
     | null
-    | undefined,
+    | undefined
 ): LiveChatTraceUsage | undefined {
   if (!usage) return undefined;
   const next: LiveChatTraceUsage = {};
-  if (typeof usage.inputTokens === "number") next.inputTokens = usage.inputTokens;
-  if (typeof usage.outputTokens === "number") next.outputTokens = usage.outputTokens;
-  if (typeof usage.totalTokens === "number") next.totalTokens = usage.totalTokens;
+  if (typeof usage.inputTokens === "number")
+    next.inputTokens = usage.inputTokens;
+  if (typeof usage.outputTokens === "number")
+    next.outputTokens = usage.outputTokens;
+  if (typeof usage.totalTokens === "number")
+    next.totalTokens = usage.totalTokens;
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+function safelyEmitLiveTextDelta(
+  onLiveTextDelta: ((delta: string) => void) | undefined,
+  delta: string
+) {
+  if (!onLiveTextDelta) return;
+  try {
+    void Promise.resolve(onLiveTextDelta(delta)).catch((error) => {
+      logger.warn("[org/local] onLiveTextDelta callback failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    logger.warn("[org/local] onLiveTextDelta callback failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function collectStepToolCallIdsLocal(
-  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined,
+  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined
 ): Set<string> {
   const ids = new Set<string>();
   if (!Array.isArray(toolCalls)) return ids;
@@ -139,6 +198,15 @@ function formatLocalStreamError(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const statusCode = (error as any).statusCode as number | undefined;
   const responseBody = (error as any).responseBody as string | undefined;
+  if (
+    isProviderOverloadError({
+      message: error.message,
+      statusCode,
+      responseBody,
+    })
+  ) {
+    return formatProviderOverloadError({ statusCode, responseBody });
+  }
   const lowerBody = responseBody?.toLowerCase() ?? "";
   const isAuthError =
     statusCode === 401 ||
@@ -170,7 +238,6 @@ export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   projectId: string;
-  workspaceId?: string;
   modelId: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -179,6 +246,7 @@ export interface OrgLocalModelHandlerOptions {
   temperature?: number;
   tools: ToolSet;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
@@ -192,6 +260,25 @@ export interface OrgLocalModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  onLiveTextDelta?: (delta: string) => void;
+  /**
+   * Inbound request abort signal. Passed to streamText so a client
+   * disconnect cancels the upstream provider call.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Total per-turn step budget enforced via the AI SDK's `stepCountIs`.
+   * Defaults to 30 to match the hosted MCPJam path so users don't see
+   * fewer agentic steps when routed through a local provider.
+   */
+  maxSteps?: number;
+  /**
+   * Progressive tool discovery plan. When `plan.enabled === true`, each
+   * step's `activeTools` is recomputed from `discoveryState` via the AI SDK
+   * `prepareStep` hook.
+   */
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
 }
 
 export function handleLocalOrgChatModel(
@@ -200,7 +287,6 @@ export function handleLocalOrgChatModel(
   const {
     provider,
     projectId,
-    workspaceId,
     modelId,
     chatSessionId,
     sourceType,
@@ -215,6 +301,7 @@ export function handleLocalOrgChatModel(
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
+    onLiveTextDelta,
   } = options;
 
   if (requireToolApproval && Object.keys(tools).length > 0) {
@@ -275,9 +362,34 @@ export function handleLocalOrgChatModel(
     turnUsage: undefined as LiveChatTraceUsage | undefined,
   };
   const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
+  const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
   let turnFinished = false;
   let streamErrored = false;
+  let aborted = false;
+  const resolvedMaxSteps =
+    typeof options.maxSteps === "number" &&
+    Number.isFinite(options.maxSteps) &&
+    options.maxSteps > 0
+      ? Math.floor(options.maxSteps)
+      : DEFAULT_MAX_STEPS_LOCAL_ORG;
+
+  // Mark `aborted` as soon as the inbound signal fires so the
+  // onFinish/onError branches below can gate their side effects without
+  // racing against the SDK's own abort propagation.
+  if (options.abortSignal) {
+    if (options.abortSignal.aborted) {
+      aborted = true;
+    } else {
+      options.abortSignal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+        },
+        { once: true }
+      );
+    }
+  }
 
   const stream = createUIMessageStream({
     onError: (error) => {
@@ -311,26 +423,52 @@ export function handleLocalOrgChatModel(
       const tracedTools = wrapToolSetForEvalTrace(
         tools as Record<string, unknown>,
         traceContext,
-        traceTurn.promptIndex,
+        traceTurn.promptIndex
       ) as ToolSet;
 
+      const { progressivePlan, discoveryState } = options;
+      // Progressive mode: gate execution to the active subset. See
+      // `gateToolsToActiveSubset` doc + the same wrap in
+      // `routes/mcp/chat-v2.ts` for rationale (defense-in-depth against
+      // hallucinated/remembered out-of-subset tool calls).
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      ) as ToolSet;
       const result = streamText({
         model: llmModel,
         messages,
         ...(temperature !== undefined ? { temperature } : {}),
-        system: systemPrompt,
-        tools: tracedTools,
-        stopWhen: stepCountIs(20),
+        system: providerSystemPrompt,
+        tools: executableTools,
+        stopWhen: stepCountIs(resolvedMaxSteps),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
           currentStepIndex = stepNumber;
           registerAiSdkPrepareStep(traceContext, stepNumber, {
             modelId,
             promptIndex: traceTurn.promptIndex,
           });
+          // Progressive discovery: promote tool ids loaded on the prior
+          // step, then narrow `activeTools` to meta + loaded + pending.
+          // Without this, the full ToolSet is exposed every step, defeating
+          // the point of progressive discovery on the local AI SDK path.
+          if (progressivePlan?.enabled && discoveryState) {
+            commitNewlyLoaded(discoveryState);
+            const active = resolveActiveToolNames(
+              progressivePlan,
+              discoveryState,
+            );
+            return { activeTools: active };
+          }
           return {};
         },
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
+            if (chunk.text) {
+              safelyEmitLiveTextDelta(onLiveTextDelta, chunk.text);
+            }
             writeTraceEvent(writer, {
               type: "text_delta",
               turnId: traceTurn.turnId,
@@ -381,7 +519,7 @@ export function handleLocalOrgChatModel(
 
           traceTurn.turnUsage = mergeLiveChatTraceUsage(
             traceTurn.turnUsage,
-            stepUsage,
+            stepUsage
           );
 
           emitAiSdkOnStepFinish(traceContext, Date.now(), {
@@ -398,7 +536,7 @@ export function handleLocalOrgChatModel(
             traceHistory,
             traceTurn.promptIndex,
             currentStepIndex,
-            collectStepToolCallIdsLocal(step.toolCalls),
+            collectStepToolCallIdsLocal(step.toolCalls)
           );
 
           traceTurn.turnSpans = [...traceContext.recordedSpans];
@@ -406,6 +544,14 @@ export function handleLocalOrgChatModel(
         },
         onError: async ({ error }) => {
           if (turnFinished) return;
+          // Aborts are not failures — silent-cancel invariant applies
+          // here too: no error chunk, no turn_finish, no fail span.
+          if (aborted || isAbortError(error)) {
+            aborted = true;
+            turnFinished = true;
+            streamErrored = true;
+            return;
+          }
           const failAt = Date.now();
           finalizeAiSdkTraceOnFailure(traceContext, failAt, {
             completedStepCount: currentStepIndex,
@@ -432,11 +578,22 @@ export function handleLocalOrgChatModel(
           turnFinished = true;
         },
         onFinish: async (event) => {
+          // Silent-cancel invariant for the local org BYOK path: an
+          // aborted turn must not emit turn_finish, post usage to
+          // Convex, or run conversation persistence. `onStreamComplete`
+          // still runs via createUIMessageStream's onFinish below so
+          // per-request resources are released.
+          if (aborted || options.abortSignal?.aborted) {
+            aborted = true;
+            turnFinished = true;
+            return;
+          }
+
           patchAiSdkRecordedSpansMessageRangesFromSteps(
             traceContext.recordedSpans,
             initialMessageHistoryLength,
             event.steps,
-            traceTurn.promptIndex,
+            traceTurn.promptIndex
           );
           traceTurn.turnSpans = [...traceContext.recordedSpans];
           traceTurn.turnUsage =
@@ -456,7 +613,6 @@ export function handleLocalOrgChatModel(
           // Post usage to Convex (best-effort, non-blocking on failure).
           postLocalUsage({
             projectId,
-            workspaceId,
             providerKey: provider.providerKey,
             model: modelId,
             usage: traceTurn.turnUsage,
@@ -469,6 +625,7 @@ export function handleLocalOrgChatModel(
             chatboxId,
             accessVersion,
             selectedServers: options.selectedServers,
+            serverIds: options.serverIds,
           }).catch((err) => {
             logger.warn("[org/local] Failed to post local usage", {
               error: err instanceof Error ? err.message : String(err),
@@ -518,7 +675,6 @@ export function handleLocalOrgChatModel(
 
 async function postLocalUsage(params: {
   projectId: string;
-  workspaceId?: string;
   providerKey: string;
   model: string;
   usage?: LiveChatTraceUsage;
@@ -531,10 +687,10 @@ async function postLocalUsage(params: {
   chatboxId?: string;
   accessVersion?: number;
   selectedServers?: string[];
+  serverIds?: string[];
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!convexHttpUrl || !inspectorServiceToken) return;
+  if (!convexHttpUrl) return;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
   const controller = new AbortController();
@@ -544,17 +700,17 @@ async function postLocalUsage(params: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Inspector-Service-Token": inspectorServiceToken,
         ...(params.authHeader ? { Authorization: params.authHeader } : {}),
       },
       body: JSON.stringify({
         projectId: params.projectId,
-        ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
         providerKey: params.providerKey,
         model: params.model,
         ...(params.usage ? { usage: params.usage } : {}),
         ...(params.finishReason ? { finishReason: params.finishReason } : {}),
-        ...(params.chatSessionId ? { chatSessionId: params.chatSessionId } : {}),
+        ...(params.chatSessionId
+          ? { chatSessionId: params.chatSessionId }
+          : {}),
         ...(params.sourceType ? { sourceType: params.sourceType } : {}),
         ...(params.turnId ? { turnId: params.turnId } : {}),
         ...(typeof params.promptIndex === "number"
@@ -564,8 +720,8 @@ async function postLocalUsage(params: {
         ...(params.chatboxId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
           : {}),
-        ...(params.selectedServers && params.selectedServers.length > 0
-          ? { serverIds: params.selectedServers }
+        ...((params.serverIds ?? params.selectedServers)?.length
+          ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
       }),
       signal: controller.signal,
@@ -592,10 +748,6 @@ export async function handleHostedOrgChatModel(
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
 
   return handleMCPJamFreeChatModel({
     messages: options.messages,
@@ -605,7 +757,7 @@ export async function handleHostedOrgChatModel(
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
     tools: options.tools,
-    projectId: options.workspaceId ? undefined : options.projectId,
+    projectId: options.projectId,
     authHeader: options.authHeader,
     chatboxId: options.chatboxId,
     accessVersion: options.accessVersion,
@@ -615,18 +767,20 @@ export async function handleHostedOrgChatModel(
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
+    onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
+    abortSignal: options.abortSignal,
+    heartbeatIntervalMs: options.heartbeatIntervalMs,
+    maxSteps: options.maxSteps,
+    progressivePlan: options.progressivePlan,
+    discoveryState: options.discoveryState,
     endpointPath: "/stream/org",
-    extraHeaders: {
-      "X-Inspector-Service-Token": inspectorServiceToken,
-    },
     extraBodyFields: {
       providerKey: options.providerKey,
-      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       // chatboxId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
-      ...(options.selectedServers && options.selectedServers.length > 0
-        ? { serverIds: options.selectedServers }
+      ...((options.serverIds ?? options.selectedServers)?.length
+        ? { serverIds: options.serverIds ?? options.selectedServers }
         : {}),
     },
   });

@@ -16,6 +16,7 @@ type ForwardedTraceViewerProps = Pick<
   | "traceStartedAtMs"
   | "traceEndedAtMs"
   | "onRevealNavigateToChat"
+  | "chatSessionId"
   | "sendFollowUpMessage"
   | "displayMode"
   | "onDisplayModeChange"

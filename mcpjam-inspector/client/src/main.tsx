@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppRouterProvider } from "./router";
 import "./index.css";
@@ -19,9 +19,24 @@ import {
 import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
 import { getRuntimeConvexUrl } from "./lib/runtime-config";
 import { normalizeInitialLegacyHashBookmark } from "./lib/app-navigation";
+import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 
 // Initialize Sentry before React mounts
 initSentry();
+
+function AuthBootstrap({ children }: { children: ReactNode }) {
+  const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+
+  return (
+    <DbUserReadyProvider
+      isEnsuringUser={isEnsuringUser}
+      isUserReady={isUserReady}
+    >
+      {children}
+    </DbUserReadyProvider>
+  );
+}
 
 // Detect if we're inside an iframe - this happens when a user's app uses BrowserRouter
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
@@ -179,7 +194,9 @@ if (isInIframe) {
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
-        <AppRouterProvider />
+        <AuthBootstrap>
+          <AppRouterProvider />
+        </AuthBootstrap>
       </ConvexProviderWithAuthKit>
     </AuthKitProvider>
   );

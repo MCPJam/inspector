@@ -1,12 +1,17 @@
 import { z } from "zod";
 import type { Context } from "hono";
-import { MCPClientManager } from "@mcpjam/sdk";
+import {
+  MCPClientManager,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk";
 import type {
   HttpServerConfig,
   RpcLogger,
   UnauthorizedRefreshHandler,
 } from "@mcpjam/sdk";
-import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
@@ -27,20 +32,51 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import {
-  buildHostedOAuthUnauthorizedHandler,
-} from "../../utils/hosted-oauth-refresh.js";
+import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
+import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
+const clientInfoBatchSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    version: z.string().min(1).optional(),
+  })
+  .passthrough()
+  .optional();
+const supportedProtocolVersionsBatchSchema = z
+  .array(z.string().min(1))
+  .optional();
+const mcpProtocolVersionEnum = z.enum([
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+]);
+
+function hasNonEmptyStringRecord(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.entries(value as Record<string, unknown>).some(
+      ([, recordValue]) => typeof recordValue === "string"
+    )
+  );
+}
+
+// Per-server `mcpProtocolVersion` map. Map entries are validated against
+// the wire-mode enum so a typo in one server's pin doesn't tank the whole
+// batch — Zod returns the typed enum union, and the route handler can
+// still defensively re-check via `isKnownProtocolVersion` before passing
+// to the SDK factory.
+export const mcpProtocolVersionsByServerIdSchema = z
+  .record(z.string().min(1), mcpProtocolVersionEnum)
+  .optional();
 
 export const projectServerSchema = z.object({
   projectId: z.string().min(1),
-  // Optional but declared so zod doesn't strip it. Downstream callers in
-  // servers.ts and conformance.ts read this when present to scope authorize
-  // calls to a workspace mirror instead of a project.
-  workspaceId: z.string().min(1).optional(),
   serverId: z.string().min(1),
   serverName: z.string().min(1).optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
@@ -68,6 +104,13 @@ export const projectServerSchema = z.object({
     .passthrough()
     .optional(),
   supportedProtocolVersions: z.array(z.string().min(1)).optional(),
+  // Per-server pinned MCP protocol version. Resolved client-side from
+  // `hostConfig.mcpProfile.mcpProtocolVersion` + per-server override.
+  // Membership-gated via `MCP_PROTOCOL_VERSIONS` (mirror of the SDK +
+  // backend constant); typo values are rejected at this trust boundary
+  // and never reach the SDK's open-routing predicate. Absent means
+  // "use SDK default (negotiates at request time)".
+  mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -98,6 +141,16 @@ export const promptsListMultiSchema = z.object({
   serverIds: z.array(z.string().min(1)).min(1),
   serverNames: z.array(z.string().min(1)).optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
+  // mcpProfile.initialize pins, threaded from the active host profile so
+  // multi-server prompts list connects honor the same protocol pins as
+  // single-server calls. `clientInfo` and `supportedProtocolVersions` are
+  // host-level (uniform per batch). `mcpProtocolVersionsByServerId` is
+  // per-server so different servers in the batch can be on different
+  // wire modes (e.g. one pinned to 2026-07-28 stateless, others on
+  // legacy 2025-11-25 negotiation).
+  clientInfo: clientInfoBatchSchema,
+  supportedProtocolVersions: supportedProtocolVersionsBatchSchema,
+  mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
@@ -173,6 +226,7 @@ export type ConvexAuthorizeResponse = {
     transportType: "stdio" | "http";
     url?: string;
     headers?: Record<string, string>;
+    hasHeaders?: boolean;
     useOAuth?: boolean;
   };
   internalLogContext?: InternalLogContext;
@@ -226,7 +280,7 @@ export type ConvexBatchAuthorizeResponse = {
 // path (`local-server-resolver.ts`).
 const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
 function stripStdioFieldsFromHostedConfig<
-  T extends { serverConfig?: Record<string, unknown> },
+  T extends { serverConfig?: Record<string, unknown> }
 >(holder: T): T {
   const cfg = holder.serverConfig;
   if (!cfg || typeof cfg !== "object") return holder;
@@ -248,7 +302,6 @@ export async function authorizeServer(
   serverId: string,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
   }
@@ -271,9 +324,7 @@ export async function authorizeServer(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
+        projectId,
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
@@ -319,7 +370,9 @@ export async function authorizeServer(
   if (internalLogContext) {
     setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
   }
-  return stripStdioFieldsFromHostedConfig(clientSafe) as ClientSafeAuthorizeResponse;
+  return stripStdioFieldsFromHostedConfig(
+    clientSafe
+  ) as ClientSafeAuthorizeResponse;
 }
 
 export async function authorizeBatch(
@@ -329,7 +382,6 @@ export async function authorizeBatch(
   serverIds: string[],
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
   }
@@ -352,15 +404,25 @@ export async function authorizeBatch(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
+        projectId,
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
           : {}),
+        // Skip Convex's hosted-mode HTTPS-only check on MCP server URLs
+        // when this Inspector instance is running locally. Convex doesn't
+        // open MCP server URLs itself (we do, from this Hono backend), so
+        // an `http://localhost` URL is harmless metadata in that case.
+        //
+        // Convex only honors `localRuntime` when the request has no
+        // browser Origin, so a hosted browser at app.mcpjam.com can't
+        // smuggle it in to bypass the policy. The flag itself isn't
+        // Inspector-specific — any non-browser caller can set it — see
+        // the docstring on `normalizeAuthorizeResult` in
+        // mcpjam-backend/convex/http.ts for the full rationale.
+        ...(!HOSTED_MODE ? { localRuntime: true } : {}),
       }),
     });
   } catch (error) {
@@ -431,7 +493,7 @@ export async function authorizeBatch(
     if (result.ok) {
       const { internalLogContext: _omit, ...clientSafeResult } = result;
       strippedResults[serverId] = stripStdioFieldsFromHostedConfig(
-        clientSafeResult,
+        clientSafeResult
       ) as ConvexBatchAuthorizeSuccess;
     } else {
       strippedResults[serverId] = result;
@@ -461,6 +523,15 @@ export function toHttpConfig(
   initializePins?: {
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
+    /**
+     * Outbound wire mode (2026-07-28 stateless preview). Forwarded
+     * onto `HttpServerConfig.mcpProtocolVersion` so the SDK factory branches
+     * to `StatelessMcpHttpPreviewClient` when set. Without this,
+     * the hosted handler dropped the pin at the route boundary and
+     * hosted connects always ran the legacy `initialize` handshake
+     * regardless of the client-level toggle.
+     */
+    mcpProtocolVersion?: McpProtocolVersion;
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
@@ -508,6 +579,9 @@ export function toHttpConfig(
           supportedProtocolVersions: initializePins.supportedProtocolVersions,
         }
       : {}),
+    ...(initializePins?.mcpProtocolVersion
+      ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
+      : {}),
   };
 }
 
@@ -515,6 +589,51 @@ export interface AuthorizedManagerResult {
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
   oauthServerUrls: Record<string, string>;
+  /** Server-authenticated Convex user/guest id for this request, when known. */
+  authenticatedUserId?: string | null;
+}
+
+function resolveEffectiveInitializePinsForServer(
+  serverId: string,
+  initializePins?: {
+    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+    supportedProtocolVersions?: string[];
+    mcpProtocolVersion?: McpProtocolVersion;
+  },
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
+):
+  | {
+      clientInfo?: { name?: string; version?: string } & Record<
+        string,
+        unknown
+      >;
+      supportedProtocolVersions?: string[];
+      mcpProtocolVersion?: McpProtocolVersion;
+    }
+  | undefined {
+  const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
+  const mcpProtocolVersion =
+    typeof perServerPin === "string" && isKnownProtocolVersion(perServerPin)
+      ? perServerPin
+      : initializePins?.mcpProtocolVersion;
+  const supportedProtocolVersions =
+    mcpProtocolVersion &&
+    !isStatelessProtocolVersion(mcpProtocolVersion) &&
+    initializePins?.supportedProtocolVersions?.includes(mcpProtocolVersion)
+      ? [mcpProtocolVersion]
+      : initializePins?.supportedProtocolVersions;
+
+  const resolved = {
+    ...(initializePins?.clientInfo
+      ? { clientInfo: initializePins.clientInfo }
+      : {}),
+    ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
+      ? { supportedProtocolVersions }
+      : {}),
+    ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+  };
+
+  return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
 export async function createAuthorizedManager(
@@ -527,17 +646,19 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
     serverNames?: string[];
     /**
-     * mcpProfile.initialize.* pins, applied uniformly to every
-     * authorized server in this batch. The same pins flow into every
-     * HttpServerConfig because hosted batches resolve under one
-     * profile context — we don't currently support per-server
-     * mcpProfile overrides.
+     * mcpProfile.initialize.* pins. `clientInfo` and
+     * `supportedProtocolVersions` are host-profile-level — they apply
+     * uniformly to every authorized server in the batch.
+     * `mcpProtocolVersion` is the batch-uniform fallback wire mode;
+     * `mcpProtocolVersionsByServerId` (sibling option below) overrides
+     * it per server. This lets a batch contain one server pinned to
+     * 2026-07-28 stateless alongside another on legacy
+     * 2025-11-25 negotiation.
      */
     initializePins?: {
       clientInfo?: { name?: string; version?: string } & Record<
@@ -545,7 +666,20 @@ export async function createAuthorizedManager(
         unknown
       >;
       supportedProtocolVersions?: string[];
+      mcpProtocolVersion?: McpProtocolVersion;
     };
+    /**
+     * Per-server `mcpProtocolVersion` overrides keyed by serverId.
+     * Values already passed `isKnownProtocolVersion` at the route
+     * boundary (the schema validates each entry against the wire-mode
+     * enum); we re-check here as a defense-in-depth so a future
+     * caller bypassing the schema can't slip a typo to the SDK.
+     *
+     * Resolution: `mcpProtocolVersionsByServerId[serverId]` (if known)
+     * → `initializePins.mcpProtocolVersion` (batch-uniform) →
+     * undefined (SDK chooses at request time).
+     */
+    mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -561,6 +695,7 @@ export async function createAuthorizedManager(
         }
       ),
       oauthServerUrls: {},
+      authenticatedUserId: null,
     };
   }
 
@@ -572,85 +707,118 @@ export async function createAuthorizedManager(
     uniqueServerIds,
     {
       accessScope: options?.accessScope,
-      workspaceId: options?.workspaceId,
       chatboxId: options?.chatboxId,
       accessVersion: options?.accessVersion,
     }
   );
 
-  const configEntries = uniqueServerIds.map((serverId) => {
-    const auth = batch.results[serverId];
-    if (!auth) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        `Authorization response is missing result for server "${serverId}"`
-      );
-    }
-
-    if (!auth.ok) {
-      throw new WebRouteError(
-        auth.status,
-        auth.code as ErrorCode,
-        auth.message
-      );
-    }
-
-    const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
-    const displayServerName = serverNamesById?.[serverId] ?? serverId;
-    const onUnauthorized =
-      auth.serverConfig.useOAuth && auth.oauthAccessToken
-        ? buildHostedOAuthUnauthorizedHandler({
-            bearerToken,
-            projectId,
-            serverId,
-            serverName: displayServerName,
-            accessScope: options?.accessScope,
-            workspaceId: options?.workspaceId,
-            shareToken: (options as { shareToken?: string })?.shareToken,
-            chatboxId: options?.chatboxId,
-            accessVersion: options?.accessVersion,
-          })
-        : undefined;
-
-    if (auth.serverConfig.useOAuth) {
-      if (auth.serverConfig.url) {
-        oauthServerUrls[serverId] = auth.serverConfig.url;
-      }
-      if (!oauthToken) {
+  const configEntries = await Promise.all(
+    uniqueServerIds.map(async (serverId) => {
+      const auth = batch.results[serverId];
+      if (!auth) {
         throw new WebRouteError(
-          401,
-          ErrorCode.UNAUTHORIZED,
-          `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-          {
-            oauthRequired: true,
-            serverId,
-            serverName: serverNamesById?.[serverId] ?? null,
-            serverUrl: auth.serverConfig.url,
-          }
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          `Authorization response is missing result for server "${serverId}"`
         );
       }
-    }
 
-    return [
-      serverId,
-      toHttpConfig(
-        auth,
-        timeoutMs,
-        oauthToken,
-        clientCapabilities,
-        onUnauthorized,
-        options?.initializePins
-      ),
-    ] as const;
-  });
+      if (!auth.ok) {
+        throw new WebRouteError(
+          auth.status,
+          auth.code as ErrorCode,
+          auth.message
+        );
+      }
+
+      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
+      const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      const onUnauthorized =
+        auth.serverConfig.useOAuth && auth.oauthAccessToken
+          ? buildHostedOAuthUnauthorizedHandler({
+              bearerToken,
+              projectId,
+              serverId,
+              serverName: displayServerName,
+              accessScope: options?.accessScope,
+              shareToken: (options as { shareToken?: string })?.shareToken,
+              chatboxId: options?.chatboxId,
+              accessVersion: options?.accessVersion,
+            })
+          : undefined;
+
+      if (auth.serverConfig.useOAuth) {
+        if (auth.serverConfig.url) {
+          oauthServerUrls[serverId] = auth.serverConfig.url;
+        }
+        if (!oauthToken) {
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+            {
+              oauthRequired: true,
+              serverId,
+              serverName: serverNamesById?.[serverId] ?? null,
+              serverUrl: auth.serverConfig.url,
+            }
+          );
+        }
+      }
+
+      const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
+        serverId,
+        options?.initializePins,
+        options?.mcpProtocolVersionsByServerId
+      );
+      const authForConfig =
+        auth.serverConfig.hasHeaders === true &&
+        !hasNonEmptyStringRecord(auth.serverConfig.headers)
+          ? {
+              ...auth,
+              serverConfig: {
+                ...auth.serverConfig,
+                headers: {
+                  ...(auth.serverConfig.headers ?? {}),
+                  ...((
+                    await fetchRuntimeServerSecrets({
+                      bearerToken,
+                      projectId,
+                      serverId,
+                      accessScope: options?.accessScope,
+                      chatboxId: options?.chatboxId,
+                      accessVersion: options?.accessVersion,
+                    })
+                  ).headers ?? {}),
+                },
+              },
+            }
+          : auth;
+
+      return [
+        serverId,
+        toHttpConfig(
+          authForConfig,
+          timeoutMs,
+          oauthToken,
+          clientCapabilities,
+          onUnauthorized,
+          effectiveInitializePins
+        ),
+      ] as const;
+    })
+  );
 
   const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
   });
-  return { manager, oauthServerUrls };
+  return {
+    manager,
+    oauthServerUrls,
+    authenticatedUserId: c.var.requestLogContext?.userId ?? null,
+  };
 }
 
 export async function withManager<T>(
@@ -720,6 +888,84 @@ function resolveConnectionParams(body: Record<string, unknown>): {
       typeof body.serverName === "string" && body.serverName.trim()
         ? [body.serverName]
         : undefined,
+  };
+}
+
+export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
+  initializePins?: {
+    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+    supportedProtocolVersions?: string[];
+    mcpProtocolVersion?: McpProtocolVersion;
+  };
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+} {
+  // Extract mcpProfile.initialize.* pins so they flow into every
+  // HttpServerConfig created by createAuthorizedManager. Defensive shape
+  // gating: malformed fields silently fall back to SDK defaults rather
+  // than failing the whole route.
+  const rawClientInfo = raw.clientInfo;
+  const initializeClientInfo =
+    rawClientInfo &&
+    typeof rawClientInfo === "object" &&
+    !Array.isArray(rawClientInfo)
+      ? (rawClientInfo as { name?: string; version?: string } & Record<
+          string,
+          unknown
+        >)
+      : undefined;
+  const rawSupportedVersions = raw.supportedProtocolVersions;
+  const initializeSupportedVersions =
+    Array.isArray(rawSupportedVersions) &&
+    rawSupportedVersions.every((v) => typeof v === "string" && v.length > 0)
+      ? (rawSupportedVersions as string[])
+      : undefined;
+  const rawProtocolVersion = raw.mcpProtocolVersion;
+  const initializeWireMode: McpProtocolVersion | undefined =
+    typeof rawProtocolVersion === "string" &&
+    isKnownProtocolVersion(rawProtocolVersion)
+      ? rawProtocolVersion
+      : undefined;
+  const initializePins =
+    initializeClientInfo || initializeSupportedVersions || initializeWireMode
+      ? {
+          ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
+          ...(initializeSupportedVersions
+            ? { supportedProtocolVersions: initializeSupportedVersions }
+            : {}),
+          ...(initializeWireMode
+            ? { mcpProtocolVersion: initializeWireMode }
+            : {}),
+        }
+      : undefined;
+
+  const rawProtocolVersionsByServerId = raw.mcpProtocolVersionsByServerId;
+  const mcpProtocolVersionsByServerId:
+    | Record<string, McpProtocolVersion>
+    | undefined =
+    rawProtocolVersionsByServerId &&
+    typeof rawProtocolVersionsByServerId === "object" &&
+    !Array.isArray(rawProtocolVersionsByServerId)
+      ? (() => {
+          const filtered: Record<string, McpProtocolVersion> = {};
+          for (const [serverId, value] of Object.entries(
+            rawProtocolVersionsByServerId as Record<string, unknown>
+          )) {
+            if (
+              typeof serverId === "string" &&
+              serverId.length > 0 &&
+              typeof value === "string" &&
+              isKnownProtocolVersion(value)
+            ) {
+              filtered[serverId] = value;
+            }
+          }
+          return Object.keys(filtered).length > 0 ? filtered : undefined;
+        })()
+      : undefined;
+
+  return {
+    ...(initializePins ? { initializePins } : {}),
+    ...(mcpProtocolVersionsByServerId ? { mcpProtocolVersionsByServerId } : {}),
   };
 }
 
@@ -798,47 +1044,12 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         ? raw.chatboxId
         : undefined;
     const accessVersion =
-      typeof raw.accessVersion === "number" && Number.isFinite(raw.accessVersion)
+      typeof raw.accessVersion === "number" &&
+      Number.isFinite(raw.accessVersion)
         ? raw.accessVersion
         : undefined;
-
-    // Extract mcpProfile.initialize.* pins so they flow into every
-    // HttpServerConfig created by createAuthorizedManager. The schema
-    // (projectServerSchema or any extension thereof) declares
-    // `clientInfo` / `supportedProtocolVersions` as optional fields —
-    // when present, the client has resolved them from the active
-    // hostConfig and wants the hosted route to honor them on
-    // `initialize`. Defensive shape gating: only forward an object
-    // `clientInfo` and only a non-empty string array for
-    // `supportedProtocolVersions`. A malformed payload silently falls
-    // back to SDK defaults rather than failing the whole route.
-    const rawClientInfo = raw.clientInfo;
-    const initializeClientInfo =
-      rawClientInfo &&
-      typeof rawClientInfo === "object" &&
-      !Array.isArray(rawClientInfo)
-        ? (rawClientInfo as { name?: string; version?: string } & Record<
-            string,
-            unknown
-          >)
-        : undefined;
-    const rawSupportedVersions = raw.supportedProtocolVersions;
-    const initializeSupportedVersions =
-      Array.isArray(rawSupportedVersions) &&
-      rawSupportedVersions.every((v) => typeof v === "string" && v.length > 0)
-        ? (rawSupportedVersions as string[])
-        : undefined;
-    const initializePins =
-      initializeClientInfo || initializeSupportedVersions
-        ? {
-            ...(initializeClientInfo
-              ? { clientInfo: initializeClientInfo }
-              : {}),
-            ...(initializeSupportedVersions
-              ? { supportedProtocolVersions: initializeSupportedVersions }
-              : {}),
-          }
-        : undefined;
+    const { initializePins, mcpProtocolVersionsByServerId } =
+      extractMcpInitializeOptions(raw);
 
     const result = await withManager(
       createAuthorizedManager(
@@ -852,13 +1063,12 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           undefined,
         {
           accessScope,
-          workspaceId:
-            typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
           chatboxId,
           accessVersion,
           rpcLogger: rpcCollector?.rpcLogger,
           serverNames,
           initializePins,
+          mcpProtocolVersionsByServerId,
         }
       ),
       (manager) => fn(manager, body as z.infer<S>)
@@ -873,7 +1083,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope()
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 }

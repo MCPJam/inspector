@@ -7,12 +7,32 @@ const {
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   emitConstructorRpcLogMock,
+  validateAppToolEntriesMock,
+  AppToolValidationErrorMock,
+  validateWidgetModelContextEntriesMock,
+  buildWidgetModelContextSystemPromptMock,
+  WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   emitConstructorRpcLogMock: vi.fn(),
+  validateAppToolEntriesMock: vi.fn(() => []),
+  AppToolValidationErrorMock: class AppToolValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "AppToolValidationError";
+    }
+  },
+  validateWidgetModelContextEntriesMock: vi.fn(() => []),
+  buildWidgetModelContextSystemPromptMock: vi.fn(() => ""),
+  WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "WidgetModelContextValidationError";
+    }
+  },
 }));
 
 vi.mock("ai", async () => {
@@ -41,10 +61,19 @@ vi.mock("@mcpjam/sdk", async () => {
 
 vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
+  validateAppToolEntries: validateAppToolEntriesMock,
+  AppToolValidationError: AppToolValidationErrorMock,
+  validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
+  buildWidgetModelContextSystemPrompt: buildWidgetModelContextSystemPromptMock,
+  WidgetModelContextValidationError: WidgetModelContextValidationErrorMock,
 }));
 
 vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({
   handleMCPJamFreeChatModel: handleMCPJamFreeChatModelMock,
+  // No-op dev-only diagnostic; tests don't need real signal-missing
+  // logging behavior but must surface the symbol so the route module
+  // can import it without ReferenceError.
+  warnIfChatAbortSignalMissing: () => {},
 }));
 
 vi.mock("../../../utils/chat-ingestion.js", async () => {
@@ -73,6 +102,7 @@ vi.mock("@/shared/types", async () => {
 });
 
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
+import { MCPClientManager } from "@mcpjam/sdk";
 
 describe("web routes — chat-v2 hosted mode", () => {
   const originalFetch = global.fetch;
@@ -121,6 +151,11 @@ describe("web routes — chat-v2 hosted mode", () => {
                   role: "member",
                   accessLevel: "shared_chat",
                   permissions: { chatOnly: false },
+                  internalLogContext: {
+                    authType: "signedIn",
+                    userId: "u-alice",
+                    projectId: payload.projectId ?? null,
+                  },
                   serverConfig: {
                     transportType: "http",
                     url: `https://${serverId}.example.com/mcp`,
@@ -261,11 +296,102 @@ describe("web routes — chat-v2 hosted mode", () => {
       "https://example.convex.site/web/authorize-batch",
       expect.objectContaining({
         method: "POST",
+        // `localRuntime: true` is set whenever HOSTED_MODE is false (the
+        // default in tests — VITE_MCPJAM_HOSTED_MODE is not "true" here).
+        // Convex uses it to skip the HTTPS-only check on MCP server URLs
+        // for local Inspector callers; see normalizeAuthorizeResult in
+        // mcpjam-backend/convex/http.ts.
         body: JSON.stringify({
           projectId: "project-1",
           serverIds: ["server-1", "server-2"],
+          localRuntime: true,
         }),
       })
+    );
+  });
+
+  it("forwards MCP profile protocol pins into the hosted chat manager", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Stateless"],
+        clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+        supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+        mcpProtocolVersionsByServerId: {
+          "server-1": "2026-07-28",
+        },
+        chatSessionId: "chat-session-stateless",
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(MCPClientManager).toHaveBeenCalledWith(
+      {
+        "server-1": expect.objectContaining({
+          url: "https://server-1.example.com/mcp",
+          clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+          supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+          mcpProtocolVersion: "2026-07-28",
+        }),
+      },
+      expect.any(Object)
+    );
+  });
+
+  it("normalizes mixed stateless host defaults with stateful per-server overrides", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-stateful", "server-stateless"],
+        selectedServerNames: ["Excalidraw", "stateless"],
+        clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+        supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+        mcpProtocolVersionsByServerId: {
+          "server-stateful": "2025-11-25",
+          "server-stateless": "2026-07-28",
+        },
+        chatSessionId: "chat-session-mixed",
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(MCPClientManager).toHaveBeenCalledWith(
+      {
+        "server-stateful": expect.objectContaining({
+          url: "https://server-stateful.example.com/mcp",
+          supportedProtocolVersions: ["2025-11-25"],
+          mcpProtocolVersion: "2025-11-25",
+        }),
+        "server-stateless": expect.objectContaining({
+          url: "https://server-stateless.example.com/mcp",
+          supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+          mcpProtocolVersion: "2026-07-28",
+        }),
+      },
+      expect.any(Object)
     );
   });
 
@@ -347,6 +473,81 @@ describe("web routes — chat-v2 hosted mode", () => {
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(typeof persistArgs.hostConfig.temperature).toBe("number");
     expect(persistArgs.hostConfig.temperature).toBe(0.3);
+  });
+
+  it("carries outgoing sender metadata into persisted direct session messages", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-senders",
+        directVisibility: "project",
+        messages: [
+          {
+            role: "user",
+            content: "hello from alice",
+            metadata: { senderUserId: "u-alice" },
+          },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.sessionMessages).toEqual([
+      {
+        role: "user",
+        content: "preview request",
+        senderUserId: "u-alice",
+      },
+    ]);
+  });
+
+  it("does not persist spoofed sender metadata from the client", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-spoofed-sender",
+        directVisibility: "project",
+        messages: [
+          {
+            role: "user",
+            content: "hello from alice",
+            metadata: { senderUserId: "u-bob" },
+          },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.sessionMessages).toEqual([
+      {
+        role: "user",
+        content: "preview request",
+      },
+    ]);
   });
 
   it("returns server names in hosted oauth-required chat errors", async () => {

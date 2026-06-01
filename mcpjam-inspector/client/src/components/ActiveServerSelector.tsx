@@ -35,12 +35,13 @@ export interface ActiveServerSelectorProps {
    * Bulk-replace the multi-server selection. Wired in for the Playground
    * tab's host snapshot — picking a named host should toggle on the host's
    * required + optional servers in one shot, not per-server. Optional on
-   * the shared interface so the AppBuilder (single-select) doesn't need
-   * it.
+   * the shared interface so single-select callers don't need it.
    */
   onSelectMultipleServers?: (serverNames: string[]) => void;
   onConnect: (formData: ServerFormData) => void;
   onReconnect?: (serverName: string) => Promise<void>;
+  /** Disconnect a connected server (Playground toggle off = unplug). */
+  onDisconnect?: (serverName: string) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters

@@ -136,10 +136,10 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
         projectId: "project-1",
         serverId: "server-1",
       });
-      return new Response(
-        JSON.stringify({ accessToken: "new-token" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ accessToken: "new-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -164,15 +164,16 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
   it("surfaces refresh_token_invalid via the attached handler with serverName", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            success: false,
-            code: "refresh_token_invalid",
-            message: "Please reconnect.",
-          }),
-          { status: 401, headers: { "Content-Type": "application/json" } }
-        )
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "refresh_token_invalid",
+              message: "Please reconnect.",
+            }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          )
       )
     );
 
@@ -228,6 +229,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       url: string;
       useOAuth?: boolean;
       headers?: Record<string, string>;
+      hasHeaders?: boolean;
     };
     oauthAccessToken: string | null;
   }) {
@@ -244,7 +246,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           },
         },
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
+      { status: 200, headers: { "Content-Type": "application/json" } }
     );
   }
 
@@ -265,7 +267,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       if (url.endsWith("/web/oauth/force-refresh")) {
         return new Response(
           JSON.stringify({ accessToken: "refreshed-token" }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
+          { status: 200, headers: { "Content-Type": "application/json" } }
         );
       }
       throw new Error(`Unexpected fetch ${url}`);
@@ -277,7 +279,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       "bearer-xyz",
       "proj-1",
       "srv-1",
-      { serverDisplayName: "Excalidraw" },
+      { serverDisplayName: "Excalidraw" }
     );
 
     expect(config.requestInit.headers).toMatchObject({
@@ -311,13 +313,160 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       "bearer-xyz",
       "proj-1",
       "srv-2",
-      { serverDisplayName: "Excalidraw" },
+      { serverDisplayName: "Excalidraw" }
     );
 
     expect(config.requestInit.headers).toMatchObject({
       Authorization: "Bearer fresh-token",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses plaintext headers from authorize-batch-local without runtime reveal", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-headers",
+          serverConfig: {
+            transportType: "http",
+            url: "https://header.example.com/mcp",
+            useOAuth: false,
+            headers: { Authorization: "Bearer static-token" },
+            hasHeaders: true,
+          },
+          oauthAccessToken: null,
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-headers",
+      { serverDisplayName: "Header Server" }
+    );
+
+    expect(config.requestInit.headers).toMatchObject({
+      Authorization: "Bearer static-token",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reveals runtime headers only when authorize-batch-local omits them", async () => {
+    const fetchMock = vi.fn(async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-hidden-headers",
+          serverConfig: {
+            transportType: "http",
+            url: "https://hidden-header.example.com/mcp",
+            useOAuth: false,
+            headers: {},
+            hasHeaders: true,
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/server/reveal-secrets")) {
+        expect(init?.headers).toEqual({
+          "Content-Type": "application/json",
+          Authorization: "Bearer bearer-xyz",
+        });
+        expect(JSON.parse(init?.body)).toMatchObject({
+          purpose: "runtime",
+          projectId: "proj-1",
+          serverId: "srv-hidden-headers",
+        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            env: null,
+            headers: { Authorization: "Bearer revealed-token" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-hidden-headers",
+      { serverDisplayName: "Hidden Header Server" }
+    );
+
+    expect(config.requestInit.headers).toMatchObject({
+      Authorization: "Bearer revealed-token",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reveals runtime stdio env without a service token", async () => {
+    const fetchMock = vi.fn(async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-hidden-env": {
+                ok: true,
+                role: "owner",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "stdio",
+                  command: "node",
+                  args: ["server.js"],
+                  env: {},
+                  hasEnv: true,
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/server/reveal-secrets")) {
+        expect(init?.headers).toEqual({
+          "Content-Type": "application/json",
+          Authorization: "Bearer bearer-xyz",
+        });
+        expect(JSON.parse(init?.body)).toMatchObject({
+          purpose: "runtime",
+          projectId: "proj-1",
+          serverId: "srv-hidden-env",
+        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            env: { FOO: "revealed" },
+            headers: null,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-hidden-env",
+      { serverDisplayName: "Hidden Env Server" }
+    );
+
+    expect(config.env).toMatchObject({ FOO: "revealed" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("throws 401 with refreshTokenInvalid when force-refresh reports refresh_token_invalid", async () => {
@@ -341,7 +490,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             code: "refresh_token_invalid",
             message: "Reconnect required.",
           }),
-          { status: 401, headers: { "Content-Type": "application/json" } },
+          { status: 401, headers: { "Content-Type": "application/json" } }
         );
       }
       throw new Error(`Unexpected fetch ${url}`);
@@ -354,8 +503,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
         "bearer-xyz",
         "proj-1",
         "srv-3",
-        { serverDisplayName: "Excalidraw" },
-      ),
+        { serverDisplayName: "Excalidraw" }
+      )
     ).rejects.toMatchObject({
       status: 401,
       code: "UNAUTHORIZED",
@@ -388,7 +537,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             code: "rate_limited",
             message: "Too many refresh requests.",
           }),
-          { status: 429, headers: { "Content-Type": "application/json" } },
+          { status: 429, headers: { "Content-Type": "application/json" } }
         );
       }
       throw new Error(`Unexpected fetch ${url}`);
@@ -401,8 +550,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
         "bearer-xyz",
         "proj-1",
         "srv-4",
-        { serverDisplayName: "Excalidraw" },
-      ),
+        { serverDisplayName: "Excalidraw" }
+      )
     ).rejects.toMatchObject({
       status: 429,
       code: "rate_limited",

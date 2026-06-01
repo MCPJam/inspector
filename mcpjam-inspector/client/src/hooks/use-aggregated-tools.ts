@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { listTools } from "@/lib/apis/mcp-tools-api";
+import {
+  getApiContextRevision,
+  subscribeApiContext,
+} from "@/lib/apis/web/context";
 
 export interface ServerScopedTool {
   serverId: string;
@@ -35,15 +46,21 @@ export interface AggregatedToolsState {
  */
 export function useAggregatedTools(
   serverNames: string[],
+  options: { unavailableServerNames?: ReadonlyArray<string> } = {}
 ): AggregatedToolsState {
+  const apiContextRevision = useSyncExternalStore(
+    subscribeApiContext,
+    getApiContextRevision,
+    getApiContextRevision
+  );
   const [toolsByServer, setToolsByServer] = useState<Record<string, Tool[]>>(
-    {},
+    {}
   );
   const [loadingByServer, setLoadingByServer] = useState<
     Record<string, boolean>
   >({});
   const [errorByServer, setErrorByServer] = useState<Record<string, string>>(
-    {},
+    {}
   );
 
   // Stable key so the effect doesn't re-run when the parent passes a fresh
@@ -51,10 +68,18 @@ export function useAggregatedTools(
   // can't appear inside a serverName.
   const serversKey = useMemo(
     () => [...serverNames].sort().join("\x00"),
-    [serverNames],
+    [serverNames]
+  );
+  const unavailableServersKey = useMemo(
+    () => [...(options.unavailableServerNames ?? [])].sort().join("\x00"),
+    [options.unavailableServerNames]
   );
   const serverNamesRef = useRef<string[]>([]);
   serverNamesRef.current = serversKey ? serversKey.split("\x00") : [];
+  const unavailableServerNamesRef = useRef<string[]>([]);
+  unavailableServerNamesRef.current = unavailableServersKey
+    ? unavailableServersKey.split("\x00")
+    : [];
 
   // Monotonic token so a stale in-flight fetch can't clobber a fresher result
   // when the server set toggles or `refetch` is called mid-request.
@@ -70,14 +95,19 @@ export function useAggregatedTools(
       return;
     }
 
+    const unavailableSet = new Set(unavailableServerNamesRef.current);
+    const fetchableNames = names.filter((name) => !unavailableSet.has(name));
+
     // Prune state to the new server set synchronously so tools from
     // just-deselected servers disappear immediately rather than lingering
     // until the new fetch returns.
     const activeSet = new Set(names);
-    const pruneToActive = <V,>(prev: Record<string, V>): Record<string, V> => {
+    const pruneToActive = <V>(prev: Record<string, V>): Record<string, V> => {
       const next: Record<string, V> = {};
       for (const key of Object.keys(prev)) {
-        if (activeSet.has(key)) next[key] = prev[key];
+        if (activeSet.has(key) && !unavailableSet.has(key)) {
+          next[key] = prev[key];
+        }
       }
       return next;
     };
@@ -85,12 +115,18 @@ export function useAggregatedTools(
     setErrorByServer((prev) => pruneToActive(prev));
     setLoadingByServer((prev) => {
       const next = pruneToActive(prev);
-      for (const name of names) next[name] = true;
+      for (const name of names) {
+        next[name] = true;
+      }
       return next;
     });
 
+    if (fetchableNames.length === 0) {
+      return;
+    }
+
     const results = await Promise.all(
-      names.map(async (serverId) => {
+      fetchableNames.map(async (serverId) => {
         try {
           const data = await listTools({ serverId });
           return { serverId, tools: data.tools ?? [], error: null as null };
@@ -99,7 +135,7 @@ export function useAggregatedTools(
             err instanceof Error ? err.message : "Failed to fetch tools";
           return { serverId, tools: [], error: message };
         }
-      }),
+      })
     );
 
     if (token !== fetchTokenRef.current) return;
@@ -119,9 +155,12 @@ export function useAggregatedTools(
     setLoadingByServer(() => {
       const next: Record<string, boolean> = {};
       for (const { serverId } of results) next[serverId] = false;
+      for (const serverId of unavailableSet) {
+        if (activeSet.has(serverId)) next[serverId] = true;
+      }
       return next;
     });
-  }, [serversKey]);
+  }, [serversKey, apiContextRevision, unavailableServersKey]);
 
   useEffect(() => {
     void fetchAll();

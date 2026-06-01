@@ -44,11 +44,11 @@ describe("SidebarCreditUsage", () => {
 
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(screen.getByLabelText("Credit usage")).toBeInTheDocument();
-    expect(dailyRow).toHaveTextContent("Daily limit");
+    expect(dailyRow).toHaveTextContent("Free daily credits");
     expect(dailyRow).toHaveTextContent("12%");
     expect(dailyRow).toHaveTextContent("resets in 3h");
     expect(
-      screen.queryByText(/15× daily usage/i)
+      screen.queryByText(/15× the credits/i)
     ).not.toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe("SidebarCreditUsage", () => {
     expect(paidRow).toHaveTextContent("75% used");
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
     expect(
-      screen.queryByText(/15× daily usage/i)
+      screen.queryByText(/15× the credits/i)
     ).not.toBeInTheDocument();
   });
 
@@ -112,8 +112,10 @@ describe("SidebarCreditUsage", () => {
 
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(screen.getByTestId("sidebar-credit-usage")).toBeInTheDocument();
-    expect(dailyRow).toHaveTextContent("Sign in for 15× daily usage");
-    expect(dailyRow).toHaveTextContent("Daily limit");
+    expect(dailyRow).toHaveTextContent(
+      "Sign in for 15× the credits"
+    );
+    expect(dailyRow).toHaveTextContent("Free daily credits");
     expect(dailyRow).toHaveTextContent("65%");
     expect(dailyRow).toHaveTextContent("resets in 2h");
     expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
@@ -127,7 +129,63 @@ describe("SidebarCreditUsage", () => {
 
     expect(screen.getByTestId("sidebar-credit-usage")).toBeInTheDocument();
     expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
-      "Daily limit"
+      "Free daily credits"
     );
+  });
+
+  it("does NOT nest buttons when onClick is set AND the paid-credits tooltip renders (variant=full + paying user)", () => {
+    // The outer clickable wrapper used to be a <button>. Combined with the
+    // paid-credits row's tooltip trigger (also a <button>), this produced an
+    // invalid <button><button/></button> tree. Regression guard: outer
+    // wrapper is now a div with role=button, leaving the tooltip trigger as
+    // the only real <button> in the row.
+    balanceState = {
+      paidPercentRemaining: 40,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 10,
+      freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+    };
+    render(
+      <SidebarCreditUsage variant="full" onClick={() => undefined} />,
+    );
+    const wrapper = screen.getByTestId("sidebar-credit-usage");
+    // Wrapper is NOT a real <button>
+    expect(wrapper.tagName).toBe("DIV");
+    expect(wrapper).toHaveAttribute("role", "button");
+    // Tooltip trigger inside it is still a real focusable button
+    const tooltipTrigger = screen.getByRole("button", {
+      name: /About Paid credits/i,
+    });
+    expect(tooltipTrigger.tagName).toBe("BUTTON");
+  });
+
+  it("clicking the tooltip trigger does NOT fire the wrapper's onClick", async () => {
+    // Regression guard: clicking the info icon should show the tooltip
+    // only. It must not bubble up to the wrapper and navigate the user
+    // away from where they are.
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const onWrapperClick = vi.fn();
+    balanceState = {
+      paidPercentRemaining: 40,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 10,
+      freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+    };
+    render(<SidebarCreditUsage variant="full" onClick={onWrapperClick} />);
+
+    const tooltipTrigger = screen.getByRole("button", {
+      name: /About Paid credits/i,
+    });
+
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    await user.click(tooltipTrigger);
+
+    expect(onWrapperClick).not.toHaveBeenCalled();
+
+    // Sanity check the other direction: clicking the row body still fires.
+    const wrapper = screen.getByTestId("sidebar-credit-usage");
+    await user.click(wrapper);
+    expect(onWrapperClick).toHaveBeenCalled();
   });
 });

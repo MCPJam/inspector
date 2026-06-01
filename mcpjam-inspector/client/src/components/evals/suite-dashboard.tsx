@@ -3,6 +3,7 @@ import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { SuiteRunsList } from "./suite-runs-list";
 import { TestCasesOverview } from "./test-cases-overview";
+import type { CaseListHostMode } from "./case-list-host-toggle";
 import type {
   EvalCase,
   EvalIteration,
@@ -46,6 +47,12 @@ export interface SuiteDashboardProps {
   connectedServerNames?: Set<string>;
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   testCasesClickHint?: string;
+  /**
+   * Seeds the case section's "By case / By host" toggle on mount (e.g. from a
+   * `view=cross-host` deep-link). Local state thereafter — the dashboard chrome
+   * stays put and only the case section swaps to the matrix in place.
+   */
+  initialHostMode?: CaseListHostMode;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
 
@@ -70,6 +77,7 @@ export function SuiteDashboard({
   connectedServerNames,
   onDeleteTestCasesBatch,
   testCasesClickHint,
+  initialHostMode = "by-case",
   userMap,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
@@ -95,7 +103,9 @@ export function SuiteDashboard({
         <TestCasesOverview
           suite={suite}
           cases={cases}
+          runs={runs}
           allIterations={allIterations}
+          initialHostMode={initialHostMode}
           runsViewMode="test-cases"
           onViewModeChange={() => {}}
           onTestCaseClick={onTestCaseClick}

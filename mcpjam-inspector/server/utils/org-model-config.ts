@@ -25,8 +25,9 @@ export type ResolvedOrgModelConfig = {
 
 export type ResolveOrgModelConfigTarget =
   | { projectId: string }
-  | { workspaceId: string }
   | { organizationId: string };
+
+export type ResolveOrgProviderRuntimeTarget = { projectId: string };
 
 export type ResolveOrgModelConfigAuth = {
   authHeader?: string;
@@ -55,7 +56,10 @@ export type ResolveOrgModelConfigAuth = {
 const LOCAL_RUNTIME_ELIGIBLE_PROVIDERS = new Set(["ollama"]);
 
 export function isLocalRuntimeEligible(providerKey: string): boolean {
-  return LOCAL_RUNTIME_ELIGIBLE_PROVIDERS.has(providerKey);
+  return (
+    LOCAL_RUNTIME_ELIGIBLE_PROVIDERS.has(providerKey) ||
+    providerKey.startsWith("custom:")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -99,15 +103,19 @@ function normalizeServerIds(serverIds: string[] | undefined): string[] {
   ).sort();
 }
 
+function formatTargetForCache(
+  params: ResolveOrgModelConfigTarget | ResolveOrgProviderRuntimeTarget,
+): string {
+  return "projectId" in params
+    ? `project:${params.projectId}`
+    : `org:${params.organizationId}`;
+}
+
 function buildCacheKey(
   params: ResolveOrgModelConfigTarget,
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
-  const target = "projectId" in params
-    ? `project:${params.projectId}`
-    : "workspaceId" in params
-    ? `legacy-workspace:${params.workspaceId}`
-    : `org:${params.organizationId}`;
+  const target = formatTargetForCache(params);
   // Cache key hashes (chatboxId, accessVersion) so a link-token rotation
   // doesn't invalidate cache entries while an accessVersion bump (mode
   // change, revoke, allowlist edit) does.
@@ -187,7 +195,11 @@ export async function resolveOrgModelConfig(
       throw new Error(message);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      ok?: boolean;
+      error?: string;
+      providers?: ResolvedProviderConfig[];
+    };
     if (!data?.ok) {
       throw new Error(data?.error ?? "Failed to resolve org model config");
     }
@@ -476,7 +488,7 @@ function pruneRuntimeResolveCache(now: number): void {
 }
 
 function buildRuntimeCacheKey(
-  projectId: string,
+  target: ResolveOrgProviderRuntimeTarget,
   providerKey: string,
   model: string,
   auth: ResolveOrgModelConfigAuth | undefined,
@@ -495,7 +507,7 @@ function buildRuntimeCacheKey(
       }),
     )
     .digest("hex");
-  return `runtime:project:${projectId}:${providerKey}:${model}:auth:${authHash}`;
+  return `runtime:${formatTargetForCache(target)}:${providerKey}:${model}:auth:${authHash}`;
 }
 
 /**
@@ -515,13 +527,24 @@ export async function resolveOrgProviderRuntime(
   model: string,
   auth?: ResolveOrgModelConfigAuth,
 ): Promise<OrgProviderRuntime> {
+  return resolveOrgProviderRuntimeForTarget(
+    { projectId },
+    providerKey,
+    model,
+    auth,
+  );
+}
+
+export async function resolveOrgProviderRuntimeForTarget(
+  target: ResolveOrgProviderRuntimeTarget,
+  providerKey: string,
+  model: string,
+  auth?: ResolveOrgModelConfigAuth,
+): Promise<OrgProviderRuntime> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-
-  const cacheKey = buildRuntimeCacheKey(projectId, providerKey, model, auth);
+  const cacheKey = buildRuntimeCacheKey(target, providerKey, model, auth);
   const now = Date.now();
   pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
@@ -542,11 +565,10 @@ export async function resolveOrgProviderRuntime(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       body: JSON.stringify({
-        projectId,
+        ...target,
         providerKey,
         model,
         ...(auth?.chatboxId?.trim()
@@ -572,15 +594,29 @@ export async function resolveOrgProviderRuntime(
       throw new Error(message);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      ok?: boolean;
+      error?: string;
+      runtimeLocation?: string;
+      provider?: unknown;
+      providerKey?: unknown;
+    };
     if (!data?.ok) {
       throw new Error(data?.error ?? "Failed to resolve org provider runtime");
     }
 
     if (data.runtimeLocation === "local") {
-      const rawProvider = data.provider;
-      if (!rawProvider || typeof rawProvider.providerKey !== "string" || rawProvider.providerKey.length === 0) {
-        throw new Error("Org runtime resolve returned invalid local provider config");
+      const rawProvider = data.provider as
+        | Partial<OrgProviderResolvedConfig>
+        | undefined;
+      if (
+        !rawProvider ||
+        typeof rawProvider.providerKey !== "string" ||
+        rawProvider.providerKey.length === 0
+      ) {
+        throw new Error(
+          "Org runtime resolve returned invalid local provider config",
+        );
       }
       // SSRF guard: in hosted mode reject baseUrls that point to private,
       // loopback, link-local, or cloud-metadata addresses — including
@@ -599,7 +635,8 @@ export async function resolveOrgProviderRuntime(
       };
     } else {
       const resolvedKey =
-        typeof data.providerKey === "string" && data.providerKey.trim().length > 0
+        typeof data.providerKey === "string" &&
+        data.providerKey.trim().length > 0
           ? data.providerKey
           : providerKey;
       result = {

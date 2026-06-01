@@ -15,6 +15,12 @@ import {
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
 import {
+  applyVisibilityPolicyAndCountSignals,
+  buildHostIterationMetadata,
+  type HostExecutionPolicy,
+  type ToolExposureSignals,
+} from "./evals/host-execution-policy.js";
+import {
   finalizePassedForEval,
   isMcpAppTool,
   type MCPClientManager,
@@ -28,6 +34,10 @@ import { logger } from "../utils/logger";
 import { injectOpenAICompat } from "../utils/widget-helpers.js";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
+  deriveOrgProviderKey,
+  isLocalRuntimeEligible,
+  resolveOrgProviderRuntimeForTarget,
+  type ResolveOrgModelConfigTarget,
   type ResolvedOrgModelConfig,
 } from "../utils/org-model-config";
 import {
@@ -42,6 +52,10 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
+import {
+  buildIterationTranscript,
+  evaluatePredicates,
+} from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import {
   createSuiteRunRecorder,
@@ -80,6 +94,37 @@ import type {
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
 
+/**
+ * Turn a non-OK backend stream response into a human-readable message. The
+ * Convex stream endpoint returns structured JSON for guardrails like the daily
+ * spend cap — e.g. { code: "user_rate_limit", error: "Daily MCPJam model limit
+ * reached. Use BYOK or try again tomorrow.", details: "Try again in N minutes." }.
+ * Surface that instead of the bare HTTP status text ("Too Many Requests"), and
+ * flag 429s as expected guardrails (not faults) so callers can log them quietly.
+ */
+function describeBackendStreamError(
+  status: number,
+  bodyText: string,
+): { message: string; code?: string; expected: boolean } {
+  const expected = status === 429;
+  try {
+    const body = JSON.parse(bodyText) as {
+      code?: string;
+      error?: string;
+      details?: string;
+    };
+    if (body?.error) {
+      const message = body.details
+        ? `${body.error} ${body.details}`
+        : body.error;
+      return { message, code: body.code, expected };
+    }
+  } catch {
+    // body wasn't JSON — fall through to the generic shape
+  }
+  return { message: `Backend stream error: ${status} ${bodyText}`, expected };
+}
+
 export type EvalTestCase = {
   title: string;
   query: string;
@@ -105,6 +150,15 @@ export type EvalTestCase = {
    */
   matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
   /**
+   * Optional state-based predicate gate evaluated over the iteration
+   * transcript after tool-call matching. Definitions are runtime/corpus data
+   * in V1 (carried on the case object through the runner, like `matchOptions`);
+   * verdicts are persisted to `testIteration.metadata.predicates`. A case
+   * passes the predicate gate iff every predicate passes; an absent/empty list
+   * is no gate. See `shared/predicates`.
+   */
+  successPredicates?: import("@/shared/eval-matching").Predicate[];
+  /**
    * Per-Run override layered on top of the suite's hostConfig. Carries
    * the editor's in-place tweaks (locale, timezone, hostContext,
    * hostCapabilitiesOverride, hostStyle, etc.) for this iteration only.
@@ -124,6 +178,11 @@ export type RunEvalSuiteOptions = {
   config: {
     tests: EvalTestCase[];
     environment: {
+      /**
+       * Legacy display/compat refs. These may be friendly names, not
+       * connected server identities; preserve serverBindings with any
+       * snapshotted environment before resolving tools for execution.
+       */
       servers: string[];
       serverBindings?: Array<{
         serverName: string;
@@ -133,6 +192,7 @@ export type RunEvalSuiteOptions = {
   };
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -140,6 +200,22 @@ export type RunEvalSuiteOptions = {
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
+  /**
+   * Resolved compat-runtime flag for the suite's host config. When
+   * true, widget snapshots captured during this run will have the
+   * OpenAI Apps SDK `window.openai` shim injected before they're
+   * persisted. Default `false` — caller (route handler) resolves
+   * from the suite's `mcpProfile.apps.compatRuntime` + `hostStyle`
+   * preset. Absent/undefined preserves SEP-1865 honest behavior.
+   */
+  suiteInjectOpenAiCompat?: boolean;
+  /**
+   * Host execution policy extracted from the run's hostConfig snapshot.
+   * When present, the runner applies visibility filtering, computes tool
+   * exposure signals, and stamps scalar metadata on each iteration for the
+   * cross-host dashboard.
+   */
+  hostExecutionPolicy?: HostExecutionPolicy;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -147,6 +223,21 @@ export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
 };
+
+/**
+ * True when the provider/backend actually reported token usage. `accumulatedUsage`
+ * is initialized to a zero object, so a zero total is indistinguishable from
+ * "unmetered" — passing that into the transcript would let `tokenBudgetUnder`
+ * pass on runs with no usage data. Only forward usage when something was
+ * reported so the predicate can fail closed otherwise.
+ */
+function hasReportedUsage(usage: UsageTotals): boolean {
+  return (
+    (usage.totalTokens ?? 0) > 0 ||
+    (usage.inputTokens ?? 0) > 0 ||
+    (usage.outputTokens ?? 0) > 0
+  );
+}
 
 export type RunEvalSuiteWithAiSdkResult = {
   /** Only set when `runId === null` (quick run); one entry per (test × run index) in suite order. */
@@ -408,6 +499,13 @@ async function captureEvalTraceWidgetSnapshots(params: {
   messages: ModelMessage[];
   mcpClientManager: MCPClientManager;
   convexClient: ConvexHttpClient;
+  /**
+   * Whether to inject the OpenAI Apps SDK `window.openai` shim into the
+   * captured widget HTML. Resolved upstream from the suite's host
+   * config (preset + override). Default `false` — SEP-1865 honest
+   * behavior, matching the rest of the widget injection paths.
+   */
+  injectOpenAiCompat?: boolean;
 }): Promise<EvalTraceWidgetSnapshot[] | undefined> {
   const sources = collectToolSnapshotSources(params.messages);
   if (sources.length === 0) {
@@ -476,12 +574,15 @@ async function captureEvalTraceWidgetSnapshots(params: {
             return snapshot;
           }
 
-          const widgetHtml = injectOpenAICompat(html, {
-            toolId: source.toolCallId,
-            toolName: source.toolName,
-            toolInput: source.toolInput,
-            toolOutput: source.toolOutput,
-          });
+          const shouldInjectOpenAiCompat = params.injectOpenAiCompat === true;
+          const widgetHtml = shouldInjectOpenAiCompat
+            ? injectOpenAICompat(html, {
+                toolId: source.toolCallId,
+                toolName: source.toolName,
+                toolInput: source.toolInput,
+                toolOutput: source.toolOutput,
+              })
+            : html;
           const widgetHtmlBlobId = await uploadEvalWidgetHtmlBlob(
             params.convexClient,
             widgetHtml,
@@ -489,6 +590,10 @@ async function captureEvalTraceWidgetSnapshots(params: {
           if (widgetHtmlBlobId) {
             snapshot.widgetHtmlBlobId = widgetHtmlBlobId;
           }
+          // Stamp the flag onto the snapshot so the replay viewer can
+          // distinguish "captured with shim" from "captured without"
+          // without re-reading the bytes.
+          snapshot.injectedOpenAiCompat = shouldInjectOpenAiCompat;
         } catch (error) {
           logger.warn("[evals] Failed to capture MCP App widget snapshot", {
             toolCallId: source.toolCallId,
@@ -992,7 +1097,12 @@ async function finishIterationDirectly(
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
-      metadata: params.metadata,
+      // Sanitize like the recorder path: metadata now carries nested
+      // predicate rows whose authored args may contain $-prefixed keys
+      // Convex rejects at the arg boundary.
+      metadata: params.metadata
+        ? sanitizeForConvexTransport(params.metadata)
+        : params.metadata,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1023,6 +1133,7 @@ type RunIterationBaseParams = {
   suiteId?: string;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
@@ -1034,6 +1145,18 @@ type RunIterationBaseParams = {
    * #1 finishes.
    */
   precreatedIterationId?: string;
+  /**
+   * Suite-level resolved compat-runtime flag — propagated from
+   * `RunEvalSuiteOptions.suiteInjectOpenAiCompat`. When true, widget
+   * snapshots captured during this iteration get the OpenAI Apps SDK
+   * `window.openai` shim injected before persistence. Default behavior
+   * (absent/undefined or false) leaves snapshots un-shimmed.
+   */
+  injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy from the run's hostConfig snapshot. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
+  toolSignals?: ToolExposureSignals;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1044,6 +1167,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
+  endpointPath?: "/stream" | "/stream/org";
+  extraBodyFields?: Record<string, unknown>;
 };
 
 function parseCustomProviderName(modelId: string): string | undefined {
@@ -1120,6 +1245,102 @@ function resolveEvalModelRuntime(args: {
   };
 }
 
+function hasExplicitModelApiKeys(
+  modelApiKeys: Record<string, string> | undefined,
+): boolean {
+  return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
+}
+
+function readBackendUsage(usage: unknown): {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+} {
+  const record =
+    usage && typeof usage === "object"
+      ? (usage as Record<string, unknown>)
+      : {};
+  const inputTokens =
+    typeof record.inputTokens === "number"
+      ? record.inputTokens
+      : typeof record.promptTokens === "number"
+        ? record.promptTokens
+        : 0;
+  const outputTokens =
+    typeof record.outputTokens === "number"
+      ? record.outputTokens
+      : typeof record.completionTokens === "number"
+        ? record.completionTokens
+        : 0;
+  const totalTokens =
+    typeof record.totalTokens === "number" ? record.totalTokens : 0;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function resolveOrgTargetForEval(
+  test: EvalTestCase,
+  explicitTarget?: ResolveOrgModelConfigTarget,
+): ResolveOrgModelConfigTarget | undefined {
+  if (explicitTarget) return explicitTarget;
+  const maybeProjectId = (test as { projectId?: unknown }).projectId;
+  if (typeof maybeProjectId === "string" && maybeProjectId.trim()) {
+    return { projectId: maybeProjectId.trim() };
+  }
+  return undefined;
+}
+
+async function resolveOrgByokEvalRuntime(args: {
+  test: EvalTestCase;
+  modelDefinition: ModelDefinition;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
+  convexAuthToken: string;
+}): Promise<
+  | {
+      kind: "cloud";
+      providerKey: string;
+      target: ResolveOrgModelConfigTarget;
+    }
+  | {
+      kind: "local";
+      orgModelConfig: ResolvedOrgModelConfig;
+    }
+  | undefined
+> {
+  if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
+
+  const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
+  if (!providerKeyResult.ok) return undefined;
+
+  const target = resolveOrgTargetForEval(args.test, args.orgModelConfigTarget);
+  if (!target) return undefined;
+
+  const providerKey = providerKeyResult.key;
+  if (!isLocalRuntimeEligible(providerKey)) {
+    return { kind: "cloud", providerKey, target };
+  }
+
+  if ("organizationId" in target) {
+    return { kind: "cloud", providerKey, target };
+  }
+
+  const runtime = await resolveOrgProviderRuntimeForTarget(
+    target,
+    providerKey,
+    String(args.modelDefinition.id),
+    { bearerToken: args.convexAuthToken },
+  );
+  if (runtime.runtimeLocation === "cloud") {
+    return { kind: "cloud", providerKey: runtime.providerKey, target };
+  }
+
+  return {
+    kind: "local",
+    orgModelConfig: { providers: [runtime.provider] },
+  };
+}
+
 const runIterationWithAiSdk = async ({
   test,
   runIndex,
@@ -1136,6 +1357,9 @@ const runIterationWithAiSdk = async ({
   abortSignal,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1428,18 +1652,35 @@ const runIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usage: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -1460,6 +1701,15 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1536,7 +1786,7 @@ const runIterationWithAiSdk = async ({
       test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -1563,6 +1813,14 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1588,11 +1846,16 @@ const runIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  extraBodyFields,
   convexClient,
   runId,
   abortSignal,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1759,7 +2022,7 @@ const runIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -1774,18 +2037,27 @@ const runIterationViaBackend = async ({
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
+            ...(extraBodyFields ?? {}),
           }),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -1824,16 +2096,13 @@ const runIterationViaBackend = async ({
           break;
         }
 
-        if (json.usage) {
-          accumulatedUsage.inputTokens =
-            (accumulatedUsage.inputTokens || 0) +
-            (json.usage.promptTokens || 0);
-          accumulatedUsage.outputTokens =
-            (accumulatedUsage.outputTokens || 0) +
-            (json.usage.completionTokens || 0);
-          accumulatedUsage.totalTokens =
-            (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
-        }
+        const stepUsage = readBackendUsage(json.usage);
+        accumulatedUsage.inputTokens =
+          (accumulatedUsage.inputTokens || 0) + stepUsage.inputTokens;
+        accumulatedUsage.outputTokens =
+          (accumulatedUsage.outputTokens || 0) + stepUsage.outputTokens;
+        accumulatedUsage.totalTokens =
+          (accumulatedUsage.totalTokens || 0) + stepUsage.totalTokens;
 
         for (const msg of json.messages as any[]) {
           if (msg?.role === "assistant" && Array.isArray(msg.content)) {
@@ -1924,9 +2193,9 @@ const runIterationViaBackend = async ({
               },
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -1952,9 +2221,9 @@ const runIterationViaBackend = async ({
               failAbs,
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -1983,9 +2252,9 @@ const runIterationViaBackend = async ({
             undefined,
             {
               modelId,
-              inputTokens: json.usage?.promptTokens,
-              outputTokens: json.usage?.completionTokens,
-              totalTokens: json.usage?.totalTokens,
+              inputTokens: stepUsage.inputTokens,
+              outputTokens: stepUsage.outputTokens,
+              totalTokens: stepUsage.totalTokens,
               messageStartIndex:
                 stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
               messageEndIndex: stepMessageEndIndex,
@@ -2075,13 +2344,30 @@ const runIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
-  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -2104,6 +2390,15 @@ const runIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -2126,6 +2421,7 @@ const runTestCase = async (params: {
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -2134,6 +2430,12 @@ const runTestCase = async (params: {
   runId: string | null;
   abortSignal?: AbortSignal;
   compareRunId?: string;
+  /** Suite-level compat-runtime flag; forwarded to each iteration. */
+  injectOpenAiCompat?: boolean;
+  /** Host execution policy for metadata stamping. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for metadata stamping. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -2142,6 +2444,7 @@ const runTestCase = async (params: {
     recorder,
     modelApiKeys,
     orgModelConfig,
+    orgModelConfigTarget,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -2150,6 +2453,9 @@ const runTestCase = async (params: {
     runId,
     abortSignal,
     compareRunId,
+    injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2161,6 +2467,16 @@ const runTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgByokRuntime = isJamModel
+    ? undefined
+    : await resolveOrgByokEvalRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        convexAuthToken,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -2235,6 +2551,42 @@ const runTestCase = async (params: {
         abortSignal,
         compareRunId,
         precreatedIterationId,
+        injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
+      });
+      outcomes.push(iterationOutcome);
+      continue;
+    }
+
+    if (orgByokRuntime?.kind === "cloud") {
+      const iterationOutcome = await runIterationViaBackend({
+        test,
+        runIndex,
+        tools,
+        mcpClientManager,
+        recorder,
+        testCaseId,
+        suiteId,
+        convexHttpUrl,
+        convexAuthToken,
+        modelId: String(modelDefinition.id),
+        endpointPath: "/stream/org",
+        extraBodyFields: {
+          providerKey: orgByokRuntime.providerKey,
+          ...orgByokRuntime.target,
+        },
+        convexClient,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        runId,
+        abortSignal,
+        compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2250,12 +2602,19 @@ const runTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
-      orgModelConfig,
+      orgModelConfig:
+        orgByokRuntime?.kind === "local"
+          ? orgByokRuntime.orgModelConfig
+          : orgModelConfig,
+      orgModelConfigTarget,
       convexClient,
       runId,
       abortSignal,
       compareRunId,
       precreatedIterationId,
+      injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2269,6 +2628,7 @@ export const runEvalSuiteWithAiSdk = async ({
   config,
   modelApiKeys,
   orgModelConfig,
+  orgModelConfigTarget,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
@@ -2276,7 +2636,10 @@ export const runEvalSuiteWithAiSdk = async ({
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
+  suiteInjectOpenAiCompat,
+  hostExecutionPolicy,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
   const serverIds = resolveConfiguredServerIds({
     environment: config.environment,
@@ -2298,7 +2661,28 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         }));
 
-  const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+  // When a host policy is present we need the full tool set (including
+  // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+  //   1. Count `toolsTotalBefore` honestly, and
+  //   2. Keep app-only tools when the host opted out of visibility filtering.
+  // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+  // sees a partial set — drops are reported as 0 even when tools were hidden.
+  const tools = (hostExecutionPolicy
+    ? await mcpClientManager.getToolsForAiSdk(serverIds, {
+        includeAppOnly: true,
+      })
+    : await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+
+  // Apply visibility filtering when a host policy is present. The filter
+  // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+  // runners see the post-filter set.
+  const resolvedToolSignals = hostExecutionPolicy
+    ? applyVisibilityPolicyAndCountSignals(
+        tools as Record<string, unknown>,
+        mcpClientManager,
+        hostExecutionPolicy,
+      )
+    : undefined;
 
   // Note: Iterations are now pre-created in startSuiteRunWithRecorder
   // This code is no longer needed as precreateIterationsForRun is called there
@@ -2342,6 +2726,7 @@ export const runEvalSuiteWithAiSdk = async ({
         recorder,
         modelApiKeys,
         orgModelConfig,
+        orgModelConfigTarget,
         convexHttpUrl,
         convexAuthToken,
         convexClient,
@@ -2350,6 +2735,9 @@ export const runEvalSuiteWithAiSdk = async ({
         suiteId,
         runId,
         abortSignal: abortController.signal,
+        injectOpenAiCompat,
+        hostPolicy: hostExecutionPolicy,
+        toolSignals: resolvedToolSignals,
       }),
     );
 
@@ -2508,6 +2896,9 @@ const streamIterationWithAiSdk = async ({
   emit,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2880,18 +3271,35 @@ const streamIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usageFinal: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -2912,6 +3320,15 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -2986,7 +3403,7 @@ const streamIterationWithAiSdk = async ({
       test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -3039,6 +3456,14 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -3064,12 +3489,17 @@ const streamIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  extraBodyFields,
   convexClient,
   runId,
   abortSignal,
   emit,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3243,7 +3673,7 @@ const streamIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -3258,18 +3688,27 @@ const streamIterationViaBackend = async ({
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
+            ...(extraBodyFields ?? {}),
           }),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -3782,13 +4221,30 @@ const streamIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
-  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -3811,6 +4267,15 @@ const streamIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -3833,6 +4298,7 @@ export const streamTestCase = async (params: {
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -3842,6 +4308,17 @@ export const streamTestCase = async (params: {
   abortSignal?: AbortSignal;
   emit: StreamEmit;
   compareRunId?: string;
+  /**
+   * Resolved compat-runtime flag for the suite. Forwarded to widget
+   * snapshot capture in each iteration so persisted blobs match the
+   * host config's `mcpProfile.apps.compatRuntime`. Absent → default
+   * off (SEP-1865 honest behavior).
+   */
+  injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy (mirrors runEvalSuiteWithAiSdk). */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for the stream run. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -3850,6 +4327,7 @@ export const streamTestCase = async (params: {
     recorder,
     modelApiKeys,
     orgModelConfig,
+    orgModelConfigTarget,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -3859,6 +4337,9 @@ export const streamTestCase = async (params: {
     abortSignal,
     emit,
     compareRunId,
+    injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -3870,6 +4351,16 @@ export const streamTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgByokRuntime = isJamModel
+    ? undefined
+    : await resolveOrgByokEvalRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        convexAuthToken,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -3948,6 +4439,43 @@ export const streamTestCase = async (params: {
         emit,
         compareRunId,
         precreatedIterationId,
+        injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
+      });
+      outcomes.push(iterationOutcome);
+      continue;
+    }
+
+    if (orgByokRuntime?.kind === "cloud") {
+      const iterationOutcome = await streamIterationViaBackend({
+        test,
+        runIndex,
+        tools,
+        mcpClientManager,
+        recorder,
+        testCaseId,
+        suiteId,
+        convexHttpUrl,
+        convexAuthToken,
+        modelId: String(modelDefinition.id),
+        endpointPath: "/stream/org",
+        extraBodyFields: {
+          providerKey: orgByokRuntime.providerKey,
+          ...orgByokRuntime.target,
+        },
+        convexClient,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        runId,
+        abortSignal,
+        emit,
+        compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -3963,13 +4491,20 @@ export const streamTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
-      orgModelConfig,
+      orgModelConfig:
+        orgByokRuntime?.kind === "local"
+          ? orgByokRuntime.orgModelConfig
+          : orgModelConfig,
+      orgModelConfigTarget,
       convexClient,
       runId,
       abortSignal,
       emit,
       compareRunId,
       precreatedIterationId,
+      injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }

@@ -19,6 +19,7 @@ import {
   useCallback,
   useRef,
   useLayoutEffect,
+  useSyncExternalStore,
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
@@ -27,14 +28,17 @@ import {
   DefaultChatTransport,
   generateId,
   lastAssistantMessageIsCompleteWithApprovalResponses,
+  lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
+import {
+  useAppToolsRegistry,
+  recordAppToolInvocation,
+} from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import {
-  ModelDefinition,
-  type ModelProvider,
-} from "@/shared/types";
+import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -69,7 +73,10 @@ import {
 } from "@/lib/mcpjam-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
-import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
+import {
+  preserveHydratedMessageIds,
+  transcriptToUIMessages,
+} from "@/lib/transcript-to-ui-messages";
 import {
   getCachedBlobJson,
   invalidateChatHistoryPrefetch,
@@ -82,6 +89,7 @@ import {
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
   getTraceSpansDurationMs,
   mergeLiveChatTraceUsage,
@@ -101,13 +109,114 @@ import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import {
+  buildResolvedServerBatchRequest,
+  getApiContextRevision,
+  subscribeApiContext,
+} from "@/lib/apis/web/context";
+
+const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
+
+// SEP-1865 App-Provided Tools: opaque alias shape minted by
+// `useAppToolsRegistry`. Mirrors the regex in `app-tools-registry.ts`,
+// `shared/http-tool-calls.ts`, and the server-side validators — kept
+// local to avoid coupling the hook to the registry's `__internal` export.
+const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+
+function resolveSystemPrompt(value: string | null | undefined): string {
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : DEFAULT_SYSTEM_PROMPT;
+}
+
+function applyGuestModelLocks(
+  models: ModelDefinition[],
+  isAuthenticated: boolean
+): ModelDefinition[] {
+  if (isAuthenticated) return models;
+
+  return models.map((model) => {
+    const modelId = String(model.id);
+    if (!isMCPJamProvidedModel(modelId) || isMCPJamGuestAllowedModel(modelId)) {
+      return model;
+    }
+
+    return {
+      ...model,
+      disabled: true,
+      disabledReason: GUEST_LOCKED_MODEL_REASON,
+    };
+  });
+}
+
+function appendDetectedLocalOllamaModels(
+  models: ModelDefinition[],
+  isOllamaRunning: boolean,
+  ollamaModels: ModelDefinition[]
+): ModelDefinition[] {
+  if (!isOllamaRunning || ollamaModels.length === 0) return models;
+  return models.concat(
+    ollamaModels.filter(
+      (ollamaModel) =>
+        !models.some((model) => String(model.id) === String(ollamaModel.id))
+    )
+  );
+}
+
+function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
+  if (model.provider === "custom") {
+    return model.customProviderName
+      ? `custom:${model.customProviderName}`
+      : null;
+  }
+  return model.provider;
+}
+
+function isOrgManagedModel(
+  orgConfig: OrgVisibleConfig | undefined,
+  model: ModelDefinition
+): boolean {
+  if (isMCPJamProvidedModel(String(model.id))) return false;
+  const providerKey = getOrgProviderKeyForModel(model);
+  if (!providerKey) return false;
+  const provider = orgConfig?.providers.find(
+    (p) => p.providerKey === providerKey && p.enabled
+  );
+  if (!provider) return false;
+
+  if (provider.providerKey === "ollama") {
+    return Boolean(
+      provider.baseUrl && provider.modelIds?.includes(String(model.id))
+    );
+  }
+
+  if (provider.providerKey.startsWith("custom:")) {
+    const prefix = `${provider.providerKey}:`;
+    const modelId = String(model.id).startsWith(prefix)
+      ? String(model.id).slice(prefix.length)
+      : String(model.id);
+    return Boolean(provider.baseUrl && provider.modelIds?.includes(modelId));
+  }
+
+  if (
+    provider.providerKey === "openrouter" &&
+    provider.selectedModels &&
+    provider.selectedModels.length > 0
+  ) {
+    return (
+      provider.hasSecret && provider.selectedModels.includes(String(model.id))
+    );
+  }
+
+  return provider.hasSecret;
+}
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
   selectedServers: string[];
   /** Visibility to apply when persisting a new direct chat */
   directVisibility?: "private" | "project";
-  /** Sanitized organization provider config for hosted org-backed projects */
+  /** Sanitized organization provider config for org-backed projects */
   hostedOrgModelConfig?: OrgVisibleConfig;
   /** Hosted runtime context (project, server IDs, OAuth tokens, share/chatbox scope) */
   hostedContext?: HostedRuntimeContext;
@@ -123,6 +232,25 @@ export interface UseChatSessionOptions {
    * backend resolves chatbox host style from the chatbox row.
    */
   hostStyle?: "claude" | "chatgpt";
+  /**
+   * Host-level opt-in for progressive MCP tool discovery
+   * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
+   * caller's resolved host config DTO (per-chatbox, per-host playground
+   * column, or project default — caller knows). `undefined` ⇒ backend
+   * orchestrator uses its auto policy; `true`/`false` ⇒ explicit
+   * host-level override that the orchestrator forwards into
+   * `prepareChatV2.progressiveToolDiscovery.enabled`. Held in a ref so a
+   * mid-session toggle flip is reflected on the next send.
+   */
+  progressiveToolDiscovery?: boolean;
+  /**
+   * Host-level SEP-1865 visibility policy. When false, tools marked
+   * `visibility: ["app"]` are still advertised to the model, matching
+   * clients that do not implement visibility filtering. Sourced from the
+   * caller's resolved host config; held in a ref so client/profile flips
+   * affect the next send without remounting.
+   */
+  respectToolVisibility?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -152,6 +280,11 @@ export interface UseChatSessionReturn {
       filename?: string;
       url: string;
     }>;
+    /** Stamped onto the outgoing UIMessage so transcript renderers can
+     *  attribute it before persistence round-trips (shared sessions). */
+    metadata?: Record<string, unknown>;
+    /** Ephemeral SEP-1865 widget context for the next model turn. */
+    widgetModelContext?: WidgetModelContextEntry[];
   }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
@@ -218,6 +351,7 @@ export interface UseChatSessionReturn {
         systemPrompt?: string;
         temperature?: number;
         requireToolApproval?: boolean;
+        respectToolVisibility?: boolean;
         selectedServers?: string[];
       };
       version: number;
@@ -272,8 +406,6 @@ export interface UseChatSessionReturn {
   submitBlocked: boolean;
   inputDisabled: boolean;
 }
-
-const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
 
 function inferModelProviderFromId(modelId: string): ModelProvider {
   const providerPrefix = modelId.split("/")[0];
@@ -600,6 +732,12 @@ function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
   event: LiveChatTraceEvent
 ): LiveTraceAccumulatorState {
+  // Heartbeat events carry no state. Drop them before any allocation so a
+  // long idle stream doesn't bloat the visible event list or trigger
+  // re-renders that depend on `state.events.length`.
+  if (event.type === "heartbeat") {
+    return state;
+  }
   const nextEvents = [...state.events, event];
   const baseState: LiveTraceAccumulatorState = {
     ...state,
@@ -964,13 +1102,17 @@ export function useChatSession(
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const requestRefreshAccessVersion = hostedContext?.requestRefreshAccessVersion;
+  const requestRefreshAccessVersion =
+    hostedContext?.requestRefreshAccessVersion;
   const initialModelId = executionConfig?.modelId;
-  const initialSystemPrompt =
-    executionConfig?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const initialSystemPrompt = resolveSystemPrompt(
+    executionConfig?.systemPrompt
+  );
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
+  const initialRespectToolVisibility =
+    executionConfig?.respectToolVisibility ?? true;
   const {
     getAccessToken,
     user: workOsUser,
@@ -1000,7 +1142,10 @@ export function useChatSession(
   >(undefined);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
-  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
+  const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
+  const setSystemPrompt = useCallback((prompt: string) => {
+    setSystemPromptState(resolveSystemPrompt(prompt));
+  }, []);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
   const chatSessionIdRef = useRef(chatSessionId);
@@ -1040,12 +1185,34 @@ export function useChatSession(
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+
+  // Host-level progressive tool discovery toggle. The value comes from the
+  // caller — each useChatSession site knows which host config row applies
+  // to its chat surface (per-host playground column, per-chatbox session,
+  // project default for direct chat, etc.) — and the hook just threads it
+  // into the request body. Held in a ref so a mid-session flip is
+  // reflected on the very next send without remounting.
+  const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
+  // Prefer the top-level option when set (used by paths that don't go
+  // through ExecutionConfig — e.g. the playground per-host column), but
+  // fall back to executionConfig so direct chat / multi-model surfaces
+  // can forward the host's HostConfigV2.progressiveToolDiscovery field
+  // through their existing config plumbing without adding a parallel
+  // option at every call site.
+  progressiveToolDiscoveryRef.current =
+    options.progressiveToolDiscovery ??
+    options.executionConfig?.progressiveToolDiscovery;
+  const [respectToolVisibility, setRespectToolVisibility] = useState(
+    initialRespectToolVisibility
+  );
+  const respectToolVisibilityRef = useRef<boolean>(respectToolVisibility);
+  respectToolVisibilityRef.current =
+    options.respectToolVisibility ??
+    options.executionConfig?.respectToolVisibility ??
+    respectToolVisibility;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
-    isHostedGuest &&
-    !isAuthLoading &&
-    !!hostedProjectId &&
-    !!hostedChatboxId;
+    isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedChatboxId;
   const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
@@ -1065,6 +1232,11 @@ export function useChatSession(
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
     [selectedServers]
+  );
+  const apiContextRevision = useSyncExternalStore(
+    subscribeApiContext,
+    getApiContextRevision,
+    getApiContextRevision
   );
   const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
@@ -1124,7 +1296,17 @@ export function useChatSession(
 
   // Build available models
   const availableModels = useMemo(() => {
-    const models = buildAvailableModels({
+    if ((hostedOrgModelConfig?.providers.length ?? 0) > 0) {
+      const orgModels = buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
+      const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
+        orgModels,
+        isOllamaRunning,
+        ollamaModels
+      );
+      return applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated);
+    }
+
+    const localModels = buildAvailableModels({
       hasToken,
       getOpenRouterSelectedModels,
       isOllamaRunning,
@@ -1132,45 +1314,8 @@ export function useChatSession(
       getAzureBaseUrl,
       customProviders,
     });
-    const visibleModels = !isAuthenticated
-      ? models.map((model) => {
-          const modelId = String(model.id);
-          if (
-            !isMCPJamProvidedModel(modelId) ||
-            isMCPJamGuestAllowedModel(modelId)
-          ) {
-            return model;
-          }
-
-          return {
-            ...model,
-            disabled: true,
-            disabledReason: GUEST_LOCKED_MODEL_REASON,
-          };
-        })
-      : models;
+    const visibleModels = applyGuestModelLocks(localModels, isAuthenticated);
     if (HOSTED_MODE) {
-      if (hostedOrgModelConfig) {
-        const orgModels =
-          buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
-        return !isAuthenticated
-          ? orgModels.map((model) => {
-              const modelId = String(model.id);
-              if (
-                !isMCPJamProvidedModel(modelId) ||
-                isMCPJamGuestAllowedModel(modelId)
-              ) {
-                return model;
-              }
-
-              return {
-                ...model,
-                disabled: true,
-                disabledReason: GUEST_LOCKED_MODEL_REASON,
-              };
-            })
-          : orgModels;
-      }
       return visibleModels.filter((model) =>
         isMCPJamProvidedModel(String(model.id))
       );
@@ -1250,7 +1395,13 @@ export function useChatSession(
       ? isMCPJamProvidedModel(String(selectedModel.id))
       : false;
   }, [selectedModel]);
-  const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
+  const selectedModelUsesOrgRuntime = useMemo(
+    () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
+    [hostedOrgModelConfig, selectedModel]
+  );
+  const traceViewsSupported = HOSTED_MODE
+    ? isMcpJamModel || selectedModelUsesOrgRuntime
+    : true;
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1291,7 +1442,12 @@ export function useChatSession(
   }, []);
 
   // Create transport
+  const pendingWidgetModelContextRef = useRef<
+    WidgetModelContextEntry[] | undefined
+  >(undefined);
+
   const transport = useMemo(() => {
+    const shouldUseOrgAwareChatApi = HOSTED_MODE || selectedModelUsesOrgRuntime;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -1316,35 +1472,45 @@ export function useChatSession(
       ? mergedHeaders
       : undefined;
 
-    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
+    const chatApi = shouldUseOrgAwareChatApi
+      ? "/api/web/chat-v2"
+      : "/api/mcp/chat-v2";
 
     // Hosted dashboard guests and signed-in users both require a project id.
     // Submit is blocked until hostedProjectId and selected server ids resolve.
     const buildHostedBody = () => {
       if (!hostedProjectId) {
-        throw new Error(
-          "Hosted chat context is not ready: missing projectId."
-        );
+        throw new Error("Hosted chat context is not ready: missing projectId.");
       }
       const isHostedDirectChat = !hostedChatboxId;
-      return {
+      const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
-        chatSessionId,
-        selectedServerIds: hostedSelectedServerIds,
-        selectedServerNames: selectedServers,
-        accessScope: "chat_v2" as const,
-        ...(isHostedDirectChat ? { directVisibility } : {}),
-        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-        ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
-          ? { accessVersion: hostedAccessVersion }
-          : {}),
-        ...(hostedChatboxId && hostedChatboxSurface
-          ? { surface: hostedChatboxSurface }
-          : {}),
+        serverIds: hostedSelectedServerIds,
+        serverNames: selectedServers,
+        accessScope: "chat_v2",
         ...(isHostedDirectChat &&
         hostedOAuthTokens &&
         Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
+          : {}),
+        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+        ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+          ? { accessVersion: hostedAccessVersion }
+          : {}),
+      });
+      const {
+        serverIds: resolvedServerIds,
+        serverNames: resolvedServerNames,
+        ...hostedServerBatchPins
+      } = hostedServerBatch;
+      return {
+        ...hostedServerBatchPins,
+        selectedServerIds: resolvedServerIds,
+        selectedServerNames: resolvedServerNames,
+        chatSessionId,
+        ...(isHostedDirectChat ? { directVisibility } : {}),
+        ...(hostedChatboxId && hostedChatboxSurface
+          ? { surface: hostedChatboxSurface }
           : {}),
       };
     };
@@ -1352,65 +1518,94 @@ export function useChatSession(
     return new DefaultChatTransport({
       api: chatApi,
       fetch: chatFetch,
-      body: () => ({
-        model: selectedModel,
-        ...(HOSTED_MODE ? {} : { apiKey }),
-        // Always send the user's slider value. The server's `prepareChatV2`
-        // already drops temperature for GPT-5 before the LLM call (its API
-        // rejects the field), so what lands here is purely the user's
-        // intended config — and ingestion's hostConfig dedupes on it. If we
-        // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
-        // helper's 0.7 fallback regardless of the slider.
-        temperature,
-        systemPrompt,
-        ...(HOSTED_MODE
-          ? buildHostedBody()
-          : {
-              selectedServers,
-              chatSessionId,
-              // `directVisibility` only applies to direct chat. The
-              // /mcp/chat-v2 route gates it off when chatboxId is present
-              // (owner-preview persists as `sourceType: "chatbox"`), but
-              // omitting it client-side keeps the body honest about the
-              // session kind.
-              ...(hostedChatboxId ? {} : { directVisibility }),
-              // Pass projectId for BYOK direct-chat history persistence
-              ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
-              // Convex server Ids parallel to `selectedServers`. Only sent
-              // when every name resolved to an Id — a partial mapping would
-              // hash to a different hostConfig than intended. Without this,
-              // the MCP route can't safely emit `hostConfig` because local
-              // server *names* aren't valid Convex Ids and the backend
-              // validator would reject the whole ingest call.
-              ...(hostedSelectedServerIds.length === selectedServers.length
-                ? { selectedServerIds: hostedSelectedServerIds }
-                : {}),
-              // Phase F: owner-preview / local chatbox sessions persist as
-              // `sourceType: "chatbox"`. Without forwarding the resolved
-              // chatbox identity here, /mcp/chat-v2 derives sourceType
-              // from absent fields and the chat is filed as a direct chat
-              // instead of a chatbox session.
-              ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-              ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
-                ? { accessVersion: hostedAccessVersion }
-                : {}),
-              ...(hostedChatboxId && hostedChatboxSurface
-                ? { surface: hostedChatboxSurface }
-                : {}),
-            }),
-        requireToolApproval: requireToolApprovalRef.current,
-        // Phase 3: forward the chat tab's resolved host style so
-        // direct chat traces persist with a real `claude`/`chatgpt`
-        // hostStyle (no more legacy `'direct'`). Omitted body falls
-        // back to the backend default of `'claude'`.
-        ...(hostStyle ? { hostStyle } : {}),
-        ...(!HOSTED_MODE && customProviders.length > 0
-          ? { customProviders }
-          : {}),
-        ...(resumedVersionRef.current !== null
-          ? { expectedVersion: resumedVersionRef.current }
-          : {}),
-      }),
+      body: () => {
+        const widgetModelContext = pendingWidgetModelContextRef.current;
+        pendingWidgetModelContextRef.current = undefined;
+        return {
+          model: selectedModel,
+          ...(shouldUseOrgAwareChatApi ? {} : { apiKey }),
+          // Always send the user's slider value. The server's `prepareChatV2`
+          // already drops temperature for GPT-5 before the LLM call (its API
+          // rejects the field), so what lands here is purely the user's
+          // intended config — and ingestion's hostConfig dedupes on it. If we
+          // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
+          // helper's 0.7 fallback regardless of the slider.
+          temperature,
+          systemPrompt,
+          ...(shouldUseOrgAwareChatApi
+            ? buildHostedBody()
+            : {
+                selectedServers,
+                chatSessionId,
+                // `directVisibility` only applies to direct chat. The
+                // /mcp/chat-v2 route gates it off when chatboxId is present
+                // (owner-preview persists as `sourceType: "chatbox"`), but
+                // omitting it client-side keeps the body honest about the
+                // session kind.
+                ...(hostedChatboxId ? {} : { directVisibility }),
+                // Pass projectId for BYOK direct-chat history persistence
+                ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
+                // Convex server Ids parallel to `selectedServers`. Only sent
+                // when every name resolved to an Id — a partial mapping would
+                // hash to a different hostConfig than intended. Without this,
+                // the MCP route can't safely emit `hostConfig` because local
+                // server *names* aren't valid Convex Ids and the backend
+                // validator would reject the whole ingest call.
+                ...(hostedSelectedServerIds.length === selectedServers.length
+                  ? { selectedServerIds: hostedSelectedServerIds }
+                  : {}),
+                // Phase F: owner-preview / local chatbox sessions persist as
+                // `sourceType: "chatbox"`. Without forwarding the resolved
+                // chatbox identity here, /mcp/chat-v2 derives sourceType
+                // from absent fields and the chat is filed as a direct chat
+                // instead of a chatbox session.
+                ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+                ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+                  ? { accessVersion: hostedAccessVersion }
+                  : {}),
+                ...(hostedChatboxId && hostedChatboxSurface
+                  ? { surface: hostedChatboxSurface }
+                  : {}),
+                ...(selectedModel.provider === "ollama"
+                  ? { ollamaBaseUrl: getOllamaBaseUrl() }
+                  : {}),
+                ...(selectedModel.provider === "azure"
+                  ? { azureBaseUrl: getAzureBaseUrl() }
+                  : {}),
+              }),
+          requireToolApproval: requireToolApprovalRef.current,
+          respectToolVisibility: respectToolVisibilityRef.current,
+          // Only send when the user explicitly set the host-level toggle.
+          // Omitting the field tells the backend orchestrator to use its
+          // auto policy (currently: off for hosted unless the env override
+          // is set). Backend hashes undefined / true / false distinctly so
+          // round-trips preserve the user's choice.
+          ...(progressiveToolDiscoveryRef.current !== undefined
+            ? { progressiveToolDiscovery: progressiveToolDiscoveryRef.current }
+            : {}),
+          // Phase 3: forward the chat tab's resolved host style so
+          // direct chat traces persist with a real `claude`/`chatgpt`
+          // hostStyle (no more legacy `'direct'`). Omitted body falls
+          // back to the backend default of `'claude'`.
+          ...(hostStyle ? { hostStyle } : {}),
+          ...(!shouldUseOrgAwareChatApi && customProviders.length > 0
+            ? { customProviders }
+            : {}),
+          ...(resumedVersionRef.current !== null
+            ? { expectedVersion: resumedVersionRef.current }
+            : {}),
+          // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
+          // (no memoization) so any iframe that mounted between the previous
+          // turn and this send contributes its tools. The registry caps size;
+          // the server defends the boundary again in `validateAppToolEntries`.
+          appTools: useAppToolsRegistry
+            .getState()
+            .snapshotForChatBody(chatSessionIdRef.current),
+          ...(widgetModelContext && widgetModelContext.length > 0
+            ? { widgetModelContext }
+            : {}),
+        };
+      },
       headers: transportHeaders,
     });
   }, [
@@ -1419,6 +1614,7 @@ export function useChatSession(
     getCustomProviderByName,
     customProviders,
     authHeaders,
+    selectedModelUsesOrgRuntime,
     temperature,
     systemPrompt,
     selectedServers,
@@ -1430,6 +1626,8 @@ export function useChatSession(
     hostedChatboxId,
     hostedAccessVersion,
     hostedChatboxSurface,
+    getOllamaBaseUrl,
+    getAzureBaseUrl,
     hostStyle,
     chatFetch,
     // requireToolApproval read from ref at request time
@@ -1458,15 +1656,176 @@ export function useChatSession(
     error,
     setMessages: baseSetMessages,
     addToolApprovalResponse,
+    addToolOutput,
   } = useChat({
     id: chatSessionId,
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,
-    sendAutomaticallyWhen: requireToolApproval
-      ? lastAssistantMessageIsCompleteWithApprovalResponses
-      : undefined,
+    // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
+    // `onToolCall`. Tool results must be supplied imperatively via
+    // `addToolOutput(...)`. Server-tool calls bypass this handler (they
+    // resolve via the server's `execute` function); only client-fulfilled
+    // app aliases land here.
+    onToolCall: async ({ toolCall }) => {
+      const toolName = (toolCall as { toolName: string }).toolName;
+      const entry = useAppToolsRegistry
+        .getState()
+        .resolve(toolName, chatSessionIdRef.current);
+      if (!entry) {
+        // Two cases:
+        //   - server tool name: not an app alias, let the server's
+        //     execute path handle it (return without touching state).
+        //   - app alias with no live bridge: snapshot shipped this
+        //     alias, then the iframe was torn down before the model's
+        //     tool-call landed. Per SEP-1865 "Calling a tool from a
+        //     closed app MUST return an error" — we must resolve the
+        //     call here or the server loop pauses forever waiting for a
+        //     client-fulfilled result that never comes.
+        if (!APP_TOOL_ALIAS_REGEX.test(toolName)) return;
+        addToolOutput({
+          tool: toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          output: {
+            content: [
+              {
+                type: "text",
+                text: "App is no longer available — the widget was closed before the tool call landed.",
+              },
+            ],
+            isError: true,
+          },
+        } as Parameters<typeof addToolOutput>[0]);
+        return;
+      }
+      const tc = toolCall as {
+        toolName: string;
+        toolCallId: string;
+        input: unknown;
+      };
+      // Scroll the target iframe into view BEFORE dispatching so the user
+      // can see the visual mutation the app makes in response. Skip when
+      // the tab is backgrounded (scrollIntoView is wasted) or when the
+      // iframe is already comfortably in viewport (avoid jitter on every
+      // tool call in an already-focused chat). Best-effort: any failure
+      // here must not block dispatch.
+      //
+      // Two non-obvious bits:
+      // - `block: "start"` (not "nearest"). For iframes taller than the
+      //   viewport, "nearest" treats a sliver of the bottom edge as "near
+      //   enough" and refuses to scroll. "start" anchors the iframe top
+      //   to the viewport top so the just-mutated content actually
+      //   becomes prominent.
+      // - `requestAnimationFrame` defers the scroll one paint so it
+      //   runs AFTER the chat thread's auto-scroll-to-latest effect
+      //   commits on the new tool-call row. Without the rAF, chat's
+      //   auto-scroll fires last and silently overrides ours.
+      try {
+        if (!document.hidden) {
+          const iframe = entry.instance.getIframeElement?.();
+          if (iframe) {
+            const rect = iframe.getBoundingClientRect();
+            const viewportHeight =
+              window.innerHeight || document.documentElement.clientHeight;
+            const fullyInView =
+              rect.top >= 0 && rect.bottom <= viewportHeight && rect.height > 0;
+            if (!fullyInView) {
+              requestAnimationFrame(() => {
+                iframe.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                });
+              });
+            }
+          }
+        }
+      } catch {
+        // Non-fatal; proceed to dispatch.
+      }
+      // SEP-1865 in-flight teardown cancellation: register an
+      // AbortController against this bridge's pending set BEFORE awaiting
+      // `bridge.callTool`. If the iframe is torn down mid-await,
+      // `unregisterInstance` aborts the controller and the race rejects,
+      // letting the catch branch resolve the tool call with `isError`.
+      // Without this, a server stream paused on this tool call would hang
+      // forever waiting for a client-fulfilled result.
+      const controller = new AbortController();
+      const registry = useAppToolsRegistry.getState();
+      registry.registerPendingCall(entry.instance.bridgeId, controller);
+      try {
+        const call = entry.bridge.callTool({
+          name: entry.rawName,
+          arguments:
+            tc.input && typeof tc.input === "object"
+              ? (tc.input as Record<string, unknown>)
+              : {},
+        });
+        const raw = await new Promise<
+          Awaited<ReturnType<typeof entry.bridge.callTool>>
+        >((resolve, reject) => {
+          const onAbort = () =>
+            reject(new Error("App iframe was torn down mid-dispatch"));
+          if (controller.signal.aborted) {
+            onAbort();
+            return;
+          }
+          controller.signal.addEventListener("abort", onAbort, { once: true });
+          call.then(resolve, reject);
+        });
+        const sanitized = scrubAppToolResultForModel(raw);
+        recordAppToolInvocation({
+          alias: tc.toolName,
+          rawName: entry.rawName,
+          appName: entry.instance.appName,
+          serverId: entry.instance.serverId,
+          parentToolCallId: entry.instance.parentToolCallId,
+          bridgeId: entry.instance.bridgeId,
+          input: tc.input,
+          raw,
+        });
+        addToolOutput({
+          tool: tc.toolName,
+          toolCallId: tc.toolCallId,
+          output: sanitized,
+        } as Parameters<typeof addToolOutput>[0]);
+      } catch (err) {
+        addToolOutput({
+          tool: tc.toolName,
+          toolCallId: tc.toolCallId,
+          output: {
+            content: [
+              {
+                type: "text",
+                text: `App tool failed: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              },
+            ],
+            isError: true,
+          },
+        } as Parameters<typeof addToolOutput>[0]);
+      } finally {
+        registry.unregisterPendingCall(entry.instance.bridgeId, controller);
+      }
+    },
+    // Combine the approval predicate (existing) with the no-execute
+    // tool-call predicate (new). App-aliased tool calls are completed by
+    // our `onToolCall` above; that triggers an auto-send which carries
+    // the new tool results back to the server so the agent loop resumes.
+    // Both AI SDK helpers take the options object: `({ messages }) => …`.
+    sendAutomaticallyWhen: (options) => {
+      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
+      if (
+        requireToolApproval &&
+        lastAssistantMessageIsCompleteWithApprovalResponses(options)
+      ) {
+        return true;
+      }
+      return false;
+    },
   });
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const queueSessionHydration = useCallback(
     (hydration: PendingSessionHydration) => {
@@ -1488,7 +1847,12 @@ export function useChatSession(
       // would be a no-op and the useLayoutEffect that processes the pending
       // hydration would never fire.  Apply the hydration directly instead.
       if (hydration.sessionId === chatSessionIdRef.current) {
-        baseSetMessages(hydration.messages);
+        // Same-session history hydration may return equivalent messages with
+        // persisted IDs. Preserve matching live IDs so React updates widgets
+        // in place instead of remounting iframes keyed by the parent message.
+        baseSetMessages(
+          preserveHydratedMessageIds(messagesRef.current, hydration.messages)
+        );
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setPersistedSnapshotToolCallIds(
@@ -1584,12 +1948,24 @@ export function useChatSession(
     if (!liveTraceEnvelopeBase) {
       return null;
     }
-    return mergePreviewSpansIntoLiveEnvelope(
+    const merged = mergePreviewSpansIntoLiveEnvelope(
       liveTraceEnvelopeBase,
       liveTraceState,
       previewWallElapsedMs,
       traceTranscriptFromUi
     );
+    // Rehydrated sessions arrive with `state.messages = []` (see
+    // buildLiveTraceStateFromTurnTraces), so the envelope's messages stay
+    // empty and the trace timeline can't resolve tool input/output. Fill
+    // them in from the converted UI transcript whenever it has more
+    // entries — same picker the preview path uses for live sessions.
+    const transcript = pickTranscriptForLiveTracePreview({
+      snapshotMessages: merged.messages,
+      transcriptFromUi: traceTranscriptFromUi,
+    });
+    return transcript === merged.messages
+      ? merged
+      : { ...merged, messages: transcript };
   }, [
     liveTraceEnvelopeBase,
     liveTraceState,
@@ -1734,13 +2110,25 @@ export function useChatSession(
         filename?: string;
         url: string;
       }>;
+      metadata?: Record<string, unknown>;
+      widgetModelContext?: WidgetModelContextEntry[];
     }) => {
-      const { text, files } = options;
-      if (files && files.length > 0) {
-        // AI SDK accepts FileUIPart[] with data URLs
-        baseSendMessage({ text, files });
-      } else {
-        baseSendMessage({ text });
+      const { text, files, metadata, widgetModelContext } = options;
+      const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
+      pendingWidgetModelContextRef.current =
+        widgetModelContext && widgetModelContext.length > 0
+          ? widgetModelContext
+          : undefined;
+      try {
+        if (files && files.length > 0) {
+          // AI SDK accepts FileUIPart[] with data URLs
+          baseSendMessage({ text, files, ...extra });
+        } else {
+          baseSendMessage({ text, ...extra });
+        }
+      } catch (error) {
+        pendingWidgetModelContextRef.current = undefined;
+        throw error;
       }
     },
     [baseSendMessage]
@@ -1793,6 +2181,7 @@ export function useChatSession(
           systemPrompt?: string;
           temperature?: number;
           requireToolApproval?: boolean;
+          respectToolVisibility?: boolean;
           selectedServers?: string[];
         };
         version: number;
@@ -1819,7 +2208,7 @@ export function useChatSession(
         // Goes through the dedup cache so a hover-prefetched blob is reused
         // by the click path. Throws on non-OK responses internally.
         const transcript = (await getCachedBlobJson(
-          session.messagesBlobUrl,
+          session.messagesBlobUrl
         )) as unknown[];
         uiMessages = transcriptToUIMessages(transcript);
       }
@@ -1835,7 +2224,13 @@ export function useChatSession(
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
           hydratedWidgetSnapshots
         );
-        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
+        // In-flow session revisit: prefer the live MCP Apps fetch over the
+        // cached snapshot HTML so the widget re-renders against the active
+        // host's current CSP / bridge state. The cached path is kept for
+        // OpenAI Apps and degenerate mcp-apps snapshots that can't live-fetch.
+        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots, {
+          preferLiveWhenPossible: true,
+        });
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
@@ -1856,6 +2251,9 @@ export function useChatSession(
         if (session.resumeConfig?.requireToolApproval !== undefined) {
           setRequireToolApproval(session.resumeConfig.requireToolApproval);
         }
+        if (session.resumeConfig?.respectToolVisibility !== undefined) {
+          setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
+        }
       }
 
       if (options?.shouldApply && !options.shouldApply()) {
@@ -1873,12 +2271,12 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration]
+    [queueSessionHydration, setSystemPrompt]
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when
   // a field is undefined, reset to the hook default rather than retaining
-  // the prior host's value (e.g. ChatV2Route passes `executionConfig`
+  // the prior host's value (e.g. ChatTabV2 callers pass `executionConfig`
   // computed from `activeHost`, which is transiently undefined during
   // project/host bootstrap). When uncontrolled (Playground), skip — the
   // caller drives these via imperative setters and would otherwise race
@@ -1886,10 +2284,11 @@ export function useChatSession(
   const executionSystemPrompt = executionConfig?.systemPrompt;
   const executionTemperature = executionConfig?.temperature;
   const executionRequireToolApproval = executionConfig?.requireToolApproval;
+  const executionRespectToolVisibility = executionConfig?.respectToolVisibility;
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
     setSystemPrompt(executionSystemPrompt ?? DEFAULT_SYSTEM_PROMPT);
-  }, [isExecutionConfigControlled, executionSystemPrompt]);
+  }, [isExecutionConfigControlled, executionSystemPrompt, setSystemPrompt]);
 
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
@@ -1900,6 +2299,13 @@ export function useChatSession(
     if (!isExecutionConfigControlled) return;
     setRequireToolApproval(executionRequireToolApproval ?? false);
   }, [isExecutionConfigControlled, executionRequireToolApproval]);
+
+  useEffect(() => {
+    if (!isExecutionConfigControlled) return;
+    // Default to the spec-default `true` when the host config doesn't set
+    // the field (legacy rows). Matches `emptyHostConfigInputV2`.
+    setRespectToolVisibility(executionRespectToolVisibility ?? true);
+  }, [isExecutionConfigControlled, executionRespectToolVisibility]);
 
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
@@ -1936,12 +2342,7 @@ export function useChatSession(
           resolvedAuthHeaders = undefined;
           setAuthHeaders(undefined);
         }
-      } else if (
-        !resolved &&
-        active &&
-        HOSTED_MODE &&
-        isHostedGuest
-      ) {
+      } else if (!resolved && active && HOSTED_MODE && isHostedGuest) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
         if (guestToken) {
@@ -2104,9 +2505,7 @@ export function useChatSession(
             : null
         );
       } catch (error) {
-        if (
-          !(hostedChatboxId && isAuthDeniedError(error))
-        ) {
+        if (!(hostedChatboxId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error
@@ -2122,7 +2521,12 @@ export function useChatSession(
     };
 
     fetchToolsMetadata();
-  }, [selectedServersSignature, selectedModel, hostedChatboxId]);
+  }, [
+    selectedServersSignature,
+    selectedModel,
+    hostedChatboxId,
+    apiContextRevision,
+  ]);
 
   // System prompt token count
   useEffect(() => {
@@ -2141,9 +2545,7 @@ export function useChatSession(
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (
-          !(hostedChatboxId && isAuthDeniedError(error))
-        ) {
+        if (!(hostedChatboxId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error
@@ -2205,11 +2607,12 @@ export function useChatSession(
   // Compute share/chatbox guest access from React state instead of the global
   // apiContext.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
-  // In non-hosted mode: auth is only needed for sign-in-only MCPJam models.
+  // In non-hosted mode: auth is needed for org-managed BYOK and sign-in-only MCPJam models.
   const requiresAuthForChat = HOSTED_MODE
     ? true
-    : isMcpJamModel &&
-      !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? ""));
+    : selectedModelUsesOrgRuntime ||
+      (isMcpJamModel &&
+        !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? "")));
   const isAuthReady =
     !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
   // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
@@ -2218,7 +2621,7 @@ export function useChatSession(
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const hostedContextNotReady =
-    HOSTED_MODE &&
+    (HOSTED_MODE || selectedModelUsesOrgRuntime) &&
     (!hostedProjectId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

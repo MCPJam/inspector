@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { selectConnectedActiveServerNames } from "../use-app-builder-state";
+import { selectConnectedActiveServerNames } from "../use-playground-state";
 
 function server(
   name: string,
-  connectionStatus: ServerWithName["connectionStatus"],
+  connectionStatus: ServerWithName["connectionStatus"]
 ): ServerWithName {
   return {
     name,
@@ -16,7 +16,7 @@ function server(
 
 describe("selectConnectedActiveServerNames", () => {
   describe("multi-server (Playground)", () => {
-    it("keeps only servers whose connectionStatus is 'connected'", () => {
+    it("keeps servers whose connectionStatus is connected or connecting", () => {
       const result = selectConnectedActiveServerNames({
         selectedServerNames: ["bart", "foo", "baz", "qux"],
         serverName: undefined,
@@ -27,7 +27,7 @@ describe("selectConnectedActiveServerNames", () => {
           qux: server("qux", "oauth-flow"),
         },
       });
-      expect(result).toEqual(["bart"]);
+      expect(result).toEqual(["bart", "baz"]);
     });
 
     it("preserves the input order of the connected subset", () => {
@@ -73,6 +73,15 @@ describe("selectConnectedActiveServerNames", () => {
         selectedServerNames: undefined,
         serverName: "bart",
         servers: { bart: server("bart", "connected") },
+      });
+      expect(result).toEqual(["bart"]);
+    });
+
+    it("returns the serverName while it is connecting", () => {
+      const result = selectConnectedActiveServerNames({
+        selectedServerNames: undefined,
+        serverName: "bart",
+        servers: { bart: server("bart", "connecting") },
       });
       expect(result).toEqual(["bart"]);
     });

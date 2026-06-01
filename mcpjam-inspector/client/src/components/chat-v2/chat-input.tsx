@@ -40,6 +40,7 @@ import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-prompt-selector";
+import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
 import {
   Context,
@@ -139,10 +140,21 @@ interface ChatInputProps {
   moveCaretToEndTrigger?: number;
   /** All project servers for the "+" dropdown server toggles. */
   allServerConfigs?: Record<string, ServerWithName>;
-  /** Toggle a server on/off for the current chat session. */
+  /**
+   * @deprecated Connectivity is now the single source of truth — the popover
+   * toggle connects/disconnects via `onDisconnectServer`/`onReconnectServer`
+   * rather than maintaining a separate per-chat selection. Kept so existing
+   * callers compile; no longer read here.
+   */
   onServerToggle?: (serverName: string) => void;
   /** Reconnect a disconnected server. */
   onReconnectServer?: (serverName: string) => Promise<void>;
+  /**
+   * Disconnect a connected server. Connectivity is the single source of
+   * truth for which servers the Playground uses, so toggling a server off
+   * here unplugs it (it stays in the list as a "Connect" row).
+   */
+  onDisconnectServer?: (serverName: string) => void;
   /** Add a new server (opens the add-server modal). */
   onAddServer?: (formData: ServerFormData) => void;
   /** Hosted chatbox: optional servers not yet connected (Add server popover). */
@@ -201,8 +213,8 @@ export function ChatInput({
   pulseSubmit = false,
   moveCaretToEndTrigger,
   allServerConfigs,
-  onServerToggle,
   onReconnectServer,
+  onDisconnectServer,
   onAddServer,
   chatboxAttachableServers,
   onAttachChatboxServer,
@@ -237,7 +249,7 @@ export function ChatInput({
   const selectorHostStyle = hostStyle ?? chatboxHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
-    onServerToggle &&
+    onDisconnectServer &&
     Object.keys(allServerConfigs).length > 0,
   );
   const hasServerOptions = Boolean(onAddServer || hasServerRows);
@@ -641,7 +653,7 @@ export function ChatInput({
                           Servers
                         </p>
                         {allServerConfigs &&
-                          onServerToggle &&
+                          onDisconnectServer &&
                           Object.keys(allServerConfigs).length > 0 && (
                             <div className="max-h-48 overflow-y-auto">
                               {Object.entries(allServerConfigs)
@@ -659,8 +671,6 @@ export function ChatInput({
                                   return aName.localeCompare(bName);
                                 })
                                 .map(([name, server]) => {
-                                  const isSelected =
-                                    selectedServers?.includes(name) ?? false;
                                   const isConnected =
                                     server.connectionStatus === "connected";
                                   const isConnecting =
@@ -707,10 +717,13 @@ export function ChatInput({
                                         {isConnecting ? (
                                           <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                                         ) : isConnected ? (
+                                          // Connectivity is the source of truth:
+                                          // a connected server is "on", and
+                                          // toggling off disconnects it.
                                           <Switch
-                                            checked={isSelected}
+                                            checked={true}
                                             onCheckedChange={() =>
-                                              onServerToggle(name)
+                                              onDisconnectServer?.(name)
                                             }
                                           />
                                         ) : (
@@ -718,9 +731,6 @@ export function ChatInput({
                                             type="button"
                                             className="text-xs font-medium text-primary hover:text-primary/80 transition-colors cursor-pointer px-1.5 py-0.5 rounded hover:bg-primary/5"
                                             onClick={() => {
-                                              if (!isSelected) {
-                                                onServerToggle(name);
-                                              }
                                               onReconnectServer?.(name).catch(
                                                 () => {},
                                               );
@@ -964,10 +974,7 @@ export function ChatInput({
 
       {!minimalMode && (
         <SystemPromptSelector
-          systemPrompt={
-            systemPrompt ||
-            "You are a helpful assistant with access to MCP tools."
-          }
+          systemPrompt={systemPrompt || DEFAULT_SYSTEM_PROMPT}
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}

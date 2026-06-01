@@ -1,20 +1,20 @@
 /**
  * PlaygroundCenter
  *
- * Center pane of the Playground IDE shell. Consumes `useAppBuilderState`
+ * Center pane of the Playground IDE shell. Consumes `usePlaygroundState`
  * via context (PlaygroundTab owns the single hook call so the docked tools
  * pane and the center share state). Renders `PlaygroundMain` directly — the
  * tools sidebar UI lives in the docked `tools` pane instead.
  */
 import { Wrench } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
-import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton";
+import { PlaygroundSkeleton } from "@/components/playground/PlaygroundSkeleton";
 import { PlaygroundMain } from "@/components/ui-playground/PlaygroundMain";
 import SaveRequestDialog from "@/components/tools/SaveRequestDialog";
 import {
-  APP_BUILDER_FIRST_RUN_PROMPT,
-  useAppBuilderStateContext,
-} from "@/components/ui-playground/hooks/use-app-builder-state";
+  PLAYGROUND_FIRST_RUN_PROMPT,
+  usePlaygroundStateContext,
+} from "@/components/ui-playground/hooks/use-playground-state";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -46,12 +46,12 @@ export function PlaygroundCenter({
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
 }: PlaygroundCenterProps) {
-  const state = useAppBuilderStateContext();
+  const state = usePlaygroundStateContext();
 
   if (state.loadingState.kind === "skeleton") {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
-        <AppBuilderSkeleton />
+        <PlaygroundSkeleton />
       </div>
     );
   }
@@ -92,7 +92,7 @@ export function PlaygroundCenter({
         playgroundServerSelectorProps={playgroundServerSelectorProps}
         initialInput={
           state.firstRunComposerSeed
-            ? APP_BUILDER_FIRST_RUN_PROMPT
+            ? PLAYGROUND_FIRST_RUN_PROMPT
             : undefined
         }
         initialInputTypewriter={state.firstRunComposerSeed}

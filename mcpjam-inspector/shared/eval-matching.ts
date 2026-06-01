@@ -107,3 +107,32 @@ export function argumentsMatch(
   );
   return result.argumentMismatches.length === 0;
 }
+
+/**
+ * Re-exports of the state-based predicate system (`@mcpjam/sdk/predicates`).
+ *
+ * Predicates are the deterministic eval **gate** layer that complements the
+ * tool-call matcher above: a pure function of the iteration transcript with
+ * the same verdict every time, which is the property a CI release gate
+ * requires. The implementation lives in `@mcpjam/sdk` so the inspector GUI
+ * runner and the `mcpjam eval` CLI share one implementation; this boundary
+ * module surfaces it alongside tool-call matching for inspector call sites.
+ */
+export {
+  evaluatePredicate,
+  evaluatePredicates,
+  allPredicatesPassed,
+  buildIterationTranscript,
+} from "@mcpjam/sdk/predicates";
+export type {
+  Predicate,
+  PredicateType,
+  PredicateResult,
+  ArgMatcher,
+  ArgMatchMode,
+  IterationTranscript,
+  TranscriptToolCall,
+  TranscriptUsage,
+  ToolErrorRecord,
+  ToolErrorKind,
+} from "@mcpjam/sdk/predicates";

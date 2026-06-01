@@ -23,6 +23,7 @@ const defaultImplementations = {
   disconnectServer: async () => undefined,
   removeServer: () => undefined,
   getClient: () => ({}),
+  getManagedClient: () => ({}),
   hasServer: () => true,
   listServers: () => [],
   getServerSummaries: () => [],

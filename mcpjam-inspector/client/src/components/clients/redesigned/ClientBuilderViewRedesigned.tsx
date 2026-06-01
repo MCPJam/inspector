@@ -41,6 +41,7 @@ import {
   focusTabForNodeId,
   type HostFocusState,
   type HostFocusTabId,
+  type SandboxConfigSubKey,
 } from "./types";
 
 interface HostBuilderViewRedesignedProps {
@@ -211,18 +212,10 @@ export function ClientBuilderViewRedesigned({
     requiredServerNames,
   });
 
-  const availableServers = useMemo(
-    () =>
-      servers?.map((s) => ({
-        id: s._id,
-        name: s.name,
-        url: s.url ?? null,
-        connectionStatus:
-          connectionStatusByName[s.name]?.connectionStatus ?? "disconnected",
-      })) ?? [],
-    [servers, connectionStatusByName],
-  );
-
+  // `availableServers` (the focus-panel-shaped catalog) was retired
+  // alongside the per-host Servers tab — server selection lives in
+  // Project Settings → Servers now. The canvas still needs the
+  // catalog for layout, so `availableServersForCanvas` stays.
   const availableServersForCanvas = useMemo(
     () =>
       (servers ?? []).map((s) => ({
@@ -277,8 +270,17 @@ export function ClientBuilderViewRedesigned({
   ]);
 
   const openFocus = useCallback(
-    (tab: HostFocusTabId, selectedServerId: string | null = null) => {
-      setFocusState({ open: true, tab, selectedServerId });
+    (
+      tab: HostFocusTabId,
+      selectedServerId: string | null = null,
+      focusSubKey?: SandboxConfigSubKey,
+    ) => {
+      setFocusState({
+        open: true,
+        tab,
+        selectedServerId,
+        ...(focusSubKey ? { focusSubKey } : {}),
+      });
     },
     [],
   );
@@ -291,7 +293,8 @@ export function ClientBuilderViewRedesigned({
     (nodeId: string) => {
       setSelectedNodeId(nodeId);
       const target = focusTabForNodeId(nodeId);
-      if (target) openFocus(target.tab, target.selectedServerId);
+      if (target)
+        openFocus(target.tab, target.selectedServerId, target.focusSubKey);
     },
     [openFocus],
   );
@@ -354,22 +357,21 @@ export function ClientBuilderViewRedesigned({
           oauthScopes: formData.oauthScopes,
           clientId: formData.clientId,
         })) as string;
-        setDraftConfig((prev) =>
-          prev
-            ? {
-                ...prev,
-                serverIds: [...(prev.serverIds ?? []), serverId],
-              }
-            : prev,
-        );
+        // Per the project-scoped server config rollout: the host draft
+        // no longer owns serverIds — `projects.serverIds` does, and the
+        // backend fan-out re-materializes every host's hostConfigId.
+        // We intentionally do NOT append to draftConfig.serverIds here
+        // (that's the bypass the audit flagged) and we do NOT open the
+        // now-removed Servers focus tab. The new server lands in the
+        // project catalog; if Auto-connect is ON on the Servers tab,
+        // toggle OFF/ON to refresh and include the new server.
         setSelectedNodeId(`server-card:${serverId}`);
-        openFocus("servers", serverId);
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {
         toast.error(getBillingErrorMessage(err, "Failed to add server"));
       }
     },
-    [createServer, projectId, openFocus],
+    [createServer, projectId],
   );
 
   // Only show the skeleton on the very first mount when there's nothing
@@ -486,7 +488,7 @@ export function ClientBuilderViewRedesigned({
                       prev.open ? { ...prev, tab: next } : prev,
                     )
                   }
-                  initialSelectedServerId={focusState.selectedServerId}
+                  focusSubKey={focusState.focusSubKey}
                   hostDisplayName={draftName}
                   onHostDisplayNameChange={setDraftName}
                   draft={draftConfig}
@@ -494,8 +496,6 @@ export function ClientBuilderViewRedesigned({
                     setDraftConfig((prev) => (prev ? updater(prev) : prev))
                   }
                   attention={attention}
-                  availableServers={availableServers}
-                  onAddServer={() => setShowAddServer(true)}
                   onClose={closeFocus}
                 />
               </ResizablePanel>

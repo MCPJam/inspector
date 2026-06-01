@@ -1,7 +1,8 @@
 import type { Edge } from "@xyflow/react";
 import { getModelById } from "@/shared/types";
-import { findHostStyle } from "@/lib/client-styles";
+import { findHostStyle, getCompatRuntimeForStyle } from "@/lib/client-styles";
 import {
+  resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
   resolveClientInfo,
   resolveSupportedProtocolVersions,
@@ -27,6 +28,7 @@ import {
   type SandboxConfigSubKey,
 } from "../types";
 import { fieldsWithIssues } from "../focus/useClientDraftValidation";
+import { clientAdvertisesMcpApps } from "@/lib/host-capabilities";
 
 /* ============================================================
    Layout constants. The host renders as a single matrix node;
@@ -44,7 +46,10 @@ const MATRIX_W = 580;
 const MATRIX_H_BASE = 280;
 const MATRIX_H_APPS_SECTION = 230;
 const MATRIX_H_SANDBOX_SECTION = 180;
-const SERVERS_HUB_GAP = 40;
+// Exported because the canvas measures the matrix card's real rendered
+// height at runtime (sandbox CSP/permission rows make it variable) and
+// shifts the servers hub + cards by the delta vs. these estimates.
+export const SERVERS_HUB_GAP = 40;
 const SERVERS_HUB_W_BASE = 220;
 const SERVERS_HUB_W_PER_SERVER = 38;
 const SERVERS_HUB_H = 48;
@@ -172,6 +177,7 @@ interface AppsCapDescriptor {
 function buildAppsCaps(draft: HostConfigInputV2): AppsCapDescriptor[] {
   const blob = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
+    profile: draft.mcpProfile,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
 
@@ -207,7 +213,7 @@ function buildAppsCaps(draft: HostConfigInputV2): AppsCapDescriptor[] {
        (mode "relaxed").
      - `neutral`: default or empty.
    ============================================================ */
-interface SandboxConfigDescriptor {
+export interface SandboxConfigDescriptor {
   subKey: SandboxConfigSubKey;
   label: string;
   summary: string;
@@ -221,6 +227,37 @@ type CspDomainKey =
   | "resourceDomains"
   | "frameDomains"
   | "baseUriDomains";
+
+/**
+ * Normalized view of the sandbox slice consumed by {@link buildSandboxConfig}.
+ *
+ * Two call sites populate this:
+ *
+ * 1. **Matrix builder** — wraps `draft.mcpProfile?.apps?.sandbox` from the
+ *    host-config draft. CSP mode + restrictTo come from the schema's
+ *    `sandbox.csp`; permissions from `sandbox.permissions.allow`.
+ *
+ * 2. **Chat-thread Sandbox debug panel** — wraps the runtime payload
+ *    `mcp-apps-renderer` posts to the sandbox proxy. The resolver
+ *    intersects the host policy with the widget's own declaration; the
+ *    `cspMode` / `restrictTo` fields are echoed from the original profile
+ *    (the resolver doesn't return them verbatim).
+ *
+ * Both shapes converge here so descriptor output is identical for equivalent
+ * inputs — that's the locking property `canvasBuilder.test.ts` pins.
+ */
+export type SandboxCspMode = "declared" | "host-default" | "relaxed";
+
+export interface ResolvedSandboxView {
+  csp?: {
+    mode?: SandboxCspMode;
+    restrictTo?: Partial<Record<CspDomainKey, string[]>>;
+    cspDirectives?: Record<string, string[]>;
+  };
+  permissions?: { allow?: Record<string, boolean> };
+  sandboxAttrs?: string[];
+  allowFeatures?: Record<string, string>;
+}
 
 const CSP_DIRECTIVE_DISPLAY: ReadonlyArray<{
   key: CspDomainKey;
@@ -267,12 +304,32 @@ function describeCspDirectives(
   return out.length > 0 ? out : undefined;
 }
 
-function buildSandboxConfig(
-  draft: HostConfigInputV2,
-): SandboxConfigDescriptor[] {
+/**
+ * Bridge from `HostConfigInputV2` to the normalized DTO. Pulled out of the
+ * builder so we can verify in tests that an equivalent runtime-shaped DTO
+ * (the chat-thread Sandbox panel call site) produces an identical row set.
+ */
+function draftToSandboxView(draft: HostConfigInputV2): ResolvedSandboxView {
   const sandbox = draft.mcpProfile?.apps?.sandbox;
-  const csp = sandbox?.csp;
-  const perms = sandbox?.permissions;
+  return {
+    csp: sandbox?.csp,
+    permissions: sandbox?.permissions,
+    sandboxAttrs: sandbox?.sandboxAttrs,
+    allowFeatures: sandbox?.allowFeatures,
+  };
+}
+
+export function buildSandboxConfig(
+  view: ResolvedSandboxView,
+): SandboxConfigDescriptor[] {
+  // The previous shape took `HostConfigInputV2` directly and reached into
+  // `mcpProfile.apps.sandbox`; we now accept a normalized DTO so the
+  // runtime panel (which doesn't have a draft, just a resolved payload)
+  // can drive the same rows. The wrapper at the call site below feeds the
+  // exact same data, so descriptor output is unchanged for matrix usage.
+  const sandbox = view;
+  const csp = sandbox.csp;
+  const perms = sandbox.permissions;
 
   // mode — default per resolver is "declared" (trust the view's CSP).
   // Only `host-default` (inspector baseline overrides the view) and
@@ -607,11 +664,19 @@ export function buildRedesignedHostCanvas(
   });
 
   // ---- Sandbox config rows ----
-  const sandboxDescs = buildSandboxConfig(draft);
+  // Adapt the host-config draft into the normalized DTO `buildSandboxConfig`
+  // now takes. Matrix consumers get exactly the same descriptor output for
+  // a given `mcpProfile.apps.sandbox` shape; the indirection exists so the
+  // chat-thread Sandbox debug panel can drive the same rows from the
+  // runtime resolver payload.
+  const sandboxDescs = buildSandboxConfig(
+    draftToSandboxView(draft),
+  );
   const prevSandboxByKey: Record<SandboxConfigSubKey, SandboxConfigDescriptor> =
     {} as Record<SandboxConfigSubKey, SandboxConfigDescriptor>;
   if (prevDraft) {
-    for (const l of buildSandboxConfig(prevDraft)) prevSandboxByKey[l.subKey] = l;
+    for (const l of buildSandboxConfig(draftToSandboxView(prevDraft)))
+      prevSandboxByKey[l.subKey] = l;
   }
   const sandbox: SandboxConfigNodeData[] = sandboxDescs.map((leaf) => {
     const prevLeaf = prevDraft ? prevSandboxByKey[leaf.subKey] : undefined;
@@ -656,15 +721,79 @@ export function buildRedesignedHostCanvas(
     return { name, version };
   })();
 
-  // Whether the client advertises the MCP UI extension. Host-side Apps
-  // capabilities only matter when the client opts in to rendering iframes;
-  // a CLI like codex-mcp-client publishes neither the extension nor any
-  // UI ext block, so the matrix should hide the Apps section entirely.
-  const appsExtensionAdvertised = (() => {
-    const exts = draft.clientCapabilities?.extensions;
-    if (!isRecord(exts)) return false;
-    return isRecord(exts["io.modelcontextprotocol/ui"]);
-  })();
+  // Whether the client advertises the MCP UI extension with the spec-
+  // required MIME type. Host-side Apps capabilities only matter when the
+  // client opts in to rendering iframes; a CLI like codex-mcp-client
+  // publishes neither the extension nor any UI ext block, so the matrix
+  // should hide the Apps section entirely. Shared predicate keeps this
+  // gate aligned with `hostSupportsWidgetRendering` at runtime — earlier
+  // versions accepted a bare `{}` payload here while the renderer
+  // refused, which silently desynced the canvas from what would render.
+  const appsExtensionAdvertised = clientAdvertisesMcpApps(
+    draft.clientCapabilities,
+  );
+
+  // Resolved vendor compat-runtime shim state. Drives the injected-globals
+  // chips in the matrix. Tags on the chips only appear when the effective
+  // surface diverges from the host style preset — not for the default case.
+  const compatRuntimeOverride = draft.mcpProfile?.apps?.compatRuntime?.openaiApps;
+  const overridesRecord =
+    draft.mcpProfile?.apps?.compatRuntime?.openaiAppsOverrides;
+  const presetCompatRuntime = getCompatRuntimeForStyle(draft.hostStyle);
+  const effectiveCompatRuntime = resolveEffectiveCompatRuntime({
+    profile: draft.mcpProfile,
+    hostStyle: draft.hostStyle,
+  });
+  // Total method count for the "N/M methods" custom subtitle. Counts
+  // every method whose effective value is "on" (boolean true) OR a
+  // non-`none` requestDisplayMode. Mirrors how the matrix UI counts
+  // active methods so the chip subtitle and the matrix agree.
+  const methodCount = effectiveCompatRuntime.injected
+    ? Object.values(effectiveCompatRuntime.capabilities).reduce(
+        (sum, value) =>
+          sum +
+          (value === true || (typeof value === "string" && value !== "none")
+            ? 1
+            : 0),
+        0,
+      )
+    : 0;
+  const compatRuntime = {
+    openaiApps: effectiveCompatRuntime.injected,
+    fromOverride:
+      typeof compatRuntimeOverride === "boolean" &&
+      compatRuntimeOverride !== presetCompatRuntime.injected,
+    // Whether the user has set any per-method override on top of the
+    // preset — drives the "custom" vs "preset" label in the chip.
+    hasMethodOverrides:
+      overridesRecord !== undefined && Object.keys(overridesRecord).length > 0,
+    methodCount,
+    // Total methods in the matrix (13 today). Constant; lives here so
+    // the chip subtitle reads "N/13 methods" without the chip needing
+    // to import the matrix's method list.
+    methodTotal: 13,
+  };
+
+  // SEP-1865 `app.*` spec-bridge state. Independent from `compatRuntime`
+  // (the OpenAI shim) — the spec bridge is always present (no
+  // "injected" toggle), so this only summarizes whether the user has
+  // sparse-overridden any of the matrix's dimensions for the canvas
+  // chip subtitle.
+  const mcpAppsOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
+  const mcpAppsBridge = {
+    hasOverrides:
+      mcpAppsOverridesRecord !== undefined &&
+      Object.keys(mcpAppsOverridesRecord).length > 0,
+    // Number of sparse-override keys the user has set. Chip reads this
+    // as "N overrides" — simpler than "N of M dimensions" because the
+    // matrix is heterogeneous (booleans + mode array + sandbox flags +
+    // resource-meta flags) and a flat "active" count would be hard to
+    // interpret across those buckets.
+    overrideCount:
+      mcpAppsOverridesRecord !== undefined
+        ? Object.keys(mcpAppsOverridesRecord).length
+        : 0,
+  };
 
   // ---- Nodes / edges ----
   const nodes: HostRedesignFlowNode[] = [];
@@ -686,6 +815,8 @@ export function buildRedesignedHostCanvas(
       sandbox,
       hostInfo,
       appsExtensionAdvertised,
+      compatRuntime,
+      mcpAppsBridge,
     },
     draggable: false,
     selectable: false,

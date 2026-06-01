@@ -1,10 +1,14 @@
 import { useLayoutEffect } from "react";
 import { setApiContext } from "@/lib/apis/web/context";
+import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 
 interface UseApiContextOptions {
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
@@ -21,6 +25,9 @@ export function useApiContext({
   projectId,
   serverIdsByName,
   clientCapabilities,
+  clientInfo,
+  supportedProtocolVersions,
+  mcpProtocolVersionsByServerId,
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
@@ -44,6 +51,9 @@ export function useApiContext({
       projectId,
       serverIdsByName,
       clientCapabilities,
+      clientInfo,
+      supportedProtocolVersions,
+      mcpProtocolVersionsByServerId,
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
@@ -61,6 +71,9 @@ export function useApiContext({
     projectId,
     serverIdsByName,
     clientCapabilities,
+    clientInfo,
+    supportedProtocolVersions,
+    mcpProtocolVersionsByServerId,
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,

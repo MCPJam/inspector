@@ -17,6 +17,9 @@ const chatSessionOnResetRef = vi.hoisted(() => ({
 const lastUseChatSessionOptionsRef = vi.hoisted(() => ({
   current: undefined as any,
 }));
+const convexQueryCallsRef = vi.hoisted(() => ({
+  current: [] as Array<{ name: string; args: unknown }>,
+}));
 const mockHistorySession = vi.hoisted(() => ({
   _id: "history-1",
   chatSessionId: "chat-session-1",
@@ -63,6 +66,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useQuery: (name: string, args: unknown) => {
+    convexQueryCallsRef.current.push({ name, args });
     if (args === "skip") {
       return undefined;
     }
@@ -229,13 +233,16 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   ChatInput: ({
     value,
     onChange,
+    enableMultiModel,
   }: {
     value: string;
     onChange: (value: string) => void;
+    enableMultiModel?: boolean;
   }) => (
     <input
       aria-label="Chat input"
       data-testid="chat-input"
+      data-enable-multi-model={enableMultiModel ? "true" : "false"}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />
@@ -254,11 +261,16 @@ vi.mock("@/components/chat-v2/history/ChatHistoryRail", () => ({
     sharedThreadsEnabled = true,
     onNewChat,
     onSelectThread,
+    onSessionAction,
   }: {
     activeSessionId?: string | null;
     sharedThreadsEnabled?: boolean;
     onNewChat: (options?: { shared?: boolean }) => void;
     onSelectThread: (session: typeof mockHistorySession) => void;
+    onSessionAction?: (event: {
+      action: "share";
+      session: typeof mockHistorySession;
+    }) => void | Promise<void>;
   }) => (
     <div
       data-testid="history-rail"
@@ -274,6 +286,16 @@ vi.mock("@/components/chat-v2/history/ChatHistoryRail", () => ({
           New shared thread
         </button>
       ) : null}
+      <button
+        onClick={() =>
+          void onSessionAction?.({
+            action: "share",
+            session: { ...mockHistorySession },
+          })
+        }
+      >
+        Share active thread
+      </button>
     </div>
   ),
 }));
@@ -421,6 +443,7 @@ describe("ChatTabV2 history sync", () => {
     );
     chatSessionOnResetRef.current = undefined;
     lastUseChatSessionOptionsRef.current = undefined;
+    convexQueryCallsRef.current = [];
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
     Object.assign(mockUseChatSession, {
@@ -466,7 +489,8 @@ describe("ChatTabV2 history sync", () => {
       <ChatTabV2
         {...defaultProps}
         hostedContext={{
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
           projectId: "project-1",
           selectedServerIds: ["server-1"],
         }}
@@ -474,11 +498,33 @@ describe("ChatTabV2 history sync", () => {
     );
 
     expect(lastUseChatSessionOptionsRef.current?.hostedContext).toMatchObject({
-      chatboxId: "cbx_test", accessVersion: 1,
+      chatboxId: "cbx_test",
+      accessVersion: 1,
     });
     expect(
       lastUseChatSessionOptionsRef.current?.hostedContext?.oauthTokens
     ).toBeUndefined();
+  });
+
+  it("loads org model config from the effective hosted project id", () => {
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        hostedContext={{
+          projectId: "hosted-project-1",
+          selectedServerIds: ["server-id-1"],
+        }}
+      />
+    );
+
+    expect(convexQueryCallsRef.current).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfigForProject",
+      args: { projectId: "hosted-project-1" },
+    });
+    expect(convexQueryCallsRef.current).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfig",
+      args: "skip",
+    });
   });
 
   it("does not auto-reconnect project chat when oauth is required", async () => {
@@ -718,6 +764,110 @@ describe("ChatTabV2 history sync", () => {
       "project"
     );
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("hides the multi-model toggle when the active thread is shared", async () => {
+    mockUseChatSession.availableModels = [
+      { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+      {
+        id: "anthropic/claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+      },
+    ];
+    const privateDetailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        directVisibility: "private" as const,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    };
+    const sharedDetailResponse = {
+      ...privateDetailResponse,
+      session: {
+        ...privateDetailResponse.session,
+        directVisibility: "project" as const,
+        version: 5,
+      },
+    };
+    mockGetChatHistoryDetail
+      .mockResolvedValueOnce(privateDetailResponse)
+      .mockResolvedValueOnce(sharedDetailResponse);
+
+    render(<ChatTabV2 {...defaultProps} enableMultiModelChat={true} />);
+
+    expect(screen.getByTestId("chat-input")).toHaveAttribute(
+      "data-enable-multi-model",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(screen.getByTestId("chat-input")).toHaveAttribute(
+      "data-enable-multi-model",
+      "true",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Share active thread" }),
+    );
+    await flushMicrotasks();
+
+    expect(screen.getByTestId("chat-input")).toHaveAttribute(
+      "data-enable-multi-model",
+      "false",
+    );
+  });
+
+  it("keeps direct visibility in sync when the active thread is shared", async () => {
+    const privateDetailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        directVisibility: "private" as const,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["server-1"],
+        },
+      },
+      widgetSnapshots: [],
+    };
+    const sharedDetailResponse = {
+      ...privateDetailResponse,
+      session: {
+        ...privateDetailResponse.session,
+        directVisibility: "project" as const,
+        version: 5,
+      },
+    };
+
+    mockGetChatHistoryDetail
+      .mockResolvedValueOnce(privateDetailResponse)
+      .mockResolvedValueOnce(sharedDetailResponse);
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
+      "private"
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Share active thread" })
+    );
+    await flushMicrotasks();
+
+    expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
+      "project"
+    );
   });
 
   it("keeps the history rail visible while hiding shared-thread affordances when the flag is off", async () => {

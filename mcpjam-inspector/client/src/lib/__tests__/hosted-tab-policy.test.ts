@@ -11,8 +11,7 @@ import {
 
 describe("hosted-tab-policy", () => {
   it("normalizes legacy hash aliases to canonical tabs", () => {
-    expect(normalizeHostedHashTab("chat")).toBe("chat-v2");
-    expect(normalizeHostedHashTab("chat-v2")).toBe("chat-v2");
+    expect(normalizeHostedHashTab("chat")).toBe("playground");
     // "registry" is now a first-class tab, not an alias
     expect(normalizeHostedHashTab("registry")).toBe("registry");
   });
@@ -49,7 +48,7 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabBlocked("auth")).toBe(true);
   });
 
-  it("treats #chat as allowed after normalization to #chat-v2", () => {
+  it("treats #chat as allowed after normalization to #playground", () => {
     expect(isHostedHashTabAllowed("chat")).toBe(true);
     expect(isHostedHashTabBlocked("chat")).toBe(false);
   });

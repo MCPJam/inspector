@@ -120,7 +120,7 @@ describe("filterByFeatureFlags", () => {
         {
           id: "mcp-apps",
           items: [
-            { title: "App Builder", url: "#app-builder", icon: FakeIcon },
+            { title: "Views", url: "#views", icon: FakeIcon },
             {
               title: "Evaluate",
               url: "#evals",
@@ -134,7 +134,7 @@ describe("filterByFeatureFlags", () => {
       { "evaluate-runs": false },
     );
     const titles = result[0].items.map((i) => i.title);
-    expect(titles).toEqual(["App Builder", "Evaluate"]);
+    expect(titles).toEqual(["Views", "Evaluate"]);
   });
 
   it("keeps Playground visible when evaluate-runs is off", () => {
@@ -191,6 +191,7 @@ describe("filterByFeatureFlags", () => {
             url: "#chatboxes",
             icon: FakeIcon,
             featureFlag: "sandboxes-enabled",
+            billingFeature: "chatboxes" as const,
           },
         ],
       },
@@ -204,11 +205,37 @@ describe("filterByFeatureFlags", () => {
         url: "#chatboxes",
         icon: FakeIcon,
         featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
       },
     ]);
     expect(
       filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
     ).toHaveLength(0);
+  });
+
+  it("marks Chatboxes disabled when billing enforcement denies chatboxes", () => {
+    const result = applyBillingGateNavState(
+      [
+        {
+          id: "connection",
+          items: [
+            {
+              title: "Chatboxes",
+              url: "/chatboxes",
+              icon: FakeIcon,
+              billingFeature: "chatboxes",
+            },
+          ],
+        },
+      ],
+      {
+        billingUiEnabled: true,
+        gateDenied: { chatboxes: true },
+        enforcementActive: true,
+      },
+    );
+
+    expect(result[0].items[0].disabled).toBe(true);
   });
 });
 

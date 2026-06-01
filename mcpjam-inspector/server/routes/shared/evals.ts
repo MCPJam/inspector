@@ -12,6 +12,14 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import {
+  loadSuiteHostConfig,
+  resolveOpenAiCompatForHostConfig,
+} from "../../services/evals/compat-runtime";
+import {
+  applyVisibilityPolicyAndCountSignals,
+  extractHostExecutionPolicy,
+} from "../../services/evals/host-execution-policy.js";
+import {
   runEvalSuiteWithAiSdk,
   streamTestCase,
 } from "../../services/evals-runner";
@@ -127,6 +135,13 @@ export const RunEvalsRequestSchema = z.object({
    * multiple host attachments, the client makes one request per host.
    */
   namedHostId: z.string().optional(),
+  /**
+   * When true on a suiteRerun, explicitly re-derives suite.hostConfigId
+   * from the request's server list and persists it. Without this flag,
+   * plain reruns leave suite.hostConfigId (and suite.environment) frozen
+   * so connecting new servers cannot silently contaminate existing suites.
+   */
+  refreshSnapshot: z.boolean().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -164,6 +179,13 @@ export const RunTestCaseRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      // State-based predicate gate (see shared/predicates). Accepted as a
+      // per-run override so SDK / corpus cases can gate on predicates without
+      // the deferred Convex `testCase` schema change. Loosely typed like
+      // `expectedToolCalls` above; predicate shape is validated by the corpus
+      // validator at authoring time and evaluated deterministically by the
+      // runner (unknown types fail closed).
+      successPredicates: z.array(z.any()).optional(),
     })
     .optional(),
   /**
@@ -435,6 +457,7 @@ export async function runEvalsWithManager(
     iterationOverride,
     matchOptionsOverride,
     namedHostId,
+    refreshSnapshot,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -518,11 +541,19 @@ export async function runEvalsWithManager(
   }
 
   if (resolvedSuiteId) {
+    // On a plain rerun do NOT overwrite the suite's persisted environment or
+    // hostConfigId — new connected servers would silently contaminate the
+    // frozen execution snapshot. Only update when explicitly refreshing or
+    // on first-run (non-rerun) writes.
+    const shouldUpdateSnapshot = !suiteRerun || refreshSnapshot === true;
     await convexClient.mutation("testSuites:updateTestSuite" as any, {
       suiteId: resolvedSuiteId,
       name: suiteName,
       description: suiteDescription,
-      environment: persistedEnvironment,
+      ...(shouldUpdateSnapshot ? { environment: persistedEnvironment } : {}),
+      ...(shouldUpdateSnapshot && refreshSnapshot === true
+        ? { refreshHostConfigFromEnvironment: true }
+        : {}),
     });
 
     // On a suite rerun, do NOT upsert per-case fields. The wire payload
@@ -684,7 +715,12 @@ export async function runEvalsWithManager(
     }
   }
 
-  const { runId, config, recorder } = await startSuiteRunWithRecorder({
+  const {
+    runId,
+    config,
+    recorder,
+    hostConfig: runHostConfigSnapshot,
+  } = await startSuiteRunWithRecorder({
     convexClient,
     suiteId: resolvedSuiteId,
     notes,
@@ -696,6 +732,12 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
   });
+  const suiteHostConfig =
+    runHostConfigSnapshot ??
+    (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
+  const suiteInjectOpenAiCompat =
+    resolveOpenAiCompatForHostConfig(suiteHostConfig);
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig, namedHostId);
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
@@ -721,32 +763,29 @@ export async function runEvalsWithManager(
     !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
-  if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
-    let projectIdForOrgConfig: string | undefined = projectId;
-    let legacyWorkspaceIdForOrgConfig: string | undefined;
-    if (!projectIdForOrgConfig && resolvedSuiteId) {
-      try {
-        const suite = await convexClient.query(
-          "testSuites:getTestSuite" as any,
-          { suiteId: resolvedSuiteId },
-        );
-        if (suite?.projectId) {
-          projectIdForOrgConfig = String(suite.projectId);
-        } else if (suite?.workspaceId) {
-          legacyWorkspaceIdForOrgConfig = String(suite.workspaceId);
-        }
-      } catch (error) {
-        logger.warn("[evals] Failed to load suite for projectId fallback", {
-          suiteId: resolvedSuiteId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+  let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
+  let projectIdForOrgConfig: string | undefined = projectId;
+  if (!projectIdForOrgConfig && resolvedSuiteId) {
+    try {
+      const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+        suiteId: resolvedSuiteId,
+      });
+      if (suite?.projectId) {
+        projectIdForOrgConfig = String(suite.projectId);
       }
+    } catch (error) {
+      logger.warn("[evals] Failed to load suite for projectId fallback", {
+        suiteId: resolvedSuiteId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-    const orgConfigTarget = projectIdForOrgConfig
-      ? { projectId: projectIdForOrgConfig }
-      : legacyWorkspaceIdForOrgConfig
-      ? { workspaceId: legacyWorkspaceIdForOrgConfig }
-      : undefined;
+  }
+  const orgConfigTarget = projectIdForOrgConfig
+    ? { projectId: projectIdForOrgConfig }
+    : undefined;
+  resolvedOrgModelConfigTarget = orgConfigTarget;
+
+  if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     if (orgConfigTarget) {
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
@@ -759,7 +798,6 @@ export async function runEvalsWithManager(
       } catch (error) {
         logger.warn("[evals] Failed to resolve org model config", {
           projectId: projectIdForOrgConfig,
-          legacyWorkspaceId: legacyWorkspaceIdForOrgConfig,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -772,11 +810,14 @@ export async function runEvalsWithManager(
     config,
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
+    orgModelConfigTarget: resolvedOrgModelConfigTarget,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
     mcpClientManager: clientManager,
     recorder,
+    suiteInjectOpenAiCompat,
+    hostExecutionPolicy: suiteHostPolicy,
   });
 
   return {
@@ -833,6 +874,15 @@ export async function runEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
+  const suiteHostConfig = await loadSuiteHostConfig(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
+    suiteHostConfig,
+    hostConfigOverride as Record<string, unknown> | undefined,
+  );
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -857,6 +907,13 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate from the per-run override (or the persisted
+    // case, once Convex `testCase` carries it) into the runtime case so the
+    // runner evaluates it.
+    successPredicates: (testCaseOverrides?.successPredicates ??
+      (testCase as { successPredicates?: unknown }).successPredicates) as
+      | import("@/shared/eval-matching").Predicate[]
+      | undefined,
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -869,14 +926,8 @@ export async function runEvalTestCaseWithManager(
   let resolvedOrgModelConfig = orgModelConfig;
   const testCaseProjectId =
     typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const testCaseLegacyWorkspaceId =
-    !testCaseProjectId && typeof testCase.workspaceId === "string"
-      ? testCase.workspaceId
-      : undefined;
   const testCaseOrgConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
-    : testCaseLegacyWorkspaceId
-    ? { workspaceId: testCaseLegacyWorkspaceId }
     : undefined;
   if (
     !resolvedModelApiKeys &&
@@ -910,6 +961,7 @@ export async function runEvalTestCaseWithManager(
     },
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
+    orgModelConfigTarget: testCaseOrgConfigTarget,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -917,6 +969,8 @@ export async function runEvalTestCaseWithManager(
     recorder: null,
     testCaseId,
     compareRunId,
+    suiteInjectOpenAiCompat,
+    hostExecutionPolicy: suiteHostPolicy,
   });
 
   const expectedIterationId =
@@ -1084,6 +1138,15 @@ export async function streamEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
+  const suiteHostConfig = await loadSuiteHostConfig(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
+    suiteHostConfig,
+    hostConfigOverride as Record<string, unknown> | undefined,
+  );
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -1108,6 +1171,13 @@ export async function streamEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate from the per-run override (or the persisted
+    // case, once Convex `testCase` carries it) into the runtime case so the
+    // runner evaluates it.
+    successPredicates: (testCaseOverrides?.successPredicates ??
+      (testCase as { successPredicates?: unknown }).successPredicates) as
+      | import("@/shared/eval-matching").Predicate[]
+      | undefined,
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -1122,14 +1192,8 @@ export async function streamEvalTestCaseWithManager(
   let resolvedStreamOrgModelConfig = orgModelConfig;
   const streamTestCaseProjectId =
     typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const streamTestCaseLegacyWorkspaceId =
-    !streamTestCaseProjectId && typeof testCase.workspaceId === "string"
-      ? testCase.workspaceId
-      : undefined;
   const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
     ? { projectId: streamTestCaseProjectId }
-    : streamTestCaseLegacyWorkspaceId
-    ? { workspaceId: streamTestCaseLegacyWorkspaceId }
     : undefined;
   if (
     !resolvedStreamModelApiKeys &&
@@ -1157,9 +1221,25 @@ export async function streamEvalTestCaseWithManager(
     }
   }
 
-  const tools = (await clientManager.getToolsForAiSdk(
-    resolvedServerIds,
-  )) as Record<string, any>;
+  // Mirror runEvalSuiteWithAiSdk: when a host policy is present, fetch the
+  // full tool set (including app-only) so the policy can both filter and
+  // count drops honestly. Without this, app-only tools are pre-stripped by
+  // getToolsForAiSdk and host visibility signals are blank.
+  const tools = (suiteHostPolicy
+    ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
+        includeAppOnly: true,
+      })
+    : await clientManager.getToolsForAiSdk(resolvedServerIds)) as Record<
+    string,
+    any
+  >;
+  const streamToolSignals = suiteHostPolicy
+    ? applyVisibilityPolicyAndCountSignals(
+        tools as Record<string, unknown>,
+        clientManager,
+        suiteHostPolicy,
+      )
+    : undefined;
   const encoder = new TextEncoder();
 
   const sseEncode = (event: EvalStreamEvent): Uint8Array =>
@@ -1175,6 +1255,7 @@ export async function streamEvalTestCaseWithManager(
           recorder: null,
           modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
           orgModelConfig: resolvedStreamOrgModelConfig,
+          orgModelConfigTarget: streamTestCaseOrgConfigTarget,
           convexHttpUrl,
           convexAuthToken,
           convexClient,
@@ -1182,6 +1263,9 @@ export async function streamEvalTestCaseWithManager(
           suiteId: testCase.evalTestSuiteId,
           runId: null,
           compareRunId,
+          injectOpenAiCompat: suiteInjectOpenAiCompat,
+          hostPolicy: suiteHostPolicy,
+          toolSignals: streamToolSignals,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));

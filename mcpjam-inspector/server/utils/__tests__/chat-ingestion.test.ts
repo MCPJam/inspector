@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
+  stampSenderUserIdsOnSessionMessages,
 } from "../chat-ingestion";
 import type { RequestLogContext } from "../log-events";
 
@@ -49,7 +50,7 @@ describe("chat-ingestion", () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response(null, {
         status: 200,
-      }),
+      })
     );
   });
 
@@ -106,6 +107,67 @@ describe("chat-ingestion", () => {
     expect(body.surface).toBe("share_link");
   });
 
+  it("stamps senderUserId onto persisted user messages only for the authenticated user", () => {
+    const sessionMessages = [
+      { role: "system", content: "system" },
+      { role: "user", content: "first" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "internal context" },
+      { role: "user", content: "second" },
+    ];
+    const sourceMessages = [
+      { role: "system", parts: [{ type: "text", text: "system" }] },
+      {
+        role: "user",
+        parts: [{ type: "text", text: "first" }],
+        metadata: { senderUserId: "u-alice" },
+      },
+      { role: "assistant", parts: [{ type: "text", text: "ok" }] },
+      {
+        role: "user",
+        parts: [{ type: "text", text: "internal context" }],
+        metadata: { source: "widget-model-context" },
+      },
+      {
+        role: "user",
+        parts: [{ type: "text", text: "second" }],
+        senderUserId: "u-bob",
+      },
+    ];
+
+    const stamped = stampSenderUserIdsOnSessionMessages(
+      sessionMessages,
+      sourceMessages,
+      { authenticatedUserId: "u-alice" }
+    );
+
+    expect(stamped).toEqual([
+      { role: "system", content: "system" },
+      { role: "user", content: "first", senderUserId: "u-alice" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "internal context" },
+      { role: "user", content: "second" },
+    ]);
+  });
+
+  it("ignores client-supplied senderUserId when no trusted principal is available", () => {
+    const sessionMessages = [{ role: "user", content: "hello" }];
+    const sourceMessages = [
+      {
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
+        metadata: { senderUserId: "u-alice" },
+      },
+    ];
+
+    const stamped = stampSenderUserIdsOnSessionMessages(
+      sessionMessages,
+      sourceMessages
+    );
+
+    expect(stamped).toBe(sessionMessages);
+  });
+
   it("logs a bounded sanitized response preview on ingest failures", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response(
@@ -117,8 +179,8 @@ describe("chat-ingestion", () => {
         ].join("\n"),
         {
           status: 500,
-        },
-      ),
+        }
+      )
     );
 
     await persistChatSessionToConvex({
@@ -131,12 +193,12 @@ describe("chat-ingestion", () => {
 
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.stringContaining(
-        "[chat-session-persistence] Failed to persist chat session (500):",
+        "[chat-session-persistence] Failed to persist chat session (500):"
       ),
       expect.objectContaining({
         status: 500,
         responsePreview: expect.any(String),
-      }),
+      })
     );
 
     const [message, metadata] = mockLogger.warn.mock.calls[0];
@@ -169,10 +231,10 @@ describe("chat-ingestion", () => {
             reject(
               Object.assign(new Error("The operation was aborted."), {
                 name: "AbortError",
-              }),
+              })
             );
           });
-        }),
+        })
     ) as typeof fetch;
 
     const persistPromise = persistChatSessionToConvex({
@@ -191,13 +253,13 @@ describe("chat-ingestion", () => {
       "https://test-convex.example.com/ingest-chat",
       expect.objectContaining({
         signal: expect.any(AbortSignal),
-      }),
+      })
     );
     expect(mockLogger.warn).toHaveBeenCalledWith(
       "[chat-session-persistence] Timed out persisting chat session",
       {
         timeoutMs: 50,
-      },
+      }
     );
   });
 
@@ -212,8 +274,8 @@ describe("chat-ingestion", () => {
         {
           status: 409,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     await persistChatSessionToConvex({
@@ -230,7 +292,7 @@ describe("chat-ingestion", () => {
       expect.objectContaining({
         status: 409,
         responsePreview: expect.stringContaining("VERSION_CONFLICT"),
-      }),
+      })
     );
   });
 
@@ -239,7 +301,7 @@ describe("chat-ingestion", () => {
       new Response(JSON.stringify({ code: "VERSION_CONFLICT" }), {
         status: 409,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
     const c = makeTestContext();
 
@@ -252,22 +314,22 @@ describe("chat-ingestion", () => {
         startedAt: 1,
         sourceType: "chatbox",
       },
-      c,
+      c
     );
 
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
       expect.objectContaining({ failureKind: "version_conflict" }),
-      undefined,
+      undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it("emits chat.session.persist.failed(http_error) via typed event when c is provided", async () => {
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response("Server Error", { status: 503 }),
-    );
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response("Server Error", { status: 503 }));
     const c = makeTestContext();
 
     await persistChatSessionToConvex(
@@ -279,14 +341,14 @@ describe("chat-ingestion", () => {
         startedAt: 1,
         sourceType: "direct",
       },
-      c,
+      c
     );
 
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
       expect.objectContaining({ failureKind: "http_error", statusCode: 503 }),
-      undefined,
+      undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
@@ -299,10 +361,12 @@ describe("chat-ingestion", () => {
           const signal = init?.signal;
           if (signal instanceof AbortSignal) {
             signal.addEventListener("abort", () => {
-              reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" })
+              );
             });
           }
-        }),
+        })
     ) as typeof fetch;
     const c = makeTestContext();
 
@@ -315,7 +379,7 @@ describe("chat-ingestion", () => {
         startedAt: 1,
         timeoutMs: 50,
       },
-      c,
+      c
     );
     await vi.advanceTimersByTimeAsync(50);
     await p;
@@ -324,7 +388,7 @@ describe("chat-ingestion", () => {
       "chat.session.persist.failed",
       expect.any(Object),
       expect.objectContaining({ failureKind: "timeout" }),
-      undefined,
+      undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
@@ -341,14 +405,14 @@ describe("chat-ingestion", () => {
         authHeader: "Bearer t",
         startedAt: 1,
       },
-      c,
+      c
     );
 
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
       expect.objectContaining({ failureKind: "exception" }),
-      expect.objectContaining({ error: expect.any(Error) }),
+      expect.objectContaining({ error: expect.any(Error) })
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
@@ -466,6 +530,19 @@ describe("buildDirectHostConfig", () => {
 
     expect(truthy.requireToolApproval).toBe(true);
     expect(undef.requireToolApproval).toBe(false);
+  });
+
+  it("includes respectToolVisibility in Convex hostConfig payloads", () => {
+    const config = buildDirectHostConfig({
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "p",
+      resolvedTemperature: 0.7,
+      selectedServerIds: ["x"],
+      requireToolApproval: false,
+      respectToolVisibility: false,
+    });
+
+    expect(config.respectToolVisibility).toBe(false);
   });
 
   it("defaults hostStyle to 'claude' when omitted (Phase 3 read switch)", () => {

@@ -11,6 +11,15 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
+type SuiteRunEnvironmentSnapshot = {
+  servers: string[];
+  serverBindings?: Array<{
+    serverName: string;
+    projectServerId?: string;
+    workspaceServerId?: string;
+  }>;
+};
+
 export type SuiteRunRecorder = {
   runId: string;
   suiteId: string;
@@ -51,7 +60,10 @@ export type SuiteRunRecorder = {
     error?: string;
     errorDetails?: string;
     resultSource?: "reported" | "derived";
-    metadata?: Record<string, string | number | boolean>;
+    // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
+    // nested `predicates: PredicateResult[]` rows. Persisted to
+    // `testIteration.metadata`; the Convex validator accepts nested values.
+    metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
     status: "completed" | "failed" | "cancelled";
@@ -66,6 +78,19 @@ export type SuiteRunRecorder = {
 };
 
 const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
+
+function isSuiteRunEnvironmentSnapshot(
+  value: unknown,
+): value is SuiteRunEnvironmentSnapshot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const environment = value as SuiteRunEnvironmentSnapshot;
+  return (
+    Array.isArray(environment.servers) &&
+    environment.servers.every((server) => typeof server === "string")
+  );
+}
 
 export const createSuiteRunRecorder = ({
   convexClient,
@@ -227,7 +252,7 @@ export const createSuiteRunRecorder = ({
           error,
           errorDetails,
           resultSource,
-          metadata,
+          metadata: metadata ? sanitizeForConvexTransport(metadata) : metadata,
         });
       } catch (error) {
         const errorMessage =
@@ -374,6 +399,19 @@ export const startSuiteRunWithRecorder = async ({
     runId,
   });
 
+  // Use the full environment Convex snapshotted into the run (derived
+  // from suite.hostConfigId.serverIds when available, else the legacy
+  // suite environment). `environment.servers` is a display/compat list;
+  // serverBindings carries the stable id mapping resolveConfiguredServerIds
+  // needs before calling getToolsForAiSdk. Falling back to the raw request
+  // refs is only for older backend responses without configSnapshot.
+  const snapshotEnvironment = isSuiteRunEnvironmentSnapshot(
+    (response?.configSnapshot as any)?.environment,
+  )
+    ? ((response?.configSnapshot as any)
+        .environment as SuiteRunEnvironmentSnapshot)
+    : { servers: serverIds ?? [] };
+
   // Build config from test cases for backward compatibility
   const config = {
     tests: testCases.flatMap((tc: any) => {
@@ -415,7 +453,7 @@ export const startSuiteRunWithRecorder = async ({
 
       return [];
     }),
-    environment: { servers: serverIds || [] },
+    environment: snapshotEnvironment,
   };
 
   return {
@@ -423,5 +461,9 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    hostConfig: response?.hostConfig as
+      | Record<string, unknown>
+      | null
+      | undefined,
   };
 };

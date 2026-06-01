@@ -19,7 +19,7 @@ describe("HandDrawnSendHint", () => {
 
   it("renders the hint label", () => {
     render(<HandDrawnSendHint theme="light" />);
-    expect(screen.getByTestId("app-builder-send-nux-hint")).toHaveTextContent(
+    expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
       "Try this prompt with a demo MCP server",
     );
   });

@@ -327,6 +327,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             hostInfo: { name: "MCPJam", version: __APP_VERSION__ },
           },
+          // Vendor compat-runtime shims the inspector injects into widget
+          // HTML before sandboxing. MCPJam intentionally exposes
+          // `window.openai` (OpenAI Apps SDK surface) so developers can
+          // debug Apps-SDK widgets here without swapping to the ChatGPT
+          // template. Stamped explicitly on the template (rather than
+          // relying on the host style preset fallback) so the JSON in the
+          // Apps Extension tab surfaces the field on day one and the
+          // "window.openai" injected-globals chip reads as user-owned,
+          // not "(from preset)".
+          compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
               // Honor the view's declared `_meta.ui.csp` as-is. MCPJam is
@@ -621,6 +631,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             hostInfo: { name: "chatgpt", version: "0.0.1" },
           },
+          // Vendor compat-runtime shims. Real ChatGPT exposes the
+          // OpenAI Apps SDK `window.openai` surface to widget HTML, so
+          // emulating it here keeps existing Apps SDK widgets rendering
+          // as their authors intended. Stamped on the template so the
+          // JSON editor surfaces the field on day one — without this,
+          // the field would only appear after a manual edit and the
+          // injected-globals chip would read "(from preset)".
+          compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
               // No host-side `restrictTo` — see the Claude template for
@@ -708,6 +726,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-sonnet-4.5",
         temperature: 0.7,
         requireToolApproval: false,
+        // Real Cursor (3.4.20 probe) doesn't yet implement SEP-1865
+        // visibility filtering — app-only tools still flow to the model.
+        // Faithful mirror: MCPJam-as-Cursor leaves visibility off so the
+        // inspector behaves the same way. Every other template inherits
+        // the spec-default `true` via emptyHostConfigInputV2.
+        respectToolVisibility: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: matches what real Cursor publishes during MCP
@@ -875,9 +899,22 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         message: { text: {} },
         updateModelContext: { text: {} },
       };
-      // Per-resource environment context. `containerDimensions` mirrors
-      // ChatGPT's "fill your container" intent (md breakpoint width
-      // policy, modest fixed height). `availableDisplayModes` is kept as
+      // Per-resource environment context. `containerDimensions` communicates
+      // a flexible-height policy (widget can grow up to `maxHeight: 400`),
+      // matching Copilot's documented `viewport.maxHeight` model — the doc
+      // maps `window.openai.maxHeight` → `app.getHostContext()?.viewport?.maxHeight`,
+      // i.e. a flexible vertical bound (widget scrolls up to a max), not a
+      // fixed render-at-400 directive. NOTE: the MCPJam renderer currently
+      // applies `ui/notifications/size-changed.height` directly to the
+      // iframe without clamping against `containerDimensions.maxHeight`
+      // (mcp-apps-renderer.tsx), so a widget reporting `height: 900` will
+      // render at 900px in MCPJam-as-Copilot even though real Copilot
+      // would scroll/cap at 400px. Renderer-level enforcement is a
+      // follow-up that affects every template with a `maxHeight` (Claude
+      // 5000, MCPJam 5000); until it lands, treat this profile as a
+      // best-effort "tells widgets the cap" advertise — overflowing
+      // widgets will look fine here but not in production Copilot.
+      // `availableDisplayModes` is kept as
       // ["inline", "fullscreen"] because omitting it falls back to the
       // inspector default ["inline", "pip", "fullscreen"], which would
       // claim `pip` support Copilot doesn't have — a worse lie than the
@@ -888,10 +925,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         theme,
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen"],
-        containerDimensions: { height: 400, maxWidth: 768 },
+        containerDimensions: { maxHeight: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
+        // Undocumented; chosen to match the `clientInfo.name` convention.
         userAgent: "ms-copilot",
+        // Undocumented; Copilot is also a web app at `m365.cloud.microsoft`,
+        // but kept as "desktop" to match the ChatGPT template behavior.
         platform: "desktop",
         deviceCapabilities: { touch: false, hover: true },
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -900,29 +940,66 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         initialize: {
           // Base MCP protocol: clientInfo sent during MCP `initialize`.
-          // Matches Microsoft's "ms-copilot" identity convention.
+          // Matches Microsoft's "ms-copilot" identity convention. The
+          // specific name/version values are guesses (no live probe and no
+          // learn.microsoft.com source confirms them).
           clientInfo: { name: "ms-copilot", version: "1.0.0" },
         },
         apps: {
           uiInitialize: {
             // MCP Apps extension: hostInfo sent in `ui/initialize`. Apps
             // that branch on `hostInfo.name === "Copilot"` need this to
-            // take that path.
+            // take that path. The specific name/version values are guesses
+            // (no live probe and no learn.microsoft.com source confirms them).
             hostInfo: { name: "Copilot", version: "1.0.0" },
           },
+          // Vendor compat-runtime shims. Copilot routes widgets through
+          // the OpenAI Apps SDK under the hood, so the `window.openai`
+          // surface is expected. Stamped on the template (rather than
+          // inherited from the preset) so the JSON editor surfaces the
+          // field on day one and the injected-globals chip reads as a
+          // template choice, not "(from preset)".
+          compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
-              // No host-side `restrictTo` — see the Claude template for
-              // the full rationale. Real Copilot publishes its own
-              // allowlist (AI APIs + jsDelivr + Microsoft Graph + Office
-              // CDN), but mirroring it here would only narrow the view's
-              // declared CSP via the SEP-1865 intersection rule and
-              // silently break widgets reaching anything else.
+              // No host-side `restrictTo` on connect/resource/baseUri
+              // — see the Claude template for the full rationale. Real
+              // Copilot publishes its own allowlist (AI APIs + jsDelivr
+              // + Microsoft Graph + Office CDN), but mirroring it here
+              // would only narrow the view's declared CSP via the
+              // SEP-1865 intersection rule and silently break widgets
+              // reaching anything else.
+              //
+              // `frameDomains: []` IS set below — Microsoft's doc marks
+              // `frameDomains` as ❌ for Copilot (real Copilot drops the
+              // field), and the symmetric move is to deny iframe nesting
+              // at the host layer too. Encoded as an explicit empty
+              // allowlist so the intent is captured in the config; the
+              // SEP-1865 schema is allowlist-only by design (no deny
+              // primitive — see CspDomainSet in client-config-v2.ts), and
+              // the current MCP Apps renderer gates `restrictToConfigured`
+              // on non-empty arrays, so this empty-list intent is not yet
+              // enforced at runtime. Renderer-side enforcement (treat an
+              // explicit empty allowlist as deny) is a follow-up that
+              // pairs with the `containerDimensions.maxHeight` clamp
+              // noted above — until both land, iframe-nesting widgets
+              // will work in MCPJam-as-Copilot but fail in production.
               mode: "declared",
+              restrictTo: { frameDomains: [] },
             },
             permissions: {
               mode: "custom",
-              allow: { clipboardWrite: true },
+              // Deny by default. Microsoft's doc marks
+              // `_meta.ui.permissions` ❌ (Copilot ignores permissions
+              // a widget declares in its resource `_meta.ui`) and says
+              // nothing about which Permissions-Policy features Copilot
+              // attaches to its own iframe. The only documented signal
+              // is "no permissions surface", so MCPJam-as-Copilot
+              // mirrors that: granting nothing rather than inventing a
+              // host-side grant. Other vendor templates set
+              // `clipboardWrite: true` from live probes — Copilot has
+              // no equivalent capture, so we hold the line.
+              allow: {},
             },
           },
         },

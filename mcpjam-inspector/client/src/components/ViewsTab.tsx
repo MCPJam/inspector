@@ -27,7 +27,6 @@ import {
 } from "@/lib/display-context-utils";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { PlaygroundMain } from "./ui-playground/PlaygroundMain";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
@@ -122,9 +121,6 @@ export function ViewsTab({
   const lastInjectedViewSignature = useRef<string | null>(null);
   const lastUploadedWidgetHtmlRef = useRef<string | null>(null);
 
-  const setSelectedProtocol = useUIPlaygroundStore(
-    (s) => s.setSelectedProtocol,
-  );
   const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
   const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
   const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
@@ -212,13 +208,9 @@ export function ViewsTab({
   // Mutations
   const {
     createMcpView,
-    createOpenaiView,
     updateMcpView,
-    updateOpenaiView,
     removeMcpView,
-    removeOpenaiView,
     generateMcpUploadUrl,
-    generateOpenaiUploadUrl,
   } = useViewMutations();
 
   // Get selected view (from filtered list)
@@ -234,14 +226,11 @@ export function ViewsTab({
     lastUploadedWidgetHtmlRef.current = null;
   }, [selectedView?._id]);
 
-  // Keep playground protocol and display context aligned to selected view
+  // Keep playground display context aligned to selected view. The active
+  // protocol is now derived from the selected tool's metadata downstream,
+  // so we no longer push a `selectedProtocol` value here.
   useEffect(() => {
     if (!selectedView) return;
-    setSelectedProtocol(
-      selectedView.protocol === "mcp-apps"
-        ? UIType.MCP_APPS
-        : UIType.OPENAI_SDK,
-    );
     if (!selectedView.defaultContext) return;
     const ctx = selectedView.defaultContext;
     if (ctx.deviceType) setDeviceType(ctx.deviceType);
@@ -252,7 +241,6 @@ export function ViewsTab({
     if (ctx.safeAreaInsets) setSafeAreaInsets(ctx.safeAreaInsets);
   }, [
     selectedView,
-    setSelectedProtocol,
     setDeviceType,
     setCustomViewport,
     updateGlobal,
@@ -428,6 +416,23 @@ export function ViewsTab({
           ? selectedView.widgetPermissive
           : undefined,
       prefersBorder: selectedView.prefersBorder,
+      // Persisted compat flag — propagated so the renderer's
+      // cached-replay branch knows what the bytes contain. Absent on
+      // pre-feature view rows; falls back to undefined which the
+      // renderer interprets as "let the live profile decide" (safe
+      // for views without cached HTML).
+      injectedOpenAiCompat: selectedView.injectedOpenAiCompat,
+      // Per-method `window.openai.*` surface that was injected at
+      // capture time. Replay reconstructs the same set of methods so
+      // a Copilot-subset snapshot doesn't accidentally render against
+      // the full ChatGPT surface when the live host has flipped. Pre-
+      // feature view rows omit this; the renderer falls back to the
+      // full ChatGPT surface (the runtime default at capture time).
+      injectedOpenAiCompatCapabilities: (
+        selectedView as { injectedOpenAiCompatCapabilities?: unknown }
+      ).injectedOpenAiCompatCapabilities as
+        | import("@/lib/client-styles").OpenAiAppsCapabilities
+        | undefined,
     });
 
     setPendingExecution({
@@ -477,11 +482,7 @@ export function ViewsTab({
     async (view: AnyView) => {
       setDeletingViewId(view._id);
       try {
-        if (view.protocol === "mcp-apps") {
-          await removeMcpView({ viewId: view._id });
-        } else {
-          await removeOpenaiView({ viewId: view._id });
-        }
+        await removeMcpView({ viewId: view._id });
 
         toast.success(`View "${view.name}" deleted`);
 
@@ -502,7 +503,7 @@ export function ViewsTab({
         setDeletingViewId(null);
       }
     },
-    [selectedViewId, removeMcpView, removeOpenaiView, posthog],
+    [selectedViewId, removeMcpView, posthog],
   );
 
   // Handle edit
@@ -531,11 +532,7 @@ export function ViewsTab({
           name: newName,
         };
 
-        if (view.protocol === "mcp-apps") {
-          await updateMcpView(updates);
-        } else {
-          await updateOpenaiView(updates);
-        }
+        await updateMcpView(updates);
 
         toast.success(`View renamed to "${newName}"`);
 
@@ -550,7 +547,7 @@ export function ViewsTab({
         throw error; // Re-throw so the sidebar knows to keep editing mode
       }
     },
-    [updateMcpView, updateOpenaiView, posthog],
+    [updateMcpView, posthog],
   );
 
   // Handle duplicate
@@ -568,10 +565,7 @@ export function ViewsTab({
           if (response.ok) {
             const data = await response.json();
             // Upload as a new blob
-            const uploadUrl =
-              view.protocol === "mcp-apps"
-                ? await generateMcpUploadUrl()
-                : await generateOpenaiUploadUrl();
+            const uploadUrl = await generateMcpUploadUrl();
 
             const uploadResponse = await fetch(uploadUrl, {
               method: "POST",
@@ -592,10 +586,7 @@ export function ViewsTab({
           const response = await fetch(view.widgetHtmlUrl);
           if (response.ok) {
             const htmlContent = await response.text();
-            const uploadUrl =
-              view.protocol === "mcp-apps"
-                ? await generateMcpUploadUrl()
-                : await generateOpenaiUploadUrl();
+            const uploadUrl = await generateMcpUploadUrl();
 
             const uploadResponse = await fetch(uploadUrl, {
               method: "POST",
@@ -621,48 +612,52 @@ export function ViewsTab({
           copyNumber === 1
             ? `${baseName} (copy)`
             : `${baseName} (copy ${copyNumber})`;
+        // Carry both the boolean and the per-method capability
+        // surface across a duplicate so the copy reproduces the
+        // original's `window.openai` API surface byte-for-byte. Only
+        // carry when the duplicate also carries cached widget bytes
+        // (the fields describe what was baked into the HTML; carrying
+        // them without HTML would lie about what the copy renders).
+        const viewWithCapabilities = view as {
+          injectedOpenAiCompat?: boolean;
+          injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
+        };
+        const injectedOpenAiCompatCopy =
+          widgetHtmlBlobId !== undefined &&
+          viewWithCapabilities.injectedOpenAiCompat !== undefined
+            ? {
+                injectedOpenAiCompat: viewWithCapabilities.injectedOpenAiCompat,
+                ...(viewWithCapabilities.injectedOpenAiCompatCapabilities !==
+                undefined
+                  ? {
+                      injectedOpenAiCompatCapabilities:
+                        viewWithCapabilities.injectedOpenAiCompatCapabilities,
+                    }
+                  : {}),
+              }
+            : {};
 
-        if (view.protocol === "mcp-apps") {
-          await createMcpView({
-            projectId,
-            serverId: view.serverId,
-            name: newName,
-            description: view.description,
-            resourceUri: (view as any).resourceUri,
-            toolName: view.toolName,
-            toolState: view.toolState,
-            toolInput: view.toolInput,
-            toolOutputBlobId,
-            widgetHtmlBlobId,
-            toolErrorText: view.toolErrorText,
-            toolMetadata: view.toolMetadata,
-            prefersBorder: view.prefersBorder,
-            tags: view.tags,
-            category: view.category,
-            defaultContext: view.defaultContext,
-          });
-        } else {
-          await createOpenaiView({
-            projectId,
-            serverId: view.serverId,
-            name: newName,
-            description: view.description,
-            outputTemplate: (view as any).outputTemplate,
-            toolName: view.toolName,
-            toolState: view.toolState,
-            toolInput: view.toolInput,
-            toolOutputBlobId,
-            widgetHtmlBlobId,
-            toolErrorText: view.toolErrorText,
-            toolMetadata: view.toolMetadata,
-            prefersBorder: view.prefersBorder,
-            tags: view.tags,
-            category: view.category,
-            defaultContext: view.defaultContext,
-            serverInfo: (view as any).serverInfo,
-            widgetState: view.widgetState,
-          });
-        }
+        await createMcpView({
+          projectId,
+          serverId: view.serverId,
+          name: newName,
+          description: view.description,
+          resourceUri: (view as any).resourceUri,
+          toolName: view.toolName,
+          toolState: view.toolState,
+          toolInput: view.toolInput,
+          toolOutputBlobId,
+          widgetHtmlBlobId,
+          // Carry the cached-HTML provenance flag across duplicate
+          // only when the copy also carries cached widget bytes.
+          ...injectedOpenAiCompatCopy,
+          toolErrorText: view.toolErrorText,
+          toolMetadata: view.toolMetadata,
+          prefersBorder: view.prefersBorder,
+          tags: view.tags,
+          category: view.category,
+          defaultContext: view.defaultContext,
+        });
 
         toast.success(`View duplicated as "${newName}"`);
 
@@ -678,15 +673,7 @@ export function ViewsTab({
         setDuplicatingViewId(null);
       }
     },
-    [
-      projectId,
-      filteredViews,
-      createMcpView,
-      createOpenaiView,
-      generateMcpUploadUrl,
-      generateOpenaiUploadUrl,
-      posthog,
-    ],
+    [projectId, filteredViews, createMcpView, generateMcpUploadUrl, posthog],
   );
 
   // Handle live data changes from editor (for real-time preview)
@@ -757,19 +744,13 @@ export function ViewsTab({
         currentDisplayContext,
         selectedView.defaultContext,
       );
-      const widgetStateChanged =
-        selectedView.protocol === "openai-apps" &&
-        currentSignatures.widgetState !== baselineSignatures.widgetState;
 
       let toolOutputBlobId: string | undefined;
       let widgetHtmlBlobId: string | undefined;
 
       if (toolOutputChanged && liveToolOutput !== null) {
         // Upload new toolOutput as JSON blob
-        const uploadUrl =
-          selectedView.protocol === "mcp-apps"
-            ? await generateMcpUploadUrl()
-            : await generateOpenaiUploadUrl();
+        const uploadUrl = await generateMcpUploadUrl();
 
         const response = await fetch(uploadUrl, {
           method: "POST",
@@ -791,10 +772,7 @@ export function ViewsTab({
       const widgetHtml = previewWidgetDebugInfo?.widgetHtml;
       if (widgetHtml && widgetHtml !== lastUploadedWidgetHtmlRef.current) {
         // Upload new widget HTML blob
-        const uploadUrl =
-          selectedView.protocol === "mcp-apps"
-            ? await generateMcpUploadUrl()
-            : await generateOpenaiUploadUrl();
+        const uploadUrl = await generateMcpUploadUrl();
 
         const response = await fetch(uploadUrl, {
           method: "POST",
@@ -823,25 +801,31 @@ export function ViewsTab({
 
       if (widgetHtmlBlobId) {
         updates.widgetHtmlBlobId = widgetHtmlBlobId;
+        // Persist the renderer's resolved compat flag + per-method
+        // capability surface alongside the new blob so the cached-
+        // replay branch agrees with the bytes AND knows which
+        // `window.openai.*` methods the SDK runtime exposed.
+        // Undefined when the renderer hasn't recorded a value yet —
+        // leave the field untouched (don't overwrite a prior stored
+        // value with `undefined`).
+        if (previewWidgetDebugInfo?.injectedOpenAiCompat !== undefined) {
+          updates.injectedOpenAiCompat =
+            previewWidgetDebugInfo.injectedOpenAiCompat;
+        }
+        if (
+          previewWidgetDebugInfo?.injectedOpenAiCompatCapabilities !==
+          undefined
+        ) {
+          updates.injectedOpenAiCompatCapabilities =
+            previewWidgetDebugInfo.injectedOpenAiCompatCapabilities;
+        }
       }
 
       if (contextChanged) {
         updates.defaultContext = currentDisplayContext;
       }
 
-      if (selectedView.protocol === "openai-apps") {
-        if (widgetStateChanged) {
-          updates.widgetState = liveWidgetState ?? null;
-        } else if (previewWidgetDebugInfo !== undefined) {
-          updates.widgetState = previewWidgetDebugInfo.widgetState;
-        }
-      }
-
-      if (selectedView.protocol === "mcp-apps") {
-        await updateMcpView(updates);
-      } else {
-        await updateOpenaiView(updates);
-      }
+      await updateMcpView(updates);
 
       // Update original values to reflect saved state
       setOriginalToolOutput(liveToolOutput);
@@ -865,14 +849,11 @@ export function ViewsTab({
     hasLiveUnsavedChanges,
     liveToolInput,
     liveToolOutput,
-    liveWidgetState,
     currentSignatures,
     baselineSignatures,
     currentDisplayContext,
     generateMcpUploadUrl,
-    generateOpenaiUploadUrl,
     updateMcpView,
-    updateOpenaiView,
     widgetsMap,
     posthog,
   ]);
@@ -1034,7 +1015,7 @@ export function ViewsTab({
         <EmptyState
           icon={Layers}
           title="No saved views yet"
-          description="Save tool executions from Chat or App Builder to create reusable views."
+          description="Save tool executions from Chat or Playground to create reusable views."
           className="h-[calc(100vh-200px)]"
         />
       </div>

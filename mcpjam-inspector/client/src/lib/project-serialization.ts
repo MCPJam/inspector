@@ -20,7 +20,7 @@ type SerializeOptions = {
 
 function serializeServersInternal(
   servers: Record<string, ServerWithName>,
-  options: SerializeOptions,
+  options: SerializeOptions
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
@@ -56,7 +56,7 @@ function serializeServersInternal(
         if ((server.config as any).requestInit.headers) {
           const headers: Record<string, string> = {};
           for (const [key, value] of Object.entries(
-            (server.config as any).requestInit.headers,
+            (server.config as any).requestInit.headers
           )) {
             if (
               options.redactSecrets &&
@@ -83,8 +83,8 @@ function serializeServersInternal(
       const scopesArray = Array.isArray(rawScopes)
         ? (rawScopes as string[])
         : typeof rawScopes === "string"
-          ? rawScopes.split(/[\s,]+/).filter(Boolean)
-          : [];
+        ? rawScopes.split(/[\s,]+/).filter(Boolean)
+        : [];
       serializedServer.oauthFlowProfile = {
         serverUrl: server.oauthFlowProfile.serverUrl,
         resourceUrl: server.oauthFlowProfile.resourceUrl,
@@ -107,7 +107,7 @@ function serializeServersInternal(
  * stay on the local machine.
  */
 export function serializeServersForSharing(
-  servers: Record<string, ServerWithName>,
+  servers: Record<string, ServerWithName>
 ): Record<string, unknown> {
   return serializeServersInternal(servers, { redactSecrets: true });
 }
@@ -124,13 +124,13 @@ export function serializeServersForSharing(
  * `serializeServersForSharing`.
  */
 export function serializeServersForPersistence(
-  servers: Record<string, ServerWithName>,
+  servers: Record<string, ServerWithName>
 ): Record<string, unknown> {
   return serializeServersInternal(servers, { redactSecrets: false });
 }
 
 export function deserializeServersFromConvex(
-  servers: Record<string, any> | any[],
+  servers: Record<string, any> | any[]
 ): Record<string, ServerWithName> {
   const result: Record<string, ServerWithName> = {};
 
@@ -191,6 +191,8 @@ export function deserializeServersFromConvex(
       enabled: serverData.enabled ?? false,
       useOAuth: serverData.useOAuth ?? false,
       hasClientSecret: serverData.hasClientSecret === true,
+      hasEnv: serverData.hasEnv === true,
+      hasHeaders: serverData.hasHeaders === true,
     };
 
     // Handle oauthFlowProfile from legacy nested structure
@@ -230,7 +232,7 @@ export function deserializeServersFromConvex(
 
 export function serversHaveChanged(
   local: Record<string, ServerWithName>,
-  remote: Record<string, any> | any[],
+  remote: Record<string, any> | any[]
 ): boolean {
   // Handle array (from servers table) or object (legacy)
   const remoteRecord = Array.isArray(remote)
@@ -278,7 +280,8 @@ export function serversHaveChanged(
     if ((localServer.config as any)?.timeout !== remoteTimeout) return true;
 
     const remoteClientCapabilities =
-      remoteServer.clientCapabilities || remoteServer.config?.clientCapabilities;
+      remoteServer.clientCapabilities ||
+      remoteServer.config?.clientCapabilities;
     if (
       JSON.stringify((localServer.config as any)?.clientCapabilities) !==
       JSON.stringify(remoteClientCapabilities)
@@ -289,24 +292,40 @@ export function serversHaveChanged(
     const remoteRequestInit = remoteServer.headers
       ? { headers: remoteServer.headers }
       : remoteServer.config?.requestInit;
-    if (
-      JSON.stringify((localServer.config as any)?.requestInit) !==
-      JSON.stringify(remoteRequestInit)
-    )
-      return true;
+    const remoteHasHeaders = remoteServer.hasHeaders === true;
+    const remoteHeadersAreRedacted =
+      remoteHasHeaders &&
+      (remoteRequestInit == null ||
+        (typeof remoteRequestInit === "object" &&
+          (remoteRequestInit as any).headers === undefined));
+    if (!remoteHeadersAreRedacted) {
+      if (
+        JSON.stringify((localServer.config as any)?.requestInit) !==
+        JSON.stringify(remoteRequestInit)
+      )
+        return true;
+    }
 
     // Get remote env (flat field or nested config)
     const remoteEnv = remoteServer.env || remoteServer.config?.env;
-    if (
-      JSON.stringify((localServer.config as any)?.env) !==
-      JSON.stringify(remoteEnv)
-    )
-      return true;
+    const remoteHasEnv = remoteServer.hasEnv === true;
+    const remoteEnvIsRedacted = remoteHasEnv && remoteEnv === undefined;
+    if (!remoteEnvIsRedacted) {
+      if (
+        JSON.stringify((localServer.config as any)?.env) !==
+        JSON.stringify(remoteEnv)
+      )
+        return true;
+    }
 
     if (
       Boolean(localServer.hasClientSecret) !==
       Boolean(remoteServer.hasClientSecret)
     )
+      return true;
+    if (Boolean(localServer.hasEnv) !== Boolean(remoteServer.hasEnv))
+      return true;
+    if (Boolean(localServer.hasHeaders) !== Boolean(remoteServer.hasHeaders))
       return true;
 
     // Check OAuth profile (handle both flat and nested structures)

@@ -145,18 +145,12 @@ export function ClientsTab({
           >
             <ClientsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
               <div
-                className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
+                className="relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8"
                 data-testid="hosts-tab-header-chrome"
               >
-                <div className="flex min-w-0 items-center justify-end gap-3">
-                  <div
-                    ref={setAddServerSlotEl}
-                    className="flex shrink-0 items-center gap-2"
-                    data-testid="hosts-tab-add-server-slot"
-                  />
-                </div>
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="pointer-events-auto">
+                <div className="flex flex-col items-stretch gap-2 md:grid md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-3">
+                  <div className="hidden md:block" aria-hidden="true" />
+                  <div className="flex min-w-0 justify-center">
                     <ViewModeSelector
                       value="servers"
                       ariaLabel="Connect view"
@@ -181,6 +175,11 @@ export function ClientsTab({
                       ]}
                     />
                   </div>
+                  <div
+                    ref={setAddServerSlotEl}
+                    className="flex min-w-0 flex-wrap items-center justify-center gap-3 md:justify-end"
+                    data-testid="hosts-tab-add-server-slot"
+                  />
                 </div>
               </div>
               <div

@@ -63,7 +63,7 @@ function createPlanCatalog() {
           maxMembers: 5,
           maxProjects: 3,
           maxChatboxesPerProject: 0,
-          maxEvalRunsPerMonth: 5,
+          maxEvalRunsPerMonth: 100,
         },
         includedSeats: null,
         seatMinimum: null,
@@ -254,6 +254,7 @@ vi.mock("convex/react", () => ({
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+  usePostHog: () => undefined,
 }));
 
 vi.mock("sonner", () => ({
@@ -999,12 +1000,12 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    // Default interval is monthly — Team lists $38/seat/mo
-    expect(screen.getByText(/\$38/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
+    // Default interval is annual — Team lists $30/seat/mo billed annually
     expect(screen.getByText(/\$30/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
     expect(screen.getByText(/\$38/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
+    expect(screen.getByText(/\$30/)).toBeInTheDocument();
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {
@@ -1117,7 +1118,7 @@ describe("OrganizationsTab billing", () => {
       expect(startPlanChange).toHaveBeenCalledWith(
         expect.stringContaining("/organizations/org-1/billing"),
         "team",
-        "monthly",
+        "annual",
         { confirmPaidPlanChange: true },
       );
     });
@@ -1494,7 +1495,7 @@ describe("OrganizationsTab billing", () => {
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
-    expect(screen.getByText(/\$30/)).toBeInTheDocument();
+    expect(screen.getByText(/\$38/)).toBeInTheDocument();
   });
 
   it("consumes paid deep links before subscription status catches up", async () => {

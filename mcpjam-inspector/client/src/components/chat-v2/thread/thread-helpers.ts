@@ -45,9 +45,20 @@ type ToolStateMeta = {
   className: string;
 };
 
+// Hidden internal messages: widget-state-* and model-context-* are injected
+// for the model but never rendered. Both `MessageView` and the sender-avatar
+// coalescing scan in `TranscriptThread` must skip them so an injected
+// `model-context-*` (role: "user") between two visible prompts from the same
+// person doesn't break coalescing.
+export function isHiddenInternalMessage(message: UIMessage): boolean {
+  return (
+    message.id?.startsWith("widget-state-") === true ||
+    message.id?.startsWith("model-context-") === true
+  );
+}
+
 export function isRenderableConversationMessage(message: UIMessage): boolean {
-  if (message.id?.startsWith("widget-state-")) return false;
-  if (message.id?.startsWith("model-context-")) return false;
+  if (isHiddenInternalMessage(message)) return false;
   return message.role === "user" || message.role === "assistant";
 }
 

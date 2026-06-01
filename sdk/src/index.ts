@@ -24,6 +24,8 @@ export type {
   MCPServerSummary,
   RegisteredServerState,
   LiveClientState,
+  UnauthorizedRefreshHandler,
+  UnauthorizedRefreshResult,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types
@@ -79,6 +81,12 @@ export {
   getDefaultClientCapabilities,
   normalizeClientCapabilities,
   mergeClientCapabilities,
+} from "./mcp-client-manager/index.js";
+export {
+  MCP_PROTOCOL_VERSIONS,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
 
 // Error classes

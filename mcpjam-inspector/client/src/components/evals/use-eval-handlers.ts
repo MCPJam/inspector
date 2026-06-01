@@ -355,7 +355,13 @@ export function useEvalHandlers({
       const modelApiKeys: Record<string, string> = {};
 
       return {
-        suiteServers: normalizeSuiteServerRefs(suite.environment?.servers),
+        // Effective server list: union of legacy `environment.servers`,
+        // per-host attachment picks, AND the suite's standalone server
+        // attachment (when set). The runner fallback in
+        // `runEvals.serverIds` reads this, so an attachment-only suite
+        // would otherwise send `serverIds: []` and fail the backend's
+        // `min(1)` validation with HTTP 400.
+        suiteServers: normalizeSuiteServerRefs(getEffectiveSuiteServers(suite)),
         testCases,
         tests,
         modelApiKeys,
@@ -488,6 +494,13 @@ export function useEvalHandlers({
          * test in the run. Does NOT mutate persisted suite/case records.
          */
         matchOptionsOverride?: import("@/shared/eval-matching").EvalMatchOptions;
+        /**
+         * When true, re-derives suite.hostConfigId from the current server
+         * list and persists it. Without this flag, reruns leave the frozen
+         * snapshot untouched so newly connected servers cannot contaminate
+         * existing suites.
+         */
+        refreshSnapshot?: boolean;
       },
     ) => {
       if (rerunningSuiteId) return;
@@ -636,6 +649,7 @@ export function useEvalHandlers({
               suiteRerun: true,
               iterationOverride: options?.iterationOverride,
               matchOptionsOverride: options?.matchOptionsOverride,
+              refreshSnapshot: options?.refreshSnapshot,
               ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
             }),
           ),

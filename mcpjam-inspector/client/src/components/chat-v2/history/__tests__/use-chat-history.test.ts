@@ -9,8 +9,10 @@ const {
   useMutationMock,
   useQueryMock,
   reactiveArchiveMutationMock,
+  reactiveShareMutationMock,
 } = vi.hoisted(() => {
   const reactiveArchiveMutationMock = vi.fn();
+  const reactiveShareMutationMock = vi.fn();
   return {
     useConvexAuthMock: vi.fn(() => ({
       isAuthenticated: false,
@@ -21,9 +23,13 @@ const {
       if (name === "directChatHistory:archiveCurrentSession") {
         return reactiveArchiveMutationMock;
       }
+      if (name === "directChatHistory:shareCurrentSession") {
+        return reactiveShareMutationMock;
+      }
       return vi.fn();
     }),
     reactiveArchiveMutationMock,
+    reactiveShareMutationMock,
   };
 });
 
@@ -71,9 +77,13 @@ describe("useChatHistory archiveAllActive", () => {
       if (name === "directChatHistory:archiveCurrentSession") {
         return reactiveArchiveMutationMock;
       }
+      if (name === "directChatHistory:shareCurrentSession") {
+        return reactiveShareMutationMock;
+      }
       return vi.fn();
     });
     reactiveArchiveMutationMock.mockReset();
+    reactiveShareMutationMock.mockReset();
     vi.mocked(chatHistoryApi.listChatHistory).mockResolvedValue({
       ok: true,
       personal: [sessionStub("p1")],
@@ -140,6 +150,36 @@ describe("useChatHistory archiveAllActive", () => {
       listCallsBefore,
     );
   });
+
+  it("passes project scope to the fallback share action", async () => {
+    const { result } = renderHook(() =>
+      useChatHistory({ enabled: true, projectId: "project-1" }),
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.actions.share("p1");
+    });
+
+    expect(chatHistoryApi.chatHistoryAction).toHaveBeenCalledWith(
+      "share",
+      "p1",
+      { projectId: "project-1" },
+      expect.objectContaining({ headers: undefined }),
+    );
+  });
+
+  it("rejects fallback share actions without project scope", async () => {
+    const { result } = renderHook(() => useChatHistory({ enabled: true }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await expect(result.current.actions.share("p1")).rejects.toThrow(
+      "Cannot share a session without a project.",
+    );
+    expect(chatHistoryApi.chatHistoryAction).not.toHaveBeenCalled();
+  });
 });
 
 describe("useChatHistory archiveManySessionIds", () => {
@@ -153,9 +193,13 @@ describe("useChatHistory archiveManySessionIds", () => {
       if (name === "directChatHistory:archiveCurrentSession") {
         return reactiveArchiveMutationMock;
       }
+      if (name === "directChatHistory:shareCurrentSession") {
+        return reactiveShareMutationMock;
+      }
       return vi.fn();
     });
     reactiveArchiveMutationMock.mockReset();
+    reactiveShareMutationMock.mockReset();
     vi.mocked(chatHistoryApi.listChatHistory).mockResolvedValue({
       ok: true,
       personal: [sessionStub("p1")],
@@ -235,6 +279,7 @@ describe("useChatHistory reactive mode", () => {
       project: [sessionStub("w1")],
     });
     reactiveArchiveMutationMock.mockResolvedValue(undefined);
+    reactiveShareMutationMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -285,5 +330,35 @@ describe("useChatHistory reactive mode", () => {
     });
     expect(chatHistoryApi.chatHistoryAction).not.toHaveBeenCalled();
     expect(chatHistoryApi.listChatHistory).not.toHaveBeenCalled();
+  });
+
+  it("shares through the current project scope in reactive mode", async () => {
+    const { result } = renderHook(() =>
+      useChatHistory({ enabled: true, projectId: "project-1" }),
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.actions.share("p1");
+    });
+
+    expect(reactiveShareMutationMock).toHaveBeenCalledWith({
+      sessionId: "p1",
+      projectId: "project-1",
+    });
+    expect(chatHistoryApi.chatHistoryAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects reactive share actions without project scope", async () => {
+    const { result } = renderHook(() => useChatHistory({ enabled: true }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await expect(result.current.actions.share("p1")).rejects.toThrow(
+      "Cannot share a session without a project.",
+    );
+    expect(reactiveShareMutationMock).not.toHaveBeenCalled();
+    expect(chatHistoryApi.chatHistoryAction).not.toHaveBeenCalled();
   });
 });

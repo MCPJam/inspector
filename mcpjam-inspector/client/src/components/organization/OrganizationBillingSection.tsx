@@ -41,7 +41,9 @@ import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
+import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlow";
 
 const PLAN_ORDER: OrganizationPlan[] = ["free", "team", "enterprise"];
 
@@ -206,47 +208,31 @@ function formatPerSeatCadence(
       ? "Flat rate, billed annually"
       : "Flat rate, billed monthly";
   }
-  return interval === "annual"
-    ? "Per seat, billed annually"
-    : "Per seat, billed monthly";
+  return interval === "annual" ? "Billed annually" : "Billed monthly";
 }
 
 const PER_SEAT_MO_SUFFIX = "/seat/mo";
 const PER_MO_SUFFIX = "/mo";
 
 function PlanPriceDisplay({ label }: { label: string }) {
-  if (label.endsWith(PER_SEAT_MO_SUFFIX)) {
-    const amount = label.slice(0, -PER_SEAT_MO_SUFFIX.length);
-    return (
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
-        <span className="text-3xl font-semibold tabular-nums tracking-tight">
-          {amount}
-        </span>
-        <span className="text-sm font-semibold text-muted-foreground">
-          {PER_SEAT_MO_SUFFIX}
-        </span>
-      </div>
-    );
-  }
-
-  if (label.endsWith(PER_MO_SUFFIX)) {
-    const amount = label.slice(0, -PER_MO_SUFFIX.length);
-    return (
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
-        <span className="text-3xl font-semibold tabular-nums tracking-tight">
-          {amount}
-        </span>
-        <span className="text-sm font-semibold text-muted-foreground">
-          {PER_MO_SUFFIX}
-        </span>
-      </div>
-    );
-  }
+  const suffix = label.endsWith(PER_SEAT_MO_SUFFIX)
+    ? PER_SEAT_MO_SUFFIX
+    : label.endsWith(PER_MO_SUFFIX)
+      ? PER_MO_SUFFIX
+      : null;
+  const amount = suffix ? label.slice(0, -suffix.length) : label;
 
   return (
-    <p className="min-w-0 text-3xl font-semibold tabular-nums tracking-tight">
-      {label}
-    </p>
+    <div className="flex min-h-9 min-w-0 items-baseline justify-center gap-x-1">
+      <span className="text-3xl font-semibold tabular-nums tracking-tight">
+        {amount}
+      </span>
+      {suffix ? (
+        <span className="text-sm font-medium text-muted-foreground">
+          {suffix}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -254,10 +240,11 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   string,
   { ariaLabel: string; content: string; contentClassName?: string }
 > = {
-  "Evals CI/CD runs": {
-    ariaLabel: "Included runs and overage pricing",
-    content: "Free: hard cap. Overages $0.02/run otherwise.",
-    contentClassName: "max-w-[20rem]",
+  "Eval iteration overage": {
+    ariaLabel: "Eval iteration overage pricing",
+    content:
+      "Free stops at the cap. Team can continue at $0.02 per iteration beyond the included monthly pool.",
+    contentClassName: "max-w-[22rem]",
   },
   "Triage Insights": {
     ariaLabel: "About Triage Insights",
@@ -270,41 +257,11 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
       "Traces for evaluations: configured user prompts, tool execution, agent reasoning, errors, and latency breakdown for playground and CI/CD runs.",
     contentClassName: "max-w-[26rem]",
   },
-  "Chatbox traces": {
-    ariaLabel: "What are chatbox traces?",
-    content:
-      "Traces for chatboxes: testing user prompts, tool execution, agent reasoning, errors, and latency breakdown while running and sharing MCP experiences.",
-    contentClassName: "max-w-[26rem]",
-  },
-  Uptime: {
-    ariaLabel: "Included uptime and overage",
-    content:
-      "Included hours are per plan. Overage after that is billed at $0.003 per minute.",
-    contentClassName: "max-w-[20rem]",
-  },
-  "User Feedback Insights": {
-    ariaLabel: "User feedback and usage insights",
-    content:
-      "User feedback and usage insights, e.g. to inform user intent and more effective product decisions and evaluations.",
-    contentClassName: "max-w-[26rem]",
-  },
   "Insights Data Export": {
     ariaLabel: "About insights data export",
     content:
       "Export triage and evaluation insights for analysis outside MCPJam.",
     contentClassName: "max-w-[22rem]",
-  },
-  "Chatbox Insights Data Export": {
-    ariaLabel: "About chatbox insights data export",
-    content:
-      "Export chatbox user feedback and usage insights for analysis outside MCPJam.",
-    contentClassName: "max-w-[22rem]",
-  },
-  Branding: {
-    ariaLabel: "About branding",
-    content:
-      "Custom branding (e.g. logo and colors) on shared chatbox experiences.",
-    contentClassName: "max-w-[18rem]",
   },
   Projects: {
     ariaLabel: "What is a project?",
@@ -498,9 +455,11 @@ export function OrganizationBillingSection({
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
+  useCreditTopupReturnFlowBilling();
+
   const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
-    useState<BillingInterval>("monthly");
+    useState<BillingInterval>("annual");
   const [checkoutPlanNotice, setCheckoutPlanNotice] = useState<{
     reason: "already_on" | "already_higher";
     currentDisplayName: string;
@@ -515,9 +474,9 @@ export function OrganizationBillingSection({
 
   useEffect(() => {
     if (billingStatus?.billingInterval === "annual") {
-      setBillingInterval((current) =>
-        current === "monthly" ? "annual" : current,
-      );
+      setBillingInterval("annual");
+    } else if (billingStatus?.billingInterval === "monthly") {
+      setBillingInterval("monthly");
     }
   }, [billingStatus?.billingInterval]);
 
@@ -710,6 +669,10 @@ export function OrganizationBillingSection({
         <CreditBalanceCard />
       </ErrorBoundary>
 
+      <ErrorBoundary fallback={null}>
+        <PaymentsHistorySection />
+      </ErrorBoundary>
+
       {checkoutIntent ? (
         <div
           className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
@@ -893,7 +856,7 @@ export function OrganizationBillingSection({
                                     </Badge>
                                   ) : null}
                                 </div>
-                                <div className="w-full space-y-1">
+                                <div className="w-full space-y-1 text-center">
                                   <PlanPriceDisplay label={priceLabel} />
                                   <p className="text-xs leading-snug text-muted-foreground">
                                     {priceSubtext}

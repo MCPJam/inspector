@@ -5,33 +5,67 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
   it("mirrors the marketing compare table sections and row coverage", () => {
     expect(COMPARE_PLAN_MARKETING_SECTIONS.map((s) => s.title)).toEqual([
       "Organization & projects",
-      "Standard features",
       "Evaluations",
-      "Chatboxes",
       "LLM Usage",
       "Security & Compliance",
-      "Platform & Infrastructure",
       "Support",
+      "Standard features",
     ]);
+
+    expect(
+      COMPARE_PLAN_MARKETING_SECTIONS.some(
+        (s) => s.title === "Platform & Infrastructure",
+      ),
+    ).toBe(false);
+
+    expect(
+      COMPARE_PLAN_MARKETING_SECTIONS.some((s) => s.title === "Chatboxes"),
+    ).toBe(false);
 
     const rowCount = COMPARE_PLAN_MARKETING_SECTIONS.reduce(
       (n, s) => n + s.rows.length,
       0,
     );
-    expect(rowCount).toBe(35);
+    expect(rowCount).toBe(24);
+
+    const standardFeatures = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Standard features",
+    );
+    const standardLabels = standardFeatures?.rows.map((r) => r.label) ?? [];
+    expect(standardLabels).toEqual([
+      "Playground",
+      "Visual OAuth Debugger",
+      "JSON-RPC Logger & SDK",
+      "Open Source on GitHub",
+    ]);
   });
 
   it("includes representative product and org/project cells", () => {
     const testing = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Evaluations",
     );
-    const evalsRow = testing?.rows.find((r) => r.label === "Evals CI/CD runs");
-    expect(evalsRow?.team).toEqual({
+    const iterationCapRow = testing?.rows.find(
+      (r) => r.label === "Eval iteration cap",
+    );
+    expect(iterationCapRow?.team).toEqual({
       kind: "text",
-      text: "5,000 included",
+      text: "5,000 iter. / mo",
       emphasize: true,
     });
-    expect(evalsRow?.free).toEqual({ kind: "text", text: "5 / mo" });
+    expect(iterationCapRow?.free).toEqual({
+      kind: "text",
+      text: "100 iter. / mo",
+    });
+
+    const overageRow = testing?.rows.find(
+      (r) => r.label === "Eval iteration overage",
+    );
+    expect(overageRow?.free).toEqual({ kind: "x" });
+    expect(overageRow?.team).toEqual({
+      kind: "text",
+      text: "$0.02 / iter.",
+      emphasize: true,
+    });
 
     const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Organization & projects",
@@ -55,7 +89,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (s) => s.title === "LLM Usage",
     );
     const rateLimitRow = llmUsage?.rows.find(
-      (r) => r.label === "Daily rate limit / user",
+      (r) => r.label === "Free daily credits / user",
     );
 
     expect(rateLimitRow?.team).toEqual({
@@ -63,6 +97,19 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       text: "$5",
       emphasize: true,
     });
+  });
+
+  it("keeps insights data export on Enterprise only", () => {
+    const evaluations = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Evaluations",
+    );
+    const exportRow = evaluations?.rows.find(
+      (r) => r.label === "Insights Data Export",
+    );
+
+    expect(exportRow?.free).toEqual({ kind: "x" });
+    expect(exportRow?.team).toEqual({ kind: "x" });
+    expect(exportRow?.enterprise).toEqual({ kind: "check" });
   });
 
   it("keeps audit logs positioned on Enterprise only", () => {

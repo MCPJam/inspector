@@ -26,6 +26,7 @@ import {
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/hosted-oauth-callback";
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
+import { shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 
 export type { ServerWithName } from "@/state/app-types";
@@ -179,6 +180,7 @@ export function useAppState({
   isLoadingOrganizations,
   validOrganizations,
   hostsHubFlagEnabled,
+  requestSignIn,
 }: {
   currentUserId: string | null;
   /**
@@ -198,6 +200,7 @@ export function useAppState({
    * via its shadow `projects.clientConfig`).
    */
   hostsHubFlagEnabled: boolean;
+  requestSignIn?: () => void | Promise<void>;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -526,6 +529,7 @@ export function useAppState({
     activeProjectServersFlat: projectState.activeProjectServersFlat,
     activeMcpProfile: activeHost?.mcpProfile,
     activeHostConfig: activeHost,
+    requestSignIn,
     logger,
   });
 
@@ -781,6 +785,14 @@ export function useAppState({
     appState,
     isLoading,
     isLoadingRemoteProjects,
+    // True once Convex has returned the flat-servers query for the active
+    // project, OR when there's no queryable project id (sentinel like
+    // "none"/"null" — query was skipped, so no data is ever coming).
+    // Lets ServersTab distinguish "still loading" from "no real project".
+    areServersHydrated:
+      !isAuthenticated ||
+      projectState.activeProjectServersFlat !== undefined ||
+      !shouldQueryProjectId(projectState.activeProjectServersFlatProjectId),
     isCloudSyncActive,
     activeOrganizationId,
     setActiveOrganizationId,
@@ -789,6 +801,7 @@ export function useAppState({
     pendingDashboardOAuth,
 
     projectServers: serverState.projectServers,
+    displayServerConfigs: serverState.displayServerConfigs,
     connectedOrConnectingServerConfigs:
       serverState.connectedOrConnectingServerConfigs,
     selectedServerEntry: serverState.selectedServerEntry,
@@ -814,14 +827,15 @@ export function useAppState({
     activeHostId,
     setActiveHostId,
     // Back-compat: `activeMcpProfile` was the per-call alias for
-    // `activeHost?.mcpProfile`. Surfaces that still destructure it (e.g.
-    // ChatV2Route) keep working without churn.
+    // `activeHost?.mcpProfile`. Surfaces that still destructure it keep
+    // working without churn.
     activeMcpProfile: activeHost?.mcpProfile,
 
     handleConnect: serverState.handleConnect,
     handleDisconnect: serverState.handleDisconnect,
     handleRuntimeDisconnect: serverState.handleRuntimeDisconnect,
     handleReconnect: serverState.handleReconnect,
+    reconnectServerForClientSwitch: serverState.reconnectServerForClientSwitch,
     ensureServersReady: serverState.ensureServersReady,
     syncAgentStatus: serverState.syncAgentStatus,
     handleUpdate: serverState.handleUpdate,

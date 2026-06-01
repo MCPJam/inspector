@@ -493,3 +493,64 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     expect(restrictTo?.isChanged).toBe(true);
   });
 });
+
+describe("buildRedesignedHostCanvas — mcpAppsBridge canvas chip", () => {
+  it("reports no overrides when mcpAppsOverrides is absent from the profile", () => {
+    const data = matrixData(buildVm());
+    expect(data.mcpAppsBridge).toEqual({
+      hasOverrides: false,
+      overrideCount: 0,
+    });
+  });
+
+  it("reports the sparse-override key count when the user has matrix edits", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        mcpAppsOverrides: {
+          serverResources: false,
+          logging: false,
+          availableDisplayModes: ["fullscreen"],
+        },
+      },
+    };
+    const data = matrixData(buildVm({ draft }));
+    expect(data.mcpAppsBridge).toEqual({
+      hasOverrides: true,
+      overrideCount: 3,
+    });
+  });
+
+  it("treats an empty mcpAppsOverrides record as 'no overrides' (sparse-key count is 0)", () => {
+    // An empty {} is the same as undefined for chip purposes — the
+    // user hasn't edited anything. Don't show a misleading "0
+    // overrides" tag.
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: { mcpAppsOverrides: {} },
+    };
+    const data = matrixData(buildVm({ draft }));
+    expect(data.mcpAppsBridge.hasOverrides).toBe(false);
+    expect(data.mcpAppsBridge.overrideCount).toBe(0);
+  });
+
+  it("counts mcpAppsOverrides independently of compatRuntime.openaiAppsOverrides (two-matrix isolation)", () => {
+    // Both matrices may have overrides on the same profile; the chip
+    // counts must reflect their respective records, not cross-pollinate.
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        compatRuntime: {
+          openaiAppsOverrides: { uploadFile: false, requestModal: false },
+        },
+        mcpAppsOverrides: { logging: false },
+      },
+    };
+    const data = matrixData(buildVm({ draft }));
+    expect(data.mcpAppsBridge.overrideCount).toBe(1);
+    expect(data.compatRuntime.hasMethodOverrides).toBe(true);
+  });
+});

@@ -71,11 +71,13 @@ describe("ClientsTab", () => {
 
     const chrome = screen.getByTestId("hosts-tab-header-chrome");
     expect(chrome).toHaveClass(
+      "relative",
       "shrink-0",
       "border-b",
       "border-border/40",
-      "px-8",
+      "px-4",
       "py-2.5",
+      "md:px-8",
     );
   });
 });

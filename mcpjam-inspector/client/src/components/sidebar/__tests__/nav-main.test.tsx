@@ -173,8 +173,8 @@ describe("NavMain", () => {
             icon: FakeIcon,
           },
           {
-            title: "Chat",
-            url: "#chat-v2",
+            title: "Chatboxes",
+            url: "#chatboxes",
             icon: FakeIcon,
           },
         ]}
@@ -183,7 +183,7 @@ describe("NavMain", () => {
     );
 
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
-    expect(screen.queryByTestId("learn-more-chat-v2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("learn-more-chatboxes")).not.toBeInTheDocument();
   });
 
   it("suppresses the built-in collapsed tooltip when learn more is handling it", () => {
@@ -206,32 +206,5 @@ describe("NavMain", () => {
       "data-tooltip",
     );
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
-  });
-
-  it("renders App Builder without the removed guide bubble UI", () => {
-    render(
-      <NavMain
-        items={[{ title: "App Builder", url: "#app-builder", icon: FakeIcon }]}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "App Builder" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText("Build your UI app with App Builder."),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Dismiss")).not.toBeInTheDocument();
-  });
-
-  it("uses the standard Learn More hover card for App Builder", () => {
-    render(
-      <NavMain
-        items={[{ title: "App Builder", url: "#app-builder", icon: FakeIcon }]}
-        learnMore={{ onExpand: vi.fn() }}
-      />,
-    );
-
-    expect(screen.getByTestId("learn-more-app-builder")).toBeInTheDocument();
   });
 });

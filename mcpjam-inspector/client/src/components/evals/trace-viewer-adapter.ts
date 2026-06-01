@@ -66,6 +66,21 @@ export interface TraceWidgetSnapshot {
   prefersBorder?: boolean;
   widgetHtmlUrl?: string | null;
   toolOutput?: unknown;
+  /**
+   * Whether the cached widget HTML was captured with the OpenAI Apps
+   * SDK `window.openai` shim injected. Propagated to the renderer so
+   * replay matches what the bytes contain.
+   */
+  injectedOpenAiCompat?: boolean;
+  /**
+   * Per-method `window.openai.*` capability surface the runtime was
+   * configured with at capture time. Travels into the renderer so
+   * replay reconstructs the same set of methods on `window.openai`
+   * the original capture had. Absent for pre-feature snapshots —
+   * the renderer falls back to the runtime's full ChatGPT surface
+   * (matches the default at capture time).
+   */
+  injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
 }
 
 /**
@@ -85,6 +100,8 @@ export function snapshotsToTraceWidgetSnapshots(
     prefersBorder: boolean;
     widgetHtmlUrl?: string | null;
     toolOutput?: unknown;
+    injectedOpenAiCompat?: boolean;
+    injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
   }>,
 ): TraceWidgetSnapshot[] {
   return snapshots.map((snap) => {
@@ -110,6 +127,9 @@ export function snapshotsToTraceWidgetSnapshots(
       prefersBorder: snap.prefersBorder,
       widgetHtmlUrl: snap.widgetHtmlUrl,
       toolOutput: snap.toolOutput,
+      injectedOpenAiCompat: snap.injectedOpenAiCompat,
+      injectedOpenAiCompatCapabilities:
+        snap.injectedOpenAiCompatCapabilities,
     };
   });
 }
@@ -118,12 +138,26 @@ export function snapshotsToTraceWidgetSnapshots(
  * Build toolRenderOverrides directly from TraceWidgetSnapshot[].
  * Used when loading a persisted session where we have snapshots
  * but don't need the full adaptTraceToUiMessages pipeline.
+ *
+ * When `preferLiveWhenPossible` is set, snapshots that have enough information
+ * to live-fetch (mcp-apps with a real `resourceUri`) get `liveFetchPreferred:
+ * true` so the renderer attempts the live MCP Apps path first and only falls
+ * back to the cached snapshot HTML if live fetch fails (e.g., the server is
+ * no longer connected). The cached URL is preserved as the fallback. OpenAI
+ * Apps snapshots (whose `toolMetadata["openai/outputTemplate"]` is
+ * `"__cached__"`) and mcp-apps snapshots missing `resourceUri` cannot
+ * live-fetch, so they stay on the cached path unconditionally.
  */
 export function buildToolRenderOverridesFromSnapshots(
   snapshots: TraceWidgetSnapshot[],
+  options: { preferLiveWhenPossible?: boolean } = {},
 ): Record<string, ToolRenderOverride> {
+  const preferLive = options.preferLiveWhenPossible ?? false;
   const overrides: Record<string, ToolRenderOverride> = {};
   for (const snap of snapshots) {
+    const canLiveFetch =
+      preferLive && snap.protocol === "mcp-apps" && !!snap.resourceUri;
+    const cachedWidgetHtmlUrl = snap.widgetHtmlUrl ?? undefined;
     const replay = buildPersistedExecutionReplay({
       protocol: snap.protocol,
       toolCallId: snap.toolCallId,
@@ -131,14 +165,18 @@ export function buildToolRenderOverridesFromSnapshots(
       toolOutput: snap.toolOutput,
       toolState: "output-available",
       serverId: snap.serverId,
-      isOffline: !!snap.widgetHtmlUrl,
-      cachedWidgetHtmlUrl: snap.widgetHtmlUrl ?? undefined,
+      isOffline: !!cachedWidgetHtmlUrl,
+      cachedWidgetHtmlUrl,
+      liveFetchPreferred: canLiveFetch,
       resourceUri: snap.resourceUri,
       toolMetadata: snap.toolMetadata,
       widgetCsp: snap.widgetCsp as any,
       widgetPermissions: snap.widgetPermissions as any,
       widgetPermissive: snap.widgetPermissive,
       prefersBorder: snap.prefersBorder,
+      injectedOpenAiCompat: snap.injectedOpenAiCompat,
+      injectedOpenAiCompatCapabilities:
+        snap.injectedOpenAiCompatCapabilities,
     });
     overrides[snap.toolCallId] = replay.renderOverride;
   }
@@ -485,6 +523,9 @@ function createReplayOverride(
     widgetPermissions: snapshot.widgetPermissions as any,
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
+    injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
+    injectedOpenAiCompatCapabilities:
+      snapshot.injectedOpenAiCompatCapabilities,
   }).renderOverride;
 }
 
@@ -498,6 +539,9 @@ function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
     widgetPermissions: snapshot.widgetPermissions as any,
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
+    injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
+    injectedOpenAiCompatCapabilities:
+      snapshot.injectedOpenAiCompatCapabilities,
   } satisfies ToolRenderOverride;
 }
 

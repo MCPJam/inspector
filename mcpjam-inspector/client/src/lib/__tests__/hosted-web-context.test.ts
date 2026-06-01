@@ -7,10 +7,13 @@ vi.mock("../config", () => ({
 }));
 
 import {
+  buildResolvedServerBatchRequest,
   buildHostedEvalServerBatchRequest,
   buildServerBatchRequest,
   buildServerRequest,
+  getApiContextRevision,
   setApiContext,
+  subscribeApiContext,
 } from "../apis/web/context";
 
 describe("hosted web context", () => {
@@ -121,13 +124,13 @@ describe("hosted web context", () => {
     });
 
     expect(() => buildServerRequest("myServer")).toThrow(
-      "hosted projectId is not in the API context yet",
+      "hosted projectId is not in the API context yet"
     );
     expect(() => buildServerBatchRequest(["myServer"])).toThrow(
-      "hosted projectId is not in the API context yet",
+      "hosted projectId is not in the API context yet"
     );
     expect(() => buildHostedEvalServerBatchRequest(["myServer"])).toThrow(
-      "hosted projectId is not in the API context yet",
+      "hosted projectId is not in the API context yet"
     );
   });
 
@@ -136,7 +139,7 @@ describe("hosted web context", () => {
       "mcp-tokens-myServer",
       JSON.stringify({
         access_token: "storage-access-token",
-      }),
+      })
     );
 
     setApiContext({
@@ -174,6 +177,114 @@ describe("hosted web context", () => {
     });
   });
 
+  it("forwards MCP profile pins on single-server hosted requests", () => {
+    setApiContext({
+      projectId: "ws_stateless",
+      serverIdsByName: { stateless: "srv_stateless" },
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateless: "2026-07-28",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(buildServerRequest("stateless")).toEqual({
+      projectId: "ws_stateless",
+      serverId: "srv_stateless",
+      serverName: "stateless",
+      clientCapabilities: defaultClientCapabilities,
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      mcpProtocolVersion: "2026-07-28",
+    });
+  });
+
+  it("forwards MCP profile pins on multi-server hosted requests", () => {
+    setApiContext({
+      projectId: "ws_stateless",
+      serverIdsByName: {
+        Excalidraw: "srv_stateful",
+        stateless: "srv_stateless",
+      },
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateful: "2025-11-25",
+        srv_stateless: "2026-07-28",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(buildServerBatchRequest(["Excalidraw", "stateless"])).toEqual({
+      projectId: "ws_stateless",
+      serverIds: ["srv_stateful", "srv_stateless"],
+      serverNames: ["Excalidraw", "stateless"],
+      clientCapabilities: defaultClientCapabilities,
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateful: "2025-11-25",
+        srv_stateless: "2026-07-28",
+      },
+    });
+  });
+
+  it("forwards pins for already-resolved chat server ids", () => {
+    setApiContext({
+      projectId: "ws_stateless",
+      serverIdsByName: {
+        Excalidraw: "srv_stateful",
+        stateless: "srv_stateless",
+      },
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateful: "2025-11-25",
+        srv_stateless: "2026-07-28",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(
+      buildResolvedServerBatchRequest({
+        projectId: "ws_stateless",
+        serverIds: ["srv_stateful", "srv_stateless"],
+        serverNames: ["Excalidraw", "stateless"],
+        accessScope: "chat_v2",
+      })
+    ).toEqual({
+      projectId: "ws_stateless",
+      serverIds: ["srv_stateful", "srv_stateless"],
+      serverNames: ["Excalidraw", "stateless"],
+      clientCapabilities: defaultClientCapabilities,
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateful: "2025-11-25",
+        srv_stateless: "2026-07-28",
+      },
+      accessScope: "chat_v2",
+    });
+  });
+
+  it("notifies subscribers when hosted API context changes", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeApiContext(listener);
+    const before = getApiContextRevision();
+
+    setApiContext({
+      projectId: "ws_notify",
+      serverIdsByName: {},
+      getAccessToken: async () => null,
+    });
+
+    expect(getApiContextRevision()).toBeGreaterThan(before);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+  });
+
   it("blocks hosted project requests while client config sync is pending", () => {
     setApiContext({
       projectId: "ws_pending",
@@ -183,13 +294,13 @@ describe("hosted web context", () => {
     });
 
     expect(() => buildServerRequest("bench")).toThrow(
-      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE
     );
     expect(() => buildServerBatchRequest(["bench"])).toThrow(
-      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE
     );
     expect(() => buildHostedEvalServerBatchRequest(["bench"])).toThrow(
-      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE
     );
   });
 
@@ -205,7 +316,7 @@ describe("hosted web context", () => {
     });
 
     expect(
-      buildHostedEvalServerBatchRequest(["asana", "srv_asana", "github"]),
+      buildHostedEvalServerBatchRequest(["asana", "srv_asana", "github"])
     ).toEqual({
       projectId: "ws_eval",
       serverIds: ["srv_asana", "srv_github"],

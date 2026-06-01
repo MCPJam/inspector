@@ -8,6 +8,39 @@ import {
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
 
+function redactServerConfig(config: unknown) {
+  if (!config || typeof config !== "object") {
+    return config;
+  }
+  const record = config as Record<string, unknown>;
+  const redacted: Record<string, unknown> = { ...record };
+  if ("env" in redacted) {
+    redacted.hasEnv =
+      !!redacted.env &&
+      typeof redacted.env === "object" &&
+      Object.keys(redacted.env as Record<string, unknown>).length > 0;
+    delete redacted.env;
+  }
+  const requestInit = redacted.requestInit;
+  if (
+    requestInit &&
+    typeof requestInit === "object" &&
+    !Array.isArray(requestInit)
+  ) {
+    const nextRequestInit = { ...(requestInit as Record<string, unknown>) };
+    if ("headers" in nextRequestInit) {
+      redacted.hasHeaders =
+        !!nextRequestInit.headers &&
+        typeof nextRequestInit.headers === "object" &&
+        Object.keys(nextRequestInit.headers as Record<string, unknown>).length >
+          0;
+      delete nextRequestInit.headers;
+    }
+    redacted.requestInit = nextRequestInit;
+  }
+  return redacted;
+}
+
 const servers = new Hono();
 
 // List all connected servers with their status
@@ -20,7 +53,7 @@ servers.get("/", async (c) => {
         id,
         name: id,
         status,
-        config,
+        config: redactServerConfig(config),
       }));
 
     return c.json({
@@ -34,7 +67,7 @@ servers.get("/", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -63,7 +96,7 @@ servers.get("/status/:serverId", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -82,7 +115,7 @@ servers.get("/init-info/:serverId", async (c) => {
           success: false,
           error: `Server "${serverId}" is not connected or initialization info not available`,
         },
-        404,
+        404
       );
     }
 
@@ -98,7 +131,7 @@ servers.get("/init-info/:serverId", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -111,8 +144,12 @@ servers.delete("/:serverId", async (c) => {
     const mcpClientManager = c.mcpClientManager;
 
     try {
-      const client = mcpClientManager.getClient(serverId);
-      if (client) {
+      // `getClient()` returns undefined for stateless connections (no
+      // wrapped upstream Client). Use `getManagedClient()` so this guard
+      // recognizes both adapters and we actually call `disconnectServer`
+      // for stateless preview connections instead of leaking them.
+      const managedClient = mcpClientManager.getManagedClient(serverId);
+      if (managedClient) {
         await mcpClientManager.disconnectServer(serverId);
       }
     } catch (error) {
@@ -136,7 +173,7 @@ servers.delete("/:serverId", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -155,7 +192,7 @@ servers.post("/reconnect", async (c) => {
         error: "Failed to parse request body",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      400,
+      400
     );
   }
 
@@ -184,7 +221,7 @@ servers.get("/rpc/stream", async (c) => {
       const send = (data: unknown) => {
         try {
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(data)}\n\n`),
+            encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
           );
         } catch {}
       };
@@ -193,7 +230,7 @@ servers.get("/rpc/stream", async (c) => {
       try {
         const recent = rpcLogBus.getBuffer(
           serverIds,
-          isNaN(replay) ? 0 : replay,
+          isNaN(replay) ? 0 : replay
         );
         for (const evt of recent) {
           send({ type: "rpc", ...evt });

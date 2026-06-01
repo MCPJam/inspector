@@ -19,18 +19,36 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
-import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
-import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
-import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
-import { HOSTED_MODE } from "../../config";
+import {
+  handleMCPJamFreeChatModel,
+  warnIfChatAbortSignalMissing,
+} from "../../utils/mcpjam-stream-handler";
+import {
+  handleHostedOrgChatModel,
+  handleLocalOrgChatModel,
+} from "../../utils/org-model-stream-handler.js";
+import {
+  deriveOrgProviderKey,
+  isLocalRuntimeEligible,
+  resolveOrgProviderRuntime,
+  type OrgProviderRuntime,
+} from "../../utils/org-model-config.js";
 import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
+  stampSenderUserIdsOnSessionMessages,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
+import {
+  buildWidgetModelContextSystemPrompt,
+  prepareChatV2,
+  validateAppToolEntries,
+  AppToolValidationError,
+  validateWidgetModelContextEntries,
+  WidgetModelContextValidationError,
+} from "../../utils/chat-v2-orchestration";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   createAiSdkEvalTraceContext,
@@ -51,11 +69,26 @@ import {
   toTraceRecord,
   writeTraceEvent,
 } from "../../utils/live-chat-trace-stream";
-import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
+import {
+  buildResolvedModelRequestPayload,
+  normalizeSystemPromptForProvider,
+} from "../../utils/model-request-payload";
+import {
+  formatProviderOverloadError,
+  isProviderOverloadError,
+} from "../../utils/provider-error-normalization";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { isAbortError } from "@/shared/abort-errors";
+import {
+  commitNewlyLoaded,
+  gateToolsToActiveSubset,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -66,6 +99,15 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
   // when multiple copies of @ai-sdk/provider are bundled (symbol mismatch).
   const statusCode = (error as any).statusCode as number | undefined;
   const responseBody = (error as any).responseBody as string | undefined;
+  if (
+    isProviderOverloadError({
+      message: error.message,
+      statusCode,
+      responseBody,
+    })
+  ) {
+    return formatProviderOverloadError({ statusCode, responseBody });
+  }
 
   // 401 is the standard "unauthorized" HTTP status — always means bad/missing key.
   const isAuthStatus = statusCode === 401;
@@ -111,7 +153,7 @@ function toLiveChatTraceUsage(
         totalTokens?: number;
       }
     | null
-    | undefined,
+    | undefined
 ): LiveChatTraceUsage | undefined {
   if (!usage) {
     return undefined;
@@ -132,7 +174,7 @@ function toLiveChatTraceUsage(
 }
 
 function toPersistedUsage(
-  usage: LiveChatTraceUsage | undefined,
+  usage: LiveChatTraceUsage | undefined
 ): { inputTokens: number; outputTokens: number } | undefined {
   if (
     typeof usage?.inputTokens !== "number" ||
@@ -148,7 +190,7 @@ function toPersistedUsage(
 }
 
 function collectStepToolCallIds(
-  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined,
+  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined
 ): Set<string> {
   const toolCallIds = new Set<string>();
   if (!Array.isArray(toolCalls)) {
@@ -175,6 +217,9 @@ function streamDirectChatWithLiveTrace(options: {
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
+  abortSignal?: AbortSignal;
   onPersist?: (event: {
     responseMessages: ModelMessage[];
     assistantText: string;
@@ -193,6 +238,7 @@ function streamDirectChatWithLiveTrace(options: {
     systemPrompt,
     temperature,
     tools,
+    abortSignal,
     onPersist,
   } = options;
 
@@ -213,11 +259,20 @@ function streamDirectChatWithLiveTrace(options: {
     turnUsage: undefined as LiveChatTraceUsage | undefined,
   };
   const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
+  const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
   let turnFinished = false;
+  let aborted = abortSignal?.aborted === true;
+  const markAborted = () => {
+    aborted = true;
+  };
+  abortSignal?.addEventListener("abort", markAborted, { once: true });
 
   const stream = createUIMessageStream({
     onError: (error) => {
+      if (aborted || isAbortError(error)) {
+        return "";
+      }
       logger.error("[mcp/chat-v2] stream error", error);
       return formatStreamError(error, provider);
     },
@@ -243,22 +298,44 @@ function streamDirectChatWithLiveTrace(options: {
       const tracedTools = wrapToolSetForEvalTrace(
         tools as Record<string, unknown>,
         traceContext,
-        traceTurn.promptIndex,
+        traceTurn.promptIndex
       ) as ToolSet;
 
-      const result = streamText({
+      const { progressivePlan, discoveryState } = options;
+      // Progressive mode: gate execution to the active subset.
+      // `activeTools` (set in `prepareStep` below) narrows what the model
+      // sees, but a hallucinated/remembered call to a non-active tool
+      // would still execute against the full map. Gating wraps each
+      // tool's `execute` to throw a structured "not loaded" error,
+      // which the AI SDK surfaces as an error tool-result the model can
+      // recover from via `load_mcp_tools`.
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      ) as ToolSet;
+      const streamTextOptions: Parameters<typeof streamText>[0] = {
         model: llmModel,
         messages: messageHistory,
         ...(temperature !== undefined ? { temperature } : {}),
-        system: systemPrompt,
-        tools: tracedTools,
+        system: providerSystemPrompt,
+        tools: executableTools,
         stopWhen: stepCountIs(20),
+        ...(abortSignal ? { abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
           currentStepIndex = stepNumber;
           registerAiSdkPrepareStep(traceContext, stepNumber, {
             modelId,
             promptIndex: traceTurn.promptIndex,
           });
+          if (progressivePlan?.enabled && discoveryState) {
+            commitNewlyLoaded(discoveryState);
+            const active = resolveActiveToolNames(
+              progressivePlan,
+              discoveryState,
+            );
+            return { activeTools: active };
+          }
           return {};
         },
         onChunk: async ({ chunk }) => {
@@ -315,7 +392,7 @@ function streamDirectChatWithLiveTrace(options: {
 
           traceTurn.turnUsage = mergeLiveChatTraceUsage(
             traceTurn.turnUsage,
-            stepUsage,
+            stepUsage
           );
 
           emitAiSdkOnStepFinish(traceContext, Date.now(), {
@@ -332,7 +409,7 @@ function streamDirectChatWithLiveTrace(options: {
             traceHistory,
             traceTurn.promptIndex,
             currentStepIndex,
-            collectStepToolCallIds(step.toolCalls),
+            collectStepToolCallIds(step.toolCalls)
           );
 
           traceTurn.turnSpans = [...traceContext.recordedSpans];
@@ -340,6 +417,11 @@ function streamDirectChatWithLiveTrace(options: {
         },
         onError: async ({ error }) => {
           if (turnFinished) {
+            return;
+          }
+          if (aborted || isAbortError(error)) {
+            aborted = true;
+            turnFinished = true;
             return;
           }
 
@@ -368,11 +450,17 @@ function streamDirectChatWithLiveTrace(options: {
           turnFinished = true;
         },
         onFinish: async (event) => {
+          if (aborted || abortSignal?.aborted) {
+            aborted = true;
+            turnFinished = true;
+            return;
+          }
+
           patchAiSdkRecordedSpansMessageRangesFromSteps(
             traceContext.recordedSpans,
             initialMessageHistoryLength,
             event.steps,
-            traceTurn.promptIndex,
+            traceTurn.promptIndex
           );
           traceTurn.turnSpans = [...traceContext.recordedSpans];
           traceTurn.turnUsage =
@@ -395,7 +483,7 @@ function streamDirectChatWithLiveTrace(options: {
               responseMessages,
               Array.isArray(step?.response?.messages)
                 ? (step.response.messages as ModelMessage[])
-                : [],
+                : []
             );
           }
 
@@ -405,7 +493,7 @@ function streamDirectChatWithLiveTrace(options: {
               assistantText: event.text,
               toolCalls: event.steps.flatMap((step) => step.toolCalls ?? []),
               toolResults: event.steps.flatMap(
-                (step) => step.toolResults ?? [],
+                (step) => step.toolResults ?? []
               ),
               usage: traceTurn.turnUsage,
               finishReason: event.finishReason,
@@ -426,21 +514,46 @@ function streamDirectChatWithLiveTrace(options: {
             });
           }
         },
-      });
+      };
 
-      for await (const chunk of result.toUIMessageStream({
-        messageMetadata: ({ part }) => {
-          if (part.type === "finish-step") {
-            return {
-              inputTokens: part.usage.inputTokens,
-              outputTokens: part.usage.outputTokens,
-              totalTokens: part.usage.totalTokens,
-            };
-          }
-        },
-        onError: (error) => formatStreamError(error, provider),
-      })) {
-        writer.write(chunk);
+      let result: ReturnType<typeof streamText>;
+      try {
+        result = streamText(streamTextOptions);
+      } catch (error) {
+        abortSignal?.removeEventListener("abort", markAborted);
+        if (aborted || isAbortError(error)) {
+          aborted = true;
+          return;
+        }
+        throw error;
+      }
+
+      try {
+        for await (const chunk of result.toUIMessageStream({
+          messageMetadata: ({ part }) => {
+            if (part.type === "finish-step") {
+              return {
+                inputTokens: part.usage.inputTokens,
+                outputTokens: part.usage.outputTokens,
+                totalTokens: part.usage.totalTokens,
+              };
+            }
+          },
+          onError: (error) => {
+            if (aborted || isAbortError(error)) return "";
+            return formatStreamError(error, provider);
+          },
+        })) {
+          writer.write(chunk);
+        }
+      } catch (error) {
+        if (aborted || isAbortError(error)) {
+          aborted = true;
+          return;
+        }
+        throw error;
+      } finally {
+        abortSignal?.removeEventListener("abort", markAborted);
       }
     },
   });
@@ -472,6 +585,7 @@ chatV2.post("/", async (c) => {
       selectedServers,
       selectedServerIds: bodySelectedServerIds,
       requireToolApproval: bodyRequireToolApproval,
+      respectToolVisibility: bodyRespectToolVisibility,
       chatboxId: bodyChatboxId,
       accessVersion: bodyAccessVersion,
       surface: bodySurface,
@@ -491,7 +605,14 @@ chatV2.post("/", async (c) => {
     let resolvedSystemPrompt = bodySystemPrompt;
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
+    let resolvedRespectToolVisibility = bodyRespectToolVisibility;
     let resolvedModelOverride: typeof model | null = null;
+    // See web/chat-v2 for rationale: body is authoritative for direct
+    // chat (sourced from the project default), host overrides for
+    // chatbox-bound sessions to keep guest / share-link clients from
+    // flipping the host-level setting.
+    let resolvedProgressiveToolDiscovery: boolean | undefined =
+      body.progressiveToolDiscovery;
     if (isChatboxSession && bodyChatboxId) {
       const bearer = c.req.header("authorization") ?? "";
       if (bearer) {
@@ -501,9 +622,60 @@ chatV2.post("/", async (c) => {
         });
         if (runtime.ok) {
           const cfg = runtime.config;
+          if (
+            bodyRequireToolApproval !== undefined &&
+            cfg.requireToolApproval !== bodyRequireToolApproval
+          ) {
+            logger.warn(
+              "[mcp/chat-v2] client requireToolApproval differs from host; using host value",
+              {
+                chatboxId: bodyChatboxId,
+                body: bodyRequireToolApproval,
+                host: cfg.requireToolApproval,
+              }
+            );
+          }
           resolvedSystemPrompt = cfg.systemPrompt;
           resolvedTemperatureOverride = cfg.temperature;
           resolvedRequireToolApproval = cfg.requireToolApproval;
+          // Host wins on chatbox-bound turns — but only when the
+          // runtime config actually carries the field. Older backends
+          // omit it; without this gate the override would replace the
+          // body's value (sourced from the chatbox doc client-side)
+          // with `undefined` and the orchestrator's auto policy would
+          // re-enable progressive mode on large catalogs.
+          if (cfg.progressiveToolDiscovery !== undefined) {
+            if (
+              body.progressiveToolDiscovery !== undefined &&
+              cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
+            ) {
+              logger.warn(
+                "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: body.progressiveToolDiscovery,
+                  host: cfg.progressiveToolDiscovery,
+                }
+              );
+            }
+            resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
+          }
+          if (cfg.respectToolVisibility !== undefined) {
+            if (
+              bodyRespectToolVisibility !== undefined &&
+              cfg.respectToolVisibility !== bodyRespectToolVisibility
+            ) {
+              logger.warn(
+                "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: bodyRespectToolVisibility,
+                  host: cfg.respectToolVisibility,
+                }
+              );
+            }
+            resolvedRespectToolVisibility = cfg.respectToolVisibility;
+          }
           // See web/chat-v2 for rationale: host's modelId wins on
           // chatbox-bound turns. Built-in catalog hit → full
           // ModelDefinition; miss → swap id only, keep body provider.
@@ -516,7 +688,7 @@ chatV2.post("/", async (c) => {
                   chatboxId: bodyChatboxId,
                   body: model.id,
                   host: cfg.modelId,
-                },
+                }
               );
               resolvedModelOverride = hostModel;
             } else {
@@ -526,7 +698,7 @@ chatV2.post("/", async (c) => {
                   chatboxId: bodyChatboxId,
                   body: model.id,
                   host: cfg.modelId,
-                },
+                }
               );
               resolvedModelOverride = { ...model, id: cfg.modelId };
             }
@@ -538,7 +710,7 @@ chatV2.post("/", async (c) => {
               chatboxId: bodyChatboxId,
               status: runtime.status,
               error: runtime.error,
-            },
+            }
           );
         }
       }
@@ -546,6 +718,7 @@ chatV2.post("/", async (c) => {
     const systemPrompt = resolvedSystemPrompt;
     const temperature = resolvedTemperatureOverride;
     const requireToolApproval = resolvedRequireToolApproval;
+    const respectToolVisibility = resolvedRespectToolVisibility;
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
@@ -586,8 +759,39 @@ chatV2.post("/", async (c) => {
           error:
             "This MCPJam model is not available for guest access. Sign in to continue.",
         },
-        403,
+        403
       );
+    }
+
+    // Convert the inbound UI messages once so prepareChatV2 can replay
+    // prior `load_mcp_tools` calls into discovery state. The downstream
+    // paths call convertToModelMessages again; that's intentional and
+    // independent — this conversion is solely for hydration.
+    const priorModelMessages = await convertToModelMessages(messages);
+
+    // SEP-1865 App-Provided Tools: validate the client snapshot at the
+    // boundary. The chat request body is not trusted; oversize / malformed
+    // entries 400 with a clean message instead of crashing prepareChatV2.
+    let validatedAppTools;
+    try {
+      validatedAppTools = validateAppToolEntries(body.appTools);
+    } catch (error) {
+      if (error instanceof AppToolValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
+    let validatedWidgetModelContext;
+    try {
+      validatedWidgetModelContext = validateWidgetModelContextEntries(
+        body.widgetModelContext
+      );
+    } catch (error) {
+      if (error instanceof WidgetModelContextValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
     }
 
     let prepared;
@@ -599,7 +803,19 @@ chatV2.post("/", async (c) => {
         systemPrompt,
         temperature,
         requireToolApproval,
+        respectToolVisibility,
         customProviders: body.customProviders,
+        priorMessages: priorModelMessages,
+        // Body for direct chat (project default), host-re-resolved for
+        // chatbox-bound sessions. undefined → auto policy.
+        ...(resolvedProgressiveToolDiscovery !== undefined
+          ? {
+              progressiveToolDiscovery: {
+                enabled: resolvedProgressiveToolDiscovery,
+              },
+            }
+          : {}),
+        appTools: validatedAppTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -617,7 +833,18 @@ chatV2.post("/", async (c) => {
       enhancedSystemPrompt,
       resolvedTemperature,
       scrubMessages,
+      progressivePlan,
+      discoveryState,
     } = prepared;
+    const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
+      validatedWidgetModelContext
+    );
+    const effectiveEnhancedSystemPrompt = [
+      enhancedSystemPrompt,
+      widgetModelContextSystemPrompt,
+    ]
+      .filter((section) => section.trim().length > 0)
+      .join("\n\n");
 
     // Shared across all three persist call sites below. All three paths are
     // hardcoded `sourceType: "direct"` and pass the same model/temperature/
@@ -634,9 +861,11 @@ chatV2.post("/", async (c) => {
           requestedTemperature: temperature,
           resolvedTemperature,
           requireToolApproval,
+          respectToolVisibility,
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
+    const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
@@ -645,7 +874,7 @@ chatV2.post("/", async (c) => {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
-          500,
+          500
         );
       }
 
@@ -663,7 +892,7 @@ chatV2.post("/", async (c) => {
               error:
                 "Unable to authenticate with MCPJam servers. Please try again or sign in.",
             },
-            503,
+            503
           );
         }
       }
@@ -673,17 +902,23 @@ chatV2.post("/", async (c) => {
 
       const chatSessionId = body.chatSessionId;
 
+      const inboundAbortSignalMcp = c.req.raw.signal as AbortSignal | undefined;
+      warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
+
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        progressivePlan,
+        discoveryState,
         authHeader,
         clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId
           ? async (fullHistory, turnTrace) => {
               await persistChatSessionToConvex({
@@ -697,7 +932,11 @@ chatV2.post("/", async (c) => {
                   ? { accessVersion: bodyAccessVersion }
                   : {}),
                 authHeader,
-                sessionMessages: fullHistory,
+                sessionMessages: stampSenderUserIdsOnSessionMessages(
+                  fullHistory,
+                  messages,
+                  { authenticatedUserId }
+                ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(body.projectId ? { projectId: body.projectId } : {}),
@@ -709,6 +948,7 @@ chatV2.post("/", async (c) => {
                         systemPrompt,
                         temperature,
                         requireToolApproval,
+                        respectToolVisibility,
                         selectedServers,
                       },
                       ...(directHostConfig
@@ -724,18 +964,12 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Hosted org BYOK: only in hosted mode, only when Convex is reachable,
-    // only when the request carries a projectId, and only when the caller
-    // hasn't supplied a client-side apiKey. A client-supplied apiKey is the
-    // strongest signal that the caller wants direct BYOK, so it wins —
-    // matches the precedence used in the eval flows (modelApiKeys ?? org).
-    // Otherwise we route the LLM call through Convex (/stream/org) so the
-    // org's vault-resolved provider keys never leave Convex. Local-mode BYOK
-    // (CLI / no Convex) falls through to createLlmModel + streamText below.
+    // Org BYOK: when Convex is reachable, the request carries a projectId,
+    // and the caller hasn't supplied a client-side apiKey, use the org's
+    // Convex config. Cloud runtime stays in Convex; local runtime resolves a
+    // scoped provider config and executes in this inspector.
     if (
-      HOSTED_MODE &&
       process.env.CONVEX_HTTP_URL &&
-      process.env.INSPECTOR_SERVICE_TOKEN &&
       typeof body.projectId === "string" &&
       body.projectId &&
       !apiKey
@@ -746,60 +980,115 @@ chatV2.post("/", async (c) => {
       }
       const providerKey = providerKeyResult.key;
       const modelMessages = scrubMessages(
-        (await convertToModelMessages(messages)) as ModelMessage[],
+        (await convertToModelMessages(messages)) as ModelMessage[]
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
+      const modelId = String(modelDefinition.id);
+      const inboundAbortSignalOrg = c.req.raw.signal as AbortSignal | undefined;
+      warnIfChatAbortSignalMissing(inboundAbortSignalOrg, "mcp/chat-v2");
+      const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
+        ? await resolveOrgProviderRuntime(
+            body.projectId,
+            providerKey,
+            modelId,
+            {
+              authHeader: requestAuthHeader,
+              chatboxId: bodyChatboxId,
+              accessVersion: bodyAccessVersion,
+              serverIds: hostConfigServerIds,
+            }
+          )
+        : { runtimeLocation: "cloud", providerKey };
+      const onConversationComplete = chatSessionId
+        ? async (
+            fullHistory: ModelMessage[],
+            turnTrace: PersistedTurnTrace
+          ) => {
+            await persistChatSessionToConvex({
+              chatSessionId,
+              modelId,
+              modelSource:
+                runtime.runtimeLocation === "local" ? "local_byok" : "byok",
+              sourceType: chatSessionSourceType,
+              ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
+                ? { accessVersion: bodyAccessVersion }
+                : {}),
+              authHeader: requestAuthHeader,
+              sessionMessages: stampSenderUserIdsOnSessionMessages(
+                fullHistory,
+                messages,
+                { authenticatedUserId }
+              ),
+              startedAt: sessionStartedAt,
+              lastActivityAt: Date.now(),
+              projectId: body.projectId,
+              ...(isChatboxSession
+                ? {}
+                : {
+                    directVisibility: body.directVisibility,
+                    resumeConfig: {
+                      systemPrompt,
+                      temperature,
+                      requireToolApproval,
+                      respectToolVisibility,
+                      selectedServers,
+                    },
+                    ...(directHostConfig
+                      ? { hostConfig: directHostConfig }
+                      : {}),
+                  }),
+              expectedVersion: body.expectedVersion,
+              turnTrace,
+              forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+            });
+          }
+        : undefined;
+
+      if (runtime.runtimeLocation === "local") {
+        return handleLocalOrgChatModel({
+          provider: runtime.provider,
+          projectId: body.projectId,
+          modelId,
+          chatSessionId,
+          sourceType: chatSessionSourceType,
+          messages: modelMessages,
+          systemPrompt: effectiveEnhancedSystemPrompt,
+          temperature: resolvedTemperature,
+          tools: allTools as ToolSet,
+          progressivePlan,
+          discoveryState,
+          authHeader: requestAuthHeader,
+          chatboxId: bodyChatboxId,
+          accessVersion: bodyAccessVersion,
+          selectedServers,
+          serverIds: hostConfigServerIds,
+          requireToolApproval,
+          abortSignal: inboundAbortSignalOrg,
+          onConversationComplete,
+        });
+      }
+
       return handleHostedOrgChatModel({
         projectId: body.projectId,
         providerKey,
-        modelId: String(modelDefinition.id),
+        modelId,
         messages: modelMessages,
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
-        authHeader: c.req.header("authorization"),
+        progressivePlan,
+        discoveryState,
+        authHeader: requestAuthHeader,
         clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
+        serverIds: hostConfigServerIds,
         requireToolApproval,
-        onConversationComplete: chatSessionId
-          ? async (fullHistory, turnTrace) => {
-              await persistChatSessionToConvex({
-                chatSessionId,
-                modelId: String(modelDefinition.id),
-                modelSource: "byok",
-                sourceType: chatSessionSourceType,
-                ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
-                ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                  ? { accessVersion: bodyAccessVersion }
-                  : {}),
-                authHeader: c.req.header("authorization"),
-                sessionMessages: fullHistory,
-                startedAt: sessionStartedAt,
-                lastActivityAt: Date.now(),
-                projectId: body.projectId,
-                ...(isChatboxSession
-                  ? {}
-                  : {
-                      directVisibility: body.directVisibility,
-                      resumeConfig: {
-                        systemPrompt,
-                        temperature,
-                        requireToolApproval,
-                        selectedServers,
-                      },
-                      ...(directHostConfig
-                        ? { hostConfig: directHostConfig }
-                        : {}),
-                    }),
-                expectedVersion: body.expectedVersion,
-                turnTrace,
-                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-              });
-            }
-          : undefined,
+        abortSignal: inboundAbortSignalOrg,
+        onConversationComplete,
       });
     }
 
@@ -811,7 +1100,7 @@ chatV2.post("/", async (c) => {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
       },
-      body.customProviders,
+      body.customProviders
     );
 
     const modelMessages = await convertToModelMessages(messages);
@@ -819,9 +1108,13 @@ chatV2.post("/", async (c) => {
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
+    const inboundAbortSignalDirect = c.req.raw.signal as
+      | AbortSignal
+      | undefined;
+    warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
-      modelMessages as ModelMessage[],
+      modelMessages as ModelMessage[]
     );
 
     return streamDirectChatWithLiveTrace({
@@ -829,9 +1122,12 @@ chatV2.post("/", async (c) => {
       modelId: String(modelDefinition.id),
       provider: modelDefinition.provider,
       messageHistory: [...scrubbedModelMessages],
-      systemPrompt: enhancedSystemPrompt,
+      systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
       tools: allTools as ToolSet,
+      progressivePlan,
+      discoveryState,
+      abortSignal: inboundAbortSignalDirect,
       onPersist: chatSessionId
         ? async ({
             responseMessages,
@@ -853,7 +1149,11 @@ chatV2.post("/", async (c) => {
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
                 ? { accessVersion: bodyAccessVersion }
                 : {}),
-              messages: modelMessages as ModelMessage[],
+              messages: stampSenderUserIdsOnSessionMessages(
+                modelMessages as ModelMessage[],
+                messages,
+                { authenticatedUserId }
+              ),
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),
               assistantText,
@@ -873,6 +1173,7 @@ chatV2.post("/", async (c) => {
                       systemPrompt,
                       temperature,
                       requireToolApproval,
+                      respectToolVisibility,
                       selectedServers,
                     },
                     ...(directHostConfig

@@ -21,7 +21,7 @@ describe("applyHostDefaultsToPlayground", () => {
   let setHostStyle: ReturnType<typeof vi.fn>;
   let setHostCapabilitiesOverride: ReturnType<typeof vi.fn>;
   let setChatUiOverride: ReturnType<typeof vi.fn>;
-  let saveSelectedModelIdSpy: ReturnType<typeof vi.spyOn>;
+  let replaceLeadModelIdSpy: ReturnType<typeof vi.spyOn>;
   let setters: {
     setHostStyle: typeof setHostStyle;
     setHostCapabilitiesOverride: typeof setHostCapabilitiesOverride;
@@ -54,10 +54,10 @@ describe("applyHostDefaultsToPlayground", () => {
       setMcpAppsCspMode: setMcpAppsCspModeSpy,
     } as unknown as ReturnType<typeof useUIPlaygroundStore.getState>);
 
-    // Stub the model-storage save so the test can assert without
-    // touching real localStorage / event listeners.
-    saveSelectedModelIdSpy = vi
-      .spyOn(selectedModelStorage, "saveSelectedModelId")
+    // Stub the model-storage host-switch primitive so the test can assert
+    // without touching real localStorage / event listeners.
+    replaceLeadModelIdSpy = vi
+      .spyOn(selectedModelStorage, "replaceLeadModelId")
       .mockImplementation(() => {});
   });
 
@@ -77,7 +77,7 @@ describe("applyHostDefaultsToPlayground", () => {
 
     // Lead model id is persisted via the storage helper (which fires the
     // same-tab event so usePersistedModel re-reads).
-    expect(saveSelectedModelIdSpy).toHaveBeenCalledWith(
+    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
       "anthropic/claude-haiku-4.5",
     );
 
@@ -107,7 +107,7 @@ describe("applyHostDefaultsToPlayground", () => {
     applyHostDefaultsToPlayground("chatgpt", setters);
 
     expect(setHostStyle).toHaveBeenCalledWith("chatgpt");
-    expect(saveSelectedModelIdSpy).toHaveBeenCalledWith("openai/gpt-5-nano");
+    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith("openai/gpt-5-nano");
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
     expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
     expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
@@ -119,7 +119,7 @@ describe("applyHostDefaultsToPlayground", () => {
     applyHostDefaultsToPlayground("cursor", setters);
 
     expect(setHostStyle).toHaveBeenCalledWith("cursor");
-    expect(saveSelectedModelIdSpy).toHaveBeenCalledWith(
+    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
       "anthropic/claude-sonnet-4.5",
     );
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
@@ -136,7 +136,7 @@ describe("applyHostDefaultsToPlayground", () => {
 
     // MCPJam template has an empty modelId — we deliberately don't
     // clear the user's last picked model on a no-op host config.
-    expect(saveSelectedModelIdSpy).not.toHaveBeenCalled();
+    expect(replaceLeadModelIdSpy).not.toHaveBeenCalled();
 
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
     expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
@@ -162,7 +162,7 @@ describe("applyHostDefaultsToPlayground", () => {
     // Body-of-work still comes from MCPJam (no template entry); since
     // MCPJam template's modelId is empty, the user's last picked model
     // is preserved.
-    expect(saveSelectedModelIdSpy).not.toHaveBeenCalled();
+    expect(replaceLeadModelIdSpy).not.toHaveBeenCalled();
     expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
     // MCPJam fallback now stamps apps.sandbox.csp.mode "declared" and a
     // hostCapabilitiesOverride, so the BYO unknown id inherits both like
@@ -198,7 +198,7 @@ describe("applyHostDefaultsToPlayground", () => {
       // indicator dispatch to "claude" — and update the chat-composer
       // model picker to the host's saved model.
       expect(setHostStyle).toHaveBeenCalledWith("claude");
-      expect(saveSelectedModelIdSpy).toHaveBeenCalledWith(
+      expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
         "anthropic/claude-opus-4.5",
       );
 
@@ -239,7 +239,7 @@ describe("applyHostDefaultsToPlayground", () => {
         setters,
       );
 
-      expect(saveSelectedModelIdSpy).toHaveBeenCalledWith("gpt-5");
+      expect(replaceLeadModelIdSpy).toHaveBeenCalledWith("gpt-5");
     });
 
     it("falls back to the template default when the persisted modelId is whitespace-only", () => {
@@ -256,7 +256,7 @@ describe("applyHostDefaultsToPlayground", () => {
 
       // Empty/whitespace skips the configured id, then the resolver
       // tries the host style's template default.
-      expect(saveSelectedModelIdSpy).toHaveBeenCalledWith(
+      expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
         "anthropic/claude-haiku-4.5",
       );
     });
@@ -275,7 +275,7 @@ describe("applyHostDefaultsToPlayground", () => {
 
       // BYO style → seedFromHostTemplate falls through to MCPJam, whose
       // modelId is empty → resolver returns undefined → no save.
-      expect(saveSelectedModelIdSpy).not.toHaveBeenCalled();
+      expect(replaceLeadModelIdSpy).not.toHaveBeenCalled();
     });
 
     it("clears override and resets device when the config has no overrides / dims / sandbox; model resolves from template", () => {
@@ -294,7 +294,7 @@ describe("applyHostDefaultsToPlayground", () => {
       );
 
       expect(setHostStyle).toHaveBeenCalledWith("claude");
-      expect(saveSelectedModelIdSpy).toHaveBeenCalledWith(
+      expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
         "anthropic/claude-haiku-4.5",
       );
       expect(applyHostTemplateSpy).toHaveBeenCalledWith({});

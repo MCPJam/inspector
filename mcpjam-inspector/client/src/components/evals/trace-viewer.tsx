@@ -17,7 +17,6 @@ import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
 import type { DisplayMode } from "@/stores/ui-playground-store";
-import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
@@ -38,6 +37,16 @@ import {
   TraceRawView,
   type TraceRawRequestPayloadHistory,
 } from "./trace-raw-view";
+import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+
+// Default host-style template id used when the caller passes
+// `activeHost` but no explicit `hostStyle`. Mirrors
+// `DEFAULT_HOST_TEMPLATE_ID` in `lib/client-templates.ts` but inlined to
+// avoid pulling that module (and its build-time `__APP_VERSION__`
+// reference) into surfaces that don't otherwise need it — keeps
+// trace-viewer test environments lean.
+const DEFAULT_TRACE_HOST_STYLE_FALLBACK = "mcpjam";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
@@ -88,6 +97,7 @@ interface TraceViewerProps {
    * "Reveal in Chat" is ignored — call this so the shell can switch to its chat tab.
    */
   onRevealNavigateToChat?: () => void;
+  chatSessionId?: string;
   sendFollowUpMessage?: (text: string) => void;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
   onModelContextUpdate?: (
@@ -99,7 +109,6 @@ interface TraceViewerProps {
   ) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   interactive?: boolean;
   enableFullscreenChatOverlay?: boolean;
@@ -119,6 +128,28 @@ interface TraceViewerProps {
    * `StickToBottom` (or similar) owns vertical scroll as the payload grows.
    */
   rawGrowWithContent?: boolean;
+  /**
+   * Active host (resolved by `useAppState`) at the time the trace is
+   * being viewed — NOT the host that was active when the trace was
+   * recorded. When provided, TraceViewer installs an inner
+   * `ActiveHostCapsResolverScope` so the render gate matches what the
+   * user is modeling right now (switch to Codex → widgets hide in
+   * replays). When `undefined`, TraceViewer does NOT install an inner
+   * scope — any outer scope from a parent chat surface (e.g.
+   * `ClientStyledChatTabV2`, `PlaygroundTab`) flows through with the
+   * user's saved capability edits intact. Pass `null` explicitly to
+   * install a scope with no host (template-seed fallback).
+   */
+  activeHost?: HostConfigDtoV2 | null;
+  /**
+   * Host style fallback used when an inner scope is installed but no
+   * `activeHost` is provided. Like `activeHost`, passing `undefined`
+   * (the default) means "don't install an inner scope" — DO NOT read
+   * the surrounding `ChatboxHostStyleProvider` here, because that
+   * ambient style would synthesize template-seed caps that shadow
+   * outer scope's user-edited caps.
+   */
+  hostStyle?: string;
 }
 
 function getTraceMessages(
@@ -181,12 +212,12 @@ export function TraceViewer({
   fillContent = false,
   hideTranscriptRevealControls = false,
   onRevealNavigateToChat,
+  chatSessionId,
   sendFollowUpMessage = NOOP,
   onWidgetStateChange,
   onModelContextUpdate,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   interactive = false,
   enableFullscreenChatOverlay = false,
@@ -197,9 +228,30 @@ export function TraceViewer({
   onFullscreenChange,
   rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
+  activeHost,
+  hostStyle,
 }: TraceViewerProps) {
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
+
+  // Decide whether to install an inner ActiveHostCapsResolverScope around
+  // the trace's `<Thread>`. We only install when the caller passed
+  // explicit `activeHost` or `hostStyle` props. When neither is given,
+  // we pass through to any outer scope (e.g. the chat surface's
+  // ClientStyledChatTabV2 / PlaygroundTab wrap) — installing a scope
+  // here unconditionally would shadow that outer scope with
+  // template-seed caps and silently drop the user's saved
+  // `clientCapabilities` edits. See TL feedback on PR #2169.
+  //
+  // `hostStyle` falls back to `DEFAULT_TRACE_HOST_STYLE_FALLBACK` only
+  // when the inner scope IS being installed (caller passed activeHost
+  // but no explicit hostStyle); we don't reach into the ambient
+  // ChatboxHostStyleProvider here, because that ambient style may not
+  // line up with the explicit `activeHost`.
+  const shouldInstallTraceScope =
+    activeHost !== undefined || hostStyle !== undefined;
+  const traceScopeHostStyle =
+    hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
 
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
@@ -597,48 +649,71 @@ export function TraceViewer({
               >
                 <div className="relative flex-1 min-h-0">
                   <StickToBottom.Content className="flex flex-col min-h-0">
-                    <Thread
-                      messages={adaptedTrace.messages}
-                      sendFollowUpMessage={sendFollowUpMessage}
-                      model={resolvedModel}
-                      isLoading={isLoading}
-                      toolsMetadata={toolsMetadata}
-                      toolServerMap={toolServerMap}
-                      onWidgetStateChange={onWidgetStateChange}
-                      onModelContextUpdate={onModelContextUpdate}
-                      displayMode={displayMode}
-                      onDisplayModeChange={onDisplayModeChange}
-                      enableFullscreenChatOverlay={enableFullscreenChatOverlay}
-                      fullscreenChatPlaceholder={fullscreenChatPlaceholder}
-                      fullscreenChatDisabled={fullscreenChatDisabled}
-                      fullscreenChatSendBlocked={fullscreenChatSendBlocked}
-                      onFullscreenChatStop={onFullscreenChatStop}
-                      onFullscreenChange={onFullscreenChange}
-                      selectedProtocolOverrideIfBothExists={
-                        selectedProtocolOverrideIfBothExists
-                      }
-                      onToolApprovalResponse={onToolApprovalResponse}
-                      toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                      showSaveViewButton={false}
-                      minimalMode={true}
-                      interactive={threadInteractive}
-                      reasoningDisplayMode="collapsed"
-                      focusMessageId={transcriptNavigation.focusMessageId}
-                      highlightedMessageIds={
-                        transcriptNavigation.highlightedMessageIds
-                      }
-                      navigationKey={transcriptNavigation.navigationKey}
-                      contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
-                      getMessageWrapperProps={({ message }) => {
-                        const sourceRange =
-                          adaptedTrace.uiMessageSourceRanges[message.id];
-                        return {
-                          "data-source-range": sourceRange
-                            ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
-                            : undefined,
-                        };
-                      }}
-                    />
+                    {(() => {
+                      // Trace `<Thread>` mount. Wrapped in
+                      // `ActiveHostCapsResolverScope` ONLY when the
+                      // caller passed explicit host inputs
+                      // (`activeHost` or `hostStyle`). Otherwise we
+                      // render Thread directly so any outer scope from
+                      // the chat surface (ClientStyledChatTabV2 /
+                      // PlaygroundTab) flows through with the user's
+                      // saved capability edits intact. Installing an
+                      // inner scope unconditionally would shadow the
+                      // outer one with template-seed caps.
+                      const threadEl = (
+                        <Thread
+                          chatSessionId={chatSessionId}
+                          messages={adaptedTrace.messages}
+                          sendFollowUpMessage={sendFollowUpMessage}
+                          model={resolvedModel}
+                          isLoading={isLoading}
+                          toolsMetadata={toolsMetadata}
+                          toolServerMap={toolServerMap}
+                          onWidgetStateChange={onWidgetStateChange}
+                          onModelContextUpdate={onModelContextUpdate}
+                          displayMode={displayMode}
+                          onDisplayModeChange={onDisplayModeChange}
+                          enableFullscreenChatOverlay={
+                            enableFullscreenChatOverlay
+                          }
+                          fullscreenChatPlaceholder={fullscreenChatPlaceholder}
+                          fullscreenChatDisabled={fullscreenChatDisabled}
+                          fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                          onFullscreenChatStop={onFullscreenChatStop}
+                          onFullscreenChange={onFullscreenChange}
+                          onToolApprovalResponse={onToolApprovalResponse}
+                          toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+                          showSaveViewButton={false}
+                          minimalMode={true}
+                          interactive={threadInteractive}
+                          reasoningDisplayMode="collapsed"
+                          focusMessageId={transcriptNavigation.focusMessageId}
+                          highlightedMessageIds={
+                            transcriptNavigation.highlightedMessageIds
+                          }
+                          navigationKey={transcriptNavigation.navigationKey}
+                          contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                          getMessageWrapperProps={({ message }) => {
+                            const sourceRange =
+                              adaptedTrace.uiMessageSourceRanges[message.id];
+                            return {
+                              "data-source-range": sourceRange
+                                ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
+                                : undefined,
+                            };
+                          }}
+                        />
+                      );
+                      if (!shouldInstallTraceScope) return threadEl;
+                      return (
+                        <ActiveHostCapsResolverScope
+                          activeHost={activeHost ?? null}
+                          hostStyle={traceScopeHostStyle}
+                        >
+                          {threadEl}
+                        </ActiveHostCapsResolverScope>
+                      );
+                    })()}
                   </StickToBottom.Content>
                   <ScrollToBottomButton />
                 </div>

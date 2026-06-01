@@ -32,6 +32,7 @@ const createMockMcpClientManager = (overrides: Record<string, any> = {}) => ({
     serverInfo: { name: "test-server", version: "1.0.0" },
   }),
   getClient: vi.fn().mockReturnValue({}),
+  getManagedClient: vi.fn().mockReturnValue({}),
   disconnectServer: vi.fn().mockResolvedValue(undefined),
   removeServer: vi.fn(),
   connectToServer: vi.fn().mockResolvedValue(undefined),
@@ -230,7 +231,7 @@ describe("DELETE /api/mcp/servers/:serverId", () => {
   });
 
   it("handles already disconnected server gracefully", async () => {
-    mcpClientManager.getClient.mockReturnValue(null);
+    mcpClientManager.getManagedClient.mockReturnValue(undefined);
 
     const res = await app.request("/api/mcp/servers/disconnected-server", {
       method: "DELETE",

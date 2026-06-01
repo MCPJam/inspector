@@ -38,6 +38,8 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { WidgetReplay } from "./widget-replay";
@@ -46,24 +48,28 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
+import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 export function PartSwitch({
   part,
   role,
+  chatSessionId,
   onSendFollowUp,
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
   onModelContextUpdate,
+  onAppToolInvocationChange,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
   onToolApprovalResponse,
   messageParts,
   toolRenderOverrides,
@@ -74,6 +80,7 @@ export function PartSwitch({
 }: {
   part: AnyPart;
   role: UIMessage["role"];
+  chatSessionId?: string;
   onSendFollowUp: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
@@ -83,17 +90,19 @@ export function PartSwitch({
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
+  onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   messageParts?: AnyPart[];
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -111,6 +120,7 @@ export function PartSwitch({
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
+  const resolveHostCaps = useActiveHostCapsResolver();
   const savingEnabled = isAuthenticated && !minimalMode && interactive;
 
   // Get the Convex project ID (sharedProjectId) from the active project
@@ -137,7 +147,7 @@ export function PartSwitch({
   });
   const existingViewNames = useMemo(
     () => new Set(sortedViews.map((v) => v.name)),
-    [sortedViews],
+    [sortedViews]
   );
 
   // Instant save hook
@@ -154,7 +164,7 @@ export function PartSwitch({
       ? ((part as any).toolCallId as string | undefined)
       : undefined;
   const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined,
+    toolCallId ? s.widgets.get(toolCallId) : undefined
   );
 
   // Create save view handler for a specific tool (instant save)
@@ -168,7 +178,7 @@ export function PartSwitch({
       uiType: UIType,
       resourceUri?: string,
       outputTemplate?: string,
-      toolMetadata?: Record<string, unknown>,
+      toolMetadata?: Record<string, unknown>
     ) => {
       return async () => {
         posthog.capture("save_as_view_clicked", {
@@ -197,12 +207,20 @@ export function PartSwitch({
           toolMetadata,
           // Include cached widget HTML for offline rendering (MCP Apps only)
           widgetHtml: widgetDebugInfo?.widgetHtml,
+          // Compat provenance — the renderer stamps these onto the
+          // debug-store entry at fetch time. Persisting them with
+          // the saved view lets replay reproduce the original
+          // `window.openai` API surface even when the live host
+          // config has since changed.
+          injectedOpenAiCompat: widgetDebugInfo?.injectedOpenAiCompat,
+          injectedOpenAiCompatCapabilities:
+            widgetDebugInfo?.injectedOpenAiCompatCapabilities,
         };
 
         await saveViewInstant(data);
       };
     },
-    [toolCallId, widgetDebugInfo, saveViewInstant, posthog],
+    [toolCallId, widgetDebugInfo, saveViewInstant, posthog]
   );
 
   if (isToolPart(part) || isDynamicTool(part)) {
@@ -243,7 +261,7 @@ export function PartSwitch({
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
     const resolvedToolOutput = hasRenderOverrideToolOutput
       ? renderOverride.toolOutput
-      : (toolInfo.output ?? toolInfo.rawOutput);
+      : toolInfo.output ?? toolInfo.rawOutput;
 
     // Determine why save might be disabled
     const hasOutput =
@@ -289,19 +307,42 @@ export function PartSwitch({
       uiType || UIType.MCP_APPS,
       uiResourceUri ?? undefined,
       outputTemplate,
-      effectiveToolMeta as Record<string, unknown> | undefined,
+      effectiveToolMeta as Record<string, unknown> | undefined
     );
 
+    // Gate widget render on the active host's advertised capabilities for
+    // this tool's server. Hosts that don't advertise the MCP UI extension
+    // (Codex — elicitation-only client) fall through to the plain
+    // ToolPart result row, even when the tool itself declares
+    // `_meta.ui.resourceUri` / `openai/outputTemplate`. This mirrors what
+    // real CLI clients do: tool runs, JSON result is shown, no iframe.
+    //
+    // `serverId` (computed above for save-view routing) is passed through
+    // so the resolver picks up any per-server `clientCapabilities`
+    // override — keeping the renderer in lockstep with `initialize`,
+    // which uses the same `resolveEffectiveClientCapabilities` function.
+    //
+    // Note on Apps SDK hosts (ChatGPT, Copilot): their templates KEEP the
+    // SDK-default MCP UI extension in `clientCapabilities`, so they pass
+    // this gate today. A future explicit "window.openai" flag on
+    // HostConfigInputV2 will be OR-ed here to cover Apps-SDK hosts that
+    // choose to strip the MCP UI extension.
+    const isWidgetTornDown =
+      typeof toolInfo.toolCallId === "string" &&
+      tornDownWidgetIds?.has(toolInfo.toolCallId);
     const shouldRenderWidget =
-      uiType === UIType.OPENAI_SDK ||
-      uiType === UIType.MCP_APPS ||
-      uiType === UIType.OPENAI_SDK_AND_MCP_APPS;
+      !isWidgetTornDown &&
+      hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
+      (uiType === UIType.OPENAI_SDK ||
+        uiType === UIType.MCP_APPS ||
+        uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
     if (shouldRenderWidget) {
       return (
         <>
           <ToolPart
             part={toolPart}
+            chatSessionId={chatSessionId}
             uiType={uiType}
             displayMode={interactive ? displayMode : undefined}
             pipWidgetId={pipWidgetId}
@@ -322,6 +363,7 @@ export function PartSwitch({
             {...approvalProps}
           />
           <WidgetReplay
+            chatSessionId={chatSessionId}
             toolName={toolInfo.toolName}
             toolCallId={toolInfo.toolCallId}
             toolState={toolInfo.toolState}
@@ -340,6 +382,7 @@ export function PartSwitch({
                     callTool(serverId ?? "offline-view", toolName, params)
                 : undefined
             }
+            onAppToolInvocationChange={onAppToolInvocationChange}
             onWidgetStateChange={interactive ? onWidgetStateChange : undefined}
             onModelContextUpdate={
               interactive ? onModelContextUpdate : undefined
@@ -350,13 +393,11 @@ export function PartSwitch({
             onExitPip={interactive ? onExitPip : undefined}
             onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
             onExitFullscreen={interactive ? onExitFullscreen : undefined}
+            onRequestTeardown={interactive ? onRequestTeardown : undefined}
             displayMode={interactive ? displayMode : undefined}
             onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
             onAppSupportedDisplayModesChange={
               interactive ? setAppSupportedDisplayModes : undefined
-            }
-            selectedProtocolOverrideIfBothExists={
-              selectedProtocolOverrideIfBothExists
             }
             minimalMode={minimalMode}
           />
@@ -367,6 +408,7 @@ export function PartSwitch({
     return (
       <ToolPart
         part={toolPart}
+        chatSessionId={chatSessionId}
         uiType={uiType}
         onSaveView={allowSaveView ? handleSaveView : undefined}
         canSaveView={allowSaveView ? canSaveView : undefined}

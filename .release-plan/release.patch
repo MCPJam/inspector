@@ -1,94 +1,39 @@
-diff --git a/.changeset/release-rollup-2026-05-18.md b/.changeset/release-rollup-2026-05-18.md
+diff --git a/.changeset/payment-history-status-badges.md b/.changeset/payment-history-status-badges.md
 deleted file mode 100644
-index bdc376c5a..000000000
---- a/.changeset/release-rollup-2026-05-18.md
+index 72097e631..000000000
+--- a/.changeset/payment-history-status-badges.md
 +++ /dev/null
-@@ -1,23 +0,0 @@
+@@ -1,7 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
--"@mcpjam/sdk": minor
 ----
 -
--Inspector + SDK rollup since the last release.
+-Inspector updates:
 -
--**@mcpjam/sdk**
--
--- New `normalizeWidgetCspMeta` export and hardening of CSP/runtime-head helpers used by the ChatGPT widget surface (#2149, #2153).
--
--**@mcpjam/inspector**
--
--- Clients (formerly Hosts) tab: canvas redesign as a single host matrix with diagram color tokens, snappier Servers→Host transition, host routes, and Rename Hosts→Clients in UI (#2126, #2128, #2132, #2133, #2136).
--- Playground / Chat: new IDE-style Playground tab, renamed to Chat with NEW announcement, refactored Chat UX, chatbox surface, playground routing, evals host config override, and copilot/cursor animation with thread-color abstraction (#2121, #2129, #2130, #2131, #2135, #2138, #2144).
--- React Router v7 shell + path-based navigation adapter (#2115).
--- Sandbox: model real-host iframe attributes via 3 new sandbox config fields; stop pre-populating `restrictTo` and hide safe-default sandbox rows (#2142, #2143).
--- ChatGPT client: patches CSP and addresses follow-up CSP review feedback; fix auto-create client (#2147, #2149, #2153, #2154).
--- Tool approvals: default Require tool approval off in client templates; fix tool approvals (#2146, #2150).
--- Host previews and theming: read global theme on host creation + icons, fix system-prompt race, align previewed-host scope across surfaces, hide per-server OAuth errors in playground Tools tab, revert per-client primary color (#2134, #2139, #2140, #2141).
--- Servers spinner held across sign-out gap with snap-to-Servers on project switch; don't send org id from inspector; don't error on invite when guest/UI changes on org modal (#2123, #2125, #2127).
--- Electron: Squirrel + update detector (#2114).
--- PostHog instrumentation for Clients feature launch (#2137).
+-- Show refund and dispute status badges in the credit purchase history, with a hover detail for partial refunds
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index d5e9a1424..76d88fe74 100644
+index c4c4035a0..7b2de073c 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.4.11",
-+  "version": "2.4.12",
+-  "version": "2.8.0",
++  "version": "2.8.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -111,7 +111,7 @@
-     "@hono/node-server": "^1.13.7",
-     "@hookform/resolvers": "^3.10.0",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.6.0",
-+    "@mcpjam/sdk": "^1.7.0",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.0.1",
-     "@ngrok/ngrok": "^1.6.0",
 diff --git a/package-lock.json b/package-lock.json
-index cb172d190..bdf5cba97 100644
+index ea04955f3..b2de25fef 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -288,7 +288,7 @@
+@@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.4.11",
-+      "version": "2.4.12",
+-      "version": "2.8.0",
++      "version": "2.8.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",
-@@ -310,7 +310,7 @@
-         "@hono/node-server": "^1.13.7",
-         "@hookform/resolvers": "^3.10.0",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.6.0",
-+        "@mcpjam/sdk": "^1.7.0",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.0.1",
-         "@ngrok/ngrok": "^1.6.0",
-@@ -35862,7 +35862,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "1.6.0",
-+      "version": "1.7.0",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/anthropic": "^2.0.17",
-diff --git a/sdk/package.json b/sdk/package.json
-index 36f3ecf73..8366dec04 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "1.6.0",
-+  "version": "1.7.0",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",

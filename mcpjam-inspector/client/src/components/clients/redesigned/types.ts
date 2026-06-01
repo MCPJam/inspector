@@ -22,6 +22,14 @@ export type HostFocusState =
       open: true;
       tab: HostFocusTabId;
       selectedServerId: string | null;
+      /**
+       * Sandbox-config row to focus inside `AppsExtensionTab` when the
+       * overlay opens from a `sandbox-cfg:<subKey>` matrix click. Currently
+       * a no-op (the JSON editor exposes no programmatic key-focus API);
+       * threaded through end-to-end so the future scroll-to-key landing is
+       * a one-file change. See `AppsExtensionTab` focusSubKey TODO.
+       */
+      focusSubKey?: SandboxConfigSubKey;
     };
 
 export interface HostAttentionIssue {
@@ -257,6 +265,63 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
    * matrix hides the entire Apps section to avoid implying support.
    */
   appsExtensionAdvertised: boolean;
+  /**
+   * Resolved vendor compat-runtime shim state for the host. Rendered
+   * as chips inside the Apps section so the user can see at a glance
+   * whether `window.openai` is being injected. Source of truth is
+   * `resolveEffectiveCompatRuntime(profile, hostStyle)` so preset and
+   * override stay in lockstep. `fromOverride` is true when the user
+   * has explicitly toggled the flag on the profile — drives the
+   * "(from preset)" qualifier on the chip.
+   */
+  compatRuntime: {
+    openaiApps: boolean;
+    fromOverride: boolean;
+    /**
+     * Whether the user has flipped any per-method override on top of
+     * the preset's `openaiAppsCapabilities`. Drives the chip's
+     * "custom (N/M methods)" subtitle vs. "from preset".
+     */
+    hasMethodOverrides: boolean;
+    /**
+     * Count of methods currently "on" in the effective per-method
+     * matrix. Used in the chip subtitle. `requestDisplayMode` counts
+     * as 1 when its value is "all" or "fullscreen-only" (anything
+     * other than "none").
+     */
+    methodCount: number;
+    /**
+     * Total method count in the matrix. Constant; lives here so the
+     * chip subtitle reads "N/13 methods" without the chip importing
+     * the matrix's method list.
+     */
+    methodTotal: number;
+  };
+  /**
+   * SEP-1865 `app.*` spec-bridge override state. Independent from
+   * {@link compatRuntime} (the OpenAI shim) — the two matrices represent
+   * different surfaces and are never cross-gated. Rendered as a sibling
+   * chip in the View iframe injected-globals strip so the user can see
+   * at a glance whether they've sparse-overridden the host's preset.
+   *
+   * No `injected` flag here: the spec bridge is always present (it's
+   * the primary protocol, not a vendor compat shim).
+   */
+  mcpAppsBridge: {
+    /**
+     * Whether the user has set any key on `mcpAppsOverrides`. Drives
+     * the chip's "custom (N overrides)" vs "from preset" subtitle.
+     */
+    hasOverrides: boolean;
+    /**
+     * Number of sparse-override keys the user has set. Surfaced in the
+     * chip subtitle. Counts edited dimensions (not "active" effective
+     * values) — the matrix is heterogeneous (booleans + mode array +
+     * sandbox flags + resource-meta flags) and an "active" count
+     * wouldn't cleanly compose across the buckets.
+     */
+    overrideCount: number;
+  };
 }
 
 export interface ServersHubNodeData extends Record<string, unknown> {
@@ -375,10 +440,21 @@ export function sandboxConfigLeafNodeId(key: SandboxConfigSubKey): string {
   return `sandbox-cfg:${key}`;
 }
 
-/** Returns the focus tab a clicked node should open in the overlay. */
-export function focusTabForNodeId(
-  nodeId: string,
-): { tab: HostFocusTabId; selectedServerId: string | null } | null {
+/**
+ * Returns the focus tab a clicked node should open in the overlay.
+ *
+ * `focusSubKey` (optional) carries a sandbox-config row identifier when
+ * the click came from a `sandbox-cfg:<subKey>` node. Consumers can use it
+ * to scroll/highlight the matching JSON region inside `AppsExtensionTab`
+ * once the editor exposes a programmatic key-focus API. Until then, it's
+ * threaded through as-is and ignored by the editor — a deliberate no-op
+ * (see `AppsExtensionTab`'s focusSubKey TODO).
+ */
+export function focusTabForNodeId(nodeId: string): {
+  tab: HostFocusTabId;
+  selectedServerId: string | null;
+  focusSubKey?: SandboxConfigSubKey;
+} | null {
   if (nodeId === HOST_GROUP_NODE_ID) {
     // After the General tab was removed, host-group clicks land on
     // Behavior — it's the most active settings tab and the natural
@@ -410,16 +486,26 @@ export function focusTabForNodeId(
     // row in the matrix opens the Apps Extension tab rather than a
     // dedicated tab. The matrix section is still visually distinct via the
     // severity tint; the editor stays unified.
-    return { tab: "apps", selectedServerId: null };
-  }
-  if (nodeId === SERVERS_HUB_NODE_ID) {
-    return { tab: "servers", selectedServerId: null };
-  }
-  if (nodeId.startsWith("server-card:")) {
+    const focusSubKey = nodeId.startsWith("sandbox-cfg:")
+      ? (nodeId.slice("sandbox-cfg:".length) as SandboxConfigSubKey)
+      : undefined;
     return {
-      tab: "servers",
-      selectedServerId: nodeId.slice("server-card:".length),
+      tab: "apps",
+      selectedServerId: null,
+      ...(focusSubKey ? { focusSubKey } : {}),
     };
+  }
+  if (
+    nodeId === SERVERS_HUB_NODE_ID ||
+    nodeId.startsWith("server-card:")
+  ) {
+    // Server-related canvas clicks intentionally do NOT open the focus
+    // panel anymore. The per-host Servers tab was removed when project-
+    // scoped server config shipped; the project Servers tab header now
+    // owns server selection (single Auto-connect toggle). Returning
+    // null leaves the click as a visual selection only — `handleSelectNode`
+    // skips `openFocus` when the resolver is null.
+    return null;
   }
   return null;
 }
