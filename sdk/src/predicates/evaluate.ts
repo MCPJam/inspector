@@ -88,13 +88,16 @@ function resolveFinalMessage(transcript: IterationTranscript): string {
 function resolveTotalTokens(transcript: IterationTranscript): number | undefined {
   const usage = transcript.usage;
   if (!usage) return undefined;
-  if (typeof usage.totalTokens === "number") return usage.totalTokens;
-  const input = usage.inputTokens;
-  const output = usage.outputTokens;
-  if (typeof input === "number" || typeof output === "number") {
-    return (input ?? 0) + (output ?? 0);
-  }
-  return undefined;
+  const { inputTokens, outputTokens, totalTokens } = usage;
+  const sum =
+    typeof inputTokens === "number" || typeof outputTokens === "number"
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : undefined;
+  const total = typeof totalTokens === "number" ? totalTokens : undefined;
+  if (total === undefined && sum === undefined) return undefined;
+  // Providers sometimes report input/output while leaving totalTokens at 0; take
+  // the larger so the budget can't be bypassed by a zero total.
+  return Math.max(total ?? 0, sum ?? 0);
 }
 
 function pass(predicate: Predicate, reason: string): PredicateResult {
@@ -282,7 +285,22 @@ export function evaluatePredicates(
   transcript: IterationTranscript,
   predicates: Predicate[] | undefined,
 ): PredicateResult[] {
-  return (predicates ?? []).map((p) => evaluatePredicate(transcript, p));
+  return (predicates ?? []).map((p) => {
+    try {
+      return evaluatePredicate(transcript, p);
+    } catch (error) {
+      // A malformed predicate (e.g. from a loosely-typed API payload missing
+      // required fields) must fail closed like an unknown type — never abort
+      // the whole iteration's finalization.
+      return {
+        predicate: p,
+        passed: false,
+        reason: `malformed predicate: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+  });
 }
 
 /**

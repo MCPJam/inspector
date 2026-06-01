@@ -254,6 +254,14 @@ describe("evaluatePredicate — table driven", () => {
       passed: true,
     },
     {
+      name: "tokenBudgetUnder: uses input+output when totalTokens is 0 (not bypassed)",
+      transcript: transcript({
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 0 },
+      }),
+      predicate: { type: "tokenBudgetUnder", tokens: 100 },
+      passed: false,
+    },
+    {
       name: "tokenBudgetUnder: missing usage fails closed",
       transcript: transcript({}),
       predicate: { type: "tokenBudgetUnder", tokens: 1000 },
@@ -304,6 +312,16 @@ describe("evaluatePredicates — aggregate verdict", () => {
     const results = evaluatePredicates(baseTranscript, predicates);
     expect(allPredicatesPassed(results)).toBe(false);
     expect(results.filter((r) => !r.passed)).toHaveLength(1);
+  });
+
+  it("a malformed predicate fails closed instead of throwing", () => {
+    const results = evaluatePredicates(baseTranscript, [
+      { type: "toolCalledWith", toolName: "x" } as unknown as Predicate,
+    ]);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.passed).toBe(false);
+    expect(results[0]!.reason).toContain("malformed predicate");
+    expect(allPredicatesPassed(results)).toBe(false);
   });
 
   it("empty predicate set passes vacuously", () => {
