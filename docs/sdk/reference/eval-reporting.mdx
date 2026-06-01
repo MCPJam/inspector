@@ -32,7 +32,7 @@ Uploaded iterations have a single boolean `passed` that drives pass rate on the 
 
 **Manual `reportEvalResults`:** If you build `results[]` yourself and set `passed` explicitly, MCPJam stores your values as-is. The execution gate applies to code paths that **compute** `passed` from prompts, traces, and iterations.
 
-**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, and `traceMessagePartIndicatesToolFailure` for custom ingestion pipelines.
+**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, `traceMessagePartIndicatesToolFailure`, `classifyToolFailurePart`, and `extractToolErrors` for custom ingestion pipelines. The `@mcpjam/sdk/predicates` sub-package exports the full predicate evaluator (`evaluatePredicate`, `evaluatePredicates`, `allPredicatesPassed`, `buildIterationTranscript`) and all predicate types.
 
 ---
 
