@@ -66,7 +66,10 @@ export function useGoalCompletion(run: EvalSuiteRun | null) {
       }
       hook.requestInsight(force, extraArgs);
     },
-    [hook],
+    // Depend on the stabilized `requestInsight` (memoized inside useInsight),
+    // not the `hook` object literal — which is recreated every render and would
+    // make this useCallback a no-op.
+    [hook.requestInsight],
   );
 
   return {

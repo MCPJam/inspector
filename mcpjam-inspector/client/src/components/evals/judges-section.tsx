@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -43,7 +43,8 @@ function pruneEmpty(value: EvalJudgeConfig): EvalJudgeConfig | undefined {
   const hasAnyField =
     gc.enabled !== undefined ||
     (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
-    gc.threshold !== undefined;
+    gc.threshold !== undefined ||
+    gc.autoRun !== undefined;
   if (!hasAnyField) return undefined;
   return { goalCompletion: gc };
 }
@@ -84,6 +85,31 @@ export function JudgesSection({
     const nextGC = { ...(gc ?? {}), ...patch };
     const nextConfig: EvalJudgeConfig = { goalCompletion: nextGC };
     onChange(pruneEmpty(nextConfig));
+  };
+
+  // The threshold field keeps a local draft so typing doesn't fight the
+  // persisted prop: `onChange` here drives an async `updateSuite`, and feeding
+  // the input straight from the round-tripped prop snaps a half-typed decimal
+  // back mid-edit. Type into the draft, commit (clamp / default) on blur, and
+  // re-sync the draft whenever the persisted value changes from elsewhere.
+  const [thresholdDraft, setThresholdDraft] = useState(String(threshold));
+  useEffect(() => {
+    setThresholdDraft(String(threshold));
+  }, [threshold]);
+
+  const commitThreshold = () => {
+    const raw = thresholdDraft.trim();
+    if (raw === "") {
+      update({ threshold: undefined });
+      return;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      setThresholdDraft(String(threshold));
+      return;
+    }
+    const clamped = Math.min(1, Math.max(0, parsed));
+    update({ threshold: clamped === DEFAULT_THRESHOLD ? undefined : clamped });
   };
 
   return (
@@ -166,21 +192,9 @@ export function JudgesSection({
                 min={0}
                 max={1}
                 step={0.05}
-                value={String(threshold)}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw.trim() === "") {
-                    update({ threshold: undefined });
-                    return;
-                  }
-                  const parsed = Number(raw);
-                  if (!Number.isFinite(parsed)) return;
-                  const clamped = Math.min(1, Math.max(0, parsed));
-                  update({
-                    threshold:
-                      clamped === DEFAULT_THRESHOLD ? undefined : clamped,
-                  });
-                }}
+                value={thresholdDraft}
+                onChange={(e) => setThresholdDraft(e.target.value)}
+                onBlur={commitThreshold}
                 className="h-8 text-sm"
               />
             </div>
