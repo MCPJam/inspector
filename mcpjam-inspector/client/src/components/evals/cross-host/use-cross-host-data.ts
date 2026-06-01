@@ -53,7 +53,7 @@ export type CrossHostData = {
 };
 
 function readMetaNumber(
-  meta: Record<string, string | number | boolean> | undefined,
+  meta: Record<string, unknown> | undefined,
   key: string,
 ): number | null {
   const v = meta?.[key];
@@ -61,7 +61,7 @@ function readMetaNumber(
 }
 
 function readMetaBool(
-  meta: Record<string, string | number | boolean> | undefined,
+  meta: Record<string, unknown> | undefined,
   key: string,
 ): boolean {
   return meta?.[key] === true;
