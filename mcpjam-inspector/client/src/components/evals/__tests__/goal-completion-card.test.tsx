@@ -77,6 +77,21 @@ describe("GoalCompletionCard", () => {
     );
   });
 
+  it("falls back to the default threshold when the field is left blank", async () => {
+    const onRun = vi.fn();
+    const user = userEvent.setup();
+    render(<GoalCompletionCard {...baseProps} onRun={onRun} />);
+
+    // Blank input must NOT send threshold 0 (which would pass every score).
+    await user.clear(screen.getByLabelText("Threshold"));
+    await user.click(screen.getByRole("button", { name: /Run judge/i }));
+
+    expect(onRun).toHaveBeenCalledWith(
+      { judgeModel: "openai/gpt-5.4-mini", threshold: 0.7 },
+      false,
+    );
+  });
+
   it("renders per-case score, advisory verdict and reason once graded", () => {
     const goalCompletion: EvalSuiteRun["goalCompletion"] = {
       summary: "One case met the goal, one fell short.",

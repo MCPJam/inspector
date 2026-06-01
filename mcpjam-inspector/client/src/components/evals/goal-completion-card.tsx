@@ -40,6 +40,18 @@ function clampThreshold(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+/**
+ * Parse the threshold input. A blank field must fall back to the default — NOT
+ * `Number("") === 0`, which would pass every nonnegative score and make a run
+ * look successful just because the field was left empty.
+ */
+function parseThreshold(input: string): number {
+  if (input.trim() === "") {
+    return DEFAULT_THRESHOLD;
+  }
+  return clampThreshold(Number(input));
+}
+
 function formatScore(score: number): string {
   return `${Math.round(clampThreshold(score) * 100)}%`;
 }
@@ -116,7 +128,7 @@ export function GoalCompletionCard({
     onRun(
       {
         judgeModel: selectedModelId || undefined,
-        threshold: clampThreshold(Number(thresholdInput)),
+        threshold: parseThreshold(thresholdInput),
       },
       force,
     );
@@ -206,7 +218,7 @@ export function GoalCompletionCard({
             value={thresholdInput}
             onChange={(e) => setThresholdInput(e.target.value)}
             onBlur={() =>
-              setThresholdInput(String(clampThreshold(Number(thresholdInput))))
+              setThresholdInput(String(parseThreshold(thresholdInput)))
             }
             disabled={inFlight}
             className="h-8 text-sm"
