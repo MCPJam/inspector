@@ -461,4 +461,45 @@ describe("reason redaction + bounding (persisted to Convex metadata)", () => {
     expect(result.passed).toBe(false);
     expect(result.reason).toContain("+2 more");
   });
+
+  it("scrubs sensitive-keyed values from the persisted PredicateResult.predicate", () => {
+    // The runner writes `result.predicate` verbatim into
+    // `testIteration.metadata.predicates`, so an authored predicate whose
+    // `args.args` includes a sensitive key would leak into Convex without
+    // sanitization in pass()/fail().
+    const result = evaluatePredicate(
+      {
+        toolCalls: [
+          {
+            toolName: "call_api",
+            arguments: {
+              authorization: "Bearer eyJsecret",
+              api_key: "sk-test-12345",
+              endpoint: "/v1/widgets",
+            },
+          },
+        ],
+      },
+      {
+        type: "toolCalledWith",
+        toolName: "call_api",
+        args: {
+          args: {
+            authorization: "Bearer eyJsecret",
+            api_key: "sk-test-12345",
+            // non-sensitive — must survive so the persisted row is still useful.
+            endpoint: "/v1/widgets",
+          },
+        },
+      },
+    );
+    expect(result.passed).toBe(true);
+    const persisted = result.predicate;
+    if (persisted.type !== "toolCalledWith") throw new Error("unexpected type");
+    expect(persisted.args.args.authorization).toBe("«redacted»");
+    expect(persisted.args.args.api_key).toBe("«redacted»");
+    expect(persisted.args.args.endpoint).toBe("/v1/widgets");
+    expect(JSON.stringify(persisted)).not.toContain("eyJsecret");
+    expect(JSON.stringify(persisted)).not.toContain("sk-test-12345");
+  });
 });

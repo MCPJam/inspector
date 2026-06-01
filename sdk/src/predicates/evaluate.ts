@@ -113,12 +113,49 @@ function resolveTotalTokens(transcript: IterationTranscript): number | undefined
   return Math.max(total ?? 0, sum ?? 0);
 }
 
+/**
+ * Sanitize an authored predicate for persistence. Reason strings already go
+ * through `brief()` (deep key-redaction), but the original `predicate` object
+ * is echoed back inside every {@link PredicateResult} and the runner persists
+ * those rows to `testIteration.metadata.predicates`. Without this, a
+ * `toolCalledWith` predicate whose `args.args` includes a sensitive key
+ * (`authorization`, `token`, etc.) round-trips its raw value into Convex.
+ *
+ * Surgical (not blanket-`redact()`): the deep redactor would also rewrite
+ * legitimate scalar fields whose names happen to contain a sensitive substring
+ * (e.g. `tokenBudgetUnder.tokens` matches `/token/i`). Only the `toolCalledWith`
+ * `args.args` blob carries author-supplied keys/values that can leak; other
+ * predicate shapes are either pure scalars (`tokens`, `caseSensitive`),
+ * author-chosen literals where redaction would destroy the predicate's meaning
+ * (`needle`, `pattern`), or carry no payload at all.
+ */
+function sanitizePredicate(predicate: Predicate): Predicate {
+  if (predicate.type === "toolCalledWith") {
+    return {
+      ...predicate,
+      args: {
+        ...predicate.args,
+        args: redact(predicate.args.args ?? {}) as Record<string, unknown>,
+      },
+    };
+  }
+  return predicate;
+}
+
 function pass(predicate: Predicate, reason: string): PredicateResult {
-  return { predicate, passed: true, reason: truncate(reason, MAX_REASON_CHARS) };
+  return {
+    predicate: sanitizePredicate(predicate),
+    passed: true,
+    reason: truncate(reason, MAX_REASON_CHARS),
+  };
 }
 
 function fail(predicate: Predicate, reason: string): PredicateResult {
-  return { predicate, passed: false, reason: truncate(reason, MAX_REASON_CHARS) };
+  return {
+    predicate: sanitizePredicate(predicate),
+    passed: false,
+    reason: truncate(reason, MAX_REASON_CHARS),
+  };
 }
 
 /** Evaluate a single predicate against the iteration transcript. */
