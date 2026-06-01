@@ -178,6 +178,14 @@ export function evaluatePredicate(
     }
 
     case "toolNeverCalled": {
+      // A missing toolName matches no calls, which would otherwise PASS the
+      // forbidden-tool check — fail closed on a malformed predicate instead.
+      if (
+        typeof predicate.toolName !== "string" ||
+        predicate.toolName.length === 0
+      ) {
+        return fail(predicate, `toolNeverCalled requires a non-empty toolName`);
+      }
       const calls = callsTo(transcript, predicate.toolName);
       return calls.length === 0
         ? pass(predicate, `tool "${predicate.toolName}" was not called`)
@@ -188,6 +196,14 @@ export function evaluatePredicate(
     }
 
     case "responseContains": {
+      // `includes("")` is always true, so an empty/missing needle would PASS for
+      // any message — fail closed on a malformed predicate instead.
+      if (
+        typeof predicate.needle !== "string" ||
+        predicate.needle.length === 0
+      ) {
+        return fail(predicate, `responseContains requires a non-empty needle`);
+      }
       const message = resolveFinalMessage(transcript);
       const caseSensitive = predicate.caseSensitive ?? false;
       const haystack = caseSensitive ? message : message.toLowerCase();

@@ -128,6 +128,13 @@ describe("evaluatePredicate — table driven", () => {
       passed: false,
       reasonIncludes: ["forbidden", "delete_account"],
     },
+    {
+      name: "toolNeverCalled: missing toolName fails closed (not silently 'not called')",
+      transcript: transcript({ toolCalls: [{ toolName: "search", arguments: {} }] }),
+      predicate: { type: "toolNeverCalled" } as unknown as Predicate,
+      passed: false,
+      reasonIncludes: ["non-empty toolName"],
+    },
 
     // ── responseContains ──────────────────────────────────────────────
     {
@@ -147,6 +154,13 @@ describe("evaluatePredicate — table driven", () => {
       transcript: transcript({}),
       predicate: { type: "responseContains", needle: "refund" },
       passed: false,
+    },
+    {
+      name: "responseContains: empty needle fails closed (not always-true includes(''))",
+      transcript: transcript({ finalAssistantMessage: "anything at all" }),
+      predicate: { type: "responseContains", needle: "" },
+      passed: false,
+      reasonIncludes: ["non-empty needle"],
     },
 
     // ── responseMatches ───────────────────────────────────────────────
