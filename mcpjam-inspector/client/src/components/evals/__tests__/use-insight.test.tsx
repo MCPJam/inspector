@@ -132,4 +132,26 @@ describe("useInsight requested lifecycle", () => {
     rerender({ run: makeRun({ _id: "run-2" }) });
     expect(result.current.unavailable).toBe(false);
   });
+
+  it("keeps `unavailable` sticky across runs when the backend feature is missing", async () => {
+    // A genuine "feature missing" failure (mutation not deployed) is permanent
+    // for the session; resetting it on every run switch would re-fire a failing
+    // (auto)request and flash the panel. It must stay hidden.
+    requestMutationMock.mockRejectedValue(
+      new Error("Could not find public function for 'goalCompletion:x'"),
+    );
+    const { result, rerender } = renderHook(
+      ({ run }) => useInsight(run, config, { autoRequest: false }),
+      { initialProps: { run: makeRun({ _id: "run-1" }) } },
+    );
+
+    await act(async () => {
+      result.current.requestInsight(false);
+      await Promise.resolve();
+    });
+    expect(result.current.unavailable).toBe(true);
+
+    rerender({ run: makeRun({ _id: "run-2" }) });
+    expect(result.current.unavailable).toBe(true);
+  });
 });

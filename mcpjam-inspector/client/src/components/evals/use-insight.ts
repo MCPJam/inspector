@@ -43,15 +43,21 @@ function resultGeneratedAt(result: unknown): number | undefined {
 
 function classifyInsightError(err: unknown): {
   unavailable: boolean;
+  permanent: boolean;
   message: string;
 } {
   const message = err instanceof Error ? err.message : String(err);
-  const unavailable =
+  // "Feature missing" — the backend mutation isn't deployed at all. This is
+  // permanent for the session: a Convex function-lookup failure won't change
+  // between runs, so the panel should stay hidden without re-attempting.
+  const permanent =
     message.includes("Could not find") ||
-    message.includes("not found") ||
-    message.includes("is not a function") ||
+    message.includes("is not a function");
+  const unavailable =
+    permanent ||
+    message.includes("not found") || // run-specific, e.g. "Suite run not found"
     message.includes("Server Error");
-  return { unavailable, message };
+  return { unavailable, permanent, message };
 }
 
 export function useInsight<TResult extends { summary?: string }>(
@@ -65,6 +71,11 @@ export function useInsight<TResult extends { summary?: string }>(
   const [requested, setRequested] = useState(false);
   const hasAutoAttemptedRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
+  // True only when the backend feature itself is missing (mutation not
+  // deployed). Unlike a run-specific/transient failure, this is permanent for
+  // the hook's lifetime, so we keep `unavailable` sticky across run switches
+  // rather than re-attempting (and flashing the panel) on every navigation.
+  const featureMissingRef = useRef(false);
   // The result `generatedAt` captured at request time. Lets us clear the
   // optimistic `requested` flag the instant a NEW result lands — even when a
   // reactive update skips an observable `pending` frame — so the controls
@@ -98,6 +109,9 @@ export function useInsight<TResult extends { summary?: string }>(
           setRequested(false);
           const classified = classifyInsightError(err);
           if (classified.unavailable) {
+            if (classified.permanent) {
+              featureMissingRef.current = true;
+            }
             setUnavailable(true);
           } else {
             setError(classified.message);
@@ -122,10 +136,14 @@ export function useInsight<TResult extends { summary?: string }>(
       runIdRef.current = runKey;
       setError(null);
       setRequested(false);
-      // Availability is re-assessed per run: a run-specific or transient failure
-      // (e.g. "Suite run not found", a transient "Server Error") must not keep
-      // the panel hidden for every later run in the same mounted view.
-      setUnavailable(false);
+      // Re-assess availability per run for run-specific/transient failures
+      // (e.g. "Suite run not found") so one bad run doesn't hide the panel for
+      // every later run — but keep it sticky when the backend feature is
+      // genuinely missing, so an autoRequest consumer (serverQuality) doesn't
+      // re-fire a failing request and flash the panel on every navigation.
+      if (!featureMissingRef.current) {
+        setUnavailable(false);
+      }
       hasAutoAttemptedRef.current = false;
       requestedAtStampRef.current = undefined;
     }
