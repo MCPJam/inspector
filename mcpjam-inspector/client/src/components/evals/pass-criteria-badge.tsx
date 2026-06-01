@@ -6,6 +6,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, XCircle } from "lucide-react";
+import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import { suitePassCriteriaCompactBadgeClassNames } from "./iteration-result-presentation";
 import { EvalSuiteRun } from "./types";
 
@@ -93,7 +94,7 @@ export function PassCriteriaBadge({
         {passed ? (
           <CheckCircle2 className="h-5 w-5 text-success" />
         ) : (
-          <XCircle className="h-5 w-5 text-destructive" />
+          <XCircle className={cn("h-5 w-5", EVAL_LOW_PASS_RATE_TEXT_CLASS)} />
         )}
         <h3 className="text-sm font-medium">
           {passed ? "Suite Passed" : "Suite Failed"}
@@ -117,7 +118,12 @@ export function PassCriteriaBadge({
         </div>
 
         {!passed && passRate < minimumPassRate && (
-          <div className="mt-2 rounded border-l-2 border-destructive bg-destructive/10 p-2 text-xs text-destructive">
+          <div
+            className={cn(
+              "mt-2 rounded border-l-2 border-red-800/40 bg-red-800/10 p-2 text-xs dark:border-red-400/40 dark:bg-red-400/10",
+              EVAL_LOW_PASS_RATE_TEXT_CLASS,
+            )}
+          >
             {metricLabel} {passRate.toFixed(1)}% below threshold{" "}
             {minimumPassRate}%
           </div>

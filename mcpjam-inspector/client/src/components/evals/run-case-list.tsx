@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { caseListDataRowClassName } from "./case-list-shared";
+import { evalSurfaceRowHoverClass } from "./eval-surface-chrome";
 import {
   RunCaseIterationBar,
   runCaseFailCountClass,
@@ -136,7 +137,8 @@ function RunCaseListItem({
         className={cn(
           runCaseListRowClassName(),
           runCaseListDataRowClassName,
-          "cursor-pointer text-left hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+          "cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+          evalSurfaceRowHoverClass,
         )}
       >
         <span className={cn(runCaseTitleClassName, "px-2 py-2")}>

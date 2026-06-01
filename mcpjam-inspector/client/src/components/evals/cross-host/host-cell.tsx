@@ -1,152 +1,337 @@
+import { useMemo } from "react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { PassDotRow } from "./pass-dot-row";
-import type { CellChips, CellData } from "./use-cross-host-data";
+import { computeIterationResult } from "../pass-criteria";
+import { RunCaseIterationBar } from "../run-case-list-shared";
+import type { RunCaseIterationOutcome } from "../run-case-groups";
+import { formatRunCaseLatencyMs } from "../run-case-groups";
+import { passRateColorClass } from "../suite-overview-presentation";
+import type { CellData } from "./use-cross-host-data";
+import type { EvalIteration } from "../types";
 
 interface HostCellProps {
   data: CellData | undefined;
+  metricComparisons?: HostCellMetricComparisons;
 }
 
-function formatMs(ms: number): string {
-  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
-  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
-  return `${Math.round(ms)}ms`;
+export type HostCellMetricKey = "p50" | "p95" | "avgTokens";
+
+export type HostCellMetricComparison = {
+  hostId: string;
+  hostName: string;
+  value: number;
+  formattedValue: string;
+  isCurrent: boolean;
+};
+
+export type HostCellMetricComparisons = Partial<
+  Record<HostCellMetricKey, HostCellMetricComparison[]>
+>;
+
+function stableOrder(iterations: EvalIteration[]): EvalIteration[] {
+  return [...iterations].sort((a, b) => {
+    const an = a.iterationNumber ?? Number.MAX_SAFE_INTEGER;
+    const bn = b.iterationNumber ?? Number.MAX_SAFE_INTEGER;
+    if (an !== bn) return an - bn;
+    return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+  });
 }
 
-function formatTokens(n: number): string {
+function iterationOutcome(iteration: EvalIteration): RunCaseIterationOutcome {
+  const result = computeIterationResult(iteration);
+  if (result === "passed") return "pass";
+  if (result === "failed") return "fail";
+  if (result === "cancelled") return "cancelled";
+  return "pending";
+}
+
+export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
+  return String(Math.round(n));
 }
 
-function Chip({
-  label,
-  variant = "default",
-  title,
+const METRIC_COPY: Record<
+  HostCellMetricKey,
+  { title: string; description: string; missing: string }
+> = {
+  p50: {
+    title: "P50 latency",
+    description: "Median completed-run latency for this test case.",
+    missing: "No completed latency sample for this client.",
+  },
+  p95: {
+    title: "P95 latency",
+    description: "Tail latency for the slowest completed runs in this case.",
+    missing: "No completed tail-latency sample for this client.",
+  },
+  avgTokens: {
+    title: "Average tokens",
+    description: "Mean token usage per iteration in the latest run.",
+    missing: "No token usage sample for this client.",
+  },
+};
+
+function formatDeltaFromBest(
+  metricKey: HostCellMetricKey,
+  value: number,
+  bestValue: number
+): string {
+  const delta = value - bestValue;
+  if (delta <= 0) return "best";
+  if (metricKey === "avgTokens") return `+${formatTokens(delta)} tok`;
+  return `+${formatRunCaseLatencyMs(delta)}`;
+}
+
+function HostMetricComparisonTooltip({
+  metricKey,
+  entries,
 }: {
-  label: string;
-  variant?: "default" | "warn" | "info";
-  title?: string;
+  metricKey: HostCellMetricKey;
+  entries: HostCellMetricComparison[];
 }) {
-  return (
-    <span
-      title={title}
-      className={cn(
-        "inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium leading-none",
-        variant === "warn" &&
-          "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
-        variant === "info" &&
-          "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
-        variant === "default" &&
-          "bg-muted text-muted-foreground",
-      )}
-    >
-      {label}
-    </span>
+  const copy = METRIC_COPY[metricKey];
+  const current = entries.find((entry) => entry.isCurrent);
+  const best = entries[0];
+  const maxValue = entries.reduce(
+    (max, entry) => Math.max(max, entry.value),
+    0
   );
-}
-
-function ChipRow({ chips }: { chips: CellChips }) {
-  const hasToolData =
-    chips.toolsTotalBefore !== null && chips.toolsExposed !== null;
 
   return (
-    <div className="flex flex-wrap gap-1 mt-0.5">
-      {hasToolData && (
-        <Chip
-          label={`tools ${chips.toolsExposed}/${chips.toolsTotalBefore}`}
-          title={`${chips.toolsExposed} tools exposed to model out of ${chips.toolsTotalBefore} total`}
-        />
+    <div className="w-[18rem] overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-0 text-popover-foreground shadow-2xl shadow-black/10 backdrop-blur supports-[backdrop-filter]:bg-popover/90">
+      <div className="border-b border-border/60 bg-gradient-to-br from-muted/80 via-background to-background px-3 py-2.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-foreground">
+              {copy.title}
+            </p>
+            <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+              {copy.description}
+            </p>
+          </div>
+          {current ? (
+            <span className="rounded-full border border-border/70 bg-background px-2 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+              #{entries.findIndex((entry) => entry.isCurrent) + 1}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {entries.length > 0 && best ? (
+        <div className="space-y-1.5 p-2">
+          {entries.map((entry, index) => {
+            const width =
+              maxValue > 0 ? Math.max(10, (entry.value / maxValue) * 100) : 0;
+            const delta = formatDeltaFromBest(
+              metricKey,
+              entry.value,
+              best.value
+            );
+
+            return (
+              <div
+                key={entry.hostId}
+                className={cn(
+                  "rounded-lg border border-transparent px-2 py-1.5",
+                  entry.isCurrent &&
+                    "border-primary/25 bg-primary/[0.07] ring-1 ring-primary/10"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-5 shrink-0 font-mono text-[10px] text-muted-foreground">
+                    #{index + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                    {entry.hostName}
+                  </span>
+                  <span className="font-mono text-[11px] tabular-nums text-foreground">
+                    {entry.formattedValue}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={cn(
+                        "h-full rounded-full",
+                        entry.isCurrent
+                          ? "bg-primary"
+                          : "bg-muted-foreground/35"
+                      )}
+                      style={{ width: `${width}%` }}
+                    />
+                  </div>
+                  <span
+                    className={cn(
+                      "w-14 text-right font-mono text-[10px] tabular-nums",
+                      delta === "best"
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    {delta}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="px-3 py-2.5 text-xs text-muted-foreground">
+          No peer data yet for this metric.
+        </p>
       )}
-      {chips.toolsDroppedVisibility !== null &&
-        chips.toolsDroppedVisibility > 0 && (
-          <Chip
-            label={`visibility -${chips.toolsDroppedVisibility}`}
-            variant="warn"
-            title={`${chips.toolsDroppedVisibility} app-only tool(s) filtered by visibility policy`}
-          />
-        )}
-      {chips.approvalsWouldRequire !== null &&
-        chips.approvalsWouldRequire > 0 && (
-          <Chip
-            label={`gated tool calls ×${chips.approvalsWouldRequire}`}
-            variant="warn"
-            title={
-              `Under this host's requireToolApproval policy, ${chips.approvalsWouldRequire} tool ` +
-              `call(s) would be subject to user approval. Real hosts may suppress some prompts ` +
-              `via per-tool allow-lists or session memory; this is an upper-bound estimate.`
-            }
-          />
-        )}
-      {chips.progressiveDiscoveryEnabled && (
-        <Chip
-          label="progressive discovery"
-          variant="info"
-          title="Progressive tool discovery enabled for this host"
-        />
-      )}
-      {chips.openaiCompatInjected && (
-        <Chip
-          label="OpenAI compat"
-          variant="info"
-          title="OpenAI Apps SDK compat runtime was injected for this host"
-        />
-      )}
+
+      {!current ? (
+        <p className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
+          {copy.missing}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-export function HostCell({ data }: HostCellProps) {
+function HostCellMetric({
+  label,
+  value,
+  metricKey,
+  comparisonEntries,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  metricKey: HostCellMetricKey;
+  comparisonEntries?: HostCellMetricComparison[];
+  valueClassName?: string;
+}) {
+  const trigger = (
+    <button
+      type="button"
+      className="group/metric flex min-w-0 flex-col items-center gap-0.5 rounded-lg px-1 py-0.5 text-center transition duration-150 hover:-translate-y-px hover:bg-background/80 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      aria-label={`${METRIC_COPY[metricKey].title}: ${value}`}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <span className="font-mono text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/90 transition-colors group-hover/metric:text-foreground/70">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "font-mono text-[11px] font-medium tabular-nums leading-none text-foreground/90",
+          valueClassName
+        )}
+      >
+        {value}
+      </span>
+    </button>
+  );
+
+  if (!comparisonEntries) return trigger;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+      <TooltipContent
+        side="top"
+        align="center"
+        sideOffset={8}
+        className="border-0 bg-transparent p-0 shadow-none"
+      >
+        <HostMetricComparisonTooltip
+          metricKey={metricKey}
+          entries={comparisonEntries}
+        />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function HostCell({ data, metricComparisons }: HostCellProps) {
+  const iterationResults = useMemo(() => {
+    if (!data?.iterations.length) return [];
+    return stableOrder(data.iterations).map(iterationOutcome);
+  }, [data?.iterations]);
+
   if (!data || data.totalCount === 0) {
     return (
-      <div className="flex h-full min-h-[56px] items-center justify-center">
-        <span className="text-xs text-muted-foreground/40">—</span>
+      <div className="flex h-full min-h-[4.5rem] items-center justify-center px-3">
+        <span className="font-mono text-xs text-muted-foreground/50">—</span>
       </div>
     );
   }
 
-  const passRateStr =
+  const accuracyLabel =
     data.passRate !== null ? `${Math.round(data.passRate)}%` : null;
+  const accuracyBadge =
+    accuracyLabel != null ? (
+      <span
+        className={cn(
+          "font-mono text-xs font-semibold tabular-nums leading-none",
+          passRateColorClass(data.passRate)
+        )}
+      >
+        {accuracyLabel}
+      </span>
+    ) : null;
 
-  const hasAnyChip =
-    data.chips.toolsTotalBefore !== null ||
-    (data.chips.toolsDroppedVisibility ?? 0) > 0 ||
-    (data.chips.approvalsWouldRequire ?? 0) > 0 ||
-    data.chips.progressiveDiscoveryEnabled ||
-    data.chips.openaiCompatInjected;
+  const p50Value =
+    data.p50LatencyMs !== null
+      ? formatRunCaseLatencyMs(data.p50LatencyMs)
+      : null;
+  const p95Value =
+    data.p95LatencyMs !== null
+      ? formatRunCaseLatencyMs(data.p95LatencyMs)
+      : null;
+  const avgTokensValue =
+    data.avgTokensPerIteration !== null
+      ? `${formatTokens(data.avgTokensPerIteration)} tok`
+      : null;
+
+  const hasMetrics = p50Value || p95Value || avgTokensValue;
 
   return (
-    <div className="flex flex-col gap-1 p-2">
-      <PassDotRow iterations={data.iterations} />
-      <div className="flex items-center gap-2 flex-wrap">
-        {passRateStr !== null && (
-          <span
-            className={cn(
-              "text-[11px] font-medium tabular-nums",
-              data.passRate === 100
-                ? "text-green-600 dark:text-green-400"
-                : data.passRate === 0
-                  ? "text-red-600 dark:text-red-400"
-                  : "text-yellow-600 dark:text-yellow-400",
-            )}
-          >
-            {passRateStr}
-          </span>
-        )}
-        {data.medianLatencyMs !== null && (
-          <span
-            className="text-[10px] text-muted-foreground tabular-nums"
-            title="Median (p50) latency across completed iterations"
-          >
-            {formatMs(data.medianLatencyMs)}
-          </span>
-        )}
-        {data.totalTokens > 0 && (
-          <span className="text-[10px] text-muted-foreground tabular-nums">
-            {formatTokens(data.totalTokens)}
-          </span>
-        )}
-      </div>
-      {hasAnyChip && <ChipRow chips={data.chips} />}
+    <div className="flex min-h-[4.5rem] flex-col gap-2 px-3 py-2.5">
+      <RunCaseIterationBar
+        results={iterationResults}
+        passed={data.passCount}
+        total={data.totalCount}
+        maxVisible={8}
+        headerEnd={accuracyBadge}
+      />
+      {hasMetrics ? (
+        <div
+          className="grid w-full grid-cols-3 gap-1 border-t border-border/50 pt-2"
+          aria-label="Latency and token metrics"
+        >
+          <HostCellMetric
+            label="p50"
+            metricKey="p50"
+            value={p50Value ?? "—"}
+            comparisonEntries={metricComparisons?.p50}
+            valueClassName={!p50Value ? "text-muted-foreground/50" : undefined}
+          />
+          <HostCellMetric
+            label="p95"
+            metricKey="p95"
+            value={p95Value ?? "—"}
+            comparisonEntries={metricComparisons?.p95}
+            valueClassName={!p95Value ? "text-muted-foreground/50" : undefined}
+          />
+          <HostCellMetric
+            label="avg"
+            metricKey="avgTokens"
+            value={avgTokensValue ?? "—"}
+            comparisonEntries={metricComparisons?.avgTokens}
+            valueClassName={
+              !avgTokensValue ? "text-muted-foreground/50" : undefined
+            }
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

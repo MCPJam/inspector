@@ -75,6 +75,10 @@ export const EVAL_DESTRUCTIVE_BUTTON_CLASS =
 /** Darker red fill for fail segments in iteration bars. */
 export const EVAL_FAIL_BAR_CLASS = "bg-red-700 dark:bg-red-600";
 
+/** Compact failed-outcome badges — same red family as {@link EVAL_LOW_PASS_RATE_TEXT_CLASS}. */
+export const EVAL_FAILED_BADGE_CLASS =
+  "bg-red-800/15 text-red-800 dark:bg-red-400/20 dark:text-red-400";
+
 // UI configuration
 export const UI_CONFIG = {
   MAX_TITLE_LENGTH: 100,

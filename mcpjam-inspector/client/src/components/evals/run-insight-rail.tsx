@@ -19,6 +19,12 @@ import {
   runDetailSupportingClass,
 } from "./run-detail-typography";
 import type { EvalIteration, EvalSuiteRun } from "./types";
+import {
+  passRateColorClass,
+  passRateSegmentColorClass,
+} from "./suite-overview-presentation";
+import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
+import { evalSurfaceCardClass } from "./eval-surface-chrome";
 
 export type RunTrendPoint = {
   runId: string;
@@ -32,19 +38,6 @@ export type RunTrendPoint = {
 
 const RUN_TREND_CHIP_LIMIT = 6;
 
-function passRateToneClass(
-  passRate: number,
-  variant: "text" | "segment",
-): string {
-  if (passRate >= 80) {
-    return variant === "text" ? "text-success" : "bg-success";
-  }
-  if (passRate >= 50) {
-    return variant === "text" ? "text-warning" : "bg-warning";
-  }
-  return variant === "text" ? "text-destructive" : "bg-destructive/70";
-}
-
 function RunAccuracySegmentBar({
   passRate,
   className,
@@ -53,7 +46,7 @@ function RunAccuracySegmentBar({
   className?: string;
 }) {
   const filled = Math.min(10, Math.max(0, Math.round(passRate / 10)));
-  const fillClass = passRateToneClass(passRate, "segment");
+  const fillClass = passRateSegmentColorClass(passRate);
 
   return (
     <div
@@ -96,9 +89,10 @@ function RunAccuracyRunCard({
   const cardSummary = `Run ${point.runIdDisplay}, ${point.passRate}% accuracy, ${contextLabel}`;
 
   const cardClassName = cn(
-    "flex min-w-[10rem] flex-1 basis-[10rem] flex-col gap-2 rounded-lg border border-border/50 bg-muted/10 p-3 transition-colors sm:min-w-[11rem] sm:basis-[11rem] sm:p-3.5",
-    isCurrent && "border-primary/35 bg-muted/30 ring-1 ring-inset ring-primary/25",
-    canNavigate && "hover:border-border hover:bg-muted/25",
+    "flex min-w-[10rem] flex-1 basis-[10rem] flex-col gap-2 rounded-lg border border-border/80 bg-muted/30 p-3 shadow-sm transition-colors sm:min-w-[11rem] sm:basis-[11rem] sm:p-3.5",
+    isCurrent &&
+      "border-primary/50 bg-muted/45 ring-1 ring-inset ring-primary/35 shadow-sm",
+    canNavigate && "hover:border-border hover:bg-muted/45",
   );
 
   const cardBody = (
@@ -127,8 +121,8 @@ function RunAccuracyRunCard({
         </div>
         <span
           className={cn(
-            "shrink-0 font-metric text-xl font-semibold tabular-nums leading-none",
-            passRateToneClass(point.passRate, "text"),
+            "shrink-0 font-metric text-xl font-semibold tabular-nums leading-none tracking-tight",
+            passRateColorClass(point.passRate),
           )}
         >
           {point.passRate}%
@@ -174,12 +168,7 @@ function RunInsightRailCard({
   className?: string;
 }) {
   return (
-    <section
-      className={cn(
-        "rounded-xl border border-border/60 bg-card text-card-foreground",
-        className,
-      )}
-    >
+    <section className={cn(evalSurfaceCardClass, className)}>
       {children}
     </section>
   );
@@ -321,7 +310,7 @@ export function RunAccuracyHeroBand({
       )}
     >
       <p className={runDetailSectionLabelClass}>{metricLabel}</p>
-      <p className={runDetailHeroStatClass}>
+      <p className={cn(runDetailHeroStatClass, passRateColorClass(passRatePercent))}>
         {passRatePercent}
         <span className="text-2xl font-medium text-muted-foreground sm:text-3xl">
           %
@@ -332,7 +321,7 @@ export function RunAccuracyHeroBand({
           className={cn(
             "font-metric text-sm font-medium tabular-nums",
             deltaPp > 0 && "text-success",
-            deltaPp < 0 && "text-destructive",
+            deltaPp < 0 && EVAL_LOW_PASS_RATE_TEXT_CLASS,
             deltaPp === 0 && "text-muted-foreground",
           )}
         >
