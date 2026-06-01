@@ -272,6 +272,15 @@ function CommitSuiteRunDetail({
         serverNames={run.configSnapshot?.environment?.servers ?? []}
         selectedIterationId={selectedIterationId}
         onSelectIteration={onSelectIteration}
+        onSelectRun={(runId) =>
+          navigateApp(
+            buildCiEvalsPath({
+              type: "run-detail",
+              suiteId: run.suiteId,
+              runId,
+            }),
+          )
+        }
         hideCiMetadata
       />
     </>

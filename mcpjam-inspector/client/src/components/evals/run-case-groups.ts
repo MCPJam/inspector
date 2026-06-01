@@ -82,17 +82,13 @@ export function groupRunIterationsByTestCase(
     group.iterations.push(iteration);
     group.iterationResults.push(iterationOutcome(iteration));
 
-    if (iteration.result === "pending" || iteration.status === "running") {
-      group.pending += 1;
-    } else if (iteration.result === "cancelled") {
-      group.cancelled += 1;
-    } else if (computeIterationResult(iteration) === "passed") {
-      group.passed += 1;
-    } else if (computeIterationResult(iteration) === "failed") {
-      group.failed += 1;
-    } else {
-      group.pending += 1;
-    }
+    // Bucket on the same normalized result that drives iterationResults, so the
+    // visual bar and the numeric counts can never disagree.
+    const result = computeIterationResult(iteration);
+    if (result === "passed") group.passed += 1;
+    else if (result === "failed") group.failed += 1;
+    else if (result === "cancelled") group.cancelled += 1;
+    else group.pending += 1;
     group.total += 1;
   }
 

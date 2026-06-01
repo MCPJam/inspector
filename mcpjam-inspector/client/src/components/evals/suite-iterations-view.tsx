@@ -880,8 +880,11 @@ export function SuiteIterationsView({
                       runs={runs}
                       allIterations={allIterations}
                       runsViewMode={
+                        // For multi-host suites the matrix is the "runs" mode;
+                        // remap cross-host so TestCasesOverview's by-host gate
+                        // (runsViewMode === "runs") still fires for deep links.
                         runsViewMode === "cross-host"
-                          ? "test-cases"
+                          ? "runs"
                           : runsViewMode
                       }
                       onViewModeChange={(value) =>
@@ -971,6 +974,9 @@ export function SuiteIterationsView({
                     compareBaseRun={previousCompletedRunForSelectedRun}
                     onCompareWithRun={(baseRunId) =>
                       handleCompareRuns(baseRunId, selectedRunDetails._id)
+                    }
+                    onSelectRun={(runId) =>
+                      navigation.toRunDetail(suite._id, runId)
                     }
                     kpiPlacement={
                       showSuiteHeader && viewMode === "run-detail"

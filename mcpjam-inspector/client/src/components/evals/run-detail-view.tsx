@@ -127,6 +127,12 @@ interface RunDetailViewProps {
   hostNamesById?: Map<string, string | null>;
   /** Recent run pass rates for the accuracy sparkline in the insight rail. */
   runTrendData?: RunTrendPoint[];
+  /**
+   * Navigate to another run on the accuracy hero's recent-run dot. Required for
+   * CI/commit-detail callers so the jump stays on `/ci-evals/...` instead of
+   * the default `buildEvalsPath` (`/evals/...`).
+   */
+  onSelectRun?: (runId: string) => void;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -332,6 +338,7 @@ export function RunDetailView({
   onCompareWithRun,
   hostNamesById,
   runTrendData = [],
+  onSelectRun,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -421,6 +428,10 @@ export function RunDetailView({
       onCompareWithRun={onCompareWithRun}
       onSelectRun={(runId) => {
         if (runId === selectedRunDetails._id) return;
+        if (onSelectRun) {
+          onSelectRun(runId);
+          return;
+        }
         navigateApp(
           buildEvalsPath({
             type: "run-detail",

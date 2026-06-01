@@ -45,8 +45,13 @@ export function median(values: number[]): number | null {
     : sorted[mid];
 }
 
-/** Linear-interpolation percentile (PERCENTILE.INC). */
-export function percentile(values: number[], p: number): number | null {
+/**
+ * Linear-interpolation percentile (PERCENTILE.INC).
+ *
+ * `p` is in the 0..100 range (e.g. 50, 95). Renamed from `percentile` to avoid
+ * a silent collision with `helpers.ts`'s `percentile`, which takes p in 0..1.
+ */
+export function percentilePct(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
   const index = (p / 100) * (sorted.length - 1);
@@ -83,7 +88,7 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   const completed = passCount + failCount;
   const passRate = completed > 0 ? (passCount / completed) * 100 : null;
   const p50LatencyMs = median(latencySamples);
-  const p95LatencyMs = percentile(latencySamples, 95);
+  const p95LatencyMs = percentilePct(latencySamples, 95);
 
   return {
     iterations,
