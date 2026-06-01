@@ -736,9 +736,11 @@ function ProjectIconBadge({
   const iconSize = size === 8 ? "h-4 w-4" : "h-3.5 w-3.5";
   return (
     <div
-      className={`flex items-center justify-center ${sizeClass} bg-primary/10 text-primary ${
+      className={cn(
+        "flex items-center justify-center bg-primary/10 text-primary font-semibold shrink-0",
+        sizeClass,
         size === 8 ? "text-sm" : "text-[11px]"
-      } font-semibold shrink-0`}
+      )}
     >
       {IconComponent ? (
         <IconComponent className={iconSize} strokeWidth={1.5} />
