@@ -1,5 +1,9 @@
 import { cn } from "@/lib/utils";
 import type { RunCaseIterationOutcome } from "./run-case-groups";
+import {
+  EVAL_FAIL_BAR_CLASS,
+  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+} from "./constants";
 
 /**
  * Run case table row: case title flexes on the left, fixed metric rail on the right.
@@ -63,8 +67,10 @@ export function RunCaseIterationBar({
       <div className="flex w-full items-baseline">
         <span
           className={cn(
-            "font-mono text-xs font-semibold tabular-nums text-foreground",
+            "font-mono text-xs font-semibold tabular-nums",
             total === 0 && "text-muted-foreground",
+            total > 0 && passed === total && "text-foreground",
+            total > 0 && passed < total && EVAL_LOW_PASS_RATE_TEXT_CLASS,
           )}
         >
           {passed}/{total}
@@ -83,7 +89,7 @@ export function RunCaseIterationBar({
             className={cn(
               "min-h-1 min-w-0 rounded-[1px]",
               result === "pass" && "bg-success",
-              result === "fail" && "bg-destructive",
+              result === "fail" && EVAL_FAIL_BAR_CLASS,
               result === "pending" && "bg-muted-foreground/25",
               result === "cancelled" && "bg-muted-foreground/20",
             )}
@@ -99,5 +105,7 @@ export const RunCaseIterationDots = RunCaseIterationBar;
 
 export const runCasePassCheckClass = "text-success";
 
-export const runCaseFailCountClass =
-  "font-mono text-xs font-semibold tabular-nums text-destructive";
+export const runCaseFailCountClass = cn(
+  "font-mono text-xs font-semibold tabular-nums",
+  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+);
