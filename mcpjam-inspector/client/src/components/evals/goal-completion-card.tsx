@@ -141,13 +141,33 @@ export function GoalCompletionCard({
   // displays this read-only; the model + threshold inputs on this card now
   // populate a per-run *override* (run.judgeConfigOverride) instead of being
   // the primary config source. Suite settings is the new home for default
-  // config (see JudgesSection in suite-iterations-view.tsx). The persisted
-  // run override (run.judgeConfigOverride.goalCompletion) is consumed at
-  // initial-state seeding above; the banner that surfaces it prominently
-  // is V1.x polish.
+  // config (see JudgesSection in suite-iterations-view.tsx).
   const suiteConfig = run.configSnapshot?.judgeConfig?.goalCompletion;
   const suiteModel = suiteConfig?.judgeModel ?? DEFAULT_JUDGE_MODEL;
   const suiteThreshold = suiteConfig?.threshold ?? DEFAULT_THRESHOLD;
+  // Judge is "configured" iff the suite snapshot has `enabled: true`. When
+  // false (or absent — older runs without a snapshot), the action would
+  // short-circuit to a no-op grading anyway, so the card hides the run
+  // controls and shows a "Configure on suite" CTA instead. Without this
+  // gate, clicking Run judge on an unconfigured run spends an LLM call to
+  // grade zero cases.
+  const isJudgeConfigured = suiteConfig?.enabled === true;
+  // The persisted run override (`run.judgeConfigOverride.goalCompletion`)
+  // tells the trend story (this data point isn't graded against the suite
+  // contract). Surfacing it prominently is how the comparability promise
+  // is delivered — otherwise the persistence is invisible.
+  const runOverride = run.judgeConfigOverride?.goalCompletion;
+  const overrideModel =
+    runOverride?.judgeModel && runOverride.judgeModel !== suiteModel
+      ? runOverride.judgeModel
+      : undefined;
+  const overrideThresholdValue =
+    runOverride?.threshold !== undefined &&
+    runOverride.threshold !== suiteThreshold
+      ? runOverride.threshold
+      : undefined;
+  const hasMeaningfulOverride =
+    overrideModel !== undefined || overrideThresholdValue !== undefined;
 
   const handleRun = (force: boolean) => {
     // Only send a runOverride when the user's inputs DIFFER from the suite
@@ -219,74 +239,125 @@ export function GoalCompletionCard({
         ) : null}
       </header>
 
-      {/* Controls: judge model + threshold + run */}
-      <div className="flex flex-wrap items-end gap-3 border-t border-border/50 px-3 py-3">
-        <div className="flex min-w-[12rem] flex-1 flex-col gap-1">
-          <Label htmlFor="goal-judge-model" className="text-xs">
-            Judge model
-          </Label>
-          <Select
-            value={selectedModelId}
-            onValueChange={setSelectedModelId}
-            disabled={inFlight}
-          >
-            <SelectTrigger id="goal-judge-model" className="h-8 w-full text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {modelOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex w-24 flex-col gap-1">
-          <Label htmlFor="goal-threshold" className="text-xs">
-            Threshold
-          </Label>
-          <Input
-            id="goal-threshold"
-            type="number"
-            min={0}
-            max={1}
-            step={0.05}
-            value={thresholdInput}
-            onChange={(e) => setThresholdInput(e.target.value)}
-            onBlur={() =>
-              setThresholdInput(String(parseThreshold(thresholdInput)))
-            }
-            disabled={inFlight}
-            className="h-8 text-sm"
-          />
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          className="h-8 gap-1 text-xs"
-          // force when re-grading an existing result OR retrying a failed run,
-          // so the shared insight lifecycle re-requests instead of no-opping.
-          onClick={() => handleRun(Boolean(goalCompletion) || failedGeneration)}
-          // `inFlight` (pending OR requested) blocks the gap between the click
-          // and the run doc flipping to `pending`, so a double-click can't spend
-          // a second judge call.
-          disabled={!completedRun || inFlight}
-        >
-          {inFlight ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="h-3.5 w-3.5" />
-          )}
-          {runLabel}
-        </Button>
-      </div>
+      {isJudgeConfigured ? (
+        <>
+          {/* Controls: judge model + threshold + run. Only shown when the
+              suite has goal completion enabled — otherwise we render the
+              "Configure on suite" CTA below so the user can't accidentally
+              trigger a no-op grading that still spends an LLM call. */}
+          <div className="flex flex-wrap items-end gap-3 border-t border-border/50 px-3 py-3">
+            <div className="flex min-w-[12rem] flex-1 flex-col gap-1">
+              <Label htmlFor="goal-judge-model" className="text-xs">
+                Judge model
+              </Label>
+              <Select
+                value={selectedModelId}
+                onValueChange={setSelectedModelId}
+                disabled={inFlight}
+              >
+                <SelectTrigger
+                  id="goal-judge-model"
+                  className="h-8 w-full text-sm"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {modelOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex w-24 flex-col gap-1">
+              <Label htmlFor="goal-threshold" className="text-xs">
+                Threshold
+              </Label>
+              <Input
+                id="goal-threshold"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={thresholdInput}
+                onChange={(e) => setThresholdInput(e.target.value)}
+                onBlur={() =>
+                  setThresholdInput(String(parseThreshold(thresholdInput)))
+                }
+                disabled={inFlight}
+                className="h-8 text-sm"
+              />
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 gap-1 text-xs"
+              // force when re-grading an existing result OR retrying a failed run,
+              // so the shared insight lifecycle re-requests instead of no-opping.
+              onClick={() =>
+                handleRun(Boolean(goalCompletion) || failedGeneration)
+              }
+              // `inFlight` (pending OR requested) blocks the gap between the click
+              // and the run doc flipping to `pending`, so a double-click can't spend
+              // a second judge call.
+              disabled={!completedRun || inFlight}
+            >
+              {inFlight ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {runLabel}
+            </Button>
+          </div>
 
-      <p className="px-3 pb-3 text-[11px] text-muted-foreground/70">
-        Threshold is the advisory pass cutoff (score ≥ threshold). Calibrate it
-        per suite against a labeled set — LLM-judge scores are not comparable
-        across domains.
-      </p>
+          <p className="px-3 pb-3 text-[11px] text-muted-foreground/70">
+            Threshold is the advisory pass cutoff (score ≥ threshold).
+            Calibrate it per suite against a labeled set — LLM-judge scores
+            are not comparable across domains.
+          </p>
+
+          {hasMeaningfulOverride ? (
+            <div className="mx-3 mb-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[12px]">
+              <div className="font-medium text-amber-700 dark:text-amber-300">
+                ⚙ This run used an override
+              </div>
+              <div className="mt-0.5 text-muted-foreground">
+                Suite default:{" "}
+                <span className="font-mono text-foreground/80">
+                  {suiteModel} @ {suiteThreshold}
+                </span>{" "}
+                · This run:{" "}
+                <span className="font-mono text-foreground/80">
+                  {overrideModel ?? suiteModel} @{" "}
+                  {overrideThresholdValue ?? suiteThreshold}
+                </span>
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground/80">
+                Scores from this run aren't directly comparable to the
+                suite's trend. Re-run with the override cleared to re-grade
+                against the suite contract.
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        // Suite hasn't enabled the judge. Don't render run controls —
+        // clicking them on an unconfigured run would spend an LLM call to
+        // grade zero cases. Direct the user to the right surface instead.
+        <div className="border-t border-border/50 px-3 py-4 text-sm">
+          <p className="text-foreground/90">
+            Goal completion isn't enabled for this suite.
+          </p>
+          <p className="mt-1 text-[12px] text-muted-foreground">
+            Configure it under <strong>Suite settings → Judges</strong> to
+            start grading runs against each case's{" "}
+            <code className="font-mono text-[11px]">expectedOutput</code>.
+            Cases without an expected output are skipped (anchored-only).
+          </p>
+        </div>
+      )}
 
       <div className="border-t border-border/50">
         {inFlight ? (

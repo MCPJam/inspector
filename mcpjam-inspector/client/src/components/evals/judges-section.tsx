@@ -233,9 +233,9 @@ export function JudgesSection({
         {enabled ? (
           <p className="text-[11px] text-muted-foreground/70">
             Runs grade against this config. Individual runs can apply a one-off
-            override via the "⚙ Override for this run" disclosure on the run
-            detail page — overrides are marked on the suite trend so
-            calibration stays comparable.
+            override from the run detail page — overridden runs show a banner
+            on the run card so their scores aren't mistaken for suite-contract
+            calibration.
           </p>
         ) : null}
       </div>

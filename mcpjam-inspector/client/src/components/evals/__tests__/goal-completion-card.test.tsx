@@ -11,7 +11,14 @@ function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
     createdBy: "user",
     runNumber: 1,
     configRevision: "rev1",
-    configSnapshot: { tests: [], environment: { servers: [] } },
+    // Default the snapshot to a configured judge so the card renders the
+    // run controls path (the configured behavior). Tests that want the
+    // unconfigured CTA pass a run override with `judgeConfig: undefined`.
+    configSnapshot: {
+      tests: [],
+      environment: { servers: [] },
+      judgeConfig: { goalCompletion: { enabled: true } },
+    },
     status: "completed",
     createdAt: 1,
     completedAt: 2,
@@ -228,5 +235,82 @@ describe("GoalCompletionCard", () => {
     );
     await user.click(screen.getByRole("button", { name: /Run judge/i }));
     expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, true);
+  });
+
+  it("hides run controls and shows a Configure-on-suite CTA when the snapshot doesn't enable the judge", () => {
+    // Without this gate the user could click Run judge on an unconfigured
+    // run — the backend would filter every case out and still spend an
+    // LLM call to "grade" nothing. Show the CTA instead.
+    const unconfiguredRun = makeRun({
+      configSnapshot: { tests: [], environment: { servers: [] } },
+    });
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        run={unconfiguredRun}
+        onRun={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Run judge/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Goal completion isn't enabled for this suite/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Suite settings . Judges/i)).toBeInTheDocument();
+  });
+
+  it("hides run controls when the snapshot has goal completion explicitly disabled", () => {
+    const disabledRun = makeRun({
+      configSnapshot: {
+        tests: [],
+        environment: { servers: [] },
+        judgeConfig: { goalCompletion: { enabled: false } },
+      },
+    });
+    render(
+      <GoalCompletionCard {...baseProps} run={disabledRun} onRun={vi.fn()} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Run judge/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders a prominent override banner when the run carries a judge override", () => {
+    const runWithOverride = makeRun({
+      configSnapshot: {
+        tests: [],
+        environment: { servers: [] },
+        judgeConfig: {
+          goalCompletion: {
+            enabled: true,
+            judgeModel: "openai/gpt-5.4-mini",
+            threshold: 0.7,
+          },
+        },
+      },
+      judgeConfigOverride: {
+        goalCompletion: { threshold: 0.85 },
+      },
+    });
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        run={runWithOverride}
+        onRun={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/This run used an override/i),
+    ).toBeInTheDocument();
+    // Suite default + run override are shown side-by-side so the user
+    // sees why this run's scores aren't suite-contract calibrated.
+    expect(screen.getByText(/Suite default:/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/openai\/gpt-5\.4-mini @ 0\.7/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/openai\/gpt-5\.4-mini @ 0\.85/),
+    ).toBeInTheDocument();
   });
 });
