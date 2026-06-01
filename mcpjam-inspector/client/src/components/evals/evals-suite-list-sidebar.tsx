@@ -52,6 +52,10 @@ import {
   type SuiteListSortKey,
 } from "./suite-overview-presentation";
 import { cn } from "@/lib/utils";
+import {
+  EVAL_DESTRUCTIVE_BUTTON_CLASS,
+  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+} from "./constants";
 
 function useTick(intervalMs = 60_000) {
   const [, setTick] = useState(0);
@@ -314,9 +318,11 @@ function SuiteTableHeader({
               </Button>
               <Button
                 type="button"
-                variant="destructive"
                 size="sm"
-                className="h-6 px-2 text-[11px]"
+                className={cn(
+                  "h-6 px-2 text-[11px]",
+                  EVAL_DESTRUCTIVE_BUTTON_CLASS,
+                )}
                 onClick={onDeleteSelected}
                 disabled={selectionBlocked}
               >
@@ -722,7 +728,9 @@ export function EvalsSuiteListSidebar({
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
-                    <Trash2 className="h-5 w-5 text-destructive" />
+                    <Trash2
+                      className={cn("h-5 w-5", EVAL_LOW_PASS_RATE_TEXT_CLASS)}
+                    />
                     Delete {selectedForBatch.size} suite
                     {selectedForBatch.size === 1 ? "" : "s"}
                   </DialogTitle>
@@ -745,7 +753,7 @@ export function EvalsSuiteListSidebar({
                   </Button>
                   <Button
                     type="button"
-                    variant="destructive"
+                    className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
                     onClick={() => void confirmBatchDeleteSuites()}
                     disabled={isBatchDeleting}
                   >

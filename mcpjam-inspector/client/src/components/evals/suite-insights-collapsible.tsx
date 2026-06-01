@@ -9,11 +9,39 @@ import {
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
+import {
+  insightHighlightAccentClass,
+  insightHighlightBodyClass,
+  insightHighlightHeaderRowClass,
+  insightHighlightNarrativeClass,
+  insightHighlightSectionClass,
+  insightHighlightSubtitleClass,
+  insightHighlightTitleClass,
+  insightHighlightTriggerClass,
+} from "./insight-highlight-chrome";
 
 export interface SuiteInsightsCollapsibleProps {
   runs: EvalSuiteRun[];
   /** Header label, e.g. "Run insights" vs "Commit insights" */
   title?: string;
+}
+
+function runInsightsHeaderSubtitle({
+  pending,
+  failedGeneration,
+  summary,
+  requested,
+}: {
+  pending: boolean;
+  failedGeneration: boolean;
+  summary: string | null;
+  requested: boolean;
+}): string {
+  if (pending) return "Generating…";
+  if (failedGeneration) return "Summary unavailable";
+  if (summary) return "Compared to your previous completed run";
+  if (requested) return "Requesting…";
+  return "Compared to your previous completed run";
 }
 
 /**
@@ -41,17 +69,25 @@ export function SuiteInsightsCollapsible({
     return null;
   }
 
+  const headerSubtitle = runInsightsHeaderSubtitle({
+    pending,
+    failedGeneration,
+    summary,
+    requested,
+  });
+
   return (
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      className="rounded-lg border border-border bg-card text-card-foreground"
+      className={insightHighlightSectionClass}
     >
-      <div className="flex items-stretch gap-0 rounded-t-lg">
+      <div className={insightHighlightAccentClass} aria-hidden />
+      <div className={insightHighlightHeaderRowClass}>
         <CollapsibleTrigger asChild>
           <motion.button
             type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring"
+            className={insightHighlightTriggerClass}
             whileTap={
               shouldReduceMotion
                 ? undefined
@@ -60,7 +96,7 @@ export function SuiteInsightsCollapsible({
             transition={{ type: "spring", stiffness: 520, damping: 32 }}
           >
             <motion.span
-              className="inline-flex shrink-0 text-muted-foreground"
+              className="inline-flex shrink-0 text-primary/70"
               aria-hidden
               initial={false}
               animate={{ rotate: open ? 0 : -90 }}
@@ -72,16 +108,17 @@ export function SuiteInsightsCollapsible({
             >
               <ChevronDown className="h-4 w-4" />
             </motion.span>
-            <span className="text-xs font-semibold text-muted-foreground">
-              {title}
-            </span>
+            <div className="min-w-0 flex-1">
+              <span className={insightHighlightTitleClass}>{title}</span>
+              <p className={insightHighlightSubtitleClass}>{headerSubtitle}</p>
+            </div>
           </motion.button>
         </CollapsibleTrigger>
         {failedGeneration ? (
           <div className="flex shrink-0 items-center pr-3">
             <button
               type="button"
-              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              className="text-xs font-medium text-primary underline-offset-2 hover:underline"
               onClick={() => requestRunInsights(true)}
             >
               Retry
@@ -90,25 +127,25 @@ export function SuiteInsightsCollapsible({
         ) : null}
       </div>
       <CollapsibleContent>
-        <div className="border-t border-border/50 px-3 pb-3 pt-2">
+        <div className={insightHighlightBodyClass}>
           {pending ? (
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
               Generating insights…
             </span>
           ) : summary ? (
-            <p className="text-xs leading-relaxed text-foreground">{summary}</p>
+            <p className={insightHighlightNarrativeClass}>{summary}</p>
           ) : requested ? (
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
               Requesting insights…
             </span>
           ) : failedGeneration ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Could not load this summary. Hit Retry in the header.
             </p>
           ) : (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Open a completed run to see a short summary vs the previous one.
             </p>
           )}

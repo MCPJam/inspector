@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { Globe, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { ClientPicker } from "@/components/clients/ClientPicker";
 import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
+import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 
 export type HostAttachmentDraft = {
@@ -145,12 +146,24 @@ function HostAttachmentRow({
   disabled,
 }: HostAttachmentRowProps) {
   const displayName = hostName ?? attachment.namedHostId;
+  const logoSrc = resolveHostLogoByDisplayName(displayName);
 
   return (
     <div className="rounded-xl border bg-card/60">
       <div className="flex items-center justify-between gap-2 p-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          {logoSrc ? (
+            <img
+              src={logoSrc}
+              alt=""
+              className="size-3.5 shrink-0 object-contain"
+            />
+          ) : (
+            <span
+              aria-hidden
+              className="size-3.5 shrink-0 rounded-full bg-muted"
+            />
+          )}
           <span className="truncate text-sm font-medium text-foreground">
             {displayName}
           </span>
