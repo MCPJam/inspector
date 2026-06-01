@@ -189,8 +189,8 @@ export function AiTriageCard({
             size="sm"
             className="h-7 shrink-0 gap-1 text-xs"
             disabled={!hasRows || pending}
-            title={`Copy the top ${TOP_N} fix prompts to paste into your coding agent`}
-            aria-label={copyTopFixPromptsLabel(TOP_N)}
+            title={`Copy the top ${topRows.length} fix prompt${topRows.length === 1 ? "" : "s"} to paste into your coding agent`}
+            aria-label={copyTopFixPromptsLabel(topRows.length)}
             onClick={() =>
               copyWithToast(
                 buildTopNPrompt(topRows),
@@ -199,7 +199,7 @@ export function AiTriageCard({
             }
           >
             <Copy className="h-3 w-3" aria-hidden />
-            {copyTopFixPromptsLabel(TOP_N)}
+            {copyTopFixPromptsLabel(topRows.length)}
           </Button>
         </div>
       </header>
@@ -215,20 +215,34 @@ export function AiTriageCard({
         </div>
         <div className="mt-1.5">
           <span className="font-metric text-xl font-semibold tabular-nums leading-none">
-            {passRate}
-            <span className="text-sm font-medium text-muted-foreground">%</span>
+            {passFailStats.total === 0 ? (
+              <span className="text-muted-foreground">—</span>
+            ) : (
+              <>
+                {passRate}
+                <span className="text-sm font-medium text-muted-foreground">
+                  %
+                </span>
+              </>
+            )}
           </span>
         </div>
         <div
           className="mt-2.5 flex h-2.5 w-full overflow-hidden rounded-full bg-muted"
           role="img"
-          aria-label={`${metricLabel} ${passRate}%`}
+          aria-label={
+            passFailStats.total === 0
+              ? `${metricLabel} not yet measured`
+              : `${metricLabel} ${passRate}%`
+          }
         >
-          <div
-            className="h-full bg-primary"
-            style={{ width: `${passRate}%` }}
-            title={`${metricLabel}: ${passRate}%`}
-          />
+          {passFailStats.total === 0 ? null : (
+            <div
+              className="h-full bg-primary"
+              style={{ width: `${passRate}%` }}
+              title={`${metricLabel}: ${passRate}%`}
+            />
+          )}
         </div>
       </div>
 

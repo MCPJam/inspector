@@ -119,7 +119,7 @@ export function TestCasesOverview({
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
   const canShowByHost = hostAttachmentCount >= 2;
-  const isByHostView = canShowByHost;
+  const isByHostView = canShowByHost && runsViewMode === "runs";
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
     { suiteId: suite._id } as any
@@ -393,7 +393,7 @@ export function TestCasesOverview({
               </div>
             ) : null}
           </div>
-        ) : !isByHostView && !showDisconnectedPlaygroundEmptyState ? (
+        ) : !showDisconnectedPlaygroundEmptyState ? (
           <div
             className={cn(
               "shrink-0 flex items-center justify-between gap-3 border-b",
@@ -452,7 +452,7 @@ export function TestCasesOverview({
           <div className="min-h-0 flex-1 overflow-y-auto bg-background">
             <CrossHostDashboard
               suite={suite as EvalSuite}
-              cases={cases}
+              cases={effectiveCases}
               runs={runs ?? []}
               allIterations={allIterations}
               expanded

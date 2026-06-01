@@ -286,16 +286,8 @@ export function sortSuiteOverviewEntries(
   switch (sortKey) {
     case "recently_run":
       list.sort((a, b) => {
-        const ta =
-          a.latestRun?.completedAt ??
-          a.latestRun?.createdAt ??
-          a.suite.updatedAt ??
-          0;
-        const tb =
-          b.latestRun?.completedAt ??
-          b.latestRun?.createdAt ??
-          b.suite.updatedAt ??
-          0;
+        const ta = a.latestRun?.completedAt ?? a.latestRun?.createdAt ?? -1;
+        const tb = b.latestRun?.completedAt ?? b.latestRun?.createdAt ?? -1;
         return tb - ta;
       });
       break;

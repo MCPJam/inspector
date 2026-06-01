@@ -122,7 +122,10 @@ function createSparklineDot(
         style={{ cursor }}
         onClick={
           onRunClick && payload?.runId
-            ? () => onRunClick(payload.runId!)
+            ? (event) => {
+                event.stopPropagation();
+                onRunClick(payload.runId!);
+              }
             : undefined
         }
       />

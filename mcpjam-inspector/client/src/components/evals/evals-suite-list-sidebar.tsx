@@ -544,10 +544,7 @@ export function EvalsSuiteListSidebar({
     }
 
     if (failuresOnly) {
-      list = list.filter(
-        (entry) =>
-          entry.latestRun?.result === "failed" || !entry.latestRun,
-      );
+      list = list.filter((entry) => entry.latestRun?.result === "failed");
     }
 
     return sortSuiteOverviewEntries(list, sortKey);

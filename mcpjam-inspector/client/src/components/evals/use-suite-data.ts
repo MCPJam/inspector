@@ -529,7 +529,8 @@ export function useRunDetailData(
       .sort((a, b) => a.model.localeCompare(b.model));
 
     caseGroupsForSelectedRun.forEach((iteration) => {
-      if (iteration.result === "pending") totalPending++;
+      if (iteration.result === "pending" || iteration.status === "running")
+        totalPending++;
       else if (iteration.result === "cancelled") totalCancelled++;
       else if (computeIterationPassed(iteration)) totalPassed++;
       else totalFailed++;
