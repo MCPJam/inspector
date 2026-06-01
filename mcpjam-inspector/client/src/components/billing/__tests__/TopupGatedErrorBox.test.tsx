@@ -89,17 +89,44 @@ describe("TopupGatedErrorBox", () => {
 
   it("renders the Buy credits CTA when canTopUp is true and presets are available", () => {
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        canManageCredits
+        onTopUp={vi.fn()}
+      />
     );
     expect(
       screen.getByRole("button", { name: /Buy credits to keep chatting/ })
     ).toBeInTheDocument();
   });
 
+  it("shows the ask-admin hint instead of the Buy credits CTA when the user cannot manage credits", () => {
+    render(
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        canManageCredits={false}
+        onTopUp={vi.fn()}
+      />
+    );
+    expect(
+      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Ask org admin to top up credits/)
+    ).toBeInTheDocument();
+  });
+
   it("hides the Buy credits CTA when canTopUp is true but presets are empty", () => {
     presetsState = [];
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        canManageCredits
+        onTopUp={vi.fn()}
+      />
     );
     expect(
       screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
@@ -110,7 +137,12 @@ describe("TopupGatedErrorBox", () => {
     presetsState = undefined;
     presetsLoadingState = true;
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        canManageCredits
+        onTopUp={vi.fn()}
+      />
     );
     expect(
       screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
@@ -122,7 +154,12 @@ describe("TopupGatedErrorBox", () => {
     // Suppress React's expected error log noise from the boundary catch.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     render(
-      <TopupGatedErrorBox {...RATE_LIMIT_PROPS} canTopUp onTopUp={vi.fn()} />
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        canManageCredits
+        onTopUp={vi.fn()}
+      />
     );
     expect(
       screen.queryByRole("button", { name: /Buy credits to keep chatting/ })

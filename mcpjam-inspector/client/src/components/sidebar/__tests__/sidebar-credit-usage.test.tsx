@@ -8,6 +8,8 @@ let balanceState:
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
       freeDailyResetAt: number;
+      freeDailyCreditsRemaining: number;
+      freeDailyCreditsTotal: number;
       walletLocked: boolean;
     }
   | undefined;
@@ -31,6 +33,8 @@ describe("SidebarCreditUsage", () => {
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 12,
       freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 264,
+      freeDailyCreditsTotal: 300,
       walletLocked: false,
     };
     isLoadingState = false;
@@ -47,7 +51,7 @@ describe("SidebarCreditUsage", () => {
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(screen.getByLabelText("Credit usage")).toBeInTheDocument();
     expect(dailyRow).toHaveTextContent("Free daily credits");
-    expect(dailyRow).toHaveTextContent("12%");
+    expect(dailyRow).toHaveTextContent("36 / 300");
     expect(dailyRow).toHaveTextContent("resets in 3h");
     expect(screen.queryByText(/15× the credits/i)).not.toBeInTheDocument();
   });
@@ -58,13 +62,17 @@ describe("SidebarCreditUsage", () => {
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 40,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 180,
+      freeDailyCreditsTotal: 300,
       walletLocked: false,
     };
 
     render(<SidebarCreditUsage />);
 
     expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
-    expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent("40%");
+    expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
+      "120 / 300"
+    );
   });
 
   it("shows paid credits in the full account-menu variant", () => {
@@ -73,19 +81,19 @@ describe("SidebarCreditUsage", () => {
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 40,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 180,
+      freeDailyCreditsTotal: 300,
       walletLocked: false,
     };
 
     render(<SidebarCreditUsage variant="full" />);
 
-    expect(screen.getByText("Credit usage")).toBeInTheDocument();
     expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
-      "40% used"
+      "120 / 300"
     );
     const paidRow = screen.getByTestId("sidebar-usage-paid");
-    expect(paidRow).toHaveTextContent("Shared paid credits");
+    expect(paidRow).toHaveTextContent("Paid credits");
     expect(paidRow).toHaveTextContent("750");
-    expect(paidRow).toHaveTextContent("shared credits");
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
     expect(screen.queryByText(/15× the credits/i)).not.toBeInTheDocument();
   });
@@ -106,6 +114,8 @@ describe("SidebarCreditUsage", () => {
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: Date.now() + 2 * 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 7,
+      freeDailyCreditsTotal: 20,
       walletLocked: false,
     };
     hasWorkOsUserState = false;
@@ -116,7 +126,7 @@ describe("SidebarCreditUsage", () => {
     expect(screen.getByTestId("sidebar-credit-usage")).toBeInTheDocument();
     expect(dailyRow).toHaveTextContent("Sign in for 15× the credits");
     expect(dailyRow).toHaveTextContent("Free daily credits");
-    expect(dailyRow).toHaveTextContent("65%");
+    expect(dailyRow).toHaveTextContent("13 / 20");
     expect(dailyRow).toHaveTextContent("resets in 2h");
     expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
   });
@@ -144,6 +154,8 @@ describe("SidebarCreditUsage", () => {
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 10,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 270,
+      freeDailyCreditsTotal: 300,
       walletLocked: false,
     };
     render(<SidebarCreditUsage variant="full" onClick={() => undefined} />);
@@ -153,7 +165,7 @@ describe("SidebarCreditUsage", () => {
     expect(wrapper).toHaveAttribute("role", "button");
     // Tooltip trigger inside it is still a real focusable button
     const tooltipTrigger = screen.getByRole("button", {
-      name: /About Shared paid credits/i,
+      name: /About Paid credits/i,
     });
     expect(tooltipTrigger.tagName).toBe("BUTTON");
   });
@@ -169,12 +181,14 @@ describe("SidebarCreditUsage", () => {
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 10,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 270,
+      freeDailyCreditsTotal: 300,
       walletLocked: false,
     };
     render(<SidebarCreditUsage variant="full" onClick={onWrapperClick} />);
 
     const tooltipTrigger = screen.getByRole("button", {
-      name: /About Shared paid credits/i,
+      name: /About Paid credits/i,
     });
 
     vi.useRealTimers();

@@ -36,6 +36,8 @@ describe("useCreditBalance", () => {
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: 1_777_777_777_000,
+      freeDailyCreditsRemaining: 7,
+      freeDailyCreditsTotal: 20,
       walletLocked: false,
     };
     mocks.useQuery.mockImplementation((_name: unknown, args: unknown) =>
@@ -71,6 +73,8 @@ describe("useCreditBalance", () => {
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: 1_777_777_777_000,
+      freeDailyCreditsRemaining: 7,
+      freeDailyCreditsTotal: 20,
       walletLocked: false,
     });
     expect(result.current.isLoading).toBe(false);

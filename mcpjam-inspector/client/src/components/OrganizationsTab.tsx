@@ -1024,7 +1024,7 @@ function OrganizationPage({
               organizationId={organization._id}
               billingStatus={billingStatus}
               organizationName={organization.name}
-              canManageCredits={canEdit}
+              canManageCredits={canEdit || organization.isCreator === true}
               planCatalog={planCatalog}
               isLoadingBilling={isLoadingBilling}
               isLoadingPlanCatalog={isLoadingPlanCatalog}

@@ -106,7 +106,14 @@ export function CreditBalanceCard({
             <ErrorBoundary fallback={null}>
               <TopupActionButton onClick={handleManualTopup} />
             </ErrorBoundary>
-          ) : null}
+          ) : (
+            <span
+              className="self-center text-xs text-muted-foreground"
+              data-testid="usage-ask-admin"
+            >
+              Ask org admin to top up credits
+            </span>
+          )}
         </div>
 
         {canManageCredits ? (
@@ -120,11 +127,24 @@ export function CreditBalanceCard({
           rightText={
             isLoading || !balance
               ? null
-              : `${Math.round(
-                  balance.freeDailyPercentUsed
-                )}% used · ${formatCreditResetText(balance.freeDailyResetAt)}`
+              : `${(
+                  balance.freeDailyCreditsTotal -
+                  balance.freeDailyCreditsRemaining
+                ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()} · ${formatCreditResetText(
+                  balance.freeDailyResetAt
+                )}`
           }
-          fillPercent={isLoading || !balance ? 0 : balance.freeDailyPercentUsed}
+          // "spent / total": count and bar both grow as credits are used —
+          // 0/300 empty when fresh, 300/300 full when drained. Matches the
+          // sidebar usage strip.
+          fillPercent={
+            isLoading || !balance || balance.freeDailyCreditsTotal <= 0
+              ? 0
+              : ((balance.freeDailyCreditsTotal -
+                  balance.freeDailyCreditsRemaining) /
+                  balance.freeDailyCreditsTotal) *
+                100
+          }
           isLoading={isLoading}
           testId="usage-daily"
         />
@@ -156,17 +176,6 @@ export function CreditBalanceCard({
           </p>
         ) : null}
 
-        {/* A member routed here from the limit modal who can't manage credits
-            would otherwise hit a silent dead-end (no dialog opens). Tell them
-            how to proceed instead. */}
-        {!isLoading && arrivedFromLimitModal && !canManageCredits ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="usage-ask-admin"
-          >
-            Ask an organization admin to add shared credits.
-          </p>
-        ) : null}
       </CardContent>
       {isTopupOpen && canManageCredits && (
         <CreditTopupDialog

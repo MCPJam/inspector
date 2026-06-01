@@ -19,6 +19,10 @@ export interface CreditBalanceState {
   freeDailyPercentUsed: number;
   /** Epoch ms when the daily bucket resets. */
   freeDailyResetAt: number;
+  /** Free daily credits still available today (1 credit = 1¢). */
+  freeDailyCreditsRemaining: number;
+  /** Total free daily credit allowance for the day (e.g. 300 signed-in, 20 guest). */
+  freeDailyCreditsTotal: number;
   /** Whether org credit spending is paused for manual review. */
   walletLocked: boolean;
 }
@@ -41,6 +45,8 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
     hasPurchaseHistory: r.hasPurchaseHistory === true,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
+    freeDailyCreditsRemaining: optionalNumber(r.freeDailyCreditsRemaining),
+    freeDailyCreditsTotal: optionalNumber(r.freeDailyCreditsTotal),
     walletLocked: r.walletLocked === true,
   };
 };

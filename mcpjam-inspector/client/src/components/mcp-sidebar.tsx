@@ -839,10 +839,7 @@ export function MCPSidebar({
             />
           ) : null}
           {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
-          <SidebarUser
-            activeOrganizationId={activeOrganizationId}
-            onBeforeSignOut={onBeforeSignOut}
-          />
+          <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

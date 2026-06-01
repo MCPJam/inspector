@@ -28,6 +28,9 @@ interface ErrorBoxProps {
   onRetry?: () => void;
   canTopUp?: boolean;
   onTopUp?: () => void;
+  /** When top-up is the relevant fix but the current user lacks permission
+   * to buy credits, render an "ask org admin" hint instead of the button. */
+  askAdminToTopUp?: boolean;
   /** When true, render the locked-account banner instead of any other state. */
   walletLocked?: boolean;
   /** Sub-classification of a rate-limit error. `"concurrency"` triggers the
@@ -59,6 +62,7 @@ export function ErrorBox({
   onRetry,
   canTopUp,
   onTopUp,
+  askAdminToTopUp,
   walletLocked,
   limitKind,
   retryAfterMs,
@@ -225,11 +229,18 @@ export function ErrorBox({
           )}
         </div>
         <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
-          {canTopUp && onTopUp && (
+          {canTopUp && onTopUp ? (
             <Button type="button" onClick={onTopUp}>
               Buy credits to keep chatting
             </Button>
-          )}
+          ) : askAdminToTopUp ? (
+            <span
+              className="self-center text-sm text-muted-foreground"
+              data-testid="chat-error-ask-admin"
+            >
+              Ask org admin to top up credits
+            </span>
+          ) : null}
           {isRetryable && onRetry && (
             <Button
               type="button"

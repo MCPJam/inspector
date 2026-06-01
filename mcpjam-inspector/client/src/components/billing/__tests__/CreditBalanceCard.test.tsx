@@ -9,6 +9,8 @@ let balanceState:
       availableCredits: number;
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
+      freeDailyCreditsRemaining: number;
+      freeDailyCreditsTotal: number;
       freeDailyResetAt: number;
       walletLocked: boolean;
     }
@@ -49,6 +51,8 @@ describe("CreditBalanceCard", () => {
       availableCredits: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 300,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 11 * 60 * 60 * 1000,
       walletLocked: false,
     };
@@ -71,13 +75,15 @@ describe("CreditBalanceCard", () => {
       availableCredits: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 9,
+      freeDailyCreditsRemaining: 273,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 11 * 60 * 60 * 1000,
       walletLocked: false,
     };
     render(<CreditBalanceCard />);
 
     const dailyRow = screen.getByTestId("usage-daily");
-    expect(dailyRow).toHaveTextContent(/9% used/);
+    expect(dailyRow).toHaveTextContent(/27 \/ 300/);
     expect(dailyRow).toHaveTextContent(/resets/);
     // Regression guard: free credit dollar value must never appear.
     expect(dailyRow.textContent ?? "").not.toMatch(/\$/);
@@ -93,6 +99,8 @@ describe("CreditBalanceCard", () => {
       availableCredits: 1200,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 100,
+      freeDailyCreditsRemaining: 0,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
       walletLocked: false,
     };
@@ -112,6 +120,8 @@ describe("CreditBalanceCard", () => {
       availableCredits: -500,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 300,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
       walletLocked: true,
     };
@@ -133,6 +143,8 @@ describe("CreditBalanceCard", () => {
       availableCredits: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 300,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
       walletLocked: true,
     };
@@ -150,6 +162,17 @@ describe("CreditBalanceCard", () => {
     expect(
       within(dailyRow).queryByRole("button", { name: /About/i })
     ).not.toBeInTheDocument();
+  });
+
+  it("shows an ask-admin hint instead of the Buy credits button for non-managers", () => {
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(
+      screen.queryByRole("button", { name: /Buy credits/i })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("usage-ask-admin")).toHaveTextContent(
+      /Ask org admin to top up credits/
+    );
   });
 
   it("opens the top-up dialog when the Top up button is clicked", async () => {

@@ -11,7 +11,10 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useEffect } from "react";
-import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import {
+  canManageOrgCredits,
+  useOrganizationQueries,
+} from "@/hooks/useOrganizations";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAppNavigate } from "@/lib/app-navigation";
@@ -19,6 +22,9 @@ import { useAppNavigate } from "@/lib/app-navigation";
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
   const intent = useMCPJamLimitDialogStore((s) => s.intent);
+  const limitOrganizationId = useMCPJamLimitDialogStore(
+    (s) => s.organizationId
+  );
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
   const { user, isLoading, signIn } = useAuth();
@@ -45,15 +51,28 @@ export function MCPJamLimitDialog() {
 
   if (isLoading) return null;
 
-  // Resolve which org's billing page to redirect to. Prefer the
-  // localStorage-persisted active org for this user; fall back to the
-  // most-recent org from the membership list.
+  // Resolve which org's billing page to redirect to. Prefer the org that
+  // actually hit the limit; fall back to local active org / recent org.
   const resolveBillingOrgId = (): string | null => {
     if (!user) return null;
+    if (limitOrganizationId) return limitOrganizationId;
     const stored = readStoredActiveOrganizationId(user.id);
     if (stored) return stored;
     return sortedOrganizations[0]?._id ?? null;
   };
+
+  // Only owners/admins/creators can buy credits (mirrors the backend gate).
+  // Members instead see an "ask org admin" hint so they don't dead-end on a
+  // button the checkout action would reject. While the org membership is
+  // still resolving (no match yet) we stay optimistic and show the buy
+  // button — `handleTopUp` already no-ops until an org id is available, so an
+  // actual admin never sees a premature "ask admin" flash.
+  const billingOrgId = resolveBillingOrgId();
+  const billingOrg = billingOrgId
+    ? sortedOrganizations.find((org) => org._id === billingOrgId) ?? null
+    : null;
+  const isKnownNonManager = billingOrg ? !canManageOrgCredits(billingOrg) : false;
+  const canBuyCredits = billingUiEnabled && !isKnownNonManager;
 
   const handleTopUp = () => {
     const orgId = resolveBillingOrgId();
@@ -113,23 +132,30 @@ export function MCPJamLimitDialog() {
         >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>You've run out of free daily credits</DialogTitle>
-              <DialogDescription>
-                {billingUiEnabled
-                  ? "Buy credits or bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."
-                  : "Bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."}
+              <DialogTitle>You've hit the org free credit limit</DialogTitle>
+              <DialogDescription data-testid="limit-dialog-description">
+                {isKnownNonManager
+                  ? "Ask your org admin to top up credits."
+                  : canBuyCredits
+                    ? "Top up or bring your own key to allow your org to keep using MCPJam."
+                    : "Bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."}
               </DialogDescription>
             </DialogHeader>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={handleBYOK}>
-                Bring your own key
-              </Button>
-              {billingUiEnabled && (
-                <Button type="button" onClick={handleTopUp}>
-                  Buy credits
+            {/* Non-managers get no CTAs — just the "ask your org admin" copy.
+                Managers (and the dev billing-off fallback) keep BYOK, plus a
+                Top up button when credit purchase is available. */}
+            {!isKnownNonManager ? (
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={handleBYOK}>
+                  Bring your own key
                 </Button>
-              )}
-            </DialogFooter>
+                {canBuyCredits ? (
+                  <Button type="button" onClick={handleTopUp}>
+                    Top up
+                  </Button>
+                ) : null}
+              </DialogFooter>
+            ) : null}
           </DialogContent>
         </Dialog>
       )}

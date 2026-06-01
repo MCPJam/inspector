@@ -34,9 +34,6 @@ export function SidebarCreditUsage({
     return null;
   }
 
-  const dailyPercentUsed = balance
-    ? Math.round(balance.freeDailyPercentUsed)
-    : 0;
   const resetText = balance
     ? formatCreditResetText(balance.freeDailyResetAt)
     : null;
@@ -46,11 +43,6 @@ export function SidebarCreditUsage({
 
   const innerContent = (
     <div className={cn("px-2 py-1.5", variant === "full" && "px-2.5 py-2")}>
-      {variant === "full" ? (
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Credit usage
-        </p>
-      ) : null}
       <div
         className={cn(
           "flex flex-col",
@@ -59,22 +51,36 @@ export function SidebarCreditUsage({
       >
         <SidebarUsageRow
           label="Free daily credits"
-          percentText={`${dailyPercentUsed}%${
-            variant === "full" ? " used" : ""
-          }`}
+          percentText={
+            balance
+              ? `${(
+                  balance.freeDailyCreditsTotal -
+                  balance.freeDailyCreditsRemaining
+                ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
+              : ""
+          }
           eyebrowText={
             showGuestUpgradeHint ? "Sign in for 15× the credits" : null
           }
           helperText={resetText}
-          fillPercent={balance ? balance.freeDailyPercentUsed : 0}
+          // "spent / total": the count and the bar both grow as credits are
+          // used — 0/300 empty when fresh, 300/300 full when drained.
+          fillPercent={
+            balance && balance.freeDailyCreditsTotal > 0
+              ? ((balance.freeDailyCreditsTotal -
+                  balance.freeDailyCreditsRemaining) /
+                  balance.freeDailyCreditsTotal) *
+                100
+              : 0
+          }
           isLoading={isLoading}
           testId="sidebar-usage-daily"
         />
         {variant === "full" && !isLoading && hasPaidHistory && balance ? (
           <SidebarUsageRow
-            label="Shared paid credits"
+            label="Paid credits"
             percentText={`${balance.availableCredits.toLocaleString()}`}
-            helperText="shared credits"
+            helperText={null}
             // Absolute credit count, not a percentage — render no progress
             // bar (a permanently 0%-filled bar reads as a bug).
             showBar={false}

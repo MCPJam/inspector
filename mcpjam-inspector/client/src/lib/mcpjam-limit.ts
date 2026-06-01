@@ -16,6 +16,7 @@ type MCPJamLimitErrorInput = {
   code?: string;
   message?: string | null;
   details?: unknown;
+  organizationId?: string;
   /** Sub-classification of a rate-limit error. `"concurrency"` is a transient
    * throttle whose UI lives inline (retry banner) — never opens the modal. */
   limitKind?: MCPJamLimitKind;
@@ -133,6 +134,48 @@ const findMCPJamLimitKind = (
   return undefined;
 };
 
+const findStringPropertyDeep = (
+  value: unknown,
+  key: string,
+  seen = new WeakSet<object>(),
+): string | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+
+  const direct = getStringProperty(value, key);
+  if (direct) return direct;
+
+  const values = Array.isArray(value) ? value : Object.values(value);
+  for (const item of values) {
+    const nested = findStringPropertyDeep(item, key, seen);
+    if (nested) return nested;
+  }
+
+  return undefined;
+};
+
+const findMCPJamLimitOrganizationId = (
+  args: MCPJamLimitErrorInput,
+): string | undefined => {
+  if (args.organizationId) return args.organizationId;
+
+  for (const value of [args.details, args.message]) {
+    if (typeof value === "string") {
+      for (const parsed of collectJsonCandidates(value)) {
+        const organizationId = findStringPropertyDeep(parsed, "organizationId");
+        if (organizationId) return organizationId;
+      }
+      continue;
+    }
+
+    const organizationId = findStringPropertyDeep(value, "organizationId");
+    if (organizationId) return organizationId;
+  }
+
+  return undefined;
+};
+
 const isMCPJamLimitString = (value: string): boolean =>
   MCPJAM_MODEL_LIMIT_PATTERN.test(value) ||
   MCPJAM_RATE_LIMIT_CODE_PATTERN.test(value);
@@ -189,6 +232,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   if (!isMCPJamModelLimitError(args)) return false;
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
     limitKind: args.limitKind,
+    organizationId: findMCPJamLimitOrganizationId(args),
   });
   return true;
 }

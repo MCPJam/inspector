@@ -10,7 +10,11 @@ const authState: { isLoading: boolean; user: { id: string } | null } = {
   user: null,
 };
 
-const sortedOrganizationsState: Array<{ _id: string }> = [];
+const sortedOrganizationsState: Array<{
+  _id: string;
+  myRole?: string;
+  isCreator?: boolean;
+}> = [];
 
 let billingUiFlagState: boolean | undefined = true;
 
@@ -34,6 +38,13 @@ vi.mock("@/hooks/useOrganizations", () => ({
     sortedOrganizations: sortedOrganizationsState,
     isLoading: false,
   }),
+  canManageOrgCredits: (
+    org: { myRole?: string; isCreator?: boolean } | null | undefined
+  ) =>
+    !!org &&
+    (org.myRole === "owner" ||
+      org.myRole === "admin" ||
+      org.isCreator === true),
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -56,6 +67,7 @@ beforeEach(() => {
     hasPendingLimit: false,
     isOpen: false,
     intent: null,
+    organizationId: null,
     pendingInput: null,
   });
 });
@@ -113,21 +125,39 @@ describe("MCPJamLimitDialog", () => {
 
   it("renders the topup variant for signed-in users", () => {
     authState.user = { id: "user-1" };
-    sortedOrganizationsState.push({ _id: "org-1" });
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
     expect(
       screen.getByRole("heading", {
-        name: /you've run out of free daily credits/i,
+        name: /you've hit the org free credit limit/i,
       })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^buy credits$/i })
+      screen.getByRole("button", { name: /^top up$/i })
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /bring your own key/i })
     ).toBeInTheDocument();
+  });
+
+  it("shows the ask-admin copy and no CTAs for org members", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "member" });
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      /Ask your org admin to top up credits/
+    );
+    // Members get no CTAs at all — neither top up nor BYOK.
+    expect(
+      screen.queryByRole("button", { name: /^top up$/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /bring your own key/i })
+    ).not.toBeInTheDocument();
   });
 
   it("redirects to the org models page on BYOK click", async () => {
@@ -153,21 +183,42 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
+    await user.click(screen.getByRole("button", { name: /^top up$/i }));
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
     expect(window.location.pathname).toBe("/organizations/org-active/billing");
     expect(window.location.search).toBe("?topup=open");
   });
 
+  it("prefers the org that hit the limit over the stored active org", async () => {
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    localStorage.setItem("active-organization-id:user-1", "org-b");
+    sortedOrganizationsState.push(
+      { _id: "org-a", myRole: "owner" },
+      { _id: "org-b", myRole: "owner" }
+    );
+    useMCPJamLimitDialogStore.setState({
+      isOpen: true,
+      intent: "topup",
+      organizationId: "org-a",
+    });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(screen.getByRole("button", { name: /^top up$/i }));
+
+    expect(window.location.pathname).toBe("/organizations/org-a/billing");
+    expect(window.location.search).toBe("?topup=open");
+  });
+
   it("falls back to the most-recent membership org when no active org is stored", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
-    sortedOrganizationsState.push({ _id: "org-fallback" });
+    sortedOrganizationsState.push({ _id: "org-fallback", myRole: "owner" });
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
+    await user.click(screen.getByRole("button", { name: /^top up$/i }));
 
     expect(window.location.pathname).toBe(
       "/organizations/org-fallback/billing"
@@ -181,7 +232,7 @@ describe("MCPJamLimitDialog", () => {
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
-    await user.click(screen.getByRole("button", { name: /^buy credits$/i }));
+    await user.click(screen.getByRole("button", { name: /^top up$/i }));
 
     // Modal stays open and no nav happens — once orgs load, the user can
     // click again and be routed correctly.
@@ -200,7 +251,7 @@ describe("MCPJamLimitDialog", () => {
   it("hides the Buy credits button when the billing-entitlements-ui flag is off", () => {
     billingUiFlagState = false;
     authState.user = { id: "user-1" };
-    sortedOrganizationsState.push({ _id: "org-1" });
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
@@ -208,19 +259,19 @@ describe("MCPJamLimitDialog", () => {
       screen.getByRole("button", { name: /bring your own key/i })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^buy credits$/i })
+      screen.queryByRole("button", { name: /^top up$/i })
     ).not.toBeInTheDocument();
   });
 
   it("hides the Buy credits button while the flag is still loading (undefined)", () => {
     billingUiFlagState = undefined;
     authState.user = { id: "user-1" };
-    sortedOrganizationsState.push({ _id: "org-1" });
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
     expect(
-      screen.queryByRole("button", { name: /^buy credits$/i })
+      screen.queryByRole("button", { name: /^top up$/i })
     ).not.toBeInTheDocument();
   });
 });
