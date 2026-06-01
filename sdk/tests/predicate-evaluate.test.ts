@@ -177,6 +177,20 @@ describe("evaluatePredicate — table driven", () => {
       reasonIncludes: ["invalid regex"],
     },
     {
+      name: "responseMatches: missing pattern fails closed (no empty-regex match-all)",
+      transcript: transcript({ finalAssistantMessage: "anything at all" }),
+      predicate: { type: "responseMatches" } as unknown as Predicate,
+      passed: false,
+      reasonIncludes: ["non-empty string pattern"],
+    },
+    {
+      name: "responseMatches: empty pattern fails closed",
+      transcript: transcript({ finalAssistantMessage: "anything at all" }),
+      predicate: { type: "responseMatches", pattern: "" },
+      passed: false,
+      reasonIncludes: ["non-empty string pattern"],
+    },
+    {
       name: "responseMatches: nested quantifier `(a+)+` fails closed (ReDoS guard)",
       transcript: transcript({ finalAssistantMessage: "a".repeat(30) + "!" }),
       predicate: { type: "responseMatches", pattern: "^(a+)+$" },

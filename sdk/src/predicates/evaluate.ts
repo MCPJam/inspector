@@ -209,6 +209,19 @@ export function evaluatePredicate(
 
     case "responseMatches": {
       const message = resolveFinalMessage(transcript);
+      // `new RegExp(undefined)` does not throw — it builds an empty regex that
+      // matches every message. A malformed predicate (missing/empty pattern via
+      // the loose `z.array(z.any())` API path) must fail closed, not silently
+      // pass.
+      if (
+        typeof predicate.pattern !== "string" ||
+        predicate.pattern.length === 0
+      ) {
+        return fail(
+          predicate,
+          `responseMatches requires a non-empty string pattern`,
+        );
+      }
       if (NESTED_QUANTIFIER.test(predicate.pattern)) {
         return fail(
           predicate,
