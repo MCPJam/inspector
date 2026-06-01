@@ -15,6 +15,12 @@ import {
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
 import {
+  applyVisibilityPolicyAndCountSignals,
+  buildHostIterationMetadata,
+  type HostExecutionPolicy,
+  type ToolExposureSignals,
+} from "./evals/host-execution-policy.js";
+import {
   finalizePassedForEval,
   isMcpAppTool,
   type MCPClientManager,
@@ -46,6 +52,10 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
+import {
+  buildIterationTranscript,
+  evaluatePredicates,
+} from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import {
   createSuiteRunRecorder,
@@ -84,6 +94,37 @@ import type {
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
 
+/**
+ * Turn a non-OK backend stream response into a human-readable message. The
+ * Convex stream endpoint returns structured JSON for guardrails like the daily
+ * spend cap — e.g. { code: "user_rate_limit", error: "Daily MCPJam model limit
+ * reached. Use BYOK or try again tomorrow.", details: "Try again in N minutes." }.
+ * Surface that instead of the bare HTTP status text ("Too Many Requests"), and
+ * flag 429s as expected guardrails (not faults) so callers can log them quietly.
+ */
+function describeBackendStreamError(
+  status: number,
+  bodyText: string,
+): { message: string; code?: string; expected: boolean } {
+  const expected = status === 429;
+  try {
+    const body = JSON.parse(bodyText) as {
+      code?: string;
+      error?: string;
+      details?: string;
+    };
+    if (body?.error) {
+      const message = body.details
+        ? `${body.error} ${body.details}`
+        : body.error;
+      return { message, code: body.code, expected };
+    }
+  } catch {
+    // body wasn't JSON — fall through to the generic shape
+  }
+  return { message: `Backend stream error: ${status} ${bodyText}`, expected };
+}
+
 export type EvalTestCase = {
   title: string;
   query: string;
@@ -108,6 +149,15 @@ export type EvalTestCase = {
    * runs resolve it in the route handler.
    */
   matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+  /**
+   * Optional state-based predicate gate evaluated over the iteration
+   * transcript after tool-call matching. Definitions are runtime/corpus data
+   * in V1 (carried on the case object through the runner, like `matchOptions`);
+   * verdicts are persisted to `testIteration.metadata.predicates`. A case
+   * passes the predicate gate iff every predicate passes; an absent/empty list
+   * is no gate. See `shared/predicates`.
+   */
+  successPredicates?: import("@/shared/eval-matching").Predicate[];
   /**
    * Per-Run override layered on top of the suite's hostConfig. Carries
    * the editor's in-place tweaks (locale, timezone, hostContext,
@@ -159,6 +209,13 @@ export type RunEvalSuiteOptions = {
    * preset. Absent/undefined preserves SEP-1865 honest behavior.
    */
   suiteInjectOpenAiCompat?: boolean;
+  /**
+   * Host execution policy extracted from the run's hostConfig snapshot.
+   * When present, the runner applies visibility filtering, computes tool
+   * exposure signals, and stamps scalar metadata on each iteration for the
+   * cross-host dashboard.
+   */
+  hostExecutionPolicy?: HostExecutionPolicy;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -166,6 +223,21 @@ export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
 };
+
+/**
+ * True when the provider/backend actually reported token usage. `accumulatedUsage`
+ * is initialized to a zero object, so a zero total is indistinguishable from
+ * "unmetered" — passing that into the transcript would let `tokenBudgetUnder`
+ * pass on runs with no usage data. Only forward usage when something was
+ * reported so the predicate can fail closed otherwise.
+ */
+function hasReportedUsage(usage: UsageTotals): boolean {
+  return (
+    (usage.totalTokens ?? 0) > 0 ||
+    (usage.inputTokens ?? 0) > 0 ||
+    (usage.outputTokens ?? 0) > 0
+  );
+}
 
 export type RunEvalSuiteWithAiSdkResult = {
   /** Only set when `runId === null` (quick run); one entry per (test × run index) in suite order. */
@@ -1025,7 +1097,12 @@ async function finishIterationDirectly(
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
-      metadata: params.metadata,
+      // Sanitize like the recorder path: metadata now carries nested
+      // predicate rows whose authored args may contain $-prefixed keys
+      // Convex rejects at the arg boundary.
+      metadata: params.metadata
+        ? sanitizeForConvexTransport(params.metadata)
+        : params.metadata,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1076,6 +1153,10 @@ type RunIterationBaseParams = {
    * (absent/undefined or false) leaves snapshots un-shimmed.
    */
   injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy from the run's hostConfig snapshot. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
+  toolSignals?: ToolExposureSignals;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1277,6 +1358,8 @@ const runIterationWithAiSdk = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1569,11 +1652,28 @@ const runIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usage: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -1601,6 +1701,15 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1704,6 +1813,14 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -1737,6 +1854,8 @@ const runIterationViaBackend = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1925,12 +2044,20 @@ const runIterationViaBackend = async ({
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -2217,12 +2344,29 @@ const runIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
@@ -2246,6 +2390,15 @@ const runIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -2279,6 +2432,10 @@ const runTestCase = async (params: {
   compareRunId?: string;
   /** Suite-level compat-runtime flag; forwarded to each iteration. */
   injectOpenAiCompat?: boolean;
+  /** Host execution policy for metadata stamping. */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for metadata stamping. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -2297,6 +2454,8 @@ const runTestCase = async (params: {
     abortSignal,
     compareRunId,
     injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2393,6 +2552,8 @@ const runTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2424,6 +2585,8 @@ const runTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2450,6 +2613,8 @@ const runTestCase = async (params: {
       compareRunId,
       precreatedIterationId,
       injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2472,6 +2637,7 @@ export const runEvalSuiteWithAiSdk = async ({
   testCaseId,
   compareRunId,
   suiteInjectOpenAiCompat,
+  hostExecutionPolicy,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2495,7 +2661,28 @@ export const runEvalSuiteWithAiSdk = async ({
           runId,
         }));
 
-  const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+  // When a host policy is present we need the full tool set (including
+  // app-only) so `applyVisibilityPolicyAndCountSignals` can:
+  //   1. Count `toolsTotalBefore` honestly, and
+  //   2. Keep app-only tools when the host opted out of visibility filtering.
+  // Without this, getToolsForAiSdk pre-strips app-only tools and the policy
+  // sees a partial set — drops are reported as 0 even when tools were hidden.
+  const tools = (hostExecutionPolicy
+    ? await mcpClientManager.getToolsForAiSdk(serverIds, {
+        includeAppOnly: true,
+      })
+    : await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
+
+  // Apply visibility filtering when a host policy is present. The filter
+  // mutates `tools` in place (same as prepareChatV2) so downstream iteration
+  // runners see the post-filter set.
+  const resolvedToolSignals = hostExecutionPolicy
+    ? applyVisibilityPolicyAndCountSignals(
+        tools as Record<string, unknown>,
+        mcpClientManager,
+        hostExecutionPolicy,
+      )
+    : undefined;
 
   // Note: Iterations are now pre-created in startSuiteRunWithRecorder
   // This code is no longer needed as precreateIterationsForRun is called there
@@ -2549,6 +2736,8 @@ export const runEvalSuiteWithAiSdk = async ({
         runId,
         abortSignal: abortController.signal,
         injectOpenAiCompat,
+        hostPolicy: hostExecutionPolicy,
+        toolSignals: resolvedToolSignals,
       }),
     );
 
@@ -2708,6 +2897,8 @@ const streamIterationWithAiSdk = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3080,11 +3271,28 @@ const streamIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usageFinal: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -3112,6 +3320,15 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -3239,6 +3456,14 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(hostPolicy && toolSignals
+          ? buildHostIterationMetadata(
+              hostPolicy,
+              toolSignals,
+              evaluation.toolsCalled.length,
+              injectOpenAiCompat === true,
+            )
+          : {}),
       },
     };
 
@@ -3273,6 +3498,8 @@ const streamIterationViaBackend = async ({
   compareRunId,
   precreatedIterationId,
   injectOpenAiCompat,
+  hostPolicy,
+  toolSignals,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3468,12 +3695,20 @@ const streamIterationViaBackend = async ({
 
         if (!res.ok) {
           const errorText = await res.text().catch(() => res.statusText);
-          iterationError = `Backend stream error: ${res.status} ${errorText}`;
-          iterationErrorDetails = errorText;
-          logger.error(
-            "[evals] backend stream error",
-            new Error(res.statusText),
+          const { message, expected } = describeBackendStreamError(
+            res.status,
+            errorText,
           );
+          iterationError = message;
+          iterationErrorDetails = errorText;
+          if (expected) {
+            // Daily spend cap / concurrency guardrail — expected, and with N
+            // cases running concurrently it fires once per case. Log a single
+            // quiet line with the real reason, not an alarming per-case stack.
+            logger.warn(`[evals] run halted: ${message}`);
+          } else {
+            logger.error("[evals] backend stream error", new Error(message));
+          }
           const failAbs = Date.now();
           pushBackendStepLlmFailureSpans(
             capturedSpans,
@@ -3986,12 +4221,29 @@ const streamIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
@@ -4015,6 +4267,15 @@ const streamIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
     },
   };
 
@@ -4054,6 +4315,10 @@ export const streamTestCase = async (params: {
    * off (SEP-1865 honest behavior).
    */
   injectOpenAiCompat?: boolean;
+  /** Resolved host execution policy (mirrors runEvalSuiteWithAiSdk). */
+  hostPolicy?: HostExecutionPolicy;
+  /** Pre-computed tool exposure signals for the stream run. */
+  toolSignals?: ToolExposureSignals;
 }) => {
   const {
     test,
@@ -4073,6 +4338,8 @@ export const streamTestCase = async (params: {
     emit,
     compareRunId,
     injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -4173,6 +4440,8 @@ export const streamTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4205,6 +4474,8 @@ export const streamTestCase = async (params: {
         compareRunId,
         precreatedIterationId,
         injectOpenAiCompat,
+        hostPolicy,
+        toolSignals,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4232,6 +4503,8 @@ export const streamTestCase = async (params: {
       compareRunId,
       precreatedIterationId,
       injectOpenAiCompat,
+      hostPolicy,
+      toolSignals,
     });
     outcomes.push(iterationOutcome);
   }

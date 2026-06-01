@@ -16,6 +16,10 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "../../services/evals/compat-runtime";
 import {
+  applyVisibilityPolicyAndCountSignals,
+  extractHostExecutionPolicy,
+} from "../../services/evals/host-execution-policy.js";
+import {
   runEvalSuiteWithAiSdk,
   streamTestCase,
 } from "../../services/evals-runner";
@@ -175,6 +179,13 @@ export const RunTestCaseRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      // State-based predicate gate (see shared/predicates). Accepted as a
+      // per-run override so SDK / corpus cases can gate on predicates without
+      // the deferred Convex `testCase` schema change. Loosely typed like
+      // `expectedToolCalls` above; predicate shape is validated by the corpus
+      // validator at authoring time and evaluated deterministically by the
+      // runner (unknown types fail closed).
+      successPredicates: z.array(z.any()).optional(),
     })
     .optional(),
   /**
@@ -726,6 +737,7 @@ export async function runEvalsWithManager(
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
   const suiteInjectOpenAiCompat =
     resolveOpenAiCompatForHostConfig(suiteHostConfig);
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig, namedHostId);
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
@@ -805,6 +817,7 @@ export async function runEvalsWithManager(
     mcpClientManager: clientManager,
     recorder,
     suiteInjectOpenAiCompat,
+    hostExecutionPolicy: suiteHostPolicy,
   });
 
   return {
@@ -869,6 +882,7 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined,
   );
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -893,6 +907,13 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate from the per-run override (or the persisted
+    // case, once Convex `testCase` carries it) into the runtime case so the
+    // runner evaluates it.
+    successPredicates: (testCaseOverrides?.successPredicates ??
+      (testCase as { successPredicates?: unknown }).successPredicates) as
+      | import("@/shared/eval-matching").Predicate[]
+      | undefined,
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -949,6 +970,7 @@ export async function runEvalTestCaseWithManager(
     testCaseId,
     compareRunId,
     suiteInjectOpenAiCompat,
+    hostExecutionPolicy: suiteHostPolicy,
   });
 
   const expectedIterationId =
@@ -1124,6 +1146,7 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined,
   );
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -1148,6 +1171,13 @@ export async function streamEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate from the per-run override (or the persisted
+    // case, once Convex `testCase` carries it) into the runtime case so the
+    // runner evaluates it.
+    successPredicates: (testCaseOverrides?.successPredicates ??
+      (testCase as { successPredicates?: unknown }).successPredicates) as
+      | import("@/shared/eval-matching").Predicate[]
+      | undefined,
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -1191,9 +1221,25 @@ export async function streamEvalTestCaseWithManager(
     }
   }
 
-  const tools = (await clientManager.getToolsForAiSdk(
-    resolvedServerIds,
-  )) as Record<string, any>;
+  // Mirror runEvalSuiteWithAiSdk: when a host policy is present, fetch the
+  // full tool set (including app-only) so the policy can both filter and
+  // count drops honestly. Without this, app-only tools are pre-stripped by
+  // getToolsForAiSdk and host visibility signals are blank.
+  const tools = (suiteHostPolicy
+    ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
+        includeAppOnly: true,
+      })
+    : await clientManager.getToolsForAiSdk(resolvedServerIds)) as Record<
+    string,
+    any
+  >;
+  const streamToolSignals = suiteHostPolicy
+    ? applyVisibilityPolicyAndCountSignals(
+        tools as Record<string, unknown>,
+        clientManager,
+        suiteHostPolicy,
+      )
+    : undefined;
   const encoder = new TextEncoder();
 
   const sseEncode = (event: EvalStreamEvent): Uint8Array =>
@@ -1218,6 +1264,8 @@ export async function streamEvalTestCaseWithManager(
           runId: null,
           compareRunId,
           injectOpenAiCompat: suiteInjectOpenAiCompat,
+          hostPolicy: suiteHostPolicy,
+          toolSignals: streamToolSignals,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));

@@ -553,20 +553,8 @@ export function useServerForm(
   const revealStoredHeaders = (
     headers: Record<string, string> | null | undefined
   ) => {
-    const nextHeaders = headers ?? {};
-    const authorization = getAuthorizationHeaderValue(nextHeaders);
-    const nextCustomHeaders = Object.entries(nextHeaders)
-      .filter(([key]) => !isAuthorizationHeader(key))
+    const nextCustomHeaders = Object.entries(headers ?? {})
       .map(([key, value]) => createHeaderEntry(key, String(value)));
-    const isBearerAuthorization =
-      authorization?.toLowerCase().startsWith("bearer ") === true;
-    if (isBearerAuthorization) {
-      setAuthType("bearer");
-      setBearerToken(authorization!.slice("bearer ".length));
-      setShowAuthSettings(true);
-    } else if (authorization) {
-      nextCustomHeaders.push(createHeaderEntry("Authorization", authorization));
-    }
     setCustomHeaders(nextCustomHeaders);
     setHasStoredHeaders(false);
     setHeadersRevealed(true);
@@ -575,12 +563,6 @@ export function useServerForm(
     if (initialValues.current) {
       initialValues.current = {
         ...initialValues.current,
-        authType: isBearerAuthorization
-          ? "bearer"
-          : initialValues.current.authType,
-        bearerToken: isBearerAuthorization
-          ? authorization!.slice("bearer ".length)
-          : initialValues.current.bearerToken,
         hasStoredHeaders: false,
         customHeaders: nextCustomHeaders.map(({ key, value }) => ({
           key,

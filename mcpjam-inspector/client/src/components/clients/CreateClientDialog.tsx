@@ -73,8 +73,14 @@ export function CreateClientDialog({
     if (!trimmed) return;
     setIsSaving(true);
     try {
-      // New hosts start with no required servers so creation never triggers
-      // an auto-connect storm; users opt servers in via the Servers tab.
+      // New hosts start with no seeded servers: keeps creation deliberate.
+      // Users opt servers in afterward via the Servers tab on the host.
+      //
+      // Historical context: this used to guard against an auto-connect
+      // storm. The current auto-connect toggle is project-scoped (see
+      // preferences-store.ts:40), so the original storm risk is gone,
+      // but the deliberate-creation framing stays.
+      //
       // Thread MCPJam's current global theme into the seed so the new
       // host opens matching the inspector chrome instead of always
       // defaulting to dark — user can still flip it later from the host

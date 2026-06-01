@@ -778,6 +778,14 @@ export function iterationTokensP95(items: EvalIteration[]): number | null {
   return percentile(vals, 0.95);
 }
 
+/** Total ordering on runs: `runNumber` primary, `createdAt` as tiebreaker. */
+export function compareRunsBySequence(
+  a: EvalSuiteRun,
+  b: EvalSuiteRun,
+): number {
+  return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
+}
+
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
 export function pickLatestCompletedRun(
   runs: EvalSuiteRun[],
