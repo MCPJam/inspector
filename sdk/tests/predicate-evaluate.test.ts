@@ -163,6 +163,13 @@ describe("evaluatePredicate — table driven", () => {
       passed: false,
     },
     {
+      name: "responseMatches: over-long message fails closed (no misleading truncated match)",
+      transcript: transcript({ finalAssistantMessage: "x".repeat(100_001) }),
+      predicate: { type: "responseMatches", pattern: "x$" },
+      passed: false,
+      reasonIncludes: ["exceeds"],
+    },
+    {
       name: "responseMatches: invalid regex fails with reason",
       transcript: transcript({ finalAssistantMessage: "anything" }),
       predicate: { type: "responseMatches", pattern: "([unterminated" },

@@ -27,9 +27,10 @@ const MAX_ERROR_MSG_CHARS = 200;
 const MAX_ITEMS_SHOWN = 3;
 const MAX_REASON_CHARS = 600;
 const REDACTED = "«redacted»";
-// Defense-in-depth cap on the text a `responseMatches` regex runs over, so an
-// authored/pathological pattern cannot pin the runner via catastrophic
-// backtracking on a huge final message.
+// Above this length a `responseMatches` predicate fails closed instead of
+// evaluating: truncating would silently turn an end-anchored/suffix pattern into
+// a misleading non-match, and running an authored regex over a huge string
+// risks catastrophic backtracking.
 const MAX_REGEX_INPUT_CHARS = 100_000;
 
 /** Keys whose values are scrubbed before a tool-arg blob is rendered. */
@@ -207,11 +208,13 @@ export function evaluatePredicate(
           }`,
         );
       }
-      const input =
-        message.length > MAX_REGEX_INPUT_CHARS
-          ? message.slice(0, MAX_REGEX_INPUT_CHARS)
-          : message;
-      return regex.test(input)
+      if (message.length > MAX_REGEX_INPUT_CHARS) {
+        return fail(
+          predicate,
+          `final assistant message exceeds ${MAX_REGEX_INPUT_CHARS} chars; refusing to evaluate /${predicate.pattern}/ safely`,
+        );
+      }
+      return regex.test(message)
         ? pass(predicate, `final assistant message matches /${predicate.pattern}/`)
         : fail(
             predicate,
