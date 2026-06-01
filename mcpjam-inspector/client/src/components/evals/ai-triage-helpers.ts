@@ -23,7 +23,7 @@ export type TriageRow = {
   rawIssues: string[];
   rawSuggestions: string[];
   toolName?: string;
-  /** Arcade pattern slug the judge attributed the violation to, if any. */
+  /** Pattern slug the judge attributed the violation to, if any. */
   patternSlug?: string;
   /** PR-B auditability metadata carried through from the judge insight. */
   evidence?: string[];
@@ -39,8 +39,6 @@ export type EmbeddableTool = {
   description?: string;
   inputSchema?: unknown;
 };
-
-const ARCADE_PATTERNS_BASE_URL = "https://arcade.dev/patterns";
 
 // SYNC: these weights mirror the backend source of truth at
 // mcpjam-backend/convex/lib/serverQualityScore.ts. They live in a separate repo
@@ -271,17 +269,7 @@ export function buildFixPrompt(
   row: TriageRow,
   options?: BuildFixPromptOptions,
 ): string {
-  const scopeLine =
-    row.source === "tool"
-      ? `Tool: ${row.toolName ?? "(unknown)"}`
-      : `Case: ${row.affectedCaseKeys.join(", ") || "(unknown)"}`;
-
-  const sections: string[] = [
-    "Improve the MCP server for the following issue found by an eval run.",
-    "",
-    `Category: ${row.category}`,
-    scopeLine,
-  ];
+  const sections: string[] = [];
 
   if (row.confidence) {
     sections.push(`Judge confidence: ${row.confidence}`);
@@ -292,18 +280,13 @@ export function buildFixPrompt(
     );
   }
 
-  if (row.patternSlug) {
-    sections.push(
-      `Pattern: ${row.patternSlug}`,
-      `Reference: ${ARCADE_PATTERNS_BASE_URL}/${row.patternSlug}`,
-    );
-  }
-
   if (row.evidence && row.evidence.length > 0) {
-    sections.push("", "Evidence:", bulletList(row.evidence));
+    if (sections.length > 0) sections.push("");
+    sections.push("Evidence:", bulletList(row.evidence));
   }
 
-  sections.push("", "Issues identified:", bulletList(row.rawIssues));
+  if (sections.length > 0) sections.push("");
+  sections.push("Issues identified:", bulletList(row.rawIssues));
   sections.push("", "Suggested changes:", bulletList(row.rawSuggestions));
 
   if (options?.embedTools && options.embedTools.length > 0) {

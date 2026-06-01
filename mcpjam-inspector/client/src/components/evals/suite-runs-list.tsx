@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { ChevronRight } from "lucide-react";
+import { ClientChip } from "@/components/clients/client-chip";
 import { cn, getInitials } from "@/lib/utils";
 import {
   Avatar,
@@ -20,6 +21,10 @@ import {
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
+/** Shared column template: run label flexes; Acc/Dur/Time share equal width. */
+const RUNS_LIST_ROW_GRID =
+  "grid w-full grid-cols-[minmax(0,1.25fr)_repeat(3,minmax(4.5rem,1fr))_1rem] items-center gap-x-4";
+
 export interface SuiteRunsListProps {
   runs: EvalSuiteRun[];
   allIterations: EvalIteration[];
@@ -35,6 +40,7 @@ export interface SuiteRunsListProps {
    * truncated IDs instead. Pass the suite's `hostAttachments` to feed it.
    */
   hostNamesById?: Map<string, string | null>;
+  className?: string;
 }
 
 /**
@@ -52,6 +58,7 @@ export function SuiteRunsList({
   maxVisibleRuns,
   runsLoading = false,
   hostNamesById,
+  className,
 }: SuiteRunsListProps) {
   const isSdk = suiteSource === "sdk";
   const accuracyLabel = isSdk ? "Pass" : "Acc";
@@ -85,13 +92,23 @@ export function SuiteRunsList({
   const hiddenRunCount = sortedRuns.length - visibleRuns.length;
 
   return (
-    <div className="flex min-h-0 flex-col rounded-xl border bg-card text-card-foreground">
-      <div className="flex shrink-0 items-center gap-3 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground">
-        <div className="flex-1">Run</div>
-        <div className="w-16 shrink-0 text-right">{accuracyLabel}</div>
-        <div className="w-16 shrink-0 text-right">Dur</div>
-        <div className="w-28 shrink-0 truncate text-right">Time</div>
-        <span className="w-4 shrink-0" aria-hidden />
+    <div
+      className={cn(
+        "flex min-h-0 flex-col rounded-xl border bg-card text-card-foreground",
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          RUNS_LIST_ROW_GRID,
+          "shrink-0 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground",
+        )}
+      >
+        <div className="min-w-0 truncate">Run</div>
+        <div className="text-right">{accuracyLabel}</div>
+        <div className="text-right">Dur</div>
+        <div className="truncate text-right">Time</div>
+        <span aria-hidden />
       </div>
 
       <div className="max-h-[520px] divide-y overflow-y-auto">
@@ -162,23 +179,25 @@ export function SuiteRunsList({
                 <button
                   type="button"
                   onClick={() => onRunClick(run._id)}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                  className={cn(
+                    RUNS_LIST_ROW_GRID,
+                    "px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+                  )}
                   aria-label={`Open run ${formatRunId(run._id)}`}
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-xs font-medium">
                       Run {formatRunId(run._id)}
                     </span>
                     {run.namedHostId ? (
-                      <span
-                        className="shrink-0 truncate rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
-                        title={
-                          hostNamesById?.get(run.namedHostId) ?? run.namedHostId
+                      <ClientChip
+                        name={
+                          hostNamesById?.get(run.namedHostId) ??
+                          formatRunId(run.namedHostId)
                         }
-                      >
-                        {hostNamesById?.get(run.namedHostId) ??
-                          formatRunId(run.namedHostId)}
-                      </span>
+                        hostId={run.namedHostId}
+                        className="shrink-0 max-w-[140px] gap-1 border-primary/35 bg-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-none"
+                      />
                     ) : null}
                     {creator ? (
                       <Tooltip>
@@ -199,20 +218,20 @@ export function SuiteRunsList({
                       </Tooltip>
                     ) : null}
                   </div>
-                  <div className="w-16 shrink-0 text-right text-xs font-mono tabular-nums text-muted-foreground">
+                  <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
                     {passRate !== null ? `${passRate}%` : "—"}
                   </div>
-                  <div className="w-16 shrink-0 text-right text-xs font-mono tabular-nums text-muted-foreground">
+                  <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
                     {duration}
                   </div>
                   <div
-                    className="w-28 shrink-0 truncate text-right text-xs tabular-nums text-muted-foreground"
+                    className="truncate text-right text-xs tabular-nums text-muted-foreground"
                     title={timestampLabel}
                   >
                     {timestampLabel}
                   </div>
                   <ChevronRight
-                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                    className="h-3.5 w-3.5 text-muted-foreground"
                     aria-hidden
                   />
                 </button>

@@ -253,24 +253,10 @@ describe("buildFixPrompt", () => {
     toolName: "foo",
   };
 
-  it("renders tool row with bullets", () => {
+  it("renders issue + suggestion bullets", () => {
     const text = buildFixPrompt(baseRow);
-    expect(text).toContain("Category: tool description");
-    expect(text).toContain("Tool: foo");
     expect(text).toContain("- issue 1");
     expect(text).toContain("- do y");
-  });
-
-  it("renders workflow row with case attribution", () => {
-    const text = buildFixPrompt({
-      ...baseRow,
-      source: "workflow",
-      category: "workflow",
-      toolName: undefined,
-      affectedCaseKeys: ["c1", "c2"],
-    });
-    expect(text).toContain("Case: c1, c2");
-    expect(text).not.toContain("Tool: ");
   });
 
   it("does not emit '- undefined' when issues/suggestions are empty", () => {
@@ -284,7 +270,7 @@ describe("buildFixPrompt", () => {
   });
 });
 
-describe("buildFixPrompt patternSlug + embedTools", () => {
+describe("buildFixPrompt embedTools", () => {
   const baseRow: TriageRow = {
     id: "tool:foo",
     source: "tool",
@@ -297,23 +283,6 @@ describe("buildFixPrompt patternSlug + embedTools", () => {
     rawSuggestions: ["y"],
     toolName: "foo",
   };
-
-  it("emits pattern slug + arcade deep-link when patternSlug is set", () => {
-    const text = buildFixPrompt({
-      ...baseRow,
-      patternSlug: "tool-description",
-    });
-    expect(text).toContain("Pattern: tool-description");
-    expect(text).toContain(
-      "Reference: https://arcade.dev/patterns/tool-description",
-    );
-  });
-
-  it("omits pattern lines when patternSlug is absent", () => {
-    const text = buildFixPrompt(baseRow);
-    expect(text).not.toContain("Pattern: ");
-    expect(text).not.toContain("arcade.dev/patterns");
-  });
 
   it("embeds current tool description + inputSchema when embedTools is provided", () => {
     const text = buildFixPrompt(baseRow, {

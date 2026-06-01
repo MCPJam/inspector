@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getHostStyleOrDefault,
+  listHostStyles,
   resolveEffectiveHostStyle,
   type ChatUiOverride,
   type HostStyleFamily,
@@ -56,6 +57,26 @@ export function getChatboxHostLogo(
 ): string {
   return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi
     .logoSrc;
+}
+
+/** Match a saved host's display name to a built-in style logo when config is unavailable. */
+export function resolveHostLogoByDisplayName(
+  displayName: string,
+): string | null {
+  const needle = displayName.trim().toLowerCase().replace(/\s+/g, "");
+  if (!needle) return null;
+
+  for (const style of listHostStyles()) {
+    const id = style.id.toLowerCase();
+    const label = style.chatUi.label.toLowerCase().replace(/\s+/g, "");
+    const shortLabel = style.chatUi.shortLabel
+      .toLowerCase()
+      .replace(/\s+/g, "");
+    if (needle === id || needle === label || needle === shortLabel) {
+      return getChatboxHostLogo(style.id);
+    }
+  }
+  return null;
 }
 
 /**

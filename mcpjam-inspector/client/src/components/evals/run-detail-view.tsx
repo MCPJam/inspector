@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
@@ -7,37 +7,79 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { cn } from "@/lib/utils";
 import {
-  formatRelativeTime,
   formatRunId,
-  getIterationRecencyTimestamp,
 } from "./helpers";
-import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
 import {
-  computeIterationResult,
   computeIterationPassed,
 } from "./pass-criteria";
-import {
-  getIterationResultDisplayLabel,
-  iterationResultBadgeClassNames,
-} from "./iteration-result-presentation";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { AiTriageCard } from "./ai-triage-card";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowLeftRight, ArrowUpDown, ExternalLink } from "lucide-react";
+import { ArrowLeftRight, ArrowUpDown } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
 import {
   caseListCardClassName,
-  caseListDataRowClassName,
-  CaseListColumnHeaders,
 } from "./case-list-shared";
+import { RunCaseListWithSections } from "./run-case-list";
+import type { RunCaseGroup } from "./run-case-groups";
+import { groupRunIterationsByTestCase } from "./run-case-groups";
+import {
+  tokensChartDatumTotal,
+  type DurationChartDatum,
+  type TokensChartDatum,
+} from "./run-chart-data";
+import { RunDetailKpiStrip } from "./run-detail-kpis";
+import { ClientChip } from "@/components/clients/client-chip";
+import {
+  RunAccuracyHeroBand,
+  RunDetailMetricsCharts,
+  RunInsightRail,
+  shouldShowRunAccuracyHero,
+  type RunTrendPoint,
+} from "./run-insight-rail";
+import { runDetailMetaLabelClass } from "./run-detail-typography";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+
+/** 3:2 default — test cases vs insight rail (option C). */
+const RUN_DETAIL_CASES_PANEL_DEFAULT = 60;
+const RUN_DETAIL_CASES_PANEL_MIN = 35;
+const RUN_DETAIL_CASES_PANEL_MAX = 75;
+const RUN_DETAIL_INSIGHTS_PANEL_MIN = 25;
+const RUN_DETAIL_INSIGHTS_PANEL_MAX = 65;
+
+const LG_MEDIA_QUERY = "(min-width: 1024px)";
+
+function useLgUp(): boolean {
+  const [lgUp, setLgUp] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.matchMedia(LG_MEDIA_QUERY).matches;
+  });
+
+  useEffect(() => {
+    const mql = window.matchMedia(LG_MEDIA_QUERY);
+    const onChange = () => {
+      setLgUp(mql.matches);
+    };
+    mql.addEventListener("change", onChange);
+    setLgUp(mql.matches);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+
+  return lgUp;
+}
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -45,28 +87,18 @@ interface RunDetailViewProps {
   source?: "ui" | "sdk";
   selectedRunChartData: {
     donutData: Array<{ name: string; value: number; fill: string }>;
-    durationData: Array<{
-      name: string;
-      duration: number;
-      durationSeconds: number;
-    }>;
-    tokensData: Array<{
-      name: string;
-      tokens: number;
-    }>;
-    modelData: Array<{
-      model: string;
-      passRate: number;
-      passed: number;
-      failed: number;
-      total: number;
-    }>;
+    durationData: DurationChartDatum[];
+    tokensData: TokensChartDatum[];
   };
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
   serverNames?: string[];
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  /** When set, highlights the grouped case row for this test case. */
+  selectedTestCaseId?: string | null;
+  /** Opens the run-scoped test case detail page (all iterations). */
+  onSelectTestCase?: (group: RunCaseGroup) => void;
   hideCiMetadata?: boolean;
   /** When true, omit replay source line (shown in SuiteHeader instead). */
   hideReplayLineage?: boolean;
@@ -87,12 +119,20 @@ interface RunDetailViewProps {
   compareBaseRun?: EvalSuiteRun | null;
   onCompareWithRun?: (baseRunId: string) => void;
   /**
-   * `namedHostId` → host display name. When the run was triggered against
-   * a specific attached host (multi-host fan-out), the run header surfaces
-   * which host this run is for. Pass the suite's `hostAttachments` to feed
-   * it.
+   * `namedHostId` → client display name. When the run was triggered against
+   * a specific attached client (multi-client fan-out), the summary band
+   * surfaces which client this run is for. Pass the suite's `hostAttachments`
+   * map to feed it.
    */
   hostNamesById?: Map<string, string | null>;
+  /** Recent run pass rates for the accuracy sparkline in the insight rail. */
+  runTrendData?: RunTrendPoint[];
+  /**
+   * Navigate to another run on the accuracy hero's recent-run dot. Required for
+   * CI/commit-detail callers so the jump stays on `/ci-evals/...` instead of
+   * the default `buildEvalsPath` (`/evals/...`).
+   */
+  onSelectRun?: (runId: string) => void;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -108,228 +148,35 @@ function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
   }
 }
 
-/** Result column matching {@link TestCasesOverview} “Last run” (badge + relative time). */
-function iterationSuiteStyleResultSummary(iteration: EvalIteration) {
-  const computedResult = computeIterationResult(iteration);
-  const resultLabel = getIterationResultDisplayLabel(iteration);
-  const ts = getIterationRecencyTimestamp(iteration);
-  const relative = ts > 0 ? formatRelativeTime(ts) : null;
-
-  const status =
-    computedResult === "passed" || computedResult === "failed" ? (
-      <span
-        className={iterationResultBadgeClassNames(iteration)}
-        aria-label={`Result: ${resultLabel}`}
-      >
-        {resultLabel}
-      </span>
-    ) : (
-      <span className="text-xs font-medium text-muted-foreground">
-        {resultLabel}
-      </span>
-    );
-
-  return (
-    <>
-      {status}
-      {relative ? (
-        <span className="font-normal text-xs text-muted-foreground tabular-nums">
-          {" "}
-          · {relative}
-        </span>
-      ) : null}
-    </>
-  );
-}
-
-function IterationListItem({
-  iteration,
-  isSelected,
-  onSelect,
-  onEditTestCase,
-  alwaysShowEditIterationRows = false,
-}: {
-  iteration: EvalIteration;
-  isSelected: boolean;
-  onSelect: () => void;
-  /** When set, failed iterations with a testCaseId show an editor link. */
-  onEditTestCase?: (testCaseId: string) => void;
-  alwaysShowEditIterationRows?: boolean;
-}) {
-  const isPending =
-    iteration.status === "pending" || iteration.status === "running";
-
-  const testInfo = iteration.testCaseSnapshot;
-  const modelName = testInfo?.model || "—";
-
-  const computedResult = computeIterationResult(iteration);
-  const isFailed = computedResult === "failed";
-  const showEditLink =
-    Boolean(onEditTestCase && iteration.testCaseId) &&
-    (alwaysShowEditIterationRows || isFailed);
-
-  const editLabel = isFailed ? "Edit in Playground" : "Edit";
-
-  const caseTitle = testInfo?.title || "Iteration";
-  const resultLabel = getIterationResultDisplayLabel(iteration);
-  const iterationAriaLabel = testInfo?.isNegativeTest
-    ? `Negative test (expects the tool not to be called): ${caseTitle}, ${modelName}. View iteration details.`
-    : `View iteration details: ${caseTitle}, ${resultLabel}, ${modelName}`;
-
-  const rowTitle =
-    testInfo?.isNegativeTest === true
-      ? "Negative test — expects the tool NOT to be called"
-      : modelName && modelName !== "—"
-      ? `${caseTitle} — ${modelName}`
-      : caseTitle;
-
-  return (
-    <div
-      className={caseListDataRowClassName({
-        isSelected,
-        isDimmed: isPending,
-      })}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        title={rowTitle}
-        aria-label={iterationAriaLabel}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-      >
-        <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
-          {caseTitle}
-        </span>
-        <div className="flex max-w-[min(100%,20rem)] min-w-0 flex-1 items-center justify-end gap-2 text-right text-xs tabular-nums">
-          {iterationSuiteStyleResultSummary(iteration)}
-        </div>
-      </button>
-      {showEditLink && iteration.testCaseId ? (
-        <span className="inline-flex shrink-0">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0 text-primary"
-            title={editLabel}
-            aria-label={editLabel}
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditTestCase!(iteration.testCaseId!);
-            }}
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-          </Button>
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-const ITERATION_STAGGER_CAP = 20;
-
-const iterationListVariants: Variants = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.03, delayChildren: 0.05 } },
-};
-
-const iterationItemVariants: Variants = {
-  hidden: (i: number) =>
-    i < ITERATION_STAGGER_CAP ? { opacity: 0, x: -6 } : { opacity: 1, x: 0 },
-  visible: {
-    opacity: 1,
-    x: 0,
-    transition: { duration: 0.15, ease: [0.16, 1, 0.3, 1] },
-  },
-};
-
-function IterationListWithSections({
-  iterations,
-  sortBy,
-  selectedIterationId,
-  onSelectIteration,
-  onEditTestCase,
-  alwaysShowEditIterationRows = false,
-}: {
-  iterations: EvalIteration[];
-  sortBy: "model" | "test" | "result";
-  selectedIterationId: string | null;
-  onSelectIteration: (id: string) => void;
-  onEditTestCase?: (testCaseId: string) => void;
-  alwaysShowEditIterationRows?: boolean;
-}) {
-  const shouldReduceMotion = useReducedMotion();
-
-  const renderItems = (items: EvalIteration[]) => (
-    <motion.div
-      variants={shouldReduceMotion ? undefined : iterationListVariants}
-      initial={shouldReduceMotion ? false : "hidden"}
-      animate="visible"
-    >
-      <div className="divide-y divide-border/40">
-        {items.map((iteration, index) => (
-          <motion.div
-            key={iteration._id}
-            custom={index}
-            variants={shouldReduceMotion ? undefined : iterationItemVariants}
-          >
-            <IterationListItem
-              iteration={iteration}
-              isSelected={selectedIterationId === iteration._id}
-              onSelect={() => onSelectIteration(iteration._id)}
-              onEditTestCase={onEditTestCase}
-              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-            />
-          </motion.div>
-        ))}
-      </div>
-    </motion.div>
-  );
-
-  if (sortBy !== "result") {
-    return renderItems(iterations);
-  }
-
-  const failing = iterations.filter(
-    (i) => computeIterationResult(i) === "failed"
-  );
-  const passing = iterations.filter(
-    (i) => computeIterationResult(i) === "passed"
-  );
-  const other = iterations.filter((i) => {
-    const r = computeIterationResult(i);
-    return r !== "failed" && r !== "passed";
-  });
-
-  const ordered = [...failing, ...passing, ...other];
-
-  return renderItems(ordered);
-}
-
 /** Iteration list + sort (composed inside run detail when the list is not inlined). */
 export function RunIterationsSidebar({
   caseGroupsForSelectedRun,
   runDetailSortBy,
   onSortChange,
-  selectedIterationId,
-  onSelectIteration,
-  onEditTestCase,
+  selectedTestCaseId = null,
+  onSelectTestCase,
+  onEditTestCase: _onEditTestCase,
   runForOverview = null,
   runOverviewExtra = null,
   onOpenRunInsights,
   runInsightsSelected = false,
-  alwaysShowEditIterationRows = false,
+  alwaysShowEditIterationRows: _alwaysShowEditIterationRows = false,
   /**
    * When false, omit the “Overview” + pass rate row (main run detail already shows KPIs; list matches the suite “Cases” table + sort only).
    * CI run-detail sidebar keeps the default true for navigation back to run-level insights.
    */
   showRunOverviewNav = true,
+  showCaseCardHeader = false,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
-  selectedIterationId: string | null;
-  onSelectIteration: (id: string) => void;
+  selectedTestCaseId?: string | null;
+  onSelectTestCase?: (group: RunCaseGroup) => void;
+  /** @deprecated Iteration-level selection moved to the test case detail page. */
+  selectedIterationId?: string | null;
+  /** @deprecated Use onSelectTestCase to open the run-scoped case detail page. */
+  onSelectIteration?: (id: string) => void;
   onEditTestCase?: (testCaseId: string) => void;
   /** When set, shows run overview row above the iteration list (CI sidebar + inline run detail). */
   runForOverview?: EvalSuiteRun | null;
@@ -340,6 +187,8 @@ export function RunIterationsSidebar({
   runInsightsSelected?: boolean;
   alwaysShowEditIterationRows?: boolean;
   showRunOverviewNav?: boolean;
+  /** Card title above the grouped case table (playground run detail main column). */
+  showCaseCardHeader?: boolean;
 }) {
   const overviewStatsOverride = useMemo(() => {
     if (!runForOverview) return undefined;
@@ -371,6 +220,15 @@ export function RunIterationsSidebar({
       overviewStatsOverride
     );
   }, [runForOverview, overviewStatsOverride]);
+
+  const groupedCaseCount = useMemo(
+    () =>
+      groupRunIterationsByTestCase(
+        caseGroupsForSelectedRun,
+        runDetailSortBy,
+      ).length,
+    [caseGroupsForSelectedRun, runDetailSortBy],
+  );
 
   const sortHeaderControl = (
     <DropdownMenu>
@@ -437,29 +295,18 @@ export function RunIterationsSidebar({
             "min-h-0 min-w-0 flex-1 overflow-hidden"
           )}
         >
-          {caseGroupsForSelectedRun.length > 0 ? (
-            <CaseListColumnHeaders
-              firstColumnLabel="Case name"
-              secondColumnLabel="Last run"
-              headerEnd={sortHeaderControl}
-              trailingGutter={Boolean(onEditTestCase)}
-            />
-          ) : null}
           <div className="min-h-0 flex-1 overflow-y-auto bg-background">
-            {caseGroupsForSelectedRun.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                No test cases in this run yet.
-              </div>
-            ) : (
-              <IterationListWithSections
-                iterations={caseGroupsForSelectedRun}
-                sortBy={runDetailSortBy}
-                selectedIterationId={selectedIterationId}
-                onSelectIteration={onSelectIteration}
-                onEditTestCase={onEditTestCase}
-                alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-              />
-            )}
+            <RunCaseListWithSections
+              iterations={caseGroupsForSelectedRun}
+              sortBy={runDetailSortBy}
+              selectedTestCaseId={selectedTestCaseId}
+              onSelectTestCase={(group) => {
+                onSelectTestCase?.(group);
+              }}
+              caseCount={showCaseCardHeader ? groupedCaseCount : undefined}
+              headerEnd={sortHeaderControl}
+              trailingGutter={Boolean(_onEditTestCase)}
+            />
           </div>
         </div>
       </div>
@@ -477,6 +324,8 @@ export function RunDetailView({
   serverNames: _serverNames = [],
   selectedIterationId,
   onSelectIteration,
+  selectedTestCaseId = null,
+  onSelectTestCase,
   hideCiMetadata,
   hideReplayLineage,
   omitIterationList = false,
@@ -488,6 +337,8 @@ export function RunDetailView({
   compareBaseRun = null,
   onCompareWithRun,
   hostNamesById,
+  runTrendData = [],
+  onSelectRun,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -511,7 +362,6 @@ export function RunDetailView({
     unavailable: serverQualityUnavailable,
   } = useServerQuality(selectedRunDetails, { autoRequest: true });
 
-  const shouldReduceMotion = useReducedMotion();
   const runDashboardKpis = useMemo(
     () =>
       kpiPlacement === "body"
@@ -527,14 +377,9 @@ export function RunDetailView({
   const hasTokenData = useMemo(
     () =>
       selectedRunChartData.tokensData.length > 0 &&
-      selectedRunChartData.tokensData.some((d) => d.tokens > 0),
+      selectedRunChartData.tokensData.some((d) => tokensChartDatumTotal(d) > 0),
     [selectedRunChartData.tokensData]
   );
-
-  const hasRunBarCharts =
-    selectedRunChartData.durationData.length > 0 || hasTokenData;
-  const hasSecondaryBreakdown =
-    selectedRunChartData.modelData.length >= 2 || hasRunBarCharts;
 
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
@@ -551,175 +396,213 @@ export function RunDetailView({
       />
     ) : null;
 
-  const runInsightsBody = (
-    <div className="space-y-6">
-      {kpiPlacement === "body" && runDashboardKpis.length > 0 ? (
-        <div className="flex w-full min-w-0 flex-nowrap gap-3 sm:gap-4">
-          {runDashboardKpis.map((stat, index) => (
-            <motion.div
-              key={`${stat.label}-${index}`}
-              initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
-              animate={shouldReduceMotion ? undefined : { opacity: 1, y: 0 }}
-              transition={
-                shouldReduceMotion
-                  ? undefined
-                  : {
-                      duration: 0.2,
-                      delay: 0.04 * index,
-                      ease: [0.16, 1, 0.3, 1],
-                    }
-              }
-              className="flex min-w-0 flex-1 basis-0 flex-col rounded-lg border border-border/25 bg-muted/10 p-3 sm:p-4"
-            >
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
-                {stat.label}
-              </div>
-              <div
-                className={cn(
-                  "mt-2 text-2xl font-semibold leading-none tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
-                  stat.valueClass
-                )}
-              >
-                {stat.value}
-              </div>
-              {stat.detail ? (
-                <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground/70">
-                  {stat.detail}
-                </div>
-              ) : null}
-            </motion.div>
-          ))}
+  const metricLabel = source === "sdk" ? "Pass rate" : "Accuracy";
+
+  const showAccuracyHero = shouldShowRunAccuracyHero({
+    run: selectedRunDetails,
+    iterations: caseGroupsForSelectedRun,
+    runTrendData,
+  });
+
+  const badgeMetricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
+
+  const runClient = useMemo(() => {
+    const hostId = selectedRunDetails.namedHostId;
+    if (!hostId) return null;
+    const displayName =
+      hostNamesById?.get(hostId) ?? formatRunId(hostId);
+    return { hostId, displayName };
+  }, [selectedRunDetails.namedHostId, hostNamesById]);
+
+  const accuracyHero = showAccuracyHero ? (
+    <RunAccuracyHeroBand
+      run={selectedRunDetails}
+      iterations={caseGroupsForSelectedRun}
+      compareBaseRun={compareBaseRun}
+      runTrendData={runTrendData}
+      metricLabel={metricLabel}
+      badgeMetricLabel={badgeMetricLabel}
+      includeRunIdentity
+      hideReplayLineage={hideReplayLineage}
+      runClient={runClient}
+      onCompareWithRun={onCompareWithRun}
+      onSelectRun={(runId) => {
+        if (runId === selectedRunDetails._id) return;
+        if (onSelectRun) {
+          onSelectRun(runId);
+          return;
+        }
+        navigateApp(
+          buildEvalsPath({
+            type: "run-detail",
+            suiteId: selectedRunDetails.suiteId,
+            runId,
+          }),
+        );
+      }}
+      className="mb-4"
+    />
+  ) : null;
+
+  const runMetricsCharts = (
+    <RunDetailMetricsCharts
+      durationData={selectedRunChartData.durationData}
+      tokensData={selectedRunChartData.tokensData}
+      hasTokenData={hasTokenData}
+      className="mb-4"
+    />
+  );
+
+  const insightRail = (
+    <RunInsightRail triageCard={serverQualityTriage} />
+  );
+
+  const runMetadataBlock = (
+    <>
+      {!hideCiMetadata &&
+        (selectedRunDetails.ciMetadata?.branch ||
+          selectedRunDetails.ciMetadata?.commitSha ||
+          selectedRunDetails.ciMetadata?.runUrl) && (
+          <div className="mb-4">
+            <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
+          </div>
+        )}
+
+      {runClient && !showAccuracyHero ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className={runDetailMetaLabelClass}>Client</span>
+          <ClientChip
+            name={runClient.displayName}
+            hostId={runClient.hostId}
+          />
         </div>
       ) : null}
 
-      {serverQualityTriage}
+      {!hideReplayLineage && selectedRunDetails.replayedFromRunId ? (
+        <p
+          className="mb-4 text-xs text-muted-foreground"
+          title={selectedRunDetails.replayedFromRunId}
+        >
+          Replay of{" "}
+          <span className="font-mono text-foreground/90">
+            Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+          </span>
+        </p>
+      ) : null}
 
-      {hasSecondaryBreakdown ? (
-        <div className="space-y-3">
-          {selectedRunChartData.modelData.length >= 2 ? (
-            <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-border/25 bg-muted/10 px-3 py-3">
-              {selectedRunChartData.modelData.map((model) => (
-                <div
-                  key={model.model}
-                  className="inline-flex items-center gap-2 rounded-full border border-border/30 bg-background/80 px-2 py-1"
-                >
-                  <div
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{
-                      backgroundColor:
-                        model.passRate >= 80
-                          ? "hsl(142.1 76.2% 36.3%)"
-                          : model.passRate >= 50
-                          ? "hsl(45.4 93.4% 47.5%)"
-                          : "hsl(0 84.2% 60.2%)",
-                    }}
-                  />
-                  <span className="text-[11px] text-foreground">
-                    {model.model}
-                  </span>
-                  <span className="text-[11px] font-mono font-medium text-foreground">
-                    {model.passRate}%
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    ({model.passed}/{model.total})
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {hasRunBarCharts ? (
-            <RunMetricsBarCharts
-              durationData={selectedRunChartData.durationData}
-              tokensData={selectedRunChartData.tokensData}
-              hasTokenData={hasTokenData}
-            />
-          ) : null}
+      {/* When the accuracy band renders, the compare action lives in its
+          Recent runs section. This top-level button is only a fallback for
+          runs without enough data to show the band. */}
+      {compareBaseRun && onCompareWithRun && !showAccuracyHero ? (
+        <div className="mb-4 flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onCompareWithRun(compareBaseRun._id)}
+            className="h-8 text-xs"
+          >
+            <ArrowLeftRight className="mr-2 h-3.5 w-3.5" aria-hidden />
+            Compare to previous run
+          </Button>
         </div>
       ) : null}
+    </>
+  );
+
+  const bodyKpiStrip =
+    kpiPlacement === "body" && runDashboardKpis.length > 0 ? (
+      <div className="mb-4 shrink-0">
+        <RunDetailKpiStrip kpis={runDashboardKpis} />
+      </div>
+    ) : null;
+
+  const stackedInsightsBody = (
+    <div className="space-y-4">
+      {bodyKpiStrip}
+      {accuracyHero}
+      {runMetricsCharts}
+      {insightRail}
     </div>
+  );
+
+  const useTwoColumnLayout = !omitIterationList;
+  const lgUp = useLgUp();
+
+  const iterationsSidebar = (
+    <RunIterationsSidebar
+      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+      runDetailSortBy={runDetailSortBy}
+      onSortChange={onSortChange}
+      selectedTestCaseId={selectedTestCaseId}
+      onSelectTestCase={onSelectTestCase}
+      selectedIterationId={selectedIterationId}
+      onSelectIteration={onSelectIteration}
+      runForOverview={selectedRunDetails}
+      onEditTestCase={handleEditTestCase}
+      onOpenRunInsights={onOpenRunInsights}
+      runInsightsSelected={runInsightsSelected}
+      alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+      showRunOverviewNav={false}
+      showCaseCardHeader
+    />
   );
 
   return (
     <div
       className={cn(
-        "relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden",
-        omitIterationList ? "px-3 py-3" : "p-4"
+        "relative flex min-h-0 w-full min-w-0 flex-1 flex-col",
+        useTwoColumnLayout ? "overflow-hidden p-4" : "overflow-y-auto p-4",
+        omitIterationList && "px-3 py-3",
       )}
     >
-      {/* Run Header */}
-      <div className="shrink-0">
-        {!hideCiMetadata &&
-          (selectedRunDetails.ciMetadata?.branch ||
-            selectedRunDetails.ciMetadata?.commitSha ||
-            selectedRunDetails.ciMetadata?.runUrl) && (
-            <div className="mb-4">
-              <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
+      <div className="shrink-0">{runMetadataBlock}</div>
+
+      {useTwoColumnLayout ? (
+        <>
+          {bodyKpiStrip}
+          {accuracyHero}
+          {runMetricsCharts}
+          {lgUp ? (
+            <ResizablePanelGroup
+              direction="horizontal"
+              autoSaveId="evals-run-detail-cases-insights"
+              className="min-h-0 min-w-0 flex-1"
+            >
+              <ResizablePanel
+                defaultSize={RUN_DETAIL_CASES_PANEL_DEFAULT}
+                minSize={RUN_DETAIL_CASES_PANEL_MIN}
+                maxSize={RUN_DETAIL_CASES_PANEL_MAX}
+                className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+              >
+                {iterationsSidebar}
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel
+                defaultSize={100 - RUN_DETAIL_CASES_PANEL_DEFAULT}
+                minSize={RUN_DETAIL_INSIGHTS_PANEL_MIN}
+                maxSize={RUN_DETAIL_INSIGHTS_PANEL_MAX}
+                className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+              >
+                <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+                  {insightRail}
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          ) : (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
+              <div className="flex min-h-[240px] min-w-0 flex-col overflow-hidden">
+                {iterationsSidebar}
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {insightRail}
+              </div>
             </div>
           )}
-
-        {selectedRunDetails.namedHostId ? (
-          <p
-            className="mb-4 text-xs text-muted-foreground"
-            title={selectedRunDetails.namedHostId}
-          >
-            Host:{" "}
-            <span className="text-foreground/90">
-              {hostNamesById?.get(selectedRunDetails.namedHostId) ??
-                formatRunId(selectedRunDetails.namedHostId)}
-            </span>
-          </p>
-        ) : null}
-
-        {!hideReplayLineage && selectedRunDetails.replayedFromRunId ? (
-          <p
-            className="mb-4 text-xs text-muted-foreground"
-            title={selectedRunDetails.replayedFromRunId}
-          >
-            Replay of{" "}
-            <span className="font-mono text-foreground/90">
-              Run {formatRunId(selectedRunDetails.replayedFromRunId)}
-            </span>
-          </p>
-        ) : null}
-
-        {compareBaseRun && onCompareWithRun ? (
-          <div className="mb-4 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onCompareWithRun(compareBaseRun._id)}
-              className="h-8 text-xs"
-            >
-              <ArrowLeftRight className="mr-2 h-3.5 w-3.5" aria-hidden />
-              Compare to previous run
-            </Button>
-          </div>
-        ) : null}
-
-        {/* Run-level KPIs, narrative, and charts stay visible while drilling into an iteration (graphs no longer disappear). */}
-        <div className="shrink-0">{runInsightsBody}</div>
-      </div>
-
-      {/* Iteration list only (details open from row actions / navigation). List may live in a parent when omitIterationList. */}
-      {!omitIterationList ? (
-        <div className="mt-4 flex min-h-[240px] min-w-0 flex-1 flex-col overflow-hidden">
-          <RunIterationsSidebar
-            caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-            runDetailSortBy={runDetailSortBy}
-            onSortChange={onSortChange}
-            selectedIterationId={selectedIterationId}
-            onSelectIteration={onSelectIteration}
-            runForOverview={selectedRunDetails}
-            onEditTestCase={handleEditTestCase}
-            onOpenRunInsights={onOpenRunInsights}
-            runInsightsSelected={runInsightsSelected}
-            alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-            showRunOverviewNav={false}
-          />
-        </div>
-      ) : null}
+        </>
+      ) : (
+        <div className="shrink-0">{stackedInsightsBody}</div>
+      )}
     </div>
   );
 }

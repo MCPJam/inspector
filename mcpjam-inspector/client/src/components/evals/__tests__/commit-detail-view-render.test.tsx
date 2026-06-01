@@ -105,7 +105,8 @@ describe("CommitDetailView", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /Run run-1/ })).toBeVisible();
+    // The run header is consolidated into RunDetailView's accuracy hero (mocked
+    // here), so CommitDetailView no longer renders a standalone "Run …" heading.
     expect(screen.getByTestId("run-detail-view")).toBeVisible();
     expect(screen.queryByText(/Suites ·/)).not.toBeInTheDocument();
     expect(screen.queryByText("Commit insights")).not.toBeInTheDocument();

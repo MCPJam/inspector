@@ -14,6 +14,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildIterationMetadata } from "./evals/iteration-metadata";
+import { buildIterationUsageMetadata } from "./evals/iteration-usage-metadata";
 import {
   applyVisibilityPolicyAndCountSignals,
   buildHostIterationMetadata,
@@ -1097,12 +1098,13 @@ async function finishIterationDirectly(
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
-      // Sanitize like the recorder path: metadata now carries nested
-      // predicate rows whose authored args may contain $-prefixed keys
-      // Convex rejects at the arg boundary.
-      metadata: params.metadata
-        ? sanitizeForConvexTransport(params.metadata)
-        : params.metadata,
+      // Merge user-provided metadata with token usage breakdown, then
+      // sanitize: metadata can carry nested predicate rows whose authored
+      // args may contain $-prefixed keys Convex rejects at the boundary.
+      metadata: sanitizeForConvexTransport({
+        ...(params.metadata ?? {}),
+        ...buildIterationUsageMetadata(params.usage),
+      }),
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

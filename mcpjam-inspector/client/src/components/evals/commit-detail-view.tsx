@@ -18,6 +18,7 @@ import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { useRunDetailData } from "./use-suite-data";
 import { RunDetailView } from "./run-detail-view";
+import { shouldShowRunAccuracyHero } from "./run-insight-rail";
 
 interface CommitDetailViewProps {
   commitGroup: CommitGroup;
@@ -238,21 +239,29 @@ function CommitSuiteRunDetail({
 
   const metricLabel = run.source === "sdk" ? "Pass Rate" : "Accuracy";
 
+  const consolidateRunHeaderInHero = shouldShowRunAccuracyHero({
+    run,
+    iterations: caseGroupsForSelectedRun,
+    runTrendData: [],
+  });
+
   return (
     <>
-      <div className="flex shrink-0 flex-col gap-1 px-4 pt-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Run {formatRunId(run._id)}
-          </h2>
-          <PassCriteriaBadge
-            run={run}
-            variant="compact"
-            metricLabel={metricLabel}
-          />
+      {!consolidateRunHeaderInHero ? (
+        <div className="flex shrink-0 flex-col gap-1 px-4 pt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold tracking-tight">
+              Run {formatRunId(run._id)}
+            </h2>
+            <PassCriteriaBadge
+              run={run}
+              variant="compact"
+              metricLabel={metricLabel}
+            />
+          </div>
+          <RunHeaderCompactStats run={run} />
         </div>
-        <RunHeaderCompactStats run={run} />
-      </div>
+      ) : null}
       <RunDetailView
         selectedRunDetails={run}
         caseGroupsForSelectedRun={caseGroupsForSelectedRun}
@@ -263,6 +272,15 @@ function CommitSuiteRunDetail({
         serverNames={run.configSnapshot?.environment?.servers ?? []}
         selectedIterationId={selectedIterationId}
         onSelectIteration={onSelectIteration}
+        onSelectRun={(runId) =>
+          navigateApp(
+            buildCiEvalsPath({
+              type: "run-detail",
+              suiteId: run.suiteId,
+              runId,
+            }),
+          )
+        }
         hideCiMetadata
       />
     </>

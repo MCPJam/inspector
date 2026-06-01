@@ -1,8 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import { Progress } from "@mcpjam/design-system/progress";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
@@ -13,6 +12,7 @@ import {
   unifyTriageRows,
   type TriageRow,
 } from "./ai-triage-helpers";
+import { runDetailSectionLabelClass } from "./run-detail-typography";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
 export interface AiTriageCardProps {
@@ -28,6 +28,10 @@ export interface AiTriageCardProps {
 }
 
 const TOP_N = 3;
+
+const COPY_FIX_PROMPT_LABEL = "Copy fix prompt";
+const copyTopFixPromptsLabel = (count: number) =>
+  `Copy top ${count} fix prompts`;
 
 async function copyWithToast(text: string, successLabel: string) {
   const ok = await copyToClipboard(text);
@@ -48,7 +52,7 @@ function CategoryChip({ row }: { row: TriageRow }) {
 
 function TriageRowItem({ row }: { row: TriageRow }) {
   return (
-    <li className="flex items-start gap-3 border-t border-border/40 px-3 py-2.5 first:border-t-0">
+    <li className="flex items-start gap-3 border-t border-border/40 px-3 py-2.5 pl-3.5 transition-colors first:border-t-0 hover:bg-primary/[0.03]">
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-foreground">
           {row.title}
@@ -63,12 +67,14 @@ function TriageRowItem({ row }: { row: TriageRow }) {
           variant="outline"
           size="sm"
           className="h-7 gap-1 text-xs"
+          title={`Copy a fix prompt for your coding agent (${row.title})`}
+          aria-label={`${COPY_FIX_PROMPT_LABEL}: ${row.title}`}
           onClick={() =>
-            copyWithToast(buildFixPrompt(row), "Fix prompt copied")
+            copyWithToast(buildFixPrompt(row), "Fix prompt copied — paste into your agent")
           }
         >
-          <Copy className="h-3 w-3" />
-          Copy
+          <Copy className="h-3 w-3" aria-hidden />
+          {COPY_FIX_PROMPT_LABEL}
         </Button>
       </div>
     </li>
@@ -122,6 +128,14 @@ export function AiTriageCard({
     (serverQuality.toolInsights?.length ?? 0) === 0 &&
     (serverQuality.workflowInsights?.length ?? 0) === 0;
   const topRows = rows.slice(0, TOP_N);
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
+
+  useEffect(() => {
+    setShowAllSuggestions(false);
+  }, [run._id, serverQuality?.generatedAt]);
+
+  const visibleRows = showAllSuggestions ? rows : topRows;
+  const hasMoreSuggestions = rows.length > TOP_N;
 
   const headerSubtitle = (() => {
     if (pending) return "Analyzing…";
@@ -129,21 +143,32 @@ export function AiTriageCard({
     if (!serverQuality && requested) return "Requesting analysis…";
     if (!serverQuality) return "Waiting for analysis…";
     if (!hasRows) return noInsights ? "Summary only" : "All clean";
+    if (rows.length > TOP_N) {
+      return `Top ${TOP_N} of ${rows.length} suggested fix${rows.length === 1 ? "" : "es"}`;
+    }
     return `${rows.length} suggested fix${rows.length === 1 ? "" : "es"}`;
   })();
 
   return (
     <section
       className={cn(
-        "rounded-lg border border-border bg-card text-card-foreground",
+        "relative rounded-xl border text-card-foreground shadow-sm",
+        "border-primary/20 bg-gradient-to-br from-primary/[0.07] via-card to-card",
+        "ring-1 ring-inset ring-primary/10",
       )}
     >
-      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm font-medium text-foreground">Triage</span>
-          <span className="truncate text-sm text-muted-foreground">
+      <div
+        className="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-primary/50"
+        aria-hidden
+      />
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-primary/10 bg-primary/[0.04] px-3 py-2.5 pl-3.5">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold tracking-tight text-foreground sm:text-lg">
+            AI Insights
+          </h2>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {headerSubtitle}
-          </span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {error || failedGeneration ? (
@@ -162,51 +187,71 @@ export function AiTriageCard({
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 gap-1 text-xs"
+            className="h-7 shrink-0 gap-1 text-xs"
             disabled={!hasRows || pending}
+            title={`Copy the top ${topRows.length} fix prompt${topRows.length === 1 ? "" : "s"} to paste into your coding agent`}
+            aria-label={copyTopFixPromptsLabel(topRows.length)}
             onClick={() =>
               copyWithToast(
                 buildTopNPrompt(topRows),
-                `Copied top ${topRows.length} prompt${topRows.length === 1 ? "" : "s"}`,
+                `Copied ${topRows.length} fix prompt${topRows.length === 1 ? "" : "s"} — paste into your agent`,
               )
             }
           >
-            <Copy className="h-3 w-3" />
-            Copy top {TOP_N}
+            <Copy className="h-3 w-3" aria-hidden />
+            {copyTopFixPromptsLabel(topRows.length)}
           </Button>
         </div>
       </header>
 
-      <div className="border-t border-border/50 px-3 py-3">
-        <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
-          <span>{metricLabel}</span>
+      <div className="border-t border-border/40 px-3 py-3 pl-3.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className={runDetailSectionLabelClass}>{metricLabel}</span>
           <span className="tabular-nums">
             {passFailStats.total === 0
               ? "No cases recorded yet"
               : `${passFailStats.passed} passed · ${passFailStats.failed} failed`}
           </span>
         </div>
-        <div className="mt-1.5 flex items-center gap-3">
-          <span className="text-lg font-semibold tabular-nums">
+        <div className="mt-1.5">
+          <span className="font-metric text-xl font-semibold tabular-nums leading-none">
             {passFailStats.total === 0 ? (
               <span className="text-muted-foreground">—</span>
             ) : (
               <>
                 {passRate}
-                <span className="text-xs font-normal text-muted-foreground">
+                <span className="text-sm font-medium text-muted-foreground">
                   %
                 </span>
               </>
             )}
           </span>
-          <Progress
-            value={passFailStats.total === 0 ? 0 : passRate}
-            className="h-2 flex-1"
-          />
+        </div>
+        <div
+          className="mt-2.5 flex h-2.5 w-full overflow-hidden rounded-full bg-muted"
+          role="img"
+          aria-label={
+            passFailStats.total === 0
+              ? `${metricLabel} not yet measured`
+              : `${metricLabel} ${passRate}%`
+          }
+        >
+          {passFailStats.total === 0 ? null : (
+            <div
+              className="h-full bg-primary"
+              style={{ width: `${passRate}%` }}
+              title={`${metricLabel}: ${passRate}%`}
+            />
+          )}
         </div>
       </div>
 
-      <div className="border-t border-border/50">
+      <div
+        className={cn(
+          "border-t border-border/40 bg-card/40",
+          hasRows && "max-h-[min(50vh,24rem)] overflow-y-auto overscroll-y-contain",
+        )}
+      >
         {pending ? (
           <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -241,11 +286,25 @@ export function AiTriageCard({
             </div>
           )
         ) : (
-          <ul className="divide-y divide-border/40">
-            {rows.map((row) => (
-              <TriageRowItem key={row.id} row={row} />
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-border/40">
+              {visibleRows.map((row) => (
+                <TriageRowItem key={row.id} row={row} />
+              ))}
+            </ul>
+            {hasMoreSuggestions ? (
+              <button
+                type="button"
+                className="w-full border-t border-border/40 py-2 text-xs font-medium text-primary transition-colors hover:bg-muted/50"
+                aria-expanded={showAllSuggestions}
+                onClick={() => setShowAllSuggestions((v) => !v)}
+              >
+                {showAllSuggestions
+                  ? "Show less"
+                  : `Show ${rows.length - TOP_N} more`}
+              </button>
+            ) : null}
+          </>
         )}
       </div>
     </section>
