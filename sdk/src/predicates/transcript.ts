@@ -28,6 +28,11 @@ export function extractFinalAssistantMessage(
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (!isRecord(msg) || msg.role !== "assistant") continue;
+    // The chronologically last assistant message *is* the final message. If it
+    // carries no text (tool-call-only or whitespace), there is no final
+    // assistant text — return undefined rather than falling through to an
+    // earlier turn, which would make `responseContains` / `responseMatches` /
+    // `finalAssistantMessageNonEmpty` judge the wrong turn.
     const content = msg.content;
     if (typeof content === "string") {
       return content.trim() ? content : undefined;
@@ -38,8 +43,9 @@ export function extractFinalAssistantMessage(
           isRecord(part) && part.type === "text" ? String(part.text ?? "") : "",
         )
         .join("");
-      if (text.trim()) return text;
+      return text.trim() ? text : undefined;
     }
+    return undefined;
   }
   return undefined;
 }

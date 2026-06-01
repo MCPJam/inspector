@@ -86,6 +86,25 @@ describe("buildIterationTranscript", () => {
       { kind: "content-error", toolName: "book" },
     ]);
   });
+
+  it("treats a tool-call-only final turn as no final message (no fall-through to an earlier turn)", () => {
+    const transcript = buildIterationTranscript({
+      trace: {
+        messages: [
+          { role: "assistant", content: [{ type: "text", text: "let me check" }] },
+          {
+            role: "tool",
+            content: [
+              { type: "tool-result", toolName: "search", output: { type: "json", value: {} } },
+            ],
+          },
+          { role: "assistant", content: [{ type: "tool-call", toolName: "search", input: "{}" }] },
+        ],
+      },
+      toolCalls: [{ toolName: "search", arguments: {} }],
+    });
+    expect(transcript.finalAssistantMessage).toBeUndefined();
+  });
 });
 
 describe("finalizePassedForEval — predicate AND-combine", () => {
