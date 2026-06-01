@@ -136,6 +136,7 @@ When you click on a test case:
   - Run ID
 - **Expanded Details** - Click an iteration to see:
   - Expected vs Actual tool calls
+  - **Predicate Gate** - When `successPredicates` are configured on a test case, a Predicate Gate section lists each predicate with its PASS/FAIL verdict, a one-line summary of what was asserted (e.g. `responseContains needle "refund issued"`, `tokens < 500`), and the evaluator's reason string explaining why the gate decided as it did. The section is hidden when no predicates are configured.
   - Full trace showing the conversation, model reasoning, and tool execution details
 
 ## Debugging Tests
