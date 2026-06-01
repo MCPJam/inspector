@@ -159,7 +159,13 @@ export type EvalIteration = {
   errorDetails?: string;
   resultSource?: "reported" | "derived";
   externalIterationId?: string;
-  metadata?: Record<string, string | number | boolean>;
+  // Widened to `unknown` because the backend metadata column now round-trips
+  // non-scalar entries — specifically `predicates: PredicateResult[]` from the
+  // state-based eval gate. Existing readers (turnCount, firstFailedTurnIndex,
+  // compareRunId, mismatchCount…) already runtime-check via `typeof`, so the
+  // wider type is backwards-compatible. Per-key parsers live next to their
+  // call sites; see `predicates-list.tsx` for the predicates parser.
+  metadata?: Record<string, unknown>;
   _creationTime?: number; // Convex auto field
 };
 

@@ -3,6 +3,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+import {
+  PredicatesList,
+  parseIterationPredicates,
+} from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
 import {
   MessageSquare,
@@ -784,6 +788,19 @@ export function IterationDetails({
       )
     ) : null;
 
+  const predicates = useMemo(
+    () => parseIterationPredicates(iteration.metadata),
+    [iteration.metadata],
+  );
+  const predicatesSection = predicates ? (
+    <div className="space-y-2" data-testid="iteration-predicates-section">
+      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+        <div className="text-xs font-semibold">Predicate Gate</div>
+      </div>
+      <PredicatesList predicates={predicates} />
+    </div>
+  ) : null;
+
   const traceSection = iteration.blob ? (
     <div
       className={cn(
@@ -961,10 +978,12 @@ export function IterationDetails({
         <>
           {traceSection}
           {toolCallsSection}
+          {predicatesSection}
         </>
       ) : (
         <>
           {toolCallsSection}
+          {predicatesSection}
           {traceSection}
         </>
       )}
