@@ -700,6 +700,107 @@ describe("useEvalHandlers", () => {
       const requestBody = JSON.parse(callArgs[1].body);
       expect(requestBody.runId).toBe("run-clicked");
     });
+
+    it("includes a shared runGroupId on every POST when the rerun fans out to multiple hosts", async () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(["server-a", "server-b"]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-multi-host",
+          name: "Multi-host suite",
+          environment: { servers: ["server-a", "server-b"] },
+          hostAttachments: [
+            {
+              namedHostId: "host-mcpjam",
+              hostName: "MCPJam",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-a"],
+            },
+            {
+              namedHostId: "host-claude",
+              hostName: "Claude",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-b"],
+            },
+          ],
+        } as any);
+      });
+
+      // One POST per host attachment.
+      const evalRunCalls = mockAuthFetch.mock.calls.filter(
+        (call) => call[0] === "/api/mcp/evals/run",
+      );
+      expect(evalRunCalls).toHaveLength(2);
+
+      const bodies = evalRunCalls.map((call) =>
+        JSON.parse(call[1].body as string),
+      );
+      const groupIds = bodies.map((b) => b.runGroupId);
+
+      // Each body carries the same non-empty runGroupId.
+      expect(groupIds[0]).toBeTypeOf("string");
+      expect(groupIds[0]).not.toEqual("");
+      expect(groupIds[0]).toEqual(groupIds[1]);
+
+      // namedHostId is still wired through per host (sanity check that the
+      // fan-out itself works — group id rides on top of it, not replacing).
+      const hostIds = bodies.map((b) => b.namedHostId).sort();
+      expect(hostIds).toEqual(["host-claude", "host-mcpjam"]);
+    });
+
+    it("omits runGroupId on a single-host rerun so the row stays ungrouped", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-single",
+          name: "Single host suite",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      const callArgs = mockAuthFetch.mock.calls[0];
+      const requestBody = JSON.parse(callArgs[1].body);
+      expect(requestBody.runGroupId).toBeUndefined();
+    });
+
+    it("omits runGroupId on a single-attachment rerun (one host attached)", async () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(["server-a"]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-one-attachment",
+          name: "Single attachment suite",
+          environment: { servers: ["server-a"] },
+          hostAttachments: [
+            {
+              namedHostId: "host-mcpjam",
+              hostName: "MCPJam",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-a"],
+            },
+          ],
+        } as any);
+      });
+
+      const evalRunCalls = mockAuthFetch.mock.calls.filter(
+        (call) => call[0] === "/api/mcp/evals/run",
+      );
+      expect(evalRunCalls).toHaveLength(1);
+      const body = JSON.parse(evalRunCalls[0][1].body as string);
+      expect(body.runGroupId).toBeUndefined();
+      expect(body.namedHostId).toBe("host-mcpjam");
+    });
   });
 
   describe("handleRunTestCase", () => {

@@ -142,6 +142,17 @@ export const RunEvalsRequestSchema = z.object({
    * so connecting new servers cannot silently contaminate existing suites.
    */
   refreshSnapshot: z.boolean().optional(),
+  /**
+   * Client-generated UUID set on every per-host POST when a multi-host
+   * eval launch fans out (N > 1). Threaded into Convex `startTestSuiteRun`
+   * so the resulting `testSuiteRun` rows share a group id, which the UI
+   * uses to collapse them into a single parent row. Absent on single-host
+   * launches and on legacy runs — those render ungrouped.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  runGroupId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -458,6 +469,7 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
     refreshSnapshot,
+    runGroupId,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -731,6 +743,7 @@ export async function runEvalsWithManager(
     iterationOverride,
     matchOptionsOverride,
     namedHostId,
+    runGroupId,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
