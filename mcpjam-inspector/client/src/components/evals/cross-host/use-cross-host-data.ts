@@ -32,21 +32,6 @@ export type CrossHostData = {
   hasHostAttachments: boolean;
 };
 
-function readMetaNumber(
-  meta: Record<string, unknown> | undefined,
-  key: string,
-): number | null {
-  const v = meta?.[key];
-  return typeof v === "number" ? v : null;
-}
-
-function readMetaBool(
-  meta: Record<string, unknown> | undefined,
-  key: string,
-): boolean {
-  return meta?.[key] === true;
-}
-
 /**
  * Median of a numeric array. Returns null on empty input. Sorts a copy —
  * does not mutate the caller's array. Even-length lists use the mean of
