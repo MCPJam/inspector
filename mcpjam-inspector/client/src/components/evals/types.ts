@@ -314,7 +314,7 @@ export type EvalSuiteRun = {
       rating: "good" | "needs_improvement" | "poor";
       issues: string[];
       suggestions: string[];
-      /** Arcade pattern slug the violation maps to. Allowlist-validated server-side. */
+      /** Pattern slug the violation maps to. Allowlist-validated server-side. */
       patternSlug?: string;
       /** PR-B auditability metadata (optional; populated by the judge). */
       evidence?: string[];
@@ -333,7 +333,7 @@ export type EvalSuiteRun = {
       efficiency: "optimal" | "acceptable" | "inefficient" | "excessive";
       issues: string[];
       suggestions: string[];
-      /** Arcade pattern slug the violation maps to. Allowlist-validated server-side. */
+      /** Pattern slug the violation maps to. Allowlist-validated server-side. */
       patternSlug?: string;
       /** PR-B auditability metadata (optional; populated by the judge). */
       evidence?: string[];
