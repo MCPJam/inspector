@@ -19,8 +19,8 @@ source of truth; Convex is the execution log.
 
 ## Case shape
 
-A case is a [`CorpusCase`](../../shared/corpus/types.ts), validated by
-[`validateCorpusCase`](../../shared/corpus/validate.ts):
+A case is a [`CorpusCase`](../../../sdk/src/corpus/types.ts), validated by
+[`validateCorpusCase`](../../../sdk/src/corpus/validate.ts):
 
 ```jsonc
 {
@@ -48,7 +48,7 @@ is harness-agnostic.
 ### Predicates
 
 The deterministic gate. A case passes iff **every** predicate passes. The
-library (see [`shared/predicates/types.ts`](../../shared/predicates/types.ts)):
+library (see [`sdk/src/predicates/types.ts`](../../../sdk/src/predicates/types.ts)):
 
 | `type` | passes when |
 | --- | --- |

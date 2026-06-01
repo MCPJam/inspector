@@ -224,6 +224,21 @@ export type EvalIterationOutcome = {
   iterationId?: string;
 };
 
+/**
+ * True when the provider/backend actually reported token usage. `accumulatedUsage`
+ * is initialized to a zero object, so a zero total is indistinguishable from
+ * "unmetered" — passing that into the transcript would let `tokenBudgetUnder`
+ * pass on runs with no usage data. Only forward usage when something was
+ * reported so the predicate can fail closed otherwise.
+ */
+function hasReportedUsage(usage: UsageTotals): boolean {
+  return (
+    (usage.totalTokens ?? 0) > 0 ||
+    (usage.inputTokens ?? 0) > 0 ||
+    (usage.outputTokens ?? 0) > 0
+  );
+}
+
 export type RunEvalSuiteWithAiSdkResult = {
   /** Only set when `runId === null` (quick run); one entry per (test × run index) in suite order. */
   quickRunIterationOutcomes?: EvalIterationOutcome[];
@@ -1642,7 +1657,9 @@ const runIterationWithAiSdk = async ({
           buildIterationTranscript({
             trace: traceForGate,
             toolCalls: evaluation.toolsCalled,
-            usage: accumulatedUsage,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
           }),
           test.successPredicates,
         )
@@ -1653,6 +1670,10 @@ const runIterationWithAiSdk = async ({
       failOnToolError,
       predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usage: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -2328,7 +2349,9 @@ const runIterationViaBackend = async ({
         buildIterationTranscript({
           trace: traceForGate,
           toolCalls: evaluation.toolsCalled,
-          usage: accumulatedUsage,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
         }),
         test.successPredicates,
       )
@@ -2340,6 +2363,10 @@ const runIterationViaBackend = async ({
     failOnToolError,
     predicateResults,
   });
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
@@ -3249,7 +3276,9 @@ const streamIterationWithAiSdk = async ({
           buildIterationTranscript({
             trace: traceForGate,
             toolCalls: evaluation.toolsCalled,
-            usage: accumulatedUsage,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
           }),
           test.successPredicates,
         )
@@ -3260,6 +3289,10 @@ const streamIterationWithAiSdk = async ({
       failOnToolError,
       predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usageFinal: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -4193,7 +4226,9 @@ const streamIterationViaBackend = async ({
         buildIterationTranscript({
           trace: traceForGate,
           toolCalls: evaluation.toolsCalled,
-          usage: accumulatedUsage,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
         }),
         test.successPredicates,
       )
@@ -4205,6 +4240,10 @@ const streamIterationViaBackend = async ({
     failOnToolError,
     predicateResults,
   });
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,

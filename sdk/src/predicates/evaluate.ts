@@ -27,6 +27,10 @@ const MAX_ERROR_MSG_CHARS = 200;
 const MAX_ITEMS_SHOWN = 3;
 const MAX_REASON_CHARS = 600;
 const REDACTED = "«redacted»";
+// Defense-in-depth cap on the text a `responseMatches` regex runs over, so an
+// authored/pathological pattern cannot pin the runner via catastrophic
+// backtracking on a huge final message.
+const MAX_REGEX_INPUT_CHARS = 100_000;
 
 /** Keys whose values are scrubbed before a tool-arg blob is rendered. */
 const SENSITIVE_KEY =
@@ -109,6 +113,14 @@ export function evaluatePredicate(
   switch (predicate.type) {
     case "toolCalledWith": {
       const minCount = predicate.minCount ?? 1;
+      // A malformed minCount (0, negative, fractional) would otherwise disable
+      // the gate (`>= 0` is always true). Fail closed instead.
+      if (!Number.isInteger(minCount) || minCount < 1) {
+        return fail(
+          predicate,
+          `invalid minCount ${String(predicate.minCount)}; expected a positive integer ≥ 1`,
+        );
+      }
       const calls = callsTo(transcript, predicate.toolName);
       const matching = calls.filter((c) =>
         argMatch(predicate.args, c.arguments ?? {}),
@@ -192,7 +204,11 @@ export function evaluatePredicate(
           }`,
         );
       }
-      return regex.test(message)
+      const input =
+        message.length > MAX_REGEX_INPUT_CHARS
+          ? message.slice(0, MAX_REGEX_INPUT_CHARS)
+          : message;
+      return regex.test(input)
         ? pass(predicate, `final assistant message matches /${predicate.pattern}/`)
         : fail(
             predicate,

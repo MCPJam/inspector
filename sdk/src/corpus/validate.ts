@@ -63,6 +63,9 @@ export const predicateSchema = z.discriminatedUnion("type", [
       pattern: z
         .string()
         .min(1)
+        // Bound pattern length as a cheap guard against pathological/untrusted
+        // regexes (complements the runtime input cap in evaluate.ts).
+        .max(1000)
         .refine(
           (s) => {
             try {
@@ -87,7 +90,7 @@ const privacyReviewSchema = z
   .object({
     reviewed: z.boolean(),
     reviewedBy: z.string().optional(),
-    reviewedAt: z.string().optional(),
+    reviewedAt: z.iso.datetime().optional(),
     notes: z.string().optional(),
   })
   .strict();
@@ -97,7 +100,7 @@ const traceProvenanceSchema = z
     source: z.literal("trace"),
     draftingModel: z.string().min(1),
     reviewedBy: z.string().optional(),
-    reviewedAt: z.string().optional(),
+    reviewedAt: z.iso.datetime().optional(),
     traceId: z.string().min(1),
     chatSessionId: z.string().min(1),
     promptIndex: z.number().int().nonnegative(),
@@ -115,7 +118,7 @@ const toolbenchProvenanceSchema = z
     source: z.literal("toolbench"),
     draftingModel: z.string().min(1),
     reviewedBy: z.string().optional(),
-    reviewedAt: z.string().optional(),
+    reviewedAt: z.iso.datetime().optional(),
     toolbenchSnapshotKey: z.string().min(1),
     toolbenchId: z.string().min(1),
     originalIssueIds: z.array(z.string().min(1)).min(1),

@@ -69,6 +69,18 @@ describe("evaluatePredicate — table driven", () => {
       reasonIncludes: ["≥2×"],
     },
     {
+      name: "toolCalledWith: minCount 0 is rejected, not treated as a disabled gate",
+      transcript: transcript({ toolCalls: [] }),
+      predicate: {
+        type: "toolCalledWith",
+        toolName: "search",
+        args: { args: {} },
+        minCount: 0,
+      },
+      passed: false,
+      reasonIncludes: ["invalid minCount"],
+    },
+    {
       name: "toolCalledWith: minCount satisfied by repeated calls (pass)",
       transcript: transcript({
         toolCalls: [
