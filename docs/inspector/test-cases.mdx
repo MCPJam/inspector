@@ -27,8 +27,8 @@ To start testing your MCP server:
 3. **Create tests** - Either:
    - Click the plus icon to manually create a test case and configure the scenario, user prompt, expected tools, and expected output
    - Click the magic wand icon to auto-generate tests from your tools
-4. **Configure models** - Click Results & Runs in the sidebar, then use the Models dropdown to select which models to test against
-5. **Run Tests** - Click Run to execute all test cases, or run individual tests from the test case view
+4. **Configure models** - Open a test case and set the model(s) directly on the case. For a compare run across multiple models, add them to the case's model list and click **Run compare**
+5. **Run Tests** - Click Run to execute a single-model test, or Run compare to run across all models configured on the case
 
 <Info>
   When using auto-generate, Claude Haiku creates realistic test scenarios from your tool definitions, including both positive cases (tools that should be called) and negative cases (tools that should NOT be called).
