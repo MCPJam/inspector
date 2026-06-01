@@ -388,7 +388,7 @@ function OrganizationPage({
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
-      : billingUiEnabled && section === "billing"
+      : section === "billing"
       ? "billing"
       : "overview";
   const memberInviteGate = resolveBillingGateState({
@@ -995,21 +995,19 @@ function OrganizationPage({
             >
               Models
             </button>
-            {billingUiEnabled ? (
-              <button
-                type="button"
-                onClick={() => navigateToSection("billing")}
-                aria-current={activeSection === "billing" ? "page" : undefined}
-                className={cn(
-                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                  activeSection === "billing"
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                Billing
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => navigateToSection("billing")}
+              aria-current={activeSection === "billing" ? "page" : undefined}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                activeSection === "billing"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Billing
+            </button>
           </nav>
         </Card>
 
@@ -1022,6 +1020,7 @@ function OrganizationPage({
           <>
             <OrganizationBillingSection
               organizationId={organization._id}
+              showPlanBilling={billingUiEnabled}
               billingStatus={billingStatus}
               organizationName={organization.name}
               canManageCredits={canEdit || organization.isCreator === true}

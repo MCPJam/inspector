@@ -6,7 +6,7 @@ import {
   ExternalLink,
   Undo2,
 } from "lucide-react";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -54,11 +54,6 @@ export function PaymentsHistorySection({
   organizationId?: string | null;
   canViewHistory?: boolean;
 }) {
-  // Hooks must be called unconditionally before any early-return — flag check
-  // happens after. PostHog's `useFeatureFlagEnabled` can return `undefined`
-  // during bootstrap; treat anything other than `true` as off so we don't
-  // flash content before the flag resolves.
-  const flagEnabled = useFeatureFlagEnabled("billing-entitlements-ui");
   const { entries, isLoading } = usePaymentsHistory(
     canViewHistory ? organizationId : null
   );
@@ -69,10 +64,8 @@ export function PaymentsHistorySection({
 
   // Fire the view event once per mount when entries first load and aren't
   // empty. Ref guard defeats StrictMode double-mount and the auth-resolve
-  // re-render that flips isLoading false. Gated on flagEnabled so we never
-  // pollute telemetry for users who can't see the surface.
+  // re-render that flips isLoading false.
   useEffect(() => {
-    if (flagEnabled !== true) return;
     if (viewedRef.current) return;
     if (isLoading) return;
     if (safeEntries.length === 0) return;
@@ -82,9 +75,9 @@ export function PaymentsHistorySection({
       has_failed: safeEntries.some((e) => e.status === "failed"),
       has_pending: safeEntries.some((e) => e.status === "pending"),
     });
-  }, [flagEnabled, isLoading, posthog, safeEntries]);
+  }, [isLoading, posthog, safeEntries]);
 
-  if (flagEnabled !== true || !canViewHistory) return null;
+  if (!canViewHistory) return null;
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">

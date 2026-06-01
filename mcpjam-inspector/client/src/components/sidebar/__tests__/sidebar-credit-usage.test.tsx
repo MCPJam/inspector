@@ -53,7 +53,7 @@ describe("SidebarCreditUsage", () => {
     expect(dailyRow).toHaveTextContent("Free daily credits");
     expect(dailyRow).toHaveTextContent("36 / 300");
     expect(dailyRow).toHaveTextContent("resets in 3h");
-    expect(screen.queryByText(/15× the credits/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
   });
 
   it("keeps the sidebar strip focused on daily limits for paid users", () => {
@@ -95,7 +95,7 @@ describe("SidebarCreditUsage", () => {
     expect(paidRow).toHaveTextContent("Paid credits");
     expect(paidRow).toHaveTextContent("750");
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
-    expect(screen.queryByText(/15× the credits/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
   });
 
   it("does not render when there is no balance to show", () => {
@@ -124,7 +124,7 @@ describe("SidebarCreditUsage", () => {
 
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(screen.getByTestId("sidebar-credit-usage")).toBeInTheDocument();
-    expect(dailyRow).toHaveTextContent("Sign in for 15× the credits");
+    expect(dailyRow).toHaveTextContent("Sign in for 10× the credits");
     expect(dailyRow).toHaveTextContent("Free daily credits");
     expect(dailyRow).toHaveTextContent("13 / 20");
     expect(dailyRow).toHaveTextContent("resets in 2h");

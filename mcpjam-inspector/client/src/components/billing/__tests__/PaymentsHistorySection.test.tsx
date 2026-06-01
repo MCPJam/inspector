@@ -14,7 +14,6 @@ let hookState: UsePaymentsHistoryResult = {
   isAuthenticated: false,
 };
 
-let flagState: boolean | undefined = true;
 const captureMock = vi.fn();
 
 vi.mock("@/hooks/usePaymentsHistory", () => ({
@@ -22,8 +21,6 @@ vi.mock("@/hooks/usePaymentsHistory", () => ({
 }));
 
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: (flag: string) =>
-    flag === "billing-entitlements-ui" ? flagState : false,
   usePostHog: () => ({ capture: captureMock }),
 }));
 
@@ -53,45 +50,7 @@ describe("PaymentsHistorySection", () => {
       isLoading: true,
       isAuthenticated: false,
     };
-    flagState = true;
     captureMock.mockReset();
-  });
-
-  describe("flag gating", () => {
-    // Seed populated entries so a missing flag-gate on the telemetry effect
-    // would otherwise fire the view event. Asserts both render-suppression
-    // AND telemetry-suppression in the same test.
-    const populated: typeof hookState = {
-      entries: [makeEntry({ id: "flag_test_entry", status: "succeeded" })],
-      isLoading: false,
-      isAuthenticated: true,
-    };
-
-    it("renders nothing and fires no telemetry when the flag is off", () => {
-      flagState = false;
-      hookState = populated;
-      const { container } = render(
-        <PaymentsHistorySection organizationId="org-1" canViewHistory />
-      );
-      expect(container.firstChild).toBeNull();
-      const calls = captureMock.mock.calls.filter(
-        (c) => c[0] === "credit_topup_history_viewed"
-      );
-      expect(calls).toHaveLength(0);
-    });
-
-    it("renders nothing and fires no telemetry while the flag is undefined (bootstrap)", () => {
-      flagState = undefined;
-      hookState = populated;
-      const { container } = render(
-        <PaymentsHistorySection organizationId="org-1" canViewHistory />
-      );
-      expect(container.firstChild).toBeNull();
-      const calls = captureMock.mock.calls.filter(
-        (c) => c[0] === "credit_topup_history_viewed"
-      );
-      expect(calls).toHaveLength(0);
-    });
   });
 
   describe("loading + empty states", () => {

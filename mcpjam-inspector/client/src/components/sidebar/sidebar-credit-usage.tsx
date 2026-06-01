@@ -60,7 +60,7 @@ export function SidebarCreditUsage({
               : ""
           }
           eyebrowText={
-            showGuestUpgradeHint ? "Sign in for 15× the credits" : null
+            showGuestUpgradeHint ? "Sign in for 10× the credits" : null
           }
           helperText={resetText}
           // "spent / total": the count and the bar both grow as credits are

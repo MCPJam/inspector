@@ -9,7 +9,6 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useEffect } from "react";
 import {
   canManageOrgCredits,
@@ -33,12 +32,6 @@ export function MCPJamLimitDialog() {
   // active-org for this user (e.g. brand-new sign-in). Sorted most-recent
   // first by useOrganizationQueries.
   const { sortedOrganizations } = useOrganizationQueries({ isAuthenticated });
-  // Gate the Top up CTA on the same PostHog flag the rest of the billing
-  // UI uses. When the flag is off, the modal hides Top up and shows only
-  // the BYOK button — avoids dead-ending users on deployments where Stripe
-  // isn't wired up yet.
-  const billingUiEnabled =
-    useFeatureFlagEnabled("billing-entitlements-ui") === true;
   const appNavigate = useAppNavigate();
 
   useEffect(() => {
@@ -71,8 +64,10 @@ export function MCPJamLimitDialog() {
   const billingOrg = billingOrgId
     ? sortedOrganizations.find((org) => org._id === billingOrgId) ?? null
     : null;
-  const isKnownNonManager = billingOrg ? !canManageOrgCredits(billingOrg) : false;
-  const canBuyCredits = billingUiEnabled && !isKnownNonManager;
+  const isKnownNonManager = billingOrg
+    ? !canManageOrgCredits(billingOrg)
+    : false;
+  const canBuyCredits = !isKnownNonManager;
 
   const handleTopUp = () => {
     const orgId = resolveBillingOrgId();
@@ -113,7 +108,7 @@ export function MCPJamLimitDialog() {
               <DialogTitle>You've used up your free guest credits.</DialogTitle>
               <DialogDescription>
                 Sign in to get{" "}
-                <strong className="text-foreground font-medium">15×</strong> the
+                <strong className="text-foreground font-medium">10×</strong> the
                 free credits.
               </DialogDescription>
             </DialogHeader>
@@ -137,8 +132,8 @@ export function MCPJamLimitDialog() {
                 {isKnownNonManager
                   ? "Ask your org admin to top up credits."
                   : canBuyCredits
-                    ? "Top up or bring your own key to allow your org to keep using MCPJam."
-                    : "Bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."}
+                  ? "Top up or bring your own key to allow your org to keep using MCPJam."
+                  : "Bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."}
               </DialogDescription>
             </DialogHeader>
             {/* Non-managers get no CTAs — just the "ask your org admin" copy.
