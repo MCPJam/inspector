@@ -70,8 +70,10 @@ function SparklinePointLabel({
   index,
   annotatedIndices,
 }: {
-  x?: number;
-  y?: number;
+  // Recharts widens x/y to string | number; the runtime values are SVG
+  // coords (numbers) — coerce inside.
+  x?: string | number;
+  y?: string | number;
   value?: number | string;
   index?: number;
   annotatedIndices: Set<number>;
@@ -86,10 +88,12 @@ function SparklinePointLabel({
     return null;
   }
 
+  const yNum = typeof y === "number" ? y : Number(y);
+
   return (
     <text
       x={x}
-      y={y - 10}
+      y={yNum - 10}
       textAnchor="middle"
       fill="hsl(var(--muted-foreground))"
       fontSize={9}
@@ -308,7 +312,9 @@ export function SuiteRunsChartGrid({
                       fillOpacity={0.12}
                       strokeWidth={2}
                       isAnimationActive={false}
-                      dot={SparklineDot}
+                      // Recharts' AreaDot type rejects nullable returns even
+                      // though it handles them at runtime; cast around it.
+                      dot={SparklineDot as unknown as object}
                       activeDot={
                         onRunClick
                           ? { cursor: "pointer", r: 5, strokeWidth: 2 }

@@ -1765,9 +1765,6 @@ export function TestTemplateEditor({
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
-  const latestAvailableIsSaved =
-    Boolean(latestAvailableIteration?._id) &&
-    latestAvailableIteration?._id === currentTestCase.lastMessageRun;
   const canOpenLastRun =
     Boolean(onOpenLastRun) &&
     Boolean(lastSavedIteration?.suiteRunId) &&
