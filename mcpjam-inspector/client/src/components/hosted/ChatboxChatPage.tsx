@@ -27,6 +27,11 @@ import {
   writeChatboxSignInReturnPath,
 } from "@/lib/chatbox-session";
 import { navigateApp } from "@/lib/app-navigation";
+import {
+  isEmbeddedPreview,
+  syncChatboxBootstrapHash,
+  syncChatboxSessionHash,
+} from "@/lib/embedded-preview";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
@@ -539,10 +544,7 @@ export function ChatboxChatPage({
           setSession(nextSession);
           setRouteError(null);
 
-          const nextSlug = slugify(nextSession.payload.name);
-          if (window.location.hash !== `#${nextSlug}`) {
-            window.history.replaceState({}, "", `/#${nextSlug}`);
-          }
+          syncChatboxBootstrapHash(slugify(nextSession.payload.name));
           posthogRef.current.capture("chatbox_bootstrap_silent_success", {
             surface: "chatbox",
             auth_mode: authMode,
@@ -592,10 +594,7 @@ export function ChatboxChatPage({
       if (recovered) {
         setSession(recovered);
         setRouteError(null);
-        const recoveredSlug = slugify(recovered.payload.name);
-        if (window.location.hash !== `#${recoveredSlug}`) {
-          window.history.replaceState({}, "", `/#${recoveredSlug}`);
-        }
+        syncChatboxBootstrapHash(slugify(recovered.payload.name));
         return;
       }
 
@@ -739,9 +738,7 @@ export function ChatboxChatPage({
 
     const expectedHash = slugify(session.payload.name);
     const enforceHash = () => {
-      if (window.location.hash !== `#${expectedHash}`) {
-        window.location.hash = expectedHash;
-      }
+      syncChatboxSessionHash(expectedHash);
     };
 
     enforceHash();
@@ -786,7 +783,9 @@ export function ChatboxChatPage({
     // A bare `window.history.replaceState` would leave `locationForRoute`
     // stale on `/chatbox/...`, and the sync effect would then redirect
     // back to `/servers` before the hash-migration shim could pivot.
-    navigateApp("/chatboxes", { replace: true });
+    navigateApp("/chatboxes", {
+      replace: isEmbeddedPreview() ? true : true,
+    });
     onExitChatboxChat?.();
   }, [onExitChatboxChat]);
 

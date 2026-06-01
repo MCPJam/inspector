@@ -64,6 +64,17 @@ export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
   failed: "text-destructive",
 } as const;
 
+/** Darker red for low pass rates, negative deltas, and fail counts in dense eval UI. */
+export const EVAL_LOW_PASS_RATE_TEXT_CLASS =
+  "text-red-800 dark:text-red-400";
+
+/** Filled delete/destructive actions — same red family as {@link EVAL_LOW_PASS_RATE_TEXT_CLASS}. */
+export const EVAL_DESTRUCTIVE_BUTTON_CLASS =
+  "border-transparent bg-red-800 text-white shadow-xs hover:bg-red-900 focus-visible:ring-red-800/25 dark:bg-red-700 dark:text-white dark:hover:bg-red-600 dark:focus-visible:ring-red-400/30";
+
+/** Darker red fill for fail segments in iteration bars. */
+export const EVAL_FAIL_BAR_CLASS = "bg-red-700 dark:bg-red-600";
+
 // UI configuration
 export const UI_CONFIG = {
   MAX_TITLE_LENGTH: 100,

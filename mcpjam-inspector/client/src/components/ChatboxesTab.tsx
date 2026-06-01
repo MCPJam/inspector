@@ -20,6 +20,7 @@ import { buildChatboxLink } from "@/lib/chatbox-session";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
+import { buildClientsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
@@ -53,6 +54,7 @@ export function ChatboxesTab({
   projectId,
   isAuthenticated,
 }: ChatboxesTabProps) {
+  const navigate = useAppNavigate();
   const [tab, setTab] = useState<ChatboxTab>("publish");
   const [previewedHostId] = usePreviewedHostId(projectId);
   const convexAuth = useConvexAuth();
@@ -216,11 +218,7 @@ export function ChatboxesTab({
             size="sm"
             className="rounded-xl"
             onClick={() => {
-              // The host bar at the top already has this host selected, so
-              // a plain Connect jump drops the user in the right host's
-              // editor. Hash-based hub navigation keeps parity with the
-              // sidebar's own Connect link.
-              window.location.hash = "connect";
+              navigate(buildClientsPath(previewedHostId));
             }}
             title="Open this client's config in Connect"
           >

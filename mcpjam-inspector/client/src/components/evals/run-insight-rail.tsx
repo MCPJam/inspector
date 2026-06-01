@@ -24,6 +24,8 @@ export type RunTrendPoint = {
   runId: string;
   runIdDisplay: string;
   passRate: number;
+  passed?: number;
+  total?: number;
   label: string;
   runNumber?: number;
 };

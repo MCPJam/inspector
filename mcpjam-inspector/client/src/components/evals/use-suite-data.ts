@@ -112,10 +112,21 @@ export function useSuiteData(
           return null;
         }
 
+        const passed =
+          realTimeTotal > 0
+            ? realTimePassed
+            : (run.summary?.passed ?? 0);
+        const total =
+          realTimeTotal > 0
+            ? realTimeTotal
+            : (run.summary?.total ?? 0);
+
         return {
           runId: run._id,
           runIdDisplay: formatRunId(run._id),
           passRate,
+          passed,
+          total,
           label: formatTime(run.completedAt ?? run.createdAt),
           runNumber: run.runNumber,
         };
@@ -127,6 +138,8 @@ export function useSuiteData(
           runId: string;
           runIdDisplay: string;
           passRate: number;
+          passed: number;
+          total: number;
           label: string;
           runNumber: number;
         } => item !== null,

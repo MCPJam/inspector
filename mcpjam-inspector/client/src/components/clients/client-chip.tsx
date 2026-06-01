@@ -1,21 +1,5 @@
 import { cn } from "@/lib/utils";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
-import { listHostStyles } from "@/lib/client-styles";
-
-function resolveLogoForClientName(displayName: string): string | null {
-  const needle = displayName.trim().toLowerCase().replace(/\s+/g, "");
-  if (!needle) return null;
-
-  for (const style of listHostStyles()) {
-    const id = style.id.toLowerCase();
-    const label = style.chatUi.label.toLowerCase().replace(/\s+/g, "");
-    const shortLabel = style.chatUi.shortLabel.toLowerCase().replace(/\s+/g, "");
-    if (needle === id || needle === label || needle === shortLabel) {
-      return getChatboxHostLogo(style.id);
-    }
-  }
-  return null;
-}
+import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 
 /** Read-only chip matching selected {@link HostCompareChip} styling. */
 export function ClientChip({
@@ -29,7 +13,7 @@ export function ClientChip({
   logoSrc?: string | null;
   className?: string;
 }) {
-  const resolvedLogo = logoSrc ?? resolveLogoForClientName(name);
+  const resolvedLogo = logoSrc ?? resolveHostLogoByDisplayName(name);
 
   return (
     <span

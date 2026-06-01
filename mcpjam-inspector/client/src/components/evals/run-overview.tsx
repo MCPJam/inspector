@@ -33,6 +33,10 @@ import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
+import {
+  EVAL_DESTRUCTIVE_BUTTON_CLASS,
+  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+} from "./constants";
 import { toast } from "sonner";
 
 const RUN_ROW_STAGGER_CAP = 20;
@@ -466,8 +470,8 @@ export function RunOverview({
               ) : null}
               {canDeleteRuns ? (
                 <Button
-                  variant="destructive"
                   size="sm"
+                  className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
                   onClick={() => setShowBatchDeleteModal(true)}
                   disabled={deletingRunId !== null}
                 >
@@ -480,7 +484,10 @@ export function RunOverview({
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
               <Trash2
-                className="h-4 w-4 shrink-0 text-destructive"
+                className={cn(
+                  "h-4 w-4 shrink-0",
+                  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+                )}
                 aria-hidden
               />
               <span className="text-xs font-medium truncate">
@@ -497,8 +504,8 @@ export function RunOverview({
                 Cancel
               </Button>
               <Button
-                variant="destructive"
                 size="sm"
+                className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
                 onClick={() => {
                   onDeleteSuite();
                   setSuiteDeleteArmed(false);
@@ -825,7 +832,9 @@ export function RunOverview({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-destructive" />
+              <Trash2
+                className={cn("h-5 w-5", EVAL_LOW_PASS_RATE_TEXT_CLASS)}
+              />
               Delete {selectedRunIds.size} Run
               {selectedRunIds.size !== 1 ? "s" : ""}
             </DialogTitle>
@@ -848,7 +857,7 @@ export function RunOverview({
               Cancel
             </Button>
             <Button
-              variant="destructive"
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
               onClick={confirmBatchDeleteRuns}
               disabled={deletingRunId !== null}
             >

@@ -9,6 +9,7 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteOverviewEntry } from "./types";
+import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 
 /** Strip trailing timestamp suffixes from suite names for display. */
 export function stripTimestampSuffix(name: string): string {
@@ -59,7 +60,7 @@ export function computeSuitePassRateDelta(
   return {
     value: delta,
     label: `${delta > 0 ? "+" : ""}${delta}%`,
-    colorClass: delta > 0 ? "text-emerald-500" : "text-destructive",
+    colorClass: delta > 0 ? "text-emerald-500" : EVAL_LOW_PASS_RATE_TEXT_CLASS,
   };
 }
 
@@ -105,7 +106,7 @@ export function passRateColorClass(percent: number | null): string {
   if (percent === null) return "text-muted-foreground";
   if (percent >= 95) return "text-emerald-500";
   if (percent >= 75) return "text-amber-500";
-  return "text-destructive";
+  return EVAL_LOW_PASS_RATE_TEXT_CLASS;
 }
 
 export function Sparkline({
