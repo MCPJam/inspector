@@ -155,8 +155,22 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   };
 };
 
+/**
+ * Optional attachment metadata threaded into the backend eval-generation
+ * endpoint. When the caller provides this, the LLM scopes the generated
+ * cases to the named server attachment and (for ≥2 servers) the prompt
+ * requires at least one explicit cross-server case. `resolvedServerNames`
+ * carries runtime server identifiers, not Convex doc ids.
+ */
+export type ServerAttachmentInput = {
+  id?: string;
+  name?: string;
+  resolvedServerNames: string[];
+};
+
 type GenerateTestsRequest = EvalRequestWithServers & {
   convexAuthToken?: string | null;
+  serverAttachment?: ServerAttachmentInput;
 };
 
 export type GeneratedEvalTestCase = {
