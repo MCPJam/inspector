@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { ChevronRight } from "lucide-react";
+import { ClientChip } from "@/components/clients/client-chip";
 import { cn, getInitials } from "@/lib/utils";
 import {
   Avatar,
@@ -35,6 +36,7 @@ export interface SuiteRunsListProps {
    * truncated IDs instead. Pass the suite's `hostAttachments` to feed it.
    */
   hostNamesById?: Map<string, string | null>;
+  className?: string;
 }
 
 /**
@@ -52,6 +54,7 @@ export function SuiteRunsList({
   maxVisibleRuns,
   runsLoading = false,
   hostNamesById,
+  className,
 }: SuiteRunsListProps) {
   const isSdk = suiteSource === "sdk";
   const accuracyLabel = isSdk ? "Pass" : "Acc";
@@ -85,7 +88,12 @@ export function SuiteRunsList({
   const hiddenRunCount = sortedRuns.length - visibleRuns.length;
 
   return (
-    <div className="flex min-h-0 flex-col rounded-xl border bg-card text-card-foreground">
+    <div
+      className={cn(
+        "flex min-h-0 flex-col rounded-xl border bg-card text-card-foreground",
+        className,
+      )}
+    >
       <div className="flex shrink-0 items-center gap-3 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground">
         <div className="flex-1">Run</div>
         <div className="w-16 shrink-0 text-right">{accuracyLabel}</div>
@@ -170,15 +178,14 @@ export function SuiteRunsList({
                       Run {formatRunId(run._id)}
                     </span>
                     {run.namedHostId ? (
-                      <span
-                        className="shrink-0 truncate rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
-                        title={
-                          hostNamesById?.get(run.namedHostId) ?? run.namedHostId
+                      <ClientChip
+                        name={
+                          hostNamesById?.get(run.namedHostId) ??
+                          formatRunId(run.namedHostId)
                         }
-                      >
-                        {hostNamesById?.get(run.namedHostId) ??
-                          formatRunId(run.namedHostId)}
-                      </span>
+                        hostId={run.namedHostId}
+                        className="shrink-0 max-w-[140px] gap-1 border-primary/35 bg-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-none"
+                      />
                     ) : null}
                     {creator ? (
                       <Tooltip>

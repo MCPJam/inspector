@@ -1,9 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { SuiteRunsList } from "./suite-runs-list";
 import { TestCasesOverview } from "./test-cases-overview";
-import type { CaseListHostMode } from "./case-list-host-toggle";
+import {
+  DEFAULT_CASE_LIST_HOST_MODE,
+  type CaseListHostMode,
+} from "./case-list-host-toggle";
 import type {
   EvalCase,
   EvalIteration,
@@ -77,9 +81,11 @@ export function SuiteDashboard({
   connectedServerNames,
   onDeleteTestCasesBatch,
   testCasesClickHint,
-  initialHostMode = "by-case",
+  initialHostMode = DEFAULT_CASE_LIST_HOST_MODE,
   userMap,
 }: SuiteDashboardProps) {
+  const [hostMode, setHostMode] = useState<CaseListHostMode>(initialHostMode);
+  const isByHostView = hostMode === "by-host";
   const hasRuns = runs.length > 0;
   const hostNamesById = useMemo(() => {
     const map = new Map<string, string | null>();
@@ -99,13 +105,19 @@ export function SuiteDashboard({
         onRunClick={onRunClick}
       />
       {hasRuns ? <SuiteInsightsCollapsible runs={runs} /> : null}
-      <div className="grid min-h-0 gap-4 lg:grid-cols-2">
+      <div
+        className={cn(
+          "grid min-h-0 gap-4",
+          isByHostView ? "lg:grid-cols-1" : "lg:grid-cols-2",
+        )}
+      >
         <TestCasesOverview
           suite={suite}
           cases={cases}
           runs={runs}
           allIterations={allIterations}
           initialHostMode={initialHostMode}
+          onHostModeChange={setHostMode}
           runsViewMode="test-cases"
           onViewModeChange={() => {}}
           onTestCaseClick={onTestCaseClick}
@@ -130,6 +142,8 @@ export function SuiteDashboard({
           userMap={userMap}
           runsLoading={runsLoading}
           hostNamesById={hostNamesById}
+          maxVisibleRuns={isByHostView ? 6 : undefined}
+          className={isByHostView ? "max-h-[280px]" : undefined}
         />
       </div>
     </div>

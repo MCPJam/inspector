@@ -762,9 +762,7 @@ export function SuiteIterationsView({
                     runsLoading={runsLoading}
                     runTrendData={runTrendData}
                     modelStats={modelStats}
-                    initialHostMode={
-                      runsViewMode === "cross-host" ? "by-host" : "by-case"
-                    }
+                    initialHostMode="by-host"
                     onTestCaseClick={(testCaseId) =>
                       navigation.toTestEdit(suite._id, testCaseId)
                     }
@@ -882,9 +880,7 @@ export function SuiteIterationsView({
                       cases={cases}
                       runs={runs}
                       allIterations={allIterations}
-                      initialHostMode={
-                        runsViewMode === "cross-host" ? "by-host" : "by-case"
-                      }
+                      initialHostMode="by-host"
                       runsViewMode={
                         runsViewMode === "cross-host"
                           ? "test-cases"

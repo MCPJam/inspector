@@ -104,8 +104,6 @@ import {
   hasUnavailableServers,
   normalizeSuiteServerRefs,
 } from "./use-eval-handlers";
-import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
-import type { ModelProvider } from "@/shared/types";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import {
   reduceEvalStreamEvent,
@@ -959,48 +957,6 @@ export function TestTemplateEditor({
     [modelOptions]
   );
 
-  const modelDefinitionsForSelector = useMemo<ModelDefinition[]>(
-    () =>
-      modelOptions.map((option) => ({
-        id: option.model,
-        name: option.label,
-        provider: option.provider as ModelProvider,
-        ...(option.customProviderName
-          ? { customProviderName: option.customProviderName }
-          : {}),
-      })),
-    [modelOptions],
-  );
-
-  const modelDefinitionByValue = useMemo(
-    () =>
-      new Map<string, ModelDefinition>(
-        modelDefinitionsForSelector.map((model) => [
-          `${model.provider}/${String(model.id)}`,
-          model,
-        ]),
-      ),
-    [modelDefinitionsForSelector],
-  );
-
-  const selectedModelDefinitions = useMemo<ModelDefinition[]>(
-    () =>
-      selectedModelValues
-        .map((value) => modelDefinitionByValue.get(value))
-        .filter((model): model is ModelDefinition => !!model),
-    [selectedModelValues, modelDefinitionByValue],
-  );
-
-  const leadSelectedModel: ModelDefinition | null =
-    selectedModelDefinitions[0] ?? modelDefinitionsForSelector[0] ?? null;
-
-  const [multiModelEnabled, setMultiModelEnabled] = useState(false);
-  useEffect(() => {
-    if (selectedModelValues.length > 1) {
-      setMultiModelEnabled(true);
-    }
-  }, [selectedModelValues.length]);
-
   useEffect(() => {
     if (!currentTestCase?._id) {
       return;
@@ -1174,24 +1130,6 @@ export function TestTemplateEditor({
     },
     [currentTestCase?._id, selectedModelValues, suiteId]
   );
-
-  const modelDefToValue = (model: ModelDefinition) =>
-    `${model.provider}/${String(model.id)}`;
-
-  const handleSingleModelChange = (model: ModelDefinition) => {
-    setSelectedModelValues([modelDefToValue(model)]);
-  };
-
-  const handleSelectedModelsChange = (models: ModelDefinition[]) => {
-    setSelectedModelValues(models.map(modelDefToValue).slice(0, 3));
-  };
-
-  const handleMultiModelEnabledChange = (enabled: boolean) => {
-    setMultiModelEnabled(enabled);
-    if (!enabled) {
-      setSelectedModelValues((previous) => previous.slice(0, 1));
-    }
-  };
 
   const handleStopCompare = useCallback(() => {
     compareRunUserStoppedRef.current = true;
@@ -2104,55 +2042,6 @@ export function TestTemplateEditor({
                 {runDisabledTooltip}
               </p>
             ) : null}
-
-            <div>
-              <div
-                data-testid="test-template-model-bar"
-                className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10"
-                title={
-                  !latestAvailableIsSaved &&
-                  currentTestCase.lastMessageRun &&
-                  latestAvailableIteration
-                    ? "The saved latest result is older than this run."
-                    : undefined
-                }
-              >
-                <div className="flex min-h-9 items-center gap-2 px-4">
-                  {!latestAvailableIteration ? (
-                    <span className="shrink-0 text-[13px] font-normal text-[#777777] dark:text-muted-foreground">
-                      Add model
-                    </span>
-                  ) : null}
-
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    {modelDefinitionsForSelector.length === 0 ||
-                    !leadSelectedModel ? (
-                      <span className="text-[13px] text-muted-foreground">
-                        No models
-                      </span>
-                    ) : (
-                      <ModelSelector
-                        currentModel={leadSelectedModel}
-                        availableModels={modelDefinitionsForSelector}
-                        onModelChange={handleSingleModelChange}
-                        enableMultiModel
-                        multiModelEnabled={multiModelEnabled}
-                        selectedModels={
-                          selectedModelDefinitions.length > 0
-                            ? selectedModelDefinitions
-                            : [leadSelectedModel]
-                        }
-                        onSelectedModelsChange={handleSelectedModelsChange}
-                        onMultiModelEnabledChange={
-                          handleMultiModelEnabledChange
-                        }
-                        maxSelectedModels={3}
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
 
             {hostConfigBaseline ? (
               <div

@@ -1,15 +1,35 @@
+import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { PassDotRow } from "./pass-dot-row";
+import { computeIterationResult } from "../pass-criteria";
+import {
+  RunCaseIterationBar,
+  runCaseFailCountClass,
+  runCaseLatencyClassName,
+} from "../run-case-list-shared";
+import type { RunCaseIterationOutcome } from "../run-case-groups";
+import { formatRunCaseLatencyMs } from "../run-case-groups";
 import type { CellChips, CellData } from "./use-cross-host-data";
+import type { EvalIteration } from "../types";
 
 interface HostCellProps {
   data: CellData | undefined;
 }
 
-function formatMs(ms: number): string {
-  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
-  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
-  return `${Math.round(ms)}ms`;
+function stableOrder(iterations: EvalIteration[]): EvalIteration[] {
+  return [...iterations].sort((a, b) => {
+    const an = a.iterationNumber ?? Number.MAX_SAFE_INTEGER;
+    const bn = b.iterationNumber ?? Number.MAX_SAFE_INTEGER;
+    if (an !== bn) return an - bn;
+    return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+  });
+}
+
+function iterationOutcome(iteration: EvalIteration): RunCaseIterationOutcome {
+  const result = computeIterationResult(iteration);
+  if (result === "passed") return "pass";
+  if (result === "failed") return "fail";
+  if (result === "cancelled") return "cancelled";
+  return "pending";
 }
 
 function formatTokens(n: number): string {
@@ -96,10 +116,15 @@ function ChipRow({ chips }: { chips: CellChips }) {
 }
 
 export function HostCell({ data }: HostCellProps) {
+  const iterationResults = useMemo(() => {
+    if (!data?.iterations.length) return [];
+    return stableOrder(data.iterations).map(iterationOutcome);
+  }, [data?.iterations]);
+
   if (!data || data.totalCount === 0) {
     return (
-      <div className="flex h-full min-h-[56px] items-center justify-center">
-        <span className="text-xs text-muted-foreground/40">—</span>
+      <div className="flex h-full min-h-[4.5rem] items-center justify-center px-3">
+        <span className="font-mono text-xs text-muted-foreground/50">—</span>
       </div>
     );
   }
@@ -115,38 +140,47 @@ export function HostCell({ data }: HostCellProps) {
     data.chips.openaiCompatInjected;
 
   return (
-    <div className="flex flex-col gap-1 p-2">
-      <PassDotRow iterations={data.iterations} />
-      <div className="flex items-center gap-2 flex-wrap">
-        {passRateStr !== null && (
+    <div className="flex min-h-[4.5rem] flex-col gap-2 px-3 py-2.5">
+      <RunCaseIterationBar
+        results={iterationResults}
+        passed={data.passCount}
+        total={data.totalCount}
+        maxVisible={8}
+      />
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {passRateStr !== null ? (
           <span
             className={cn(
-              "text-[11px] font-medium tabular-nums",
-              data.passRate === 100
-                ? "text-green-600 dark:text-green-400"
-                : data.passRate === 0
-                  ? "text-red-600 dark:text-red-400"
-                  : "text-yellow-600 dark:text-yellow-400",
+              "font-mono text-xs font-semibold tabular-nums",
+              data.passRate === 100 && "text-success",
+              data.passRate === 0 && "text-destructive",
+              data.passRate !== null &&
+                data.passRate > 0 &&
+                data.passRate < 100 &&
+                "text-amber-600 dark:text-amber-400",
             )}
           >
             {passRateStr}
           </span>
-        )}
-        {data.medianLatencyMs !== null && (
+        ) : null}
+        {data.medianLatencyMs !== null ? (
           <span
-            className="text-[10px] text-muted-foreground tabular-nums"
+            className={runCaseLatencyClassName}
             title="Median (p50) latency across completed iterations"
           >
-            {formatMs(data.medianLatencyMs)}
+            {formatRunCaseLatencyMs(data.medianLatencyMs)}
           </span>
-        )}
-        {data.totalTokens > 0 && (
-          <span className="text-[10px] text-muted-foreground tabular-nums">
-            {formatTokens(data.totalTokens)}
+        ) : null}
+        {data.failCount > 0 ? (
+          <span className={runCaseFailCountClass}>{data.failCount} fail</span>
+        ) : null}
+        {data.totalTokens > 0 ? (
+          <span className={runCaseLatencyClassName}>
+            {formatTokens(data.totalTokens)} tok
           </span>
-        )}
+        ) : null}
       </div>
-      {hasAnyChip && <ChipRow chips={data.chips} />}
+      {hasAnyChip ? <ChipRow chips={data.chips} /> : null}
     </div>
   );
 }

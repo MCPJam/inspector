@@ -258,30 +258,16 @@ describe("TestTemplateEditor run view from route", () => {
       .length;
   }
 
-  // Adds the given models to the compare selection via the chat-v2
-  // ModelSelector popover that replaced the old "Add model to compare"
-  // dropdown. Assumes the lead (pre-selected) model is GPT-4, which the
-  // shared `caseDoc` fixture seeds via `models: [{ provider: "openai",
-  // model: "gpt-4" }]`.
-  async function addCompareModels(
-    user: ReturnType<typeof userEvent.setup>,
-    modelNames: string[],
-  ): Promise<void> {
-    await user.click(
-      screen.getByRole("button", { name: /^openai logo/i }),
-    );
-    await user.click(
-      await screen.findByRole("switch", { name: /multiple models/i }),
-    );
-    for (const name of modelNames) {
-      await user.click(
-        await screen.findByRole("option", {
-          name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
-        }),
-      );
-    }
-    await user.keyboard("{Escape}");
-  }
+  const threeModelCompareCase = {
+    ...caseDoc,
+    models: [
+      { provider: "openai", model: "gpt-4" },
+      { provider: "anthropic", model: "claude-4.5-sonnet" },
+      { provider: "google", model: "gemini-2.5-pro" },
+    ],
+  };
+
+  let activeCaseDoc = caseDoc;
 
   function getLatestTraceViewerProps() {
     const lastCall = mockTraceViewer.mock.calls.at(-1)?.[0];
@@ -295,6 +281,7 @@ describe("TestTemplateEditor run view from route", () => {
   }
 
   beforeEach(() => {
+    activeCaseDoc = caseDoc;
     vi.clearAllMocks();
     mockTraceViewer.mockReset();
     useMutationMock.mockImplementation((name: string) => {
@@ -306,7 +293,7 @@ describe("TestTemplateEditor run view from route", () => {
     getGuestBearerTokenMock.mockResolvedValue("guest-token");
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (name === "testSuites:listTestCases") {
-        return [caseDoc];
+        return [activeCaseDoc];
       }
       if (name === "testSuites:getTestSuite") {
         return {
@@ -420,7 +407,7 @@ describe("TestTemplateEditor run view from route", () => {
       }
 
       if (name === "testSuites:listTestCases") {
-        return [caseDoc];
+        return [activeCaseDoc];
       }
       if (name === "testSuites:getTestSuite") {
         return {
@@ -588,8 +575,10 @@ describe("TestTemplateEditor run view from route", () => {
     expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
   });
 
-  it("autosaves compare models on run and reuses the compare session id for per-model retry", async () => {
+  it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {
     const user = userEvent.setup();
+
+    activeCaseDoc = threeModelCompareCase;
 
     renderWithProviders(
       <TestTemplateEditor
@@ -624,24 +613,16 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
     await waitFor(() => {
-      expect(updateTestCaseMutationMock).toHaveBeenCalledWith({
-        testCaseId: "case-1",
-        models: [
-          { provider: "openai", model: "gpt-4" },
-          { provider: "anthropic", model: "claude-4.5-sonnet" },
-          { provider: "google", model: "gemini-2.5-pro" },
-        ],
-      });
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(3);
     });
+
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
 
     const initialCompareRunIds = streamEvalTestCaseMock.mock.calls.map(
       ([request]) => (request as { compareRunId?: string }).compareRunId
@@ -664,7 +645,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(retryRequest.compareRunId).toBe(initialCompareRunIds[0]);
     expect(retryRequest.provider).toBe("openai");
     expect(retryRequest.model).toBe("gpt-4");
-    expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
   });
 
   it("persists unsaved test case draft fields before starting a compare run", async () => {
@@ -955,7 +935,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("renders the host-style control below models and before the scenario form", async () => {
+  it("renders the host-style control before the scenario form", async () => {
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -979,14 +959,9 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    const modelBar = screen.getByTestId("test-template-model-bar");
     const hostHeaderRow = screen.getByTestId("test-template-host-header-row");
     const scenarioHeading = screen.getByText("Test scenario");
 
-    expect(
-      modelBar.compareDocumentPosition(hostHeaderRow) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
     expect(
       hostHeaderRow.compareDocumentPosition(scenarioHeading) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -1351,6 +1326,8 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -1384,10 +1361,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1473,6 +1448,8 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -1506,10 +1483,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1598,6 +1573,8 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -1631,10 +1608,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1729,6 +1704,8 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -1762,10 +1739,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 

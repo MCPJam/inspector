@@ -32,6 +32,7 @@ import {
 } from "./case-list-shared";
 import {
   CaseListHostToggle,
+  DEFAULT_CASE_LIST_HOST_MODE,
   type CaseListHostMode,
 } from "./case-list-host-toggle";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
@@ -100,6 +101,8 @@ interface TestCasesOverviewProps {
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /** When true, the surrounding view is the direct-guest eval playground. */
   isDirectGuest?: boolean;
+  /** Notifies parents when the By case / By host toggle changes (layout). */
+  onHostModeChange?: (mode: CaseListHostMode) => void;
 }
 
 export function TestCasesOverview({
@@ -107,7 +110,7 @@ export function TestCasesOverview({
   cases,
   runs,
   allIterations,
-  initialHostMode = "by-case",
+  initialHostMode = DEFAULT_CASE_LIST_HOST_MODE,
   runsViewMode,
   onViewModeChange,
   onTestCaseClick,
@@ -120,6 +123,7 @@ export function TestCasesOverview({
   blockTestCaseRuns = false,
   connectedServerNames,
   isDirectGuest = false,
+  onHostModeChange,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   // A one-host matrix is pointless, so the "By host" view is only offered when
@@ -133,6 +137,11 @@ export function TestCasesOverview({
   // that arrives before attachments populate isn't lost.
   const [hostMode, setHostMode] = useState<CaseListHostMode>(initialHostMode);
   const effectiveHostMode = canShowByHost ? hostMode : "by-case";
+  const isByHostView = effectiveHostMode === "by-host";
+
+  useEffect(() => {
+    onHostModeChange?.(effectiveHostMode);
+  }, [effectiveHostMode, onHostModeChange]);
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
     { suiteId: suite._id } as any
@@ -357,7 +366,12 @@ export function TestCasesOverview({
     <>
       {/* Cases List */}
       <div
-        className={cn(caseListCardClassName, "max-h-[600px]")}
+        className={cn(
+          caseListCardClassName,
+          isByHostView
+            ? "min-h-[min(70vh,720px)] flex-1"
+            : "max-h-[600px]",
+        )}
       >
         {batchDelete &&
         (showPersistentBatchHeader || selectedCaseIds.size > 0) ? (
@@ -408,11 +422,32 @@ export function TestCasesOverview({
             ) : null}
           </div>
         ) : !showDisconnectedPlaygroundEmptyState ? (
-          <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">{clickHint}</p>
+          <div
+            className={cn(
+              "shrink-0 flex items-center justify-between gap-3 border-b",
+              isByHostView
+                ? "bg-muted/60 px-4 py-2.5"
+                : "px-4 py-2",
+            )}
+          >
+            <div className="min-w-0">
+              {isByHostView ? (
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <h2 className="truncate text-base font-semibold leading-tight text-foreground sm:text-lg">
+                    Test cases
+                    <span className="ml-1.5 font-mono text-sm font-normal tabular-nums text-muted-foreground">
+                      · {effectiveCases.length}
+                    </span>
+                  </h2>
+                  <p className="text-[11px] text-muted-foreground">
+                    Pass rate, latency, and tokens per attached host
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{clickHint}</p>
+              )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {canShowByHost ? (
                 <CaseListHostToggle
                   value={effectiveHostMode}
@@ -447,13 +482,15 @@ export function TestCasesOverview({
           </div>
         ) : null}
 
-        {effectiveHostMode === "by-host" ? (
-          <div className="overflow-y-auto p-4">
+        {isByHostView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto bg-background">
             <CrossHostDashboard
               suite={suite as EvalSuite}
               cases={cases}
               runs={runs ?? []}
               allIterations={allIterations}
+              expanded
+              onTestCaseClick={onTestCaseClick}
             />
           </div>
         ) : (
