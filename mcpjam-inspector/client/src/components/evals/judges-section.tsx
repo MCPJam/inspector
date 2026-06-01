@@ -59,6 +59,7 @@ export function JudgesSection({
   const enabled = gc?.enabled === true;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
   const threshold = gc?.threshold ?? DEFAULT_THRESHOLD;
+  const autoRun = gc?.autoRun === true;
 
   const modelOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -181,6 +182,35 @@ export function JudgesSection({
                   });
                 }}
                 className="h-8 text-sm"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {enabled ? (
+          <div className="space-y-2 rounded-md border border-border/20 bg-muted/10 p-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-0.5">
+                <Label
+                  htmlFor="suite-goal-auto-run"
+                  className="text-xs font-medium"
+                >
+                  Run automatically on every completed run
+                </Label>
+                <p className="text-[11px] text-muted-foreground/80">
+                  When on, the judge fires the moment each run completes — no
+                  need to click <strong>Run judge</strong> per run. Off by
+                  default so each grading is an explicit choice (each one
+                  spends an LLM call).
+                </p>
+              </div>
+              <Switch
+                id="suite-goal-auto-run"
+                checked={autoRun}
+                onCheckedChange={(checked: boolean) =>
+                  update({ autoRun: checked || undefined })
+                }
+                aria-label="Auto-run the Goal Completion judge on every new completed run"
               />
             </div>
           </div>

@@ -142,6 +142,13 @@ export type EvalJudgeConfig = {
     enabled?: boolean;
     judgeModel?: string;
     threshold?: number;
+    /**
+     * When true, the judge fires automatically as each run completes
+     * (matches the dominant industry pattern — most eval platforms run
+     * scorers inline with the eval rather than on-demand). Default off
+     * so suites preserve the cost-conscious V1 behavior until they opt in.
+     */
+    autoRun?: boolean;
   };
 };
 
