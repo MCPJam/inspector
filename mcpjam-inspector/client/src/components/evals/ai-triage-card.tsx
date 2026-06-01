@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Copy, Loader2, RotateCw, TrendingUp } from "lucide-react";
+import { Copy, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
@@ -33,12 +33,6 @@ const COPY_FIX_PROMPT_LABEL = "Copy fix prompt";
 const copyTopFixPromptsLabel = (count: number) =>
   `Copy top ${count} fix prompts`;
 
-/** Dummy per-fix accuracy lift shown until real estimates are wired up. */
-const ESTIMATED_ACCURACY_GAIN_PCT = 9;
-
-/** Distinct tones so each applied fix reads as its own slice of the potential bar. */
-const GAIN_SEGMENT_TONES = ["bg-green-800", "bg-green-700", "bg-green-600"];
-
 async function copyWithToast(text: string, successLabel: string) {
   const ok = await copyToClipboard(text);
   if (ok) {
@@ -68,13 +62,6 @@ function TriageRowItem({ row }: { row: TriageRow }) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <span
-          className="inline-flex items-center gap-1 rounded-full bg-green-700/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-green-700 dark:text-green-400"
-          title="Estimated accuracy improvement from applying this fix"
-        >
-          <TrendingUp className="h-3 w-3" aria-hidden />+
-          {ESTIMATED_ACCURACY_GAIN_PCT}%
-        </span>
         <Button
           type="button"
           variant="outline"
@@ -150,16 +137,6 @@ export function AiTriageCard({
   const visibleRows = showAllSuggestions ? rows : topRows;
   const hasMoreSuggestions = rows.length > TOP_N;
 
-  // Project the accuracy lift from applying the top suggested fixes. Clamp the
-  // total so current + gains never exceeds 100%, then split the realized gain
-  // evenly across each fix's segment of the potential bar.
-  const projectedGain = hasRows
-    ? Math.min(100 - passRate, topRows.length * ESTIMATED_ACCURACY_GAIN_PCT)
-    : 0;
-  const potentialAccuracy = passRate + projectedGain;
-  const gainSegmentWidth =
-    topRows.length > 0 ? projectedGain / topRows.length : 0;
-
   const headerSubtitle = (() => {
     if (pending) return "Analyzing…";
     if (error || failedGeneration) return "Analysis failed";
@@ -171,8 +148,6 @@ export function AiTriageCard({
     }
     return `${rows.length} suggested fix${rows.length === 1 ? "" : "es"}`;
   })();
-
-  const hasProjectedLift = projectedGain > 0;
 
   return (
     <section
@@ -229,86 +204,32 @@ export function AiTriageCard({
         </div>
       </header>
 
-      <div
-        className={cn(
-          "border-t border-border/40 px-3 py-3 pl-3.5",
-          hasProjectedLift && "bg-green-700/[0.04] dark:bg-green-400/[0.06]",
-        )}
-      >
+      <div className="border-t border-border/40 px-3 py-3 pl-3.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className={runDetailSectionLabelClass}>
-            {hasProjectedLift
-              ? `Potential ${metricLabel.toLowerCase()}`
-              : metricLabel}
-          </span>
+          <span className={runDetailSectionLabelClass}>{metricLabel}</span>
           <span className="tabular-nums">
             {passFailStats.total === 0
               ? "No cases recorded yet"
               : `${passFailStats.passed} passed · ${passFailStats.failed} failed`}
           </span>
         </div>
-        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <div className="mt-1.5">
           <span className="font-metric text-xl font-semibold tabular-nums leading-none">
             {passRate}
             <span className="text-sm font-medium text-muted-foreground">%</span>
           </span>
-          {projectedGain > 0 ? (
-            <>
-              <ArrowRight
-                className="h-3.5 w-3.5 shrink-0 self-center text-muted-foreground"
-                aria-hidden
-              />
-              <span className="font-metric text-xl font-semibold tabular-nums leading-none text-green-700 dark:text-green-400">
-                {potentialAccuracy}
-                <span className="text-sm font-medium text-green-700/70 dark:text-green-400/70">
-                  %
-                </span>
-              </span>
-              <span className="text-xs font-medium text-green-700 dark:text-green-400">
-                +{projectedGain}% with top {topRows.length} fix
-                {topRows.length === 1 ? "" : "es"}
-              </span>
-            </>
-          ) : null}
         </div>
         <div
           className="mt-2.5 flex h-2.5 w-full overflow-hidden rounded-full bg-muted"
           role="img"
-          aria-label={
-            projectedGain > 0
-              ? `Current ${metricLabel.toLowerCase()} ${passRate}%, projected ${potentialAccuracy}% after applying the top ${topRows.length} fixes`
-              : `${metricLabel} ${passRate}%`
-          }
+          aria-label={`${metricLabel} ${passRate}%`}
         >
           <div
             className="h-full bg-primary"
             style={{ width: `${passRate}%` }}
-            title={`Current ${metricLabel.toLowerCase()}: ${passRate}%`}
+            title={`${metricLabel}: ${passRate}%`}
           />
-          {projectedGain > 0
-            ? topRows.map((row, idx) => (
-                <div
-                  key={row.id}
-                  className={cn(
-                    "h-full border-l border-card",
-                    GAIN_SEGMENT_TONES[idx % GAIN_SEGMENT_TONES.length],
-                  )}
-                  style={{ width: `${gainSegmentWidth}%` }}
-                  title={`${row.title}: +${ESTIMATED_ACCURACY_GAIN_PCT}%`}
-                />
-              ))
-            : null}
         </div>
-        {hasProjectedLift ? (
-          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-            Apply the top {topRows.length} suggested fix
-            {topRows.length === 1 ? "" : "es"} to reach an estimated{" "}
-            <span className="font-medium text-green-700 dark:text-green-400">
-              {potentialAccuracy}%
-            </span>{" "}
-            {metricLabel.toLowerCase()}.
-          </p>
-        ) : null}
       </div>
 
       <div
