@@ -41,6 +41,11 @@
       "types": "./dist/matchers.d.ts",
       "import": "./dist/matchers.js",
       "default": "./dist/matchers.js"
+    },
+    "./predicates": {
+      "types": "./dist/predicates/index.d.ts",
+      "import": "./dist/predicates/index.js",
+      "default": "./dist/predicates/index.js"
     }
   },
   "files": [
@@ -56,7 +61,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers');\"",
+    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers'); await import('@mcpjam/sdk/predicates');\"",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { median, percentilePct } from "../use-cross-host-data";
+import { median } from "../use-cross-host-data";
 
 describe("median", () => {
   it("returns null for an empty array", () => {
@@ -38,19 +38,5 @@ describe("median", () => {
     const med = median(samples);
     // Sorted: [900, 950, 1000, 1050, 1100, 10000] — even length, middle two are 1000 and 1050
     expect(med).toBe(1025);
-  });
-});
-
-describe("percentilePct", () => {
-  it("returns null for an empty array", () => {
-    expect(percentilePct([], 95)).toBeNull();
-  });
-
-  it("returns the single value for a one-element array", () => {
-    expect(percentilePct([42], 95)).toBe(42);
-  });
-
-  it("interpolates p95 for multiple samples", () => {
-    expect(percentilePct([1, 2, 3, 4, 5], 95)).toBeCloseTo(4.8, 5);
   });
 });

@@ -61,7 +61,10 @@ export type SuiteRunRecorder = {
     error?: string;
     errorDetails?: string;
     resultSource?: "reported" | "derived";
-    metadata?: Record<string, string | number | boolean>;
+    // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
+    // nested `predicates: PredicateResult[]` rows. Persisted to
+    // `testIteration.metadata`; the Convex validator accepts nested values.
+    metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
     status: "completed" | "failed" | "cancelled";
@@ -250,10 +253,13 @@ export const createSuiteRunRecorder = ({
           error,
           errorDetails,
           resultSource,
-          metadata: {
+          // Merge user-provided metadata with token usage breakdown, then
+          // sanitize: metadata can carry nested predicate rows whose authored
+          // args may contain $-prefixed keys Convex rejects at the boundary.
+          metadata: sanitizeForConvexTransport({
             ...(metadata ?? {}),
             ...buildIterationUsageMetadata(usage),
-          },
+          }),
         });
       } catch (error) {
         const errorMessage =
