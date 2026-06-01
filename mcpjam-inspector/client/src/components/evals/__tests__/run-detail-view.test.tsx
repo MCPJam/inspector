@@ -20,6 +20,24 @@ vi.mock("../use-server-quality", () => ({
   })),
 }));
 
+// Stub the goal-completion judge hook so the rail stays empty in view tests
+// that aren't about the judge panel. Matches the `unavailable: true` shape
+// used for useServerQuality above so callers see no rendered card.
+vi.mock("../use-goal-completion", () => ({
+  useGoalCompletion: vi.fn(() => ({
+    result: null,
+    pending: false,
+    requested: false,
+    failedGeneration: false,
+    error: null,
+    canRequest: false,
+    requestGoalCompletion: vi.fn(),
+    cancelGoalCompletion: vi.fn(),
+    summary: null,
+    unavailable: true,
+  })),
+}));
+
 import { useRunInsights } from "../use-run-insights";
 import { RunDetailView, RunIterationsSidebar } from "../run-detail-view";
 
@@ -27,6 +45,13 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
   useQuery: () => undefined,
   useAction: () => vi.fn().mockResolvedValue(undefined),
+  useConvexAuth: () => ({ isLoading: false, isAuthenticated: false }),
+}));
+
+// The goal-completion judge panel pulls the model catalog; stub it so the view
+// test stays isolated from the provider chain (auth / provider keys / ollama).
+vi.mock("@/hooks/use-available-eval-models", () => ({
+  useAvailableEvalModels: () => ({ availableModels: [] }),
 }));
 
 vi.mock("@/components/ui/resizable", () => ({

@@ -351,6 +351,28 @@ export type EvalSuiteRun = {
         | "unknown";
     }>;
   };
+  // Goal-completion judge (advisory LLM-as-judge): grades each case's final
+  // answer against its expectedOutput. Mirrors the Convex `v.object` by hand.
+  // Advisory only — never changes the run's deterministic `passed`/`result`.
+  goalCompletionJobId?: string;
+  goalCompletionStatus?: "pending" | "completed" | "failed";
+  goalCompletion?: {
+    summary: string;
+    generatedAt: number;
+    /** The judge model actually used for this run. */
+    modelUsed: string;
+    /** Per-run advisory pass threshold (`passed = score >= threshold`). */
+    threshold: number;
+    cases: Array<{
+      caseKey: string;
+      /** How fully the final answer satisfied expectedOutput, in [0,1]. */
+      score: number;
+      /** Advisory pass = score >= threshold. Does NOT gate the run. */
+      passed: boolean;
+      reason: string;
+      rubricHits: string[];
+    }>;
+  };
 };
 
 export type EvalRunNumericDiff = {

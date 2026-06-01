@@ -18,7 +18,10 @@ import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
+import { useGoalCompletion } from "./use-goal-completion";
 import { AiTriageCard } from "./ai-triage-card";
+import { GoalCompletionCard } from "./goal-completion-card";
+import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import { ArrowLeftRight, ArrowUpDown } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
@@ -362,6 +365,19 @@ export function RunDetailView({
     unavailable: serverQualityUnavailable,
   } = useServerQuality(selectedRunDetails, { autoRequest: true });
 
+  // Goal-completion judge: advisory, user-triggered (no auto-request — it spends
+  // an LLM call). Never changes the run's deterministic pass/fail.
+  const { availableModels } = useAvailableEvalModels();
+  const {
+    result: goalCompletionResult,
+    pending: goalCompletionPending,
+    requested: goalCompletionRequested,
+    failedGeneration: goalCompletionFailedGeneration,
+    error: goalCompletionError,
+    requestGoalCompletion,
+    unavailable: goalCompletionUnavailable,
+  } = useGoalCompletion(selectedRunDetails);
+
   const runDashboardKpis = useMemo(
     () =>
       kpiPlacement === "body"
@@ -393,6 +409,26 @@ export function RunDetailView({
         error={serverQualityError}
         onRetry={() => requestServerQuality(true)}
         source={source}
+      />
+    ) : null;
+
+  // Show the goal-completion panel once a run completes, unless the backend
+  // mutation is unavailable (older deployment). The card itself gates on an
+  // explicit "Run judge" click, so it never auto-spends an LLM call. Rendered
+  // inside RunInsightRail next to the serverQuality triage card — the rail is
+  // the run-detail "AI insights column" and goal-completion is an AI insight.
+  const goalCompletionPanel =
+    selectedRunDetails.status === "completed" && !goalCompletionUnavailable ? (
+      <GoalCompletionCard
+        run={selectedRunDetails}
+        iterations={caseGroupsForSelectedRun}
+        goalCompletion={goalCompletionResult ?? null}
+        availableModels={availableModels}
+        pending={goalCompletionPending}
+        requested={goalCompletionRequested}
+        failedGeneration={goalCompletionFailedGeneration}
+        error={goalCompletionError}
+        onRun={(args, force) => requestGoalCompletion(args, force)}
       />
     ) : null;
 
@@ -454,7 +490,10 @@ export function RunDetailView({
   );
 
   const insightRail = (
-    <RunInsightRail triageCard={serverQualityTriage} />
+    <RunInsightRail
+      triageCard={serverQualityTriage}
+      goalCompletionCard={goalCompletionPanel}
+    />
   );
 
   const runMetadataBlock = (

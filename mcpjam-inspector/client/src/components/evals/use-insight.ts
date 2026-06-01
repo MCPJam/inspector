@@ -29,7 +29,10 @@ export interface InsightHookResult<TResult> {
   failedGeneration: boolean;
   result: TResult | undefined;
   summary: string | null;
-  requestInsight: (force?: boolean) => void;
+  requestInsight: (
+    force?: boolean,
+    extraArgs?: Record<string, unknown>,
+  ) => void;
   cancelInsight: () => void;
 }
 
@@ -71,13 +74,13 @@ export function useInsight<TResult extends { summary?: string }>(
     !unavailable;
 
   const requestInsight = useCallback(
-    (force?: boolean) => {
+    (force?: boolean, extraArgs?: Record<string, unknown>) => {
       if (!run || unavailable) {
         return;
       }
       setError(null);
       setRequested(true);
-      requestMut({ suiteRunId: run._id, force } as any).catch(
+      requestMut({ suiteRunId: run._id, force, ...extraArgs } as any).catch(
         (err: unknown) => {
           setRequested(false);
           const classified = classifyInsightError(err);
