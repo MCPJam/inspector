@@ -124,11 +124,15 @@ export function GoalCompletionCard({
 
   const cases = goalCompletion?.cases ?? [];
   const advisoryPassed = cases.filter((c) => c.passed).length;
+  // Treat an in-flight request (clicked, before the run doc flips to `pending`)
+  // as a grading state, so a re-run doesn't keep showing the previous run's
+  // stale scores/counts as if they were current.
+  const inFlight = pending || requested;
 
   const headerSubtitle = (() => {
     if (pending) return "Grading…";
+    if (requested) return "Requesting…";
     if (error || failedGeneration) return "Grading failed";
-    if (!goalCompletion && requested) return "Requesting…";
     if (!goalCompletion) return "Not run yet";
     if (cases.length === 0) return "Summary only";
     return `${advisoryPassed}/${cases.length} meet goal (advisory)`;
@@ -158,7 +162,7 @@ export function GoalCompletionCard({
             size="sm"
             className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
             onClick={() => handleRun(true)}
-            disabled={!completedRun || pending || requested}
+            disabled={!completedRun || inFlight}
           >
             <RotateCw className="h-3 w-3" />
             Retry
@@ -175,7 +179,7 @@ export function GoalCompletionCard({
           <Select
             value={selectedModelId}
             onValueChange={setSelectedModelId}
-            disabled={pending}
+            disabled={inFlight}
           >
             <SelectTrigger id="goal-judge-model" className="h-8 w-full text-sm">
               <SelectValue />
@@ -204,7 +208,7 @@ export function GoalCompletionCard({
             onBlur={() =>
               setThresholdInput(String(clampThreshold(Number(thresholdInput))))
             }
-            disabled={pending}
+            disabled={inFlight}
             className="h-8 text-sm"
           />
         </div>
@@ -215,11 +219,12 @@ export function GoalCompletionCard({
           // force when re-grading an existing result OR retrying a failed run,
           // so the shared insight lifecycle re-requests instead of no-opping.
           onClick={() => handleRun(Boolean(goalCompletion) || failedGeneration)}
-          // `requested` blocks the gap between click and the run doc flipping to
-          // `pending`, so a double-click can't spend a second judge call.
-          disabled={!completedRun || pending || requested}
+          // `inFlight` (pending OR requested) blocks the gap between the click
+          // and the run doc flipping to `pending`, so a double-click can't spend
+          // a second judge call.
+          disabled={!completedRun || inFlight}
         >
-          {pending ? (
+          {inFlight ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Sparkles className="h-3.5 w-3.5" />
@@ -235,7 +240,7 @@ export function GoalCompletionCard({
       </p>
 
       <div className="border-t border-border/50">
-        {pending ? (
+        {inFlight ? (
           <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Grading final answers against expected output…

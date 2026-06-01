@@ -144,6 +144,41 @@ describe("GoalCompletionCard", () => {
     expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
   });
 
+  it("shows a grading state (not stale scores) during a re-run gap", () => {
+    // requested=true with a prior result still on the run: the card must show
+    // the in-flight state rather than the previous run's scores as if current.
+    const goalCompletion: EvalSuiteRun["goalCompletion"] = {
+      summary: "prior run",
+      generatedAt: 1,
+      modelUsed: "openai/gpt-5.4-mini",
+      threshold: 0.7,
+      cases: [
+        {
+          caseKey: "ck-1",
+          score: 0.8,
+          passed: true,
+          reason: "old reason",
+          rubricHits: [],
+        },
+      ],
+    };
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        requested
+        goalCompletion={goalCompletion}
+        onRun={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/Grading final answers against expected output/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Requesting…")).toBeInTheDocument();
+    // Stale score / reason from the previous run must not be displayed.
+    expect(screen.queryByText("80%")).not.toBeInTheDocument();
+    expect(screen.queryByText("old reason")).not.toBeInTheDocument();
+  });
+
   it("forces a re-request when retrying a failed run", async () => {
     const onRun = vi.fn();
     const user = userEvent.setup();
