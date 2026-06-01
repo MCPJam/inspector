@@ -64,17 +64,19 @@ describe("GoalCompletionCard", () => {
     expect(screen.getByText("Not run yet")).toBeInTheDocument();
   });
 
-  it("runs the judge with the selected default model and threshold", async () => {
+  it("runs the judge against the suite config (no override) by default", async () => {
     const onRun = vi.fn();
     const user = userEvent.setup();
     render(<GoalCompletionCard {...baseProps} onRun={onRun} />);
 
     await user.click(screen.getByRole("button", { name: /Run judge/i }));
 
-    expect(onRun).toHaveBeenCalledWith(
-      { judgeModel: "openai/gpt-5.4-mini", threshold: 0.7 },
-      false,
-    );
+    // V2 semantic: when the card's inputs equal the suite-configured values
+    // (here both fall back to managed defaults), `runOverride` is undefined
+    // and the backend explicitly clears any previously persisted run
+    // override. This is the "re-running without re-confirming exploration
+    // returns to the suite contract" property the plan requires.
+    expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, false);
   });
 
   it("falls back to the default threshold when the field is left blank", async () => {
@@ -86,8 +88,26 @@ describe("GoalCompletionCard", () => {
     await user.clear(screen.getByLabelText("Threshold"));
     await user.click(screen.getByRole("button", { name: /Run judge/i }));
 
+    // Parsed 0.7 == suite-config default, so no override is sent (the
+    // backend clears any persisted override and uses the suite contract).
+    expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, false);
+  });
+
+  it("sends a runOverride when the user picks a non-default threshold", async () => {
+    const onRun = vi.fn();
+    const user = userEvent.setup();
+    render(<GoalCompletionCard {...baseProps} onRun={onRun} />);
+
+    const thresholdInput = screen.getByLabelText("Threshold");
+    await user.clear(thresholdInput);
+    await user.type(thresholdInput, "0.85");
+    await user.click(screen.getByRole("button", { name: /Run judge/i }));
+
+    // The user's value differs from the suite-config default (0.7) → the
+    // card sends a runOverride. The judge model still matches the suite
+    // default so only `threshold` flows through.
     expect(onRun).toHaveBeenCalledWith(
-      { judgeModel: "openai/gpt-5.4-mini", threshold: 0.7 },
+      { runOverride: { threshold: 0.85 } },
       false,
     );
   });
@@ -207,9 +227,6 @@ describe("GoalCompletionCard", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: /Run judge/i }));
-    expect(onRun).toHaveBeenCalledWith(
-      { judgeModel: "openai/gpt-5.4-mini", threshold: 0.7 },
-      true,
-    );
+    expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, true);
   });
 });

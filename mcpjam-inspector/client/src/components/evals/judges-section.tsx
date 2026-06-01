@@ -1,0 +1,200 @@
+import { useMemo } from "react";
+import { Sparkles } from "lucide-react";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
+import { Switch } from "@mcpjam/design-system/switch";
+import type { ModelDefinition } from "@/shared/types";
+import type { EvalJudgeConfig } from "./types";
+
+/**
+ * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
+ * pattern (props: value / onChange / title / description) so the suite
+ * settings page can drop it next to ValidatorsSection. V1 carries one
+ * judge — Goal Completion — but the envelope is forward-compatible with
+ * additional judges (refusal judge, etc.) without a second pass on the
+ * surface.
+ *
+ * The card on the run-detail page reads the snapshotted suite config from
+ * `run.configSnapshot.judgeConfig` and displays it read-only; this is the
+ * one place a user can change the suite contract.
+ */
+
+const MANAGED_DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
+const DEFAULT_THRESHOLD = 0.7;
+
+interface JudgesSectionProps {
+  value: EvalJudgeConfig | undefined;
+  onChange: (next: EvalJudgeConfig | undefined) => void;
+  availableModels: ModelDefinition[];
+  title?: string;
+  description?: string;
+}
+
+function pruneEmpty(value: EvalJudgeConfig): EvalJudgeConfig | undefined {
+  if (!value.goalCompletion) return undefined;
+  const gc = value.goalCompletion;
+  const hasAnyField =
+    gc.enabled !== undefined ||
+    (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
+    gc.threshold !== undefined;
+  if (!hasAnyField) return undefined;
+  return { goalCompletion: gc };
+}
+
+export function JudgesSection({
+  value,
+  onChange,
+  availableModels,
+  title = "Judges",
+  description = "Advisory LLM-as-judge scorers that grade run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
+}: JudgesSectionProps) {
+  const gc = value?.goalCompletion;
+  const enabled = gc?.enabled === true;
+  const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
+  const threshold = gc?.threshold ?? DEFAULT_THRESHOLD;
+
+  const modelOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const model of availableModels) {
+      const id = String(model.id);
+      if (id && !map.has(id)) {
+        map.set(id, model.name ?? id);
+      }
+    }
+    // Always keep the managed default + the current selection selectable,
+    // even before the async model catalog loads.
+    if (!map.has(MANAGED_DEFAULT_JUDGE_MODEL)) {
+      map.set(MANAGED_DEFAULT_JUDGE_MODEL, MANAGED_DEFAULT_JUDGE_MODEL);
+    }
+    if (judgeModel && !map.has(judgeModel)) {
+      map.set(judgeModel, judgeModel);
+    }
+    return Array.from(map, ([id, label]) => ({ id, label }));
+  }, [availableModels, judgeModel]);
+
+  const update = (patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>) => {
+    const nextGC = { ...(gc ?? {}), ...patch };
+    const nextConfig: EvalJudgeConfig = { goalCompletion: nextGC };
+    onChange(pruneEmpty(nextConfig));
+  };
+
+  return (
+    <section
+      aria-label={title}
+      className="rounded-lg border border-border/40 bg-card/30 p-4 space-y-4"
+    >
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">{title}</h3>
+        </div>
+        {description ? (
+          <p className="text-[12px] text-muted-foreground">{description}</p>
+        ) : null}
+      </div>
+
+      <div className="space-y-3 rounded-md border border-border/30 bg-background/60 p-3">
+        {/* Goal Completion — V1 only judge */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Goal completion</span>
+              <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                advisory · LLM judge
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground/80">
+              Grades whether each case's final answer satisfied its{" "}
+              <code className="font-mono">expectedOutput</code>. Cases without
+              an expected output are skipped (anchored-only).
+            </p>
+          </div>
+          <Switch
+            checked={enabled}
+            onCheckedChange={(checked: boolean) =>
+              update({ enabled: checked || undefined })
+            }
+            aria-label="Enable Goal Completion judge for this suite"
+          />
+        </div>
+
+        {enabled ? (
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="space-y-1">
+              <Label htmlFor="suite-goal-judge-model" className="text-xs">
+                Judge model
+              </Label>
+              <Select
+                value={judgeModel}
+                onValueChange={(next) =>
+                  update({
+                    judgeModel:
+                      next === MANAGED_DEFAULT_JUDGE_MODEL ? undefined : next,
+                  })
+                }
+              >
+                <SelectTrigger
+                  id="suite-goal-judge-model"
+                  className="h-8 w-full text-sm"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {modelOptions.map((opt) => (
+                    <SelectItem key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1 sm:w-28">
+              <Label htmlFor="suite-goal-threshold" className="text-xs">
+                Threshold
+              </Label>
+              <Input
+                id="suite-goal-threshold"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={String(threshold)}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw.trim() === "") {
+                    update({ threshold: undefined });
+                    return;
+                  }
+                  const parsed = Number(raw);
+                  if (!Number.isFinite(parsed)) return;
+                  const clamped = Math.min(1, Math.max(0, parsed));
+                  update({
+                    threshold:
+                      clamped === DEFAULT_THRESHOLD ? undefined : clamped,
+                  });
+                }}
+                className="h-8 text-sm"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {enabled ? (
+          <p className="text-[11px] text-muted-foreground/70">
+            Runs grade against this config. Individual runs can apply a one-off
+            override via the "⚙ Override for this run" disclosure on the run
+            detail page — overrides are marked on the suite trend so
+            calibration stays comparable.
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}

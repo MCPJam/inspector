@@ -84,13 +84,26 @@ export function GoalCompletionCard({
 }: GoalCompletionCardProps) {
   const completedRun = run.status === "completed";
 
-  const [selectedModelId, setSelectedModelId] = useState<string>(
-    goalCompletion?.modelUsed && goalCompletion.modelUsed !== "n/a"
+  // Seed inputs from (in order): persisted run override → suite snapshot →
+  // managed defaults. This way reopening a run with an override pre-populates
+  // it; reopening a run without one pre-populates suite config (so a click
+  // submits the suite default and the override field stays cleared on the
+  // backend).
+  const initialModel =
+    run.judgeConfigOverride?.goalCompletion?.judgeModel ??
+    run.configSnapshot?.judgeConfig?.goalCompletion?.judgeModel ??
+    (goalCompletion?.modelUsed && goalCompletion.modelUsed !== "n/a"
       ? goalCompletion.modelUsed
-      : DEFAULT_JUDGE_MODEL,
-  );
+      : DEFAULT_JUDGE_MODEL);
+  const initialThreshold =
+    run.judgeConfigOverride?.goalCompletion?.threshold ??
+    run.configSnapshot?.judgeConfig?.goalCompletion?.threshold ??
+    goalCompletion?.threshold ??
+    DEFAULT_THRESHOLD;
+  const [selectedModelId, setSelectedModelId] =
+    useState<string>(initialModel);
   const [thresholdInput, setThresholdInput] = useState<string>(
-    String(goalCompletion?.threshold ?? DEFAULT_THRESHOLD),
+    String(initialThreshold),
   );
 
   // Always keep the managed default + the current selection selectable, even
@@ -124,14 +137,38 @@ export function GoalCompletionCard({
     return map;
   }, [iterations]);
 
+  // Read the suite's effective config from the run's snapshot. The card
+  // displays this read-only; the model + threshold inputs on this card now
+  // populate a per-run *override* (run.judgeConfigOverride) instead of being
+  // the primary config source. Suite settings is the new home for default
+  // config (see JudgesSection in suite-iterations-view.tsx). The persisted
+  // run override (run.judgeConfigOverride.goalCompletion) is consumed at
+  // initial-state seeding above; the banner that surfaces it prominently
+  // is V1.x polish.
+  const suiteConfig = run.configSnapshot?.judgeConfig?.goalCompletion;
+  const suiteModel = suiteConfig?.judgeModel ?? DEFAULT_JUDGE_MODEL;
+  const suiteThreshold = suiteConfig?.threshold ?? DEFAULT_THRESHOLD;
+
   const handleRun = (force: boolean) => {
-    onRun(
-      {
-        judgeModel: selectedModelId || undefined,
-        threshold: parseThreshold(thresholdInput),
-      },
-      force,
-    );
+    // Only send a runOverride when the user's inputs DIFFER from the suite
+    // config. Otherwise pass `{}` so the backend clears any previously
+    // persisted override and grades against the suite contract — the
+    // override-clearing semantic the plan + tests require.
+    const overrideModel =
+      selectedModelId && selectedModelId !== suiteModel
+        ? selectedModelId
+        : undefined;
+    const parsedThreshold = parseThreshold(thresholdInput);
+    const overrideThreshold =
+      parsedThreshold !== suiteThreshold ? parsedThreshold : undefined;
+    const runOverride =
+      overrideModel || overrideThreshold !== undefined
+        ? {
+            judgeModel: overrideModel,
+            threshold: overrideThreshold,
+          }
+        : undefined;
+    onRun({ runOverride }, force);
   };
 
   const cases = goalCompletion?.cases ?? [];

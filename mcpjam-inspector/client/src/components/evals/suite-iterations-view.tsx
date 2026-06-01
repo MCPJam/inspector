@@ -15,6 +15,7 @@ import { RunDiffView } from "./run-diff-view";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
+import { JudgesSection } from "./judges-section";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
@@ -1127,6 +1128,32 @@ export function SuiteIterationsView({
                       "Failed to update default validators:",
                       error
                     );
+                  }
+                }}
+              />
+            </div>
+
+            {/* Judges Section — suite-level authoritative judge config. The
+                run-detail card reads run.configSnapshot.judgeConfig (pinned
+                at run start) and lets a single run override via the
+                "⚙ Override for this run" disclosure; this section is the
+                canonical home for what the suite calibrates against. */}
+            <div className="space-y-3">
+              <JudgesSection
+                value={suite.judgeConfig}
+                availableModels={availableModels}
+                onChange={async (next) => {
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      judgeConfig: next ?? null,
+                    });
+                    toast.success("Judges updated");
+                  } catch (error) {
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite")
+                    );
+                    console.error("Failed to update judges:", error);
                   }
                 }}
               />

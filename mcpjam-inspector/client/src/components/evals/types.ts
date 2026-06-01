@@ -48,6 +48,15 @@ export type EvalSuite = {
   };
   /** Suite-level default validator options (used unless a case overrides). */
   defaultMatchOptions?: EvalMatchOptions;
+  /**
+   * Suite-level advisory judge configuration. Authoritative source for
+   * judgeModel / threshold / enabled flag — runs snapshot this at
+   * run-create time, the action reads from the snapshot, and the
+   * run-detail card displays it read-only with an explicit "override
+   * for this run" disclosure as the escape hatch. Hand-mirrors the
+   * Convex `v.object` (no codegen for backend → inspector types).
+   */
+  judgeConfig?: EvalJudgeConfig;
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {
@@ -113,8 +122,42 @@ export type EvalCase = {
   advancedConfig?: Record<string, unknown>;
   /** Case-level validator override; merged on top of suite defaults. */
   matchOptions?: EvalMatchOptions;
+  /**
+   * Per-case judge override. V1 carries opt-out only — no alt model or
+   * threshold (see backend `convex/lib/judgeConfig.ts` for rationale).
+   */
+  judgeConfigOverride?: EvalJudgeConfigOverride;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
+};
+
+/**
+ * Suite-level judge config envelope. Currently carries goalCompletion only;
+ * the envelope shape is forward-compatible with additional judges (refusal
+ * judge, future serverQuality move-here, etc.) without a second pass on
+ * the type surface.
+ */
+export type EvalJudgeConfig = {
+  goalCompletion?: {
+    enabled?: boolean;
+    judgeModel?: string;
+    threshold?: number;
+  };
+};
+
+/** Per-case judge override. Opt-out only in V1. */
+export type EvalJudgeConfigOverride = {
+  goalCompletion?: {
+    enabled?: boolean;
+  };
+};
+
+/** Per-run exploration override; persists on the run for transparency. */
+export type EvalJudgeRunOverride = {
+  goalCompletion?: {
+    judgeModel?: string;
+    threshold?: number;
+  };
 };
 
 export type EvalIteration = {
@@ -250,6 +293,13 @@ export type EvalSuiteRun = {
         projectServerId?: string;
       }>;
     };
+    /**
+     * Suite-level judge config snapshotted at run-create. The run-detail
+     * card reads `modelUsed` / `threshold` from here when displaying the
+     * judge config, so a config edit after the run started doesn't
+     * silently re-render in-flight scoring with new values.
+     */
+    judgeConfig?: EvalJudgeConfig;
   };
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   summary?: EvalSuiteRunSummary;
@@ -258,6 +308,12 @@ export type EvalSuiteRun = {
   };
   /** One-off validator override applied to all iterations in this run. */
   matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * Per-run judge override from the "⚙ Override for this run" disclosure.
+   * Cleared (whole field wiped) when the user re-runs the judge without
+   * re-confirming the override.
+   */
+  judgeConfigOverride?: EvalJudgeRunOverride;
   result?: "pending" | "passed" | "failed" | "cancelled";
   source?: "ui" | "sdk";
   replayedFromRunId?: string;
