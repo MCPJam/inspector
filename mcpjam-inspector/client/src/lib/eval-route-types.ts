@@ -24,6 +24,8 @@ export type EvalRoute =
       suiteId: string;
       runId: string;
       iteration?: string;
+      /** Drill into a test case's iterations within this run. */
+      testCaseId?: string;
       insightsFocus?: boolean;
       compareToRunId?: string;
     }

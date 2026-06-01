@@ -8,8 +8,10 @@ import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
+import { shouldShowRunAccuracyHero } from "./run-insight-rail";
+import { RunTestCaseDetailView } from "./run-test-case-detail-view";
+import type { RunCaseGroup } from "./run-case-groups";
 import { RunDiffView } from "./run-diff-view";
-import { computeRunDashboardKpis, RunDetailKpiStrip } from "./run-detail-kpis";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
@@ -59,6 +61,7 @@ export interface SuiteNavigation {
       insightsFocus?: boolean;
       replace?: boolean;
       compareToRunId?: string;
+      testCaseId?: string;
     }
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
@@ -335,9 +338,60 @@ export function SuiteIterationsView({
     return map;
   }, [suite.hostAttachments]);
 
+  const omitRunDetailIdentity = useMemo(() => {
+    if (viewMode !== "run-detail" || !selectedRunDetails) {
+      return false;
+    }
+    return shouldShowRunAccuracyHero({
+      run: selectedRunDetails,
+      iterations: caseGroupsForSelectedRun,
+      runTrendData,
+    });
+  }, [
+    viewMode,
+    selectedRunDetails,
+    caseGroupsForSelectedRun,
+    runTrendData,
+  ]);
+
   // Derive selectedIterationId from route
   const selectedIterationId =
     route.type === "run-detail" ? route.iteration ?? null : null;
+
+  const selectedRunTestCaseId =
+    route.type === "run-detail" ? route.testCaseId ?? null : null;
+
+  const handleSelectTestCase = (group: RunCaseGroup) => {
+    if (route.type !== "run-detail" || !group.testCaseId) {
+      return;
+    }
+    navigation.toRunDetail(route.suiteId, route.runId, undefined, {
+      testCaseId: group.testCaseId,
+    });
+  };
+
+  const handleBackToRunOverview = () => {
+    if (route.type !== "run-detail") return;
+    navigation.toRunDetail(route.suiteId, route.runId, undefined, {
+      insightsFocus: true,
+    });
+  };
+
+  const iterationsForSelectedRunTestCase = useMemo(() => {
+    if (!selectedRunId || !selectedRunTestCaseId) return [];
+    return caseGroupsForSelectedRun.filter(
+      (iteration) => iteration.testCaseId === selectedRunTestCaseId,
+    );
+  }, [
+    selectedRunId,
+    selectedRunTestCaseId,
+    caseGroupsForSelectedRun,
+  ]);
+
+  const selectedRunTestCase = useMemo(() => {
+    if (!selectedRunTestCaseId) return null;
+    return cases.find((testCase) => testCase._id === selectedRunTestCaseId) ?? null;
+  }, [cases, selectedRunTestCaseId]);
 
   const handleSelectIteration = (iterationId: string) => {
     if (route.type !== "run-detail") {
@@ -345,7 +399,9 @@ export function SuiteIterationsView({
     }
     const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
     if (readOnlyConfig) {
-      navigation.toRunDetail(route.suiteId, route.runId, iterationId);
+      navigation.toRunDetail(route.suiteId, route.runId, iterationId, {
+        testCaseId: selectedRunTestCaseId ?? iter?.testCaseId ?? undefined,
+      });
       return;
     }
     if (iter?.testCaseId) {
@@ -530,12 +586,13 @@ export function SuiteIterationsView({
     if (viewMode === "run-detail" && selectedRunId)
       return selectedCompareBaseRunId
         ? `run-diff-${selectedCompareBaseRunId}-${selectedRunId}`
-        : `run-detail-${selectedRunId}`;
+        : `run-detail-${selectedRunId}-${selectedRunTestCaseId ?? "overview"}`;
     return "empty";
   }, [
     viewMode,
     selectedTestId,
     selectedRunId,
+    selectedRunTestCaseId,
     selectedCompareBaseRunId,
     runsViewMode,
   ]);
@@ -587,20 +644,7 @@ export function SuiteIterationsView({
               readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
             projectHosts={projectHosts}
-            runDetailKpiStrip={
-              showSuiteHeader &&
-              viewMode === "run-detail" &&
-              selectedRunDetails ? (
-                <RunDetailKpiStrip
-                  compact
-                  kpis={computeRunDashboardKpis({
-                    selectedRunDetails,
-                    caseGroupsForSelectedRun,
-                    source: suite.source as "ui" | "sdk" | undefined,
-                  })}
-                />
-              ) : undefined
-            }
+            omitRunDetailIdentity={omitRunDetailIdentity}
           />
         </div>
       ) : null}
@@ -718,9 +762,6 @@ export function SuiteIterationsView({
                     runsLoading={runsLoading}
                     runTrendData={runTrendData}
                     modelStats={modelStats}
-                    initialHostMode={
-                      runsViewMode === "cross-host" ? "by-host" : "by-case"
-                    }
                     onTestCaseClick={(testCaseId) =>
                       navigation.toTestEdit(suite._id, testCaseId)
                     }
@@ -838,12 +879,12 @@ export function SuiteIterationsView({
                       cases={cases}
                       runs={runs}
                       allIterations={allIterations}
-                      initialHostMode={
-                        runsViewMode === "cross-host" ? "by-host" : "by-case"
-                      }
                       runsViewMode={
+                        // For multi-host suites the matrix is the "runs" mode;
+                        // remap cross-host so TestCasesOverview's by-host gate
+                        // (runsViewMode === "runs") still fires for deep links.
                         runsViewMode === "cross-host"
-                          ? "test-cases"
+                          ? "runs"
                           : runsViewMode
                       }
                       onViewModeChange={(value) =>
@@ -908,6 +949,14 @@ export function SuiteIterationsView({
                       navigation.toRunDetail(suite._id, runId, iterationId)
                     }
                   />
+                ) : selectedRunTestCaseId && selectedRunDetails ? (
+                  <RunTestCaseDetailView
+                    run={selectedRunDetails}
+                    testCase={selectedRunTestCase}
+                    iterations={iterationsForSelectedRunTestCase}
+                    onBack={handleBackToRunOverview}
+                    serverNames={suite.environment?.servers || []}
+                  />
                 ) : (
                   <RunDetailView
                     selectedRunDetails={selectedRunDetails}
@@ -919,10 +968,15 @@ export function SuiteIterationsView({
                     serverNames={suite.environment?.servers || []}
                     selectedIterationId={selectedIterationId}
                     onSelectIteration={handleSelectIteration}
+                    selectedTestCaseId={selectedRunTestCaseId}
+                    onSelectTestCase={handleSelectTestCase}
                     hostNamesById={hostNamesById}
                     compareBaseRun={previousCompletedRunForSelectedRun}
                     onCompareWithRun={(baseRunId) =>
                       handleCompareRuns(baseRunId, selectedRunDetails._id)
+                    }
+                    onSelectRun={(runId) =>
+                      navigation.toRunDetail(suite._id, runId)
                     }
                     kpiPlacement={
                       showSuiteHeader && viewMode === "run-detail"
@@ -938,17 +992,22 @@ export function SuiteIterationsView({
                               route.suiteId,
                               route.runId,
                               undefined,
-                              { insightsFocus: true }
+                              { insightsFocus: true },
                             )
                         : undefined
                     }
                     runInsightsSelected={
                       !omitRunIterationList &&
                       route.type === "run-detail" &&
-                      Boolean(route.insightsFocus && !route.iteration)
+                      Boolean(
+                        route.insightsFocus &&
+                          !route.iteration &&
+                          !route.testCaseId,
+                      )
                     }
                     onEditTestCase={onEditTestCase}
                     alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+                    runTrendData={runTrendData}
                   />
                 )}
               </motion.div>

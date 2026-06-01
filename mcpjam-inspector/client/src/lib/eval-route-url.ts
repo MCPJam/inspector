@@ -72,6 +72,7 @@ export function parseEvalRouteFromUrl(
       suiteId,
       runId: decodePathSegment(rest[1]),
       iteration: params.get("iteration") || undefined,
+      testCaseId: params.get("case") || undefined,
       ...(insightsFocus ? { insightsFocus: true } : {}),
       ...(params.get("compareTo")
         ? { compareToRunId: params.get("compareTo") || undefined }

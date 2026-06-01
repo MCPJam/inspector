@@ -535,6 +535,16 @@ export function CiEvalsTab({
                   caseGroupsForSelectedRun={caseGroupsForSelectedRun}
                   runDetailSortBy={runDetailSidebarSortBy}
                   onSortChange={setRunDetailSidebarSortBy}
+                  selectedTestCaseId={route.testCaseId ?? null}
+                  onSelectTestCase={(group) => {
+                    if (!group.testCaseId) return;
+                    navigateToCiEvalsPath({
+                      type: "run-detail",
+                      suiteId: route.suiteId,
+                      runId: route.runId,
+                      testCaseId: group.testCaseId,
+                    });
+                  }}
                   selectedIterationId={route.iteration ?? null}
                   onSelectIteration={(iterationId) => {
                     navigateToCiEvalsPath({
@@ -542,6 +552,7 @@ export function CiEvalsTab({
                       suiteId: route.suiteId,
                       runId: route.runId,
                       iteration: iterationId,
+                      testCaseId: route.testCaseId,
                     });
                   }}
                   runForOverview={selectedRunForSidebar}
@@ -558,7 +569,11 @@ export function CiEvalsTab({
                   }
                   runInsightsSelected={
                     route.type === "run-detail"
-                      ? Boolean(route.insightsFocus && !route.iteration)
+                      ? Boolean(
+                          route.insightsFocus &&
+                            !route.iteration &&
+                            !route.testCaseId,
+                        )
                       : false
                   }
                 />

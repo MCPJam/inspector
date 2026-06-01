@@ -8,6 +8,7 @@ import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -252,7 +253,13 @@ export const createSuiteRunRecorder = ({
           error,
           errorDetails,
           resultSource,
-          metadata: metadata ? sanitizeForConvexTransport(metadata) : metadata,
+          // Merge user-provided metadata with token usage breakdown, then
+          // sanitize: metadata can carry nested predicate rows whose authored
+          // args may contain $-prefixed keys Convex rejects at the boundary.
+          metadata: sanitizeForConvexTransport({
+            ...(metadata ?? {}),
+            ...buildIterationUsageMetadata(usage),
+          }),
         });
       } catch (error) {
         const errorMessage =

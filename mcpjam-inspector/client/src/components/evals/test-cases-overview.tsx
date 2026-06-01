@@ -21,6 +21,12 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
+import {
+  EVAL_DESTRUCTIVE_BUTTON_CLASS,
+  EVAL_FAILED_BADGE_CLASS,
+  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+} from "./constants";
+import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
@@ -30,10 +36,6 @@ import {
   caseListCardClassName,
   CaseListColumnHeaders,
 } from "./case-list-shared";
-import {
-  CaseListHostToggle,
-  type CaseListHostMode,
-} from "./case-list-host-toggle";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 
 function iterationRecencyTs(iter: EvalIteration): number {
@@ -51,17 +53,11 @@ interface TestCasesOverviewProps {
   cases: EvalCase[];
   allIterations: EvalIteration[];
   /**
-   * Suite runs, required to build the "By host" cross-host matrix. Optional
-   * because minimal callers (and the by-case-only path) don't need it; the
-   * matrix only renders when host attachments exist, which implies runs.
+   * Suite runs, required to build the cross-host matrix. Optional because
+   * minimal callers don't need it; the matrix only renders when host
+   * attachments exist, which implies runs.
    */
   runs?: EvalSuiteRun[];
-  /**
-   * Seeds the "By case / By host" toggle on mount (e.g. from a
-   * `view=cross-host` deep-link). The toggle is local state thereafter, so
-   * flipping it does not remount this component or churn the URL.
-   */
-  initialHostMode?: CaseListHostMode;
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   onTestCaseClick: (testCaseId: string) => void;
@@ -107,7 +103,6 @@ export function TestCasesOverview({
   cases,
   runs,
   allIterations,
-  initialHostMode = "by-case",
   runsViewMode,
   onViewModeChange,
   onTestCaseClick,
@@ -122,17 +117,11 @@ export function TestCasesOverview({
   isDirectGuest = false,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
-  // A one-host matrix is pointless, so the "By host" view is only offered when
+  // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
   const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
   const canShowByHost = hostAttachmentCount >= 2;
-  // Local state (seeded from the route on mount) so flipping the toggle swaps
-  // the list/matrix in place without remounting this component or the content
-  // region. Seed unconditionally from the route — `effectiveHostMode` clamps
-  // to "by-case" until host attachments load, so a `view=cross-host` deep-link
-  // that arrives before attachments populate isn't lost.
-  const [hostMode, setHostMode] = useState<CaseListHostMode>(initialHostMode);
-  const effectiveHostMode = canShowByHost ? hostMode : "by-case";
+  const isByHostView = canShowByHost && runsViewMode === "runs";
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
     { suiteId: suite._id } as any
@@ -357,13 +346,19 @@ export function TestCasesOverview({
     <>
       {/* Cases List */}
       <div
-        className={cn(caseListCardClassName, "max-h-[600px]")}
+        className={cn(
+          caseListCardClassName,
+          isByHostView
+            ? "min-h-[min(70vh,720px)] flex-1"
+            : "max-h-[600px]",
+        )}
       >
-        {batchDelete &&
+        {!isByHostView &&
+        batchDelete &&
         (showPersistentBatchHeader || selectedCaseIds.size > 0) ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
-              {effectiveHostMode === "by-case" ? (
+              {!isByHostView ? (
                 <Checkbox
                   checked={selectedCaseIds.size === testCaseStats.length}
                   onCheckedChange={toggleAllCases}
@@ -390,35 +385,43 @@ export function TestCasesOverview({
                 </Button>
                 <Button
                   type="button"
-                  variant="destructive"
                   size="sm"
-                  className="h-8"
+                  className={cn("h-8", EVAL_DESTRUCTIVE_BUTTON_CLASS)}
                   onClick={() => setShowBatchDeleteModal(true)}
                   disabled={isBatchDeleting}
                 >
                   Delete
                 </Button>
               </div>
-            ) : canShowByHost ? (
-              <CaseListHostToggle
-                value={effectiveHostMode}
-                onChange={setHostMode}
-                className="shrink-0"
-              />
             ) : null}
           </div>
         ) : !showDisconnectedPlaygroundEmptyState ? (
-          <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">{clickHint}</p>
+          <div
+            className={cn(
+              "shrink-0 flex items-center justify-between gap-3 border-b",
+              isByHostView
+                ? "bg-muted/60 px-4 py-2.5"
+                : "px-4 py-2",
+            )}
+          >
+            <div className="min-w-0">
+              {isByHostView ? (
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <h2 className="truncate text-base font-semibold leading-tight text-foreground sm:text-lg">
+                    Test cases
+                    <span className="ml-1.5 font-mono text-sm font-normal tabular-nums text-muted-foreground">
+                      · {effectiveCases.length}
+                    </span>
+                  </h2>
+                  <p className="text-[11px] text-muted-foreground">
+                    Pass rate, latency, and tokens per attached host
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{clickHint}</p>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              {canShowByHost ? (
-                <CaseListHostToggle
-                  value={effectiveHostMode}
-                  onChange={setHostMode}
-                />
-              ) : null}
+            <div className="flex shrink-0 items-center gap-2">
               {!hideViewModeSelect ? (
                 <div className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5">
                   {(
@@ -447,13 +450,15 @@ export function TestCasesOverview({
           </div>
         ) : null}
 
-        {effectiveHostMode === "by-host" ? (
-          <div className="overflow-y-auto p-4">
+        {isByHostView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto bg-background">
             <CrossHostDashboard
               suite={suite as EvalSuite}
-              cases={cases}
+              cases={effectiveCases}
               runs={runs ?? []}
               allIterations={allIterations}
+              expanded
+              onTestCaseClick={onTestCaseClick}
             />
           </div>
         ) : (
@@ -549,7 +554,11 @@ export function TestCasesOverview({
               );
               const failBadge = (
                 <span
-                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+                  className={cn(
+                    ITERATION_RESULT_BADGE_BASE,
+                    "tracking-wider",
+                    EVAL_FAILED_BADGE_CLASS,
+                  )}
                   aria-label="Failed"
                 >
                   Failed
@@ -751,7 +760,9 @@ export function TestCasesOverview({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-destructive" />
+              <Trash2
+                className={cn("h-5 w-5", EVAL_LOW_PASS_RATE_TEXT_CLASS)}
+              />
               Delete {selectedCaseIds.size} test case
               {selectedCaseIds.size !== 1 ? "s" : ""}
             </DialogTitle>
@@ -769,7 +780,7 @@ export function TestCasesOverview({
               Cancel
             </Button>
             <Button
-              variant="destructive"
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
               onClick={() => void confirmBatchDeleteTestCases()}
               disabled={isBatchDeleting}
             >

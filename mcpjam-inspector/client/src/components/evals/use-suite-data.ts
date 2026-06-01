@@ -17,6 +17,8 @@ import {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
+import { groupRunIterationsByTestCase } from "./run-case-groups";
+import { buildRunMetricsChartData } from "./run-chart-data";
 
 function desanitizeEvalIteration(iter: EvalIteration): EvalIteration {
   return {
@@ -110,11 +112,23 @@ export function useSuiteData(
           return null;
         }
 
+        const passed =
+          realTimeTotal > 0
+            ? realTimePassed
+            : (run.summary?.passed ?? 0);
+        const total =
+          realTimeTotal > 0
+            ? realTimeTotal
+            : (run.summary?.total ?? 0);
+
         return {
           runId: run._id,
           runIdDisplay: formatRunId(run._id),
           passRate,
+          passed,
+          total,
           label: formatTime(run.completedAt ?? run.createdAt),
+          runNumber: run.runNumber,
         };
       })
       .filter(
@@ -124,7 +138,10 @@ export function useSuiteData(
           runId: string;
           runIdDisplay: string;
           passRate: number;
+          passed: number;
+          total: number;
           label: string;
+          runNumber: number;
         } => item !== null,
       );
     return data;
@@ -511,88 +528,19 @@ export function useRunDetailData(
       }))
       .sort((a, b) => a.model.localeCompare(b.model));
 
-    const testMap = new Map<
-      string,
-      {
-        title: string;
-        durations: number[];
-        tokens: number[];
-        passed: number;
-        failed: number;
-        pending: number;
-        cancelled: number;
-      }
-    >();
-
     caseGroupsForSelectedRun.forEach((iteration) => {
-      const testKey = iteration.testCaseSnapshot?.title || "Unknown";
-
-      if (!testMap.has(testKey)) {
-        testMap.set(testKey, {
-          title: testKey,
-          durations: [],
-          tokens: [],
-          passed: 0,
-          failed: 0,
-          pending: 0,
-          cancelled: 0,
-        });
-      }
-
-      const test = testMap.get(testKey)!;
-
-      // Use computeIterationPassed for accurate pass/fail with negative test support
-      if (iteration.result === "pending") test.pending++;
-      else if (iteration.result === "cancelled") test.cancelled++;
-      else if (computeIterationPassed(iteration)) test.passed++;
-      else test.failed++;
-
-      const startedAt = iteration.startedAt ?? iteration.createdAt;
-      const completedAt = iteration.updatedAt ?? iteration.createdAt;
-      if (startedAt && completedAt && iteration.result !== "pending") {
-        test.durations.push(Math.max(completedAt - startedAt, 0));
-      }
-
-      // Track tokens used
-      if (iteration.result !== "pending" && iteration.tokensUsed) {
-        test.tokens.push(iteration.tokensUsed);
-      }
+      if (iteration.result === "pending" || iteration.status === "running")
+        totalPending++;
+      else if (iteration.result === "cancelled") totalCancelled++;
+      else if (computeIterationPassed(iteration)) totalPassed++;
+      else totalFailed++;
     });
 
-    testMap.forEach((test) => {
-      totalPassed += test.passed;
-      totalFailed += test.failed;
-      totalPending += test.pending;
-      totalCancelled += test.cancelled;
-    });
-
-    const durationData = Array.from(testMap.values()).map((test) => {
-      const avgDuration =
-        test.durations.length > 0
-          ? test.durations.reduce((sum, d) => sum + d, 0) /
-            test.durations.length
-          : 0;
-
-      return {
-        name: test.title,
-        duration: avgDuration,
-        durationSeconds: avgDuration / 1000,
-      };
-    });
-
-    const tokensData = Array.from(testMap.values())
-      .map((test) => {
-        const avgTokens =
-          test.tokens.length > 0
-            ? test.tokens.reduce((sum, t) => sum + t, 0) / test.tokens.length
-            : 0;
-
-        return {
-          name: test.title,
-          tokens: avgTokens,
-        };
-      })
-      .filter((entry) => entry.tokens > 0);
+    const runCaseGroups = groupRunIterationsByTestCase(
+      caseGroupsForSelectedRun,
+      "test",
+    );
+    const { durationData, tokensData } = buildRunMetricsChartData(runCaseGroups);
 
     const donutData = [];
     if (totalPassed > 0) {

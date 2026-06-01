@@ -89,6 +89,24 @@ describe("SuiteHeader", () => {
     expect(screen.getByText(/1 passed · 1 failed · 50%/)).toBeInTheDocument();
   });
 
+  it("omits run identity when consolidated into the accuracy hero band", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+        }}
+        omitRunDetailIdentity
+      />,
+    );
+    expect(screen.queryByRole("heading", { name: /Run run-1/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/1 passed · 1 failed/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Replay this run" }),
+    ).toBeInTheDocument();
+  });
+
   it("hides compact run stats when the KPI strip is shown", () => {
     renderWithProviders(
       <SuiteHeader

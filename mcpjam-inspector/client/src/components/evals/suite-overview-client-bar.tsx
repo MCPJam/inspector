@@ -7,6 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Globe, MoreHorizontal, Plus, X } from "lucide-react";
+import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { type HostListItem } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
@@ -154,7 +155,7 @@ export function SuiteOverviewClientBar({
               className="flex cursor-pointer items-center gap-2 text-sm"
               onSelect={() => void handleAddHost(host)}
             >
-              <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <HostLogoMark label={host.name} />
               <span className="truncate font-medium">{host.name}</span>
             </DropdownMenuItem>
           ))
@@ -252,7 +253,7 @@ export function SuiteOverviewClientBar({
                   key={attachment.namedHostId}
                   className="flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-foreground"
                 >
-                  <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                  <HostLogoMark label={label} />
                   <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
                     {label}
                   </span>
@@ -302,5 +303,21 @@ export function SuiteOverviewClientBar({
         </div>
       </div>
     </div>
+  );
+}
+
+function HostLogoMark({ label }: { label: string }) {
+  const logoSrc = resolveHostLogoByDisplayName(label);
+  if (logoSrc) {
+    return (
+      <img
+        src={logoSrc}
+        alt=""
+        className="size-3.5 shrink-0 object-contain"
+      />
+    );
+  }
+  return (
+    <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
   );
 }

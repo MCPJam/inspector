@@ -102,6 +102,7 @@ function buildEvalRoutePath(
     case "run-detail": {
       const params = new URLSearchParams();
       if (route.iteration) params.set("iteration", route.iteration);
+      if (route.testCaseId) params.set("case", route.testCaseId);
       if (route.insightsFocus) params.set("insights", "1");
       if (route.compareToRunId) params.set("compareTo", route.compareToRunId);
       const query = params.toString();

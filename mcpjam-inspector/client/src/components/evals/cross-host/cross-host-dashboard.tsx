@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { Network } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
+import { cn } from "@/lib/utils";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
+import { evalSurfaceCardClass } from "../eval-surface-chrome";
 import { CrossHostMatrix } from "./cross-host-matrix";
 import { useCrossHostData } from "./use-cross-host-data";
 
@@ -13,6 +15,9 @@ interface CrossHostDashboardProps {
   allIterations: EvalIteration[];
   /** Called when the user wants to navigate to host attachment settings. */
   onConfigureHosts?: () => void;
+  /** Full-height matrix inside the suite dashboard By host view. */
+  expanded?: boolean;
+  onTestCaseClick?: (testCaseId: string) => void;
 }
 
 export function CrossHostDashboard({
@@ -21,6 +26,8 @@ export function CrossHostDashboard({
   runs,
   allIterations,
   onConfigureHosts,
+  expanded = false,
+  onTestCaseClick,
 }: CrossHostDashboardProps) {
   const data = useCrossHostData(suite, cases, runs, allIterations);
   const posthog = usePostHog();
@@ -93,17 +100,33 @@ export function CrossHostDashboard({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h3 className="text-sm font-medium">Cross-host comparison</h3>
-        <p className="text-xs text-muted-foreground">
-          {data.hostColumns.length} host
-          {data.hostColumns.length !== 1 ? "s" : ""} · {data.caseRows.length}{" "}
-          case{data.caseRows.length !== 1 ? "s" : ""}
-        </p>
-      </div>
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <CrossHostMatrix data={data} />
+    <div
+      className={
+        expanded ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-4 p-4"
+      }
+    >
+      {!expanded ? (
+        <div>
+          <h3 className="text-sm font-medium">Cross-host comparison</h3>
+          <p className="text-xs text-muted-foreground">
+            {data.hostColumns.length} host
+            {data.hostColumns.length !== 1 ? "s" : ""} · {data.caseRows.length}{" "}
+            case{data.caseRows.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+      ) : null}
+      <div
+        className={
+          expanded
+            ? "min-h-0 flex-1 overflow-hidden"
+            : cn("overflow-hidden", evalSurfaceCardClass)
+        }
+      >
+        <CrossHostMatrix
+          data={data}
+          expanded={expanded}
+          onTestCaseClick={onTestCaseClick}
+        />
       </div>
     </div>
   );

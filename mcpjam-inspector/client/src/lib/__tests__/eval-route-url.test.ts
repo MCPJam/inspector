@@ -95,6 +95,19 @@ describe("eval-route-url", () => {
       iteration: undefined,
       compareToRunId: "r_123",
     });
+    expect(
+      parseEvalRouteFromUrl(
+        "/evals",
+        "/evals/suite/s_123/runs/r_456",
+        "?case=tc_789",
+      ),
+    ).toEqual({
+      type: "run-detail",
+      suiteId: "s_123",
+      runId: "r_456",
+      iteration: undefined,
+      testCaseId: "tc_789",
+    });
   });
 
   it("builds run detail query state", () => {

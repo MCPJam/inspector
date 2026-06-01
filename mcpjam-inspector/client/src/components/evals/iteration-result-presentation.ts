@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { EVAL_FAILED_BADGE_CLASS } from "./constants";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration } from "./types";
 
@@ -19,7 +20,7 @@ export function suitePassCriteriaCompactBadgeClassNames(
     outcome === "passed"
       ? "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
       : outcome === "failed"
-        ? "bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+        ? EVAL_FAILED_BADGE_CLASS
         : "bg-amber-500/15 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300";
 
   return cn(ITERATION_RESULT_BADGE_BASE, colorClass);
@@ -41,7 +42,7 @@ export function getIterationResultBadgeClass(iteration: EvalIteration) {
     return "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300";
   }
   if (result === "failed") {
-    return "bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300";
+    return EVAL_FAILED_BADGE_CLASS;
   }
   if (result === "cancelled") {
     return "bg-muted text-muted-foreground";
