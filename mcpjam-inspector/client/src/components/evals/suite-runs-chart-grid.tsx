@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactElement } from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -74,17 +74,17 @@ function SparklinePointLabel({
   index,
   annotatedIndices,
 }: {
-  // Recharts widens x/y to string | number; the runtime values are SVG
-  // coords (numbers) — coerce inside.
-  x?: string | number;
-  y?: string | number;
+  // Recharts' LabelList content widens these to string | number from its
+  // SVG prop types; we only annotate numerics, so guard and skip otherwise.
+  x?: number | string;
+  y?: number | string;
   value?: number | string;
   index?: number;
   annotatedIndices: Set<number>;
 }) {
   if (
-    x == null ||
-    y == null ||
+    typeof x !== "number" ||
+    typeof y !== "number" ||
     value == null ||
     index == null ||
     !annotatedIndices.has(index)
@@ -92,12 +92,10 @@ function SparklinePointLabel({
     return null;
   }
 
-  const yNum = typeof y === "number" ? y : Number(y);
-
   return (
     <text
       x={x}
-      y={yNum - 10}
+      y={y - 10}
       textAnchor="middle"
       fill="hsl(var(--muted-foreground))"
       fontSize={9}
@@ -112,9 +110,13 @@ function createSparklineDot(
   pointCount: number,
   onRunClick?: (runId: string) => void,
 ) {
-  return function SparklineDot(props: DotProps & { index?: number; payload?: { runId?: string } }) {
+  return function SparklineDot(
+    props: DotProps & { index?: number; payload?: { runId?: string } },
+  ): ReactElement<SVGElement> {
     const { cx, cy, index, payload } = props;
-    if (cx == null || cy == null) return null;
+    // Recharts' AreaDot type requires the function to return an SVGElement;
+    // a no-op <g/> for the missing-coordinate case keeps the type honest.
+    if (cx == null || cy == null) return <g />;
 
     const isLatest = index === pointCount - 1;
     const cursor = onRunClick ? "pointer" : undefined;
@@ -321,9 +323,7 @@ export function SuiteRunsChartGrid({
                       fillOpacity={0.12}
                       strokeWidth={2}
                       isAnimationActive={false}
-                      // Recharts' AreaDot type rejects nullable returns even
-                      // though it handles them at runtime; cast around it.
-                      dot={SparklineDot as unknown as object}
+                      dot={SparklineDot}
                       activeDot={
                         onRunClick
                           ? { cursor: "pointer", r: 5, strokeWidth: 2 }

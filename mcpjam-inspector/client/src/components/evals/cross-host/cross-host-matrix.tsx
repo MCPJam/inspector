@@ -9,29 +9,18 @@ import {
   evalSurfaceHeaderClass,
   evalSurfaceRowHoverClass,
 } from "../eval-surface-chrome";
+import { HostCell } from "./host-cell";
+import type { CrossHostData, HostColumn } from "./use-cross-host-data";
 import {
-  formatTokens,
-  HostCell,
-  type HostCellMetricComparison,
-  type HostCellMetricComparisons,
-  type HostCellMetricKey,
-} from "./host-cell";
-import type {
-  CellData,
-  CrossHostData,
-  HostColumn,
-} from "./use-cross-host-data";
-import { formatRunCaseLatencyMs } from "../run-case-groups";
+  buildBaseMetricComparisons,
+  formatHostFallback,
+  projectComparisonsForHost,
+} from "./metric-comparison";
 
 interface CrossHostMatrixProps {
   data: CrossHostData;
   expanded?: boolean;
   onTestCaseClick?: (testCaseId: string) => void;
-}
-
-function formatHostFallback(hostId: string): string {
-  const tail = hostId.slice(-6);
-  return `…${tail}`;
 }
 
 function HostColumnHeader({ col }: { col: HostColumn }) {
@@ -56,71 +45,6 @@ function HostColumnHeader({ col }: { col: HostColumn }) {
       ) : null}
     </div>
   );
-}
-
-function metricValueForCell(
-  metricKey: HostCellMetricKey,
-  cell: CellData
-): number | null {
-  if (metricKey === "p50") return cell.p50LatencyMs;
-  if (metricKey === "p95") return cell.p95LatencyMs;
-  return cell.avgTokensPerIteration;
-}
-
-function formatMetricValue(
-  metricKey: HostCellMetricKey,
-  value: number
-): string {
-  if (metricKey === "avgTokens") return `${formatTokens(value)} tok`;
-  return formatRunCaseLatencyMs(value);
-}
-
-function buildMetricComparison(
-  metricKey: HostCellMetricKey,
-  currentHostId: string,
-  hostColumns: HostColumn[],
-  byHost: Map<string, CellData> | undefined
-): HostCellMetricComparison[] | undefined {
-  if (!byHost) return undefined;
-
-  const entries = hostColumns
-    .map((col) => {
-      const cell = byHost.get(col.hostId);
-      if (!cell) return null;
-      const value = metricValueForCell(metricKey, cell);
-      if (value == null) return null;
-      return {
-        hostId: col.hostId,
-        hostName: col.hostName ?? formatHostFallback(col.hostId),
-        value,
-        formattedValue: formatMetricValue(metricKey, value),
-        isCurrent: col.hostId === currentHostId,
-      };
-    })
-    .filter((entry): entry is HostCellMetricComparison => entry !== null)
-    .sort((a, b) => {
-      if (a.value !== b.value) return a.value - b.value;
-      return a.hostName.localeCompare(b.hostName);
-    });
-
-  return entries.length > 0 ? entries : undefined;
-}
-
-function buildMetricComparisons(
-  currentHostId: string,
-  hostColumns: HostColumn[],
-  byHost: Map<string, CellData> | undefined
-): HostCellMetricComparisons {
-  return {
-    p50: buildMetricComparison("p50", currentHostId, hostColumns, byHost),
-    p95: buildMetricComparison("p95", currentHostId, hostColumns, byHost),
-    avgTokens: buildMetricComparison(
-      "avgTokens",
-      currentHostId,
-      hostColumns,
-      byHost
-    ),
-  };
 }
 
 export function CrossHostMatrix({
@@ -164,6 +88,10 @@ export function CrossHostMatrix({
         <tbody className="divide-y divide-border/40">
           {caseRows.map((row) => {
             const byHost = matrix.get(row.caseId);
+            const baseComparisons = buildBaseMetricComparisons(
+              hostColumns,
+              byHost,
+            );
             const openCase = () => onTestCaseClick?.(row.caseId);
             return (
               <tr
@@ -210,10 +138,9 @@ export function CrossHostMatrix({
                   >
                     <HostCell
                       data={byHost?.get(col.hostId)}
-                      metricComparisons={buildMetricComparisons(
+                      metricComparisons={projectComparisonsForHost(
+                        baseComparisons,
                         col.hostId,
-                        hostColumns,
-                        byHost
                       )}
                     />
                   </td>
