@@ -60,7 +60,10 @@ export type SuiteRunRecorder = {
     error?: string;
     errorDetails?: string;
     resultSource?: "reported" | "derived";
-    metadata?: Record<string, string | number | boolean>;
+    // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
+    // nested `predicates: PredicateResult[]` rows. Persisted to
+    // `testIteration.metadata`; the Convex validator accepts nested values.
+    metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
     status: "completed" | "failed" | "cancelled";
@@ -249,7 +252,7 @@ export const createSuiteRunRecorder = ({
           error,
           errorDetails,
           resultSource,
-          metadata,
+          metadata: metadata ? sanitizeForConvexTransport(metadata) : metadata,
         });
       } catch (error) {
         const errorMessage =

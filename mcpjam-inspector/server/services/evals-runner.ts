@@ -52,6 +52,10 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
+import {
+  buildIterationTranscript,
+  evaluatePredicates,
+} from "@/shared/eval-matching";
 import type { ConvexHttpClient } from "convex/browser";
 import {
   createSuiteRunRecorder,
@@ -146,6 +150,15 @@ export type EvalTestCase = {
    */
   matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
   /**
+   * Optional state-based predicate gate evaluated over the iteration
+   * transcript after tool-call matching. Definitions are runtime/corpus data
+   * in V1 (carried on the case object through the runner, like `matchOptions`);
+   * verdicts are persisted to `testIteration.metadata.predicates`. A case
+   * passes the predicate gate iff every predicate passes; an absent/empty list
+   * is no gate. See `shared/predicates`.
+   */
+  successPredicates?: import("@/shared/eval-matching").Predicate[];
+  /**
    * Per-Run override layered on top of the suite's hostConfig. Carries
    * the editor's in-place tweaks (locale, timezone, hostContext,
    * hostCapabilitiesOverride, hostStyle, etc.) for this iteration only.
@@ -210,6 +223,21 @@ export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
 };
+
+/**
+ * True when the provider/backend actually reported token usage. `accumulatedUsage`
+ * is initialized to a zero object, so a zero total is indistinguishable from
+ * "unmetered" — passing that into the transcript would let `tokenBudgetUnder`
+ * pass on runs with no usage data. Only forward usage when something was
+ * reported so the predicate can fail closed otherwise.
+ */
+function hasReportedUsage(usage: UsageTotals): boolean {
+  return (
+    (usage.totalTokens ?? 0) > 0 ||
+    (usage.inputTokens ?? 0) > 0 ||
+    (usage.outputTokens ?? 0) > 0
+  );
+}
 
 export type RunEvalSuiteWithAiSdkResult = {
   /** Only set when `runId === null` (quick run); one entry per (test × run index) in suite order. */
@@ -1069,7 +1097,12 @@ async function finishIterationDirectly(
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
-      metadata: params.metadata,
+      // Sanitize like the recorder path: metadata now carries nested
+      // predicate rows whose authored args may contain $-prefixed keys
+      // Convex rejects at the arg boundary.
+      metadata: params.metadata
+        ? sanitizeForConvexTransport(params.metadata)
+        : params.metadata,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1619,11 +1652,28 @@ const runIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usage: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -1651,6 +1701,7 @@ const runIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
         ...(hostPolicy && toolSignals
           ? buildHostIterationMetadata(
               hostPolicy,
@@ -2293,12 +2344,29 @@ const runIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
@@ -2322,6 +2390,7 @@ const runIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,
@@ -3202,11 +3271,28 @@ const streamIterationWithAiSdk = async ({
             }>,
           }
         : undefined;
+    const predicateResults = test.successPredicates?.length
+      ? evaluatePredicates(
+          buildIterationTranscript({
+            trace: traceForGate,
+            toolCalls: evaluation.toolsCalled,
+            usage: hasReportedUsage(accumulatedUsage)
+              ? accumulatedUsage
+              : undefined,
+          }),
+          test.successPredicates,
+        )
+      : [];
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
       failOnToolError,
+      predicateResults,
     });
+    // Reflect the gated verdict (match AND tool-error gate AND predicates) in
+    // the returned evaluation so totals built from `evaluation.passed` agree
+    // with the persisted iteration result.
+    evaluation.passed = passed;
 
     const usageFinal: UsageTotals = {
       inputTokens: accumulatedUsage.inputTokens,
@@ -3234,6 +3320,7 @@ const streamIterationWithAiSdk = async ({
       metadata: {
         ...iterationMetadataBase,
         ...buildIterationMetadata(evaluation),
+        ...(predicateResults.length ? { predicates: predicateResults } : {}),
         ...(hostPolicy && toolSignals
           ? buildHostIterationMetadata(
               hostPolicy,
@@ -4134,12 +4221,29 @@ const streamIterationViaBackend = async ({
           }>,
         }
       : undefined;
+  const predicateResults = test.successPredicates?.length
+    ? evaluatePredicates(
+        buildIterationTranscript({
+          trace: traceForGate,
+          toolCalls: evaluation.toolsCalled,
+          usage: hasReportedUsage(accumulatedUsage)
+            ? accumulatedUsage
+            : undefined,
+        }),
+        test.successPredicates,
+      )
+    : [];
   const passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: traceForGate,
     iterationError,
     failOnToolError,
+    predicateResults,
   });
+  // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
+  // returned evaluation so totals built from `evaluation.passed` agree with the
+  // persisted iteration result.
+  evaluation.passed = passed;
   const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
@@ -4163,6 +4267,7 @@ const streamIterationViaBackend = async ({
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation),
+      ...(predicateResults.length ? { predicates: predicateResults } : {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,

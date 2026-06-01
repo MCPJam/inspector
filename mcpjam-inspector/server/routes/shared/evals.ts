@@ -179,6 +179,13 @@ export const RunTestCaseRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      // State-based predicate gate (see shared/predicates). Accepted as a
+      // per-run override so SDK / corpus cases can gate on predicates without
+      // the deferred Convex `testCase` schema change. Loosely typed like
+      // `expectedToolCalls` above; predicate shape is validated by the corpus
+      // validator at authoring time and evaluated deterministically by the
+      // runner (unknown types fail closed).
+      successPredicates: z.array(z.any()).optional(),
     })
     .optional(),
   /**
@@ -900,6 +907,13 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate from the per-run override (or the persisted
+    // case, once Convex `testCase` carries it) into the runtime case so the
+    // runner evaluates it.
+    successPredicates: (testCaseOverrides?.successPredicates ??
+      (testCase as { successPredicates?: unknown }).successPredicates) as
+      | import("@/shared/eval-matching").Predicate[]
+      | undefined,
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -1157,6 +1171,13 @@ export async function streamEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate from the per-run override (or the persisted
+    // case, once Convex `testCase` carries it) into the runtime case so the
+    // runner evaluates it.
+    successPredicates: (testCaseOverrides?.successPredicates ??
+      (testCase as { successPredicates?: unknown }).successPredicates) as
+      | import("@/shared/eval-matching").Predicate[]
+      | undefined,
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
