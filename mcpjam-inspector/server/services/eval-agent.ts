@@ -60,6 +60,15 @@ interface BackendGeneratedTestCase {
 }
 
 function adaptBackendCase(tc: BackendGeneratedTestCase): GeneratedTestCase {
+  // Preserve `promptTurns: undefined` for single-turn cases. The backend
+  // returns no `promptTurns` field for single-turn cases, and downstream
+  // consumers (e.g. persistence shape, UI multi-turn affordances) treat
+  // `undefined` and `[]` differently — an empty array suggests a multi-turn
+  // case with no turns, which is a nonsensical state.
+  const normalizedTurns =
+    Array.isArray(tc.promptTurns) && tc.promptTurns.length > 0
+      ? normalizePromptTurns(tc.promptTurns)
+      : undefined;
   return {
     title: tc.title,
     query: tc.query,
@@ -71,7 +80,9 @@ function adaptBackendCase(tc: BackendGeneratedTestCase): GeneratedTestCase {
     scenario: tc.scenario,
     expectedOutput: tc.expectedOutput,
     isNegativeTest: tc.isNegativeTest,
-    promptTurns: normalizePromptTurns(tc.promptTurns),
+    ...(normalizedTurns && normalizedTurns.length > 0
+      ? { promptTurns: normalizedTurns }
+      : {}),
   };
 }
 
