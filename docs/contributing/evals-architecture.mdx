@@ -136,7 +136,13 @@ EvalsResultsTab
 │  └─ SuiteRow (Individual suite card)
 │
 └─ SuiteIterationsView (Detailed view)
-   ├─ Test case aggregates
+   ├─ SuiteDashboard
+   │  ├─ SuiteRunsChartGrid (accuracy sparkline + model bar chart)
+   │  ├─ SuiteInsightsCollapsible (AI narrative)
+   │  ├─ SuiteRunsList (run history)
+   │  └─ TestCasesOverview
+   │     └─ CrossHostDashboard (when ≥2 hosts attached)
+   │        └─ CrossHostMatrix (per-case × per-host grid)
    └─ IterationCard (Individual run results)
       └─ IterationDetails (Expandable details)
 ```
