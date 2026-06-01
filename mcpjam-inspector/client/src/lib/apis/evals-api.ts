@@ -95,6 +95,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * silently contaminate existing suites.
    */
   refreshSnapshot?: boolean;
+  /**
+   * Client-generated UUID set on every per-host POST when a multi-host
+   * eval launch fans out (N > 1). Persisted on the resulting
+   * `testSuiteRun` rows so the UI can group sibling runs into a single
+   * parent row. Absent on single-host launches and legacy runs.
+   */
+  runGroupId?: string;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
