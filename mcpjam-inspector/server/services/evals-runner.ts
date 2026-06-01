@@ -1082,7 +1082,12 @@ async function finishIterationDirectly(
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
-      metadata: params.metadata,
+      // Sanitize like the recorder path: metadata now carries nested
+      // predicate rows whose authored args may contain $-prefixed keys
+      // Convex rejects at the arg boundary.
+      metadata: params.metadata
+        ? sanitizeForConvexTransport(params.metadata)
+        : params.metadata,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
