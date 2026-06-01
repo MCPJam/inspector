@@ -332,6 +332,7 @@ export const startSuiteRunWithRecorder = async ({
   iterationOverride,
   matchOptionsOverride,
   namedHostId,
+  runGroupId,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -370,6 +371,13 @@ export const startSuiteRunWithRecorder = async ({
    * just receives the host's servers like any other run.
    */
   namedHostId?: string;
+  /**
+   * Client-generated UUID shared by every per-host run when a multi-host
+   * eval launch fans out. Persisted on `testSuiteRun.runGroupId` so the
+   * UI can collapse sibling rows into a single group. Absent on
+   * single-host launches.
+   */
+  runGroupId?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -385,6 +393,7 @@ export const startSuiteRunWithRecorder = async ({
       iterationOverride,
       matchOptionsOverride,
       ...(namedHostId ? { namedHostId } : {}),
+      ...(runGroupId ? { runGroupId } : {}),
     },
   );
 
