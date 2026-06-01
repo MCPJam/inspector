@@ -33,6 +33,18 @@ const REDACTED = "«redacted»";
 // risks catastrophic backtracking.
 const MAX_REGEX_INPUT_CHARS = 100_000;
 
+// Heuristic ReDoS guard: a quantifier (`+`, `*`, or `}` closing `{m,n}`)
+// immediately followed by `)` and another quantifier (`+`, `*`, `{`) is the
+// classic "nested quantifier" shape — `(a+)+`, `(.+)*`, `(?:x+){2,}` — that
+// makes V8's backtracking engine pin a CPU for seconds-to-minutes on short
+// adversarial inputs. The 100k char cap above doesn't help: ReDoS is a
+// property of the pattern, not the input. We fail closed on suspicious
+// patterns; small false-positive risk on escaped-quantifier patterns like
+// `(\+)+` is the right trade vs. hanging the eval runner's event loop.
+// Adversarial alternation (`(a|a)+`) still slips through and needs a real
+// linear-time engine (RE2) — tracked as follow-up.
+const NESTED_QUANTIFIER = /[+*}]\??\)[+*{]/;
+
 /** Keys whose values are scrubbed before a tool-arg blob is rendered. */
 const SENSITIVE_KEY =
   /(authorization|bearer|password|passwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|cookie|credential|private[_-]?key)/i;
@@ -197,6 +209,12 @@ export function evaluatePredicate(
 
     case "responseMatches": {
       const message = resolveFinalMessage(transcript);
+      if (NESTED_QUANTIFIER.test(predicate.pattern)) {
+        return fail(
+          predicate,
+          `regex pattern /${predicate.pattern}/ contains a nested quantifier; refusing to evaluate to avoid catastrophic backtracking`,
+        );
+      }
       let regex: RegExp;
       try {
         regex = new RegExp(predicate.pattern);

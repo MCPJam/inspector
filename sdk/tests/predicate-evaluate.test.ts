@@ -176,6 +176,46 @@ describe("evaluatePredicate — table driven", () => {
       passed: false,
       reasonIncludes: ["invalid regex"],
     },
+    {
+      name: "responseMatches: nested quantifier `(a+)+` fails closed (ReDoS guard)",
+      transcript: transcript({ finalAssistantMessage: "a".repeat(30) + "!" }),
+      predicate: { type: "responseMatches", pattern: "^(a+)+$" },
+      passed: false,
+      reasonIncludes: ["nested quantifier", "catastrophic backtracking"],
+    },
+    {
+      name: "responseMatches: nested quantifier `(a*)*` fails closed",
+      transcript: transcript({ finalAssistantMessage: "aaaa" }),
+      predicate: { type: "responseMatches", pattern: "(a*)*" },
+      passed: false,
+      reasonIncludes: ["nested quantifier"],
+    },
+    {
+      name: "responseMatches: non-capturing nested quantifier `(?:x+){2,}` fails closed",
+      transcript: transcript({ finalAssistantMessage: "xxxxxx" }),
+      predicate: { type: "responseMatches", pattern: "(?:x+){2,}" },
+      passed: false,
+      reasonIncludes: ["nested quantifier"],
+    },
+    {
+      name: "responseMatches: nested `{m,n}` inside quantified group `(a{2,})+` fails closed",
+      transcript: transcript({ finalAssistantMessage: "aaaa" }),
+      predicate: { type: "responseMatches", pattern: "(a{2,})+" },
+      passed: false,
+      reasonIncludes: ["nested quantifier"],
+    },
+    {
+      name: "responseMatches: safe quantified group `(foo)+` still evaluates",
+      transcript: transcript({ finalAssistantMessage: "foofoofoo" }),
+      predicate: { type: "responseMatches", pattern: "(foo)+" },
+      passed: true,
+    },
+    {
+      name: "responseMatches: sibling quantifiers `a+b+` still evaluate (no nesting)",
+      transcript: transcript({ finalAssistantMessage: "aaabbb" }),
+      predicate: { type: "responseMatches", pattern: "a+b+" },
+      passed: true,
+    },
 
     // ── noToolErrors (the isError vs JSON-RPC distinction) ─────────────
     {
