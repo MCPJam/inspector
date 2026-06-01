@@ -23,6 +23,8 @@ export interface InsightConfig<TResult> {
 export interface InsightHookResult<TResult> {
   canRequest: boolean;
   error: string | null;
+  /** User-facing message for a REQUEST-TIME rejection (e.g. spend-cap). */
+  errorMessage: string | null;
   unavailable: boolean;
   requested: boolean;
   pending: boolean;
@@ -37,12 +39,22 @@ function classifyInsightError(err: unknown): {
   unavailable: boolean;
   message: string;
 } {
-  const message = err instanceof Error ? err.message : String(err);
+  const raw = err instanceof Error ? err.message : String(err);
   const unavailable =
-    message.includes("Could not find") ||
-    message.includes("not found") ||
-    message.includes("is not a function") ||
-    message.includes("Server Error");
+    raw.includes("Could not find") ||
+    raw.includes("not found") ||
+    raw.includes("is not a function") ||
+    raw.includes("Server Error");
+
+  // Map known structured error codes to user-friendly copy. PR B introduces
+  // `insights_daily_limit_reached` for the workspace spend-cap rejection;
+  // the code travels in the Convex error message. Unrecognized errors fall
+  // through to the raw message (existing behavior).
+  let message = raw;
+  if (raw.includes("insights_daily_limit_reached")) {
+    message =
+      "Daily insights limit reached for your workspace. Try again tomorrow or upgrade.";
+  }
   return { unavailable, message };
 }
 
@@ -139,6 +151,7 @@ export function useInsight<TResult extends { summary?: string }>(
   return {
     canRequest,
     error,
+    errorMessage: error,
     unavailable,
     requested,
     requestInsight,
