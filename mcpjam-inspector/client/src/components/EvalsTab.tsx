@@ -491,7 +491,22 @@ function EvalsTabContent({
     if (!selectedSuite) return;
     const suiteServers = getEffectiveSuiteServers(selectedSuite);
     if (suiteServers.length === 0) return;
-    await handlers.handleGenerateTests(selectedSuite._id, suiteServers);
+    // Scope generation by the suite's saved server attachment when present.
+    // Backend uses this to (a) require per-server cases AND at least one
+    // cross-server case when the attachment spans ≥2 servers, and (b) put
+    // the attachment name on each generated case so failures are
+    // attributable to a specific suite scope rather than "any server".
+    const suiteAttachment = selectedSuite.serverAttachment;
+    const serverAttachment = suiteAttachment
+      ? {
+          id: suiteAttachment._id,
+          name: suiteAttachment.name,
+          resolvedServerNames: suiteAttachment.resolvedServerNames,
+        }
+      : undefined;
+    await handlers.handleGenerateTests(selectedSuite._id, suiteServers, {
+      ...(serverAttachment ? { serverAttachment } : {}),
+    });
   }, [handlers, selectedSuite]);
 
   const generateState = useMemo(() => {

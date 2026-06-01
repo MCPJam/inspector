@@ -274,11 +274,28 @@ export function assertTestCaseRunWithinCap(
   }
 }
 
+// Optional attachment metadata threaded into the backend eval-generation
+// endpoint so the LLM can scope the cases by the suite's saved server
+// attachment (per-server tests + at least one explicit cross-server test
+// when the attachment spans ≥2 servers). `resolvedServerNames` carries
+// runtime server identifiers — NOT Convex serverAttachment document ids —
+// to avoid ambiguity at the wire boundary.
+export const ServerAttachmentInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().optional(),
+  resolvedServerNames: z.array(z.string().min(1)).min(1),
+});
+
+export type ServerAttachmentInput = z.infer<
+  typeof ServerAttachmentInputSchema
+>;
+
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
@@ -288,6 +305,7 @@ export const GenerateNegativeTestsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateNegativeTestsRequest = z.infer<
@@ -1043,6 +1061,7 @@ export async function generateEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
   );
 
   return {
@@ -1085,6 +1104,7 @@ export async function generateNegativeEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
   );
 
   return {
