@@ -306,17 +306,7 @@ function StandaloneRunRow({
   const timestamp = run.completedAt ?? run.createdAt;
   const timestampLabel = formatTime(timestamp);
 
-  const runResult =
-    run.result ||
-    (run.status === "completed" && passRate !== null
-      ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)
-        ? "passed"
-        : "failed"
-      : run.status === "cancelled"
-        ? "cancelled"
-        : run.status === "running"
-          ? "running"
-          : "pending");
+  const runResult = computeEffectiveRunResult(run, passRate);
 
   const creator = run.createdBy ? userMap?.get(run.createdBy) : undefined;
 
@@ -408,6 +398,27 @@ function computeChildDuration(run: EvalSuiteRun): number | null {
   return null;
 }
 
+// Effective result for a run: prefer the explicit `result` set by the recorder
+// when present, otherwise derive from live pass rate against passCriteria.
+// The recorder finalizes runs with `status: "completed"` + `summary` but does
+// not always populate `result`, so a parent that only checks `result === "failed"`
+// would render a green border over a child whose passRate is below criteria.
+export function computeEffectiveRunResult(
+  run: EvalSuiteRun,
+  passRate: number | null,
+): "passed" | "failed" | "running" | "cancelled" | "pending" {
+  if (run.result) return run.result;
+  if (run.status === "completed" && passRate !== null) {
+    return passRate >= (run.passCriteria?.minimumPassRate ?? 100)
+      ? "passed"
+      : "failed";
+  }
+  if (run.status === "cancelled") return "cancelled";
+  if (run.status === "running") return "running";
+  if (run.status === "failed") return "failed";
+  return "pending";
+}
+
 function GroupRunRows({
   group,
   iterationsByRun,
@@ -446,16 +457,19 @@ function GroupRunRows({
   const maxDuration =
     childDurations.length > 0 ? Math.max(...childDurations) : null;
 
-  // Parent status: pick the "worst" status across children so the left
-  // border accurately reflects partial failure / running state.
-  const anyRunning = group.runs.some((r) => r.status === "running");
-  const anyFailed = group.runs.some(
-    (r) => r.result === "failed" || r.status === "failed",
+  // Parent status: pick the "worst" effective status across children so the
+  // left border matches what each child row shows. Derive from the same
+  // helper the standalone rows use — checking only `run.result`/`run.status`
+  // here misses children that the recorder finalized as `status: completed`
+  // without setting `result: failed`, even though their passRate is below
+  // criteria. Order: running > failed > cancelled > pending > passed.
+  const effectiveResults = childStats.map((c) =>
+    computeEffectiveRunResult(c.run, c.stats.passRate),
   );
-  const anyCancelled = group.runs.some(
-    (r) => r.status === "cancelled" || r.result === "cancelled",
-  );
-  const allCompleted = group.runs.every((r) => r.status === "completed");
+  const anyRunning = effectiveResults.some((r) => r === "running");
+  const anyFailed = effectiveResults.some((r) => r === "failed");
+  const anyCancelled = effectiveResults.some((r) => r === "cancelled");
+  const anyPending = effectiveResults.some((r) => r === "pending");
   const groupResult: "running" | "failed" | "cancelled" | "passed" | "pending" =
     anyRunning
       ? "running"
@@ -463,9 +477,9 @@ function GroupRunRows({
         ? "failed"
         : anyCancelled
           ? "cancelled"
-          : allCompleted
-            ? "passed"
-            : "pending";
+          : anyPending
+            ? "pending"
+            : "passed";
 
   const timestampLabel = formatTime(group.latestTimestamp);
   const shortGroupId = group.runGroupId.slice(0, 8);

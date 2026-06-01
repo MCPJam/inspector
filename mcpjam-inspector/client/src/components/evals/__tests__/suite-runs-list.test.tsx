@@ -10,7 +10,11 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
-import { SuiteRunsList, computeRunEffectiveStats } from "../suite-runs-list";
+import {
+  SuiteRunsList,
+  computeEffectiveRunResult,
+  computeRunEffectiveStats,
+} from "../suite-runs-list";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 
 // The SuiteRunsList renders an Avatar/Tooltip from the design system; jsdom
@@ -229,6 +233,47 @@ describe("SuiteRunsList run-group rendering", () => {
     ).toBeInTheDocument();
   });
 
+  it("parent group renders failed accent when a completed child is below passCriteria even with no run.result", async () => {
+    // Regression for the cursor/codex review finding: the recorder finalizes
+    // runs as `status: completed` + `summary` without always setting
+    // `result: "failed"`. Children derive failed-ness from passRate vs
+    // passCriteria; the parent must use the same source or it would show
+    // a green border over a red child.
+    const passingChild = makeRun({
+      _id: "gfail1xx",
+      runGroupId: "g-fail",
+      namedHostId: "host-pass",
+      status: "completed",
+      result: undefined,
+      summary: { total: 2, passed: 2, failed: 0, passRate: 100 },
+      passCriteria: { minimumPassRate: 80 },
+    });
+    const failingChild = makeRun({
+      _id: "gfail2xx",
+      runGroupId: "g-fail",
+      namedHostId: "host-fail",
+      status: "completed",
+      result: undefined,
+      summary: { total: 4, passed: 1, failed: 3, passRate: 25 },
+      passCriteria: { minimumPassRate: 80 },
+    });
+
+    const { container } = renderWithProviders(
+      <SuiteRunsList
+        runs={[passingChild, failingChild]}
+        allIterations={[]}
+        onRunClick={vi.fn()}
+      />,
+    );
+
+    const parentButton = screen.getByLabelText(/Expand run group g/i);
+    // Wrapper div carries the left-border accent class.
+    const accent = parentButton.closest("[class*='border-l-2']");
+    expect(accent).not.toBeNull();
+    expect(accent!.className).toContain("border-l-destructive");
+    expect(accent!.className).not.toContain("border-l-success");
+  });
+
   it("renders a group with only one settled child as a standalone (no chevron) during the partial-fan-out gap", () => {
     // If Convex sync briefly returns only one run with a given group id,
     // showing a parent labelled "1 hosts" would look broken. The
@@ -277,5 +322,61 @@ describe("computeRunEffectiveStats", () => {
     const run = makeRun({ _id: "r3", summary: undefined });
     const stats = computeRunEffectiveStats(run, []);
     expect(stats.passRate).toBeNull();
+  });
+});
+
+describe("computeEffectiveRunResult", () => {
+  it("prefers explicit run.result when set", () => {
+    const run = makeRun({ result: "failed", status: "completed" });
+    expect(computeEffectiveRunResult(run, 100)).toBe("failed");
+  });
+
+  it("derives failed from passRate below passCriteria when result is unset", () => {
+    const run = makeRun({
+      result: undefined,
+      status: "completed",
+      passCriteria: { minimumPassRate: 80 },
+    });
+    expect(computeEffectiveRunResult(run, 25)).toBe("failed");
+  });
+
+  it("derives passed from passRate at-or-above passCriteria when result is unset", () => {
+    const run = makeRun({
+      result: undefined,
+      status: "completed",
+      passCriteria: { minimumPassRate: 80 },
+    });
+    expect(computeEffectiveRunResult(run, 80)).toBe("passed");
+  });
+
+  it("defaults minimumPassRate to 100 when passCriteria is absent", () => {
+    const run = makeRun({
+      result: undefined,
+      status: "completed",
+      passCriteria: undefined,
+    });
+    expect(computeEffectiveRunResult(run, 99)).toBe("failed");
+    expect(computeEffectiveRunResult(run, 100)).toBe("passed");
+  });
+
+  it("returns running/cancelled/pending based on status when passRate is null", () => {
+    expect(
+      computeEffectiveRunResult(
+        makeRun({ result: undefined, status: "running" }),
+        null,
+      ),
+    ).toBe("running");
+    expect(
+      computeEffectiveRunResult(
+        makeRun({ result: undefined, status: "cancelled" }),
+        null,
+      ),
+    ).toBe("cancelled");
+    expect(
+      computeEffectiveRunResult(
+        makeRun({ result: undefined, status: "completed" }),
+        null,
+      ),
+    ).toBe("pending");
   });
 });
