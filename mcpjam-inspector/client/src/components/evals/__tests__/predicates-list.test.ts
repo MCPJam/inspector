@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseIterationPredicates } from "../predicates-list";
+import {
+  parseIterationPredicates,
+  summarizePredicate,
+} from "../predicates-list";
+import type { Predicate } from "@/shared/eval-matching";
 
 describe("parseIterationPredicates", () => {
   it("returns null when metadata is absent", () => {
@@ -74,5 +78,44 @@ describe("parseIterationPredicates", () => {
 
   it("returns null on an empty predicates array (nothing to render)", () => {
     expect(parseIterationPredicates({ predicates: [] })).toBeNull();
+  });
+});
+
+describe("summarizePredicate", () => {
+  it("summarizes well-formed variants", () => {
+    expect(
+      summarizePredicate({ type: "toolCalledAtLeastOnce", toolName: "search" }),
+    ).toBe('tool "search" called ≥1×');
+    expect(summarizePredicate({ type: "tokenBudgetUnder", tokens: 500 })).toBe(
+      "tokens < 500",
+    );
+    expect(
+      summarizePredicate({ type: "responseContains", needle: "refund" }),
+    ).toBe('needle "refund"');
+    expect(summarizePredicate({ type: "noToolErrors" })).toBe("no tool errors");
+  });
+
+  it("degrades to an empty summary instead of throwing on a malformed-but-typed predicate", () => {
+    // Valid `type` discriminant but the variant's payload is missing — exactly
+    // what `parseIterationPredicates` lets through (it only checks the row
+    // envelope). Field access here must not throw during render.
+    const malformed: Predicate[] = [
+      { type: "tokenBudgetUnder" } as unknown as Predicate, // missing tokens
+      { type: "responseContains" } as unknown as Predicate, // missing needle
+      { type: "responseMatches" } as unknown as Predicate, // missing pattern
+      { type: "toolCalledWith", toolName: "x" } as unknown as Predicate, // missing args
+    ];
+    for (const p of malformed) {
+      expect(() => summarizePredicate(p)).not.toThrow();
+      expect(summarizePredicate(p)).toBe("");
+    }
+  });
+
+  it("returns an empty summary for an unknown future predicate type", () => {
+    const future = {
+      type: "responseMatchesSemantically",
+    } as unknown as Predicate;
+    expect(() => summarizePredicate(future)).not.toThrow();
+    expect(summarizePredicate(future)).toBe("");
   });
 });

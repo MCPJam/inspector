@@ -122,32 +122,45 @@ function PredicateRow({ row }: { row: PredicateResult }) {
 /**
  * One-line summary of *what was asserted*, derived from the predicate fields.
  * Complements `row.reason` (which says *whether the assertion held* and why).
+ *
+ * Total by construction. `parseIterationPredicates` validates the row envelope
+ * (`passed`/`reason`/`type`) but NOT each variant's payload, so a
+ * malformed-but-typed predicate — or a predicate type newer than this build —
+ * must degrade to an empty summary rather than throw during render. The row's
+ * PASS/FAIL badge and `reason` stay visible regardless, and the `type` is
+ * already shown next to this summary, so the empty fallback loses nothing.
  */
-function summarizePredicate(predicate: Predicate): string {
-  switch (predicate.type) {
-    case "toolCalledWith": {
-      const mode = predicate.args.argumentMatching ?? "partial";
-      const minCount = predicate.minCount ?? 1;
-      const suffix = minCount > 1 ? `, ≥${minCount}×` : "";
-      return `tool "${predicate.toolName}" with ${briefArgs(predicate.args.args)} (${mode}${suffix})`;
+export function summarizePredicate(predicate: Predicate): string {
+  try {
+    switch (predicate.type) {
+      case "toolCalledWith": {
+        const mode = predicate.args.argumentMatching ?? "partial";
+        const minCount = predicate.minCount ?? 1;
+        const suffix = minCount > 1 ? `, ≥${minCount}×` : "";
+        return `tool "${predicate.toolName}" with ${briefArgs(predicate.args.args)} (${mode}${suffix})`;
+      }
+      case "toolCalledAtLeastOnce":
+        return `tool "${predicate.toolName}" called ≥1×`;
+      case "toolNeverCalled":
+        return `tool "${predicate.toolName}" never called`;
+      case "responseContains":
+        return `needle "${truncate(predicate.needle, 60)}"${
+          predicate.caseSensitive ? " (case-sensitive)" : ""
+        }`;
+      case "responseMatches":
+        return `pattern /${truncate(predicate.pattern, 60)}/`;
+      case "noToolErrors":
+        return "no tool errors";
+      case "finalAssistantMessageNonEmpty":
+        return "final assistant message non-empty";
+      case "tokenBudgetUnder":
+        return `tokens < ${predicate.tokens.toLocaleString()}`;
     }
-    case "toolCalledAtLeastOnce":
-      return `tool "${predicate.toolName}" called ≥1×`;
-    case "toolNeverCalled":
-      return `tool "${predicate.toolName}" never called`;
-    case "responseContains":
-      return `needle "${truncate(predicate.needle, 60)}"${
-        predicate.caseSensitive ? " (case-sensitive)" : ""
-      }`;
-    case "responseMatches":
-      return `pattern /${truncate(predicate.pattern, 60)}/`;
-    case "noToolErrors":
-      return "no tool errors";
-    case "finalAssistantMessageNonEmpty":
-      return "final assistant message non-empty";
-    case "tokenBudgetUnder":
-      return `tokens < ${predicate.tokens.toLocaleString()}`;
+  } catch {
+    // A row whose `type` is valid but whose payload is missing/wrong (corruption,
+    // producer bug, or schema skew) would otherwise throw on field access here.
   }
+  return "";
 }
 
 function briefArgs(args: Record<string, unknown>): string {
