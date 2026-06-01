@@ -351,8 +351,9 @@ export function GoalCompletionCard({
             Goal completion isn't enabled for this suite.
           </p>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            Configure it under <strong>Suite settings → Judges</strong> to
-            start grading runs against each case's{" "}
+            Open suite settings (the <strong>⚙</strong> button next to the
+            suite name) and enable Goal completion under{" "}
+            <strong>Judges</strong> to start grading runs against each case's{" "}
             <code className="font-mono text-[11px]">expectedOutput</code>.
             Cases without an expected output are skipped (anchored-only).
           </p>

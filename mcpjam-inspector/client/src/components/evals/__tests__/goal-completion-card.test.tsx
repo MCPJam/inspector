@@ -257,7 +257,13 @@ describe("GoalCompletionCard", () => {
     expect(
       screen.getByText(/Goal completion isn't enabled for this suite/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Suite settings . Judges/i)).toBeInTheDocument();
+    // CTA points at the actual UI affordance (the gear button on the suite
+    // header) — not just generic "Suite settings", which had no visible
+    // entry point in the inspector until the gear shipped.
+    expect(
+      screen.getByText(/Open suite settings.*button next to the suite name/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/enable Goal completion under/i)).toBeInTheDocument();
   });
 
   it("hides run controls when the snapshot has goal completion explicitly disabled", () => {
