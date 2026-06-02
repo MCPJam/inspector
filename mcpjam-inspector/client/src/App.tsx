@@ -118,6 +118,7 @@ import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import { shouldShowUserSetupError } from "./lib/user-setup-gate";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -2764,7 +2765,14 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
+  if (
+    shouldShowUserSetupError({
+      hostedMode: HOSTED_MODE,
+      isHostedChatRoute,
+      isAuthenticated,
+      currentUserIsNull: currentUser === null,
+    })
+  ) {
     return <UserSetupError />;
   }
 
