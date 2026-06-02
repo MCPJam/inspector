@@ -40,22 +40,28 @@ function classifyInsightError(err: unknown): {
   message: string;
 } {
   const raw = err instanceof Error ? err.message : String(err);
+
+  // Known structured rejections take precedence over the generic
+  // "Server Error" classification — Convex wraps mutation rejections with
+  // a "Server Error" prefix, so a spend-cap rejection would otherwise be
+  // misclassified as `unavailable: true` and the calling component hides
+  // the surface entirely (SuiteInsightsCollapsible returns null on
+  // unavailable). These are *rejections*, not unavailability — the
+  // feature works, the user is rate-limited / quota-bound.
+  if (raw.includes("insights_daily_limit_reached")) {
+    return {
+      unavailable: false,
+      message:
+        "Daily insights limit reached for your workspace. Try again tomorrow or upgrade.",
+    };
+  }
+
   const unavailable =
     raw.includes("Could not find") ||
     raw.includes("not found") ||
     raw.includes("is not a function") ||
     raw.includes("Server Error");
-
-  // Map known structured error codes to user-friendly copy. PR B introduces
-  // `insights_daily_limit_reached` for the workspace spend-cap rejection;
-  // the code travels in the Convex error message. Unrecognized errors fall
-  // through to the raw message (existing behavior).
-  let message = raw;
-  if (raw.includes("insights_daily_limit_reached")) {
-    message =
-      "Daily insights limit reached for your workspace. Try again tomorrow or upgrade.";
-  }
-  return { unavailable, message };
+  return { unavailable, message: raw };
 }
 
 export function useInsight<TResult extends { summary?: string }>(

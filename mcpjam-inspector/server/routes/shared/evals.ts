@@ -752,6 +752,21 @@ export async function runEvalsWithManager(
         });
       }
     }
+
+    // New-suite path only: if every case create failed, the freshly-made
+    // suite has zero cases. Fall through and `startSuiteRunWithRecorder`
+    // would snapshot nothing, then `runEvalSuiteWithAiSdk` would throw a
+    // generic "No tests supplied for eval run" — masking the structured
+    // failure breakdown we just collected. Short-circuit with an
+    // actionable message instead.
+    if (committedCases.length === 0 && failedCases.length > 0) {
+      const firstError = failedCases[0]?.error ?? "unknown error";
+      throw new Error(
+        `Failed to save any of ${failedCases.length} test case(s) to the new suite. ` +
+          `First failure: ${firstError}. ` +
+          `Run aborted because the suite would have zero cases to execute.`,
+      );
+    }
   }
 
   const {

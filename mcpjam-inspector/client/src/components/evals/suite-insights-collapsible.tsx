@@ -174,10 +174,15 @@ export function SuiteInsightsCollapsible({
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
               Requesting insights…
             </span>
+          ) : errorMessage ? (
+            // Fresh request-time rejections (e.g. spend-cap on a Retry
+            // click) must win over the stale persisted "failed" state —
+            // otherwise the user clicks Retry, the server rejects, and
+            // they keep seeing the same old "Could not load this summary"
+            // copy because `runInsightsStatus` hasn't changed yet.
+            <p className="text-sm text-muted-foreground">{errorMessage}</p>
           ) : failedGeneration ? (
             <p className="text-sm text-muted-foreground">{failedMessage}</p>
-          ) : errorMessage ? (
-            <p className="text-sm text-muted-foreground">{errorMessage}</p>
           ) : (
             <p className="text-sm text-muted-foreground">
               Open a completed run to see a short summary vs the previous one.
