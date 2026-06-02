@@ -70,7 +70,7 @@ export function SaveAsTestCaseAction({
   promptPreview,
   projectId,
 }: SaveAsTestCaseActionProps) {
-  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const hostsFlagEnabled = useFeatureFlagEnabled("hosts-enabled");
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const [open, setOpen] = useState(false);
@@ -173,7 +173,7 @@ export function SaveAsTestCaseAction({
     }
     setSubmitting(true);
     try {
-      await saveAsTestCase({
+      const result = (await saveAsTestCase({
         chatSessionId,
         promptIndex,
         projectId,
@@ -190,8 +190,21 @@ export function SaveAsTestCaseAction({
                 ? { newSuiteHostAttachments: hostAttachments }
                 : {}),
             }),
-      });
-      toast.success("Saved as test case");
+      })) as
+        | { addedServers?: string[]; updatedSuiteEnvironment?: boolean }
+        | undefined;
+      const added = result?.addedServers ?? [];
+      if (
+        destinationMode === "existing" &&
+        result?.updatedSuiteEnvironment === true &&
+        added.length > 0
+      ) {
+        toast.success(
+          `Saved as test case. Added ${added.join(", ")} to the suite.`,
+        );
+      } else {
+        toast.success("Saved as test case");
+      }
       setOpen(false);
     } catch (error) {
       const message = getBillingErrorMessage(
@@ -209,8 +222,8 @@ export function SaveAsTestCaseAction({
     return null;
   }
 
-  // Gated behind the same flag as the Playground/Evals sidebar entry.
-  if (playgroundEnabled !== true) {
+  // Gated behind the same flag as the Evaluate sidebar entry.
+  if (evaluateUiEnabled !== true) {
     return null;
   }
 

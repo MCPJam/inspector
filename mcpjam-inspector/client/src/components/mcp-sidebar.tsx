@@ -232,6 +232,7 @@ const navigationSections: NavSection[] = [
         title: "Evaluate",
         url: "/evals",
         icon: FlaskConical,
+        featureFlag: "evaluate-ui",
         billingFeature: "evals",
         evalsSubnav: true,
       },
@@ -555,6 +556,7 @@ export function MCPSidebar({
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
@@ -625,6 +627,7 @@ export function MCPSidebar({
       "mcpjam-conformance": conformanceEnabled === true,
       "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
       "home-page-enabled": homePageEnabled === true && isAuthenticated,
+      "evaluate-ui": evaluateUiEnabled === true,
       xaa: xaaEnabled === true,
     }),
     [
@@ -634,6 +637,7 @@ export function MCPSidebar({
       conformanceEnabled,
       hostsEnabled,
       homePageEnabled,
+      evaluateUiEnabled,
       xaaEnabled,
       isAuthenticated,
     ]

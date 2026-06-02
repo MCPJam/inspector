@@ -277,9 +277,9 @@ export function ChatHistoryRail({
   }, [enabled, isReactive, refetch, refreshSignal]);
 
   const archiveBusy = archivingScope !== null;
-  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const canConvertToTestCase =
-    Boolean(isAuthenticated) && playgroundEnabled === true;
+    Boolean(isAuthenticated) && evaluateUiEnabled === true;
 
   const handleArchiveSection = async (
     scope: ArchiveSectionScope,
