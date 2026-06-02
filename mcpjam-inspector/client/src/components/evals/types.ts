@@ -1,7 +1,11 @@
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/prompt-turns";
 import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
-import type { EvalMatchOptions } from "@/shared/eval-matching";
+import type {
+  EvalMatchOptions,
+  Predicate,
+  CasePredicates,
+} from "@/shared/eval-matching";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export type EvalSuiteConfigTest = {
@@ -48,6 +52,13 @@ export type EvalSuite = {
   };
   /** Suite-level default validator options (used unless a case overrides). */
   defaultMatchOptions?: EvalMatchOptions;
+  /**
+   * Suite-level default deterministic predicate gate ("Default checks" in UI).
+   * Resolved per-case via `testCase.predicates.mode` (`inherit` ⇒ use as-is,
+   * `replace` ⇒ ignored, `extend` ⇒ prepended to case list). Snapshotted onto
+   * `testIteration.testCaseSnapshot.predicates` at run-precreate time.
+   */
+  defaultPredicates?: Predicate[];
   /**
    * Suite-level advisory judge configuration. Authoritative source for
    * judgeModel / threshold / enabled flag — runs snapshot this at
@@ -123,6 +134,13 @@ export type EvalCase = {
   /** Case-level validator override; merged on top of suite defaults. */
   matchOptions?: EvalMatchOptions;
   /**
+   * Case-level predicate gate override. Three explicit modes (`inherit`,
+   * `replace`, `extend`) eliminate the predicates / additionalPredicates
+   * ambiguity (Phase 2 plan). `undefined` is treated as
+   * `{ mode: "inherit", list: [] }`.
+   */
+  predicates?: CasePredicates;
+  /**
    * Per-case judge override. V1 carries opt-out only — no alt model or
    * threshold (see backend `convex/lib/judgeConfig.ts` for rationale).
    */
@@ -189,6 +207,15 @@ export type EvalIteration = {
     advancedConfig?: Record<string, unknown>;
     /** Effective validator options used for this iteration's pass/fail. */
     matchOptions?: EvalMatchOptions;
+    /**
+     * Effective deterministic predicate gate frozen at run-precreate time.
+     * Resolved from suite `defaultPredicates` + the case `predicates`
+     * envelope; matches the contract documented on
+     * {@link EvalTestSuite.defaultPredicates}. Without this field, run-detail
+     * UIs silently fall through to live suite/case state instead of the
+     * snapshot the iteration was actually evaluated against.
+     */
+    predicates?: Predicate[];
   };
   suiteRunId?: string;
   configRevision?: string;

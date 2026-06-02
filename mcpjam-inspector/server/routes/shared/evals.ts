@@ -36,6 +36,8 @@ import { type PromptTurn } from "@/shared/prompt-turns";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
+  resolveCaseSuccessPredicates,
+  casePredicatesSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
 
@@ -90,6 +92,10 @@ export const RunEvalsRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      // Case-level predicate gate override; threaded through every Zod
+      // boundary on the wire so it doesn't get silently stripped
+      // (feedback_zod_strips_unthreaded_fields).
+      predicates: casePredicatesSchema.optional(),
     }),
   ),
   serverIds: z
@@ -197,6 +203,10 @@ export const RunTestCaseRequestSchema = z.object({
       // validator at authoring time and evaluated deterministically by the
       // runner (unknown types fail closed).
       successPredicates: z.array(z.any()).optional(),
+      // Case-level predicate override envelope ({ mode, list }). Threaded
+      // through every Zod boundary; the runner resolves it against the
+      // suite's `defaultPredicates` per the case mode.
+      predicates: casePredicatesSchema.optional(),
     })
     .optional(),
   /**
@@ -340,6 +350,33 @@ async function loadSuiteDefaultMatchOptions(
     });
     return (suite?.defaultMatchOptions as MatchOptionsDTO | undefined) ??
       undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Best-effort fetch of a suite's `defaultPredicates` so single-case runs
+ * resolve the same suite → case predicate precedence chain that the suite
+ * run path applies via `precreateIterationsForRun` once the backend ships
+ * the resolved field. Returns undefined on any error; runner treats that
+ * as no suite default.
+ */
+async function loadSuiteDefaultPredicates(
+  convexClient: ConvexHttpClient,
+  suiteId?: string,
+): Promise<
+  import("@/shared/eval-matching").Predicate[] | undefined
+> {
+  if (!suiteId) return undefined;
+  try {
+    const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+      suiteId,
+    });
+    const defaults = (suite as { defaultPredicates?: unknown } | undefined)
+      ?.defaultPredicates;
+    if (!Array.isArray(defaults) || defaults.length === 0) return undefined;
+    return defaults as import("@/shared/eval-matching").Predicate[];
   } catch {
     return undefined;
   }
@@ -550,6 +587,7 @@ export async function runEvalsWithManager(
       judgeRequirement?: string;
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+      predicates?: import("@/shared/eval-matching").CasePredicates;
     }
   >();
 
@@ -568,6 +606,7 @@ export async function runEvalsWithManager(
         promptTurns: test.promptTurns,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
+        predicates: test.predicates,
       });
     }
     testCaseMap.get(key)!.models.push({
@@ -659,6 +698,11 @@ export async function runEvalsWithManager(
             normalizeForComparison(existingTestCase.matchOptions),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.matchOptions));
+        const predicatesChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.predicates),
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.predicates));
 
         const hasChanges =
           modelsChanged ||
@@ -670,7 +714,8 @@ export async function runEvalsWithManager(
           promptTurnsChanged ||
           judgeRequirementChanged ||
           advancedConfigChanged ||
-          matchOptionsChanged;
+          matchOptionsChanged ||
+          predicatesChanged;
 
         if (hasChanges) {
           await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -688,6 +733,7 @@ export async function runEvalsWithManager(
               testCaseData.advancedConfig,
             ),
             matchOptions: testCaseData.matchOptions,
+            predicates: testCaseData.predicates,
           });
         }
         committedCases.push({
@@ -713,6 +759,7 @@ export async function runEvalsWithManager(
             testCaseData.advancedConfig,
           ),
           matchOptions: testCaseData.matchOptions,
+          predicates: testCaseData.predicates,
         });
         committedCases.push({ name: testCaseData.title });
       }
@@ -768,6 +815,7 @@ export async function runEvalsWithManager(
             testCaseData.advancedConfig,
           ),
           matchOptions: testCaseData.matchOptions,
+          predicates: testCaseData.predicates,
         });
         committedCases.push({ name: testCaseData.title });
       } catch (error) {
@@ -963,6 +1011,10 @@ export async function runEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
+  const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
   const suiteHostConfig = await loadSuiteHostConfig(
     convexClient,
     testCase.evalTestSuiteId,
@@ -996,13 +1048,25 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
-    // Thread the predicate gate from the per-run override (or the persisted
-    // case, once Convex `testCase` carries it) into the runtime case so the
-    // runner evaluates it.
-    successPredicates: (testCaseOverrides?.successPredicates ??
-      (testCase as { successPredicates?: unknown }).successPredicates) as
-      | import("@/shared/eval-matching").Predicate[]
-      | undefined,
+    // Thread the predicate gate into the runtime case so the runner
+    // evaluates it. See `resolveCaseSuccessPredicates` for the full
+    // precedence rules — kept as a shared helper so all three resolution
+    // sites (this function, `streamEvalTestCaseWithManager`, and the
+    // suite-run recorder) stay in lockstep.
+    successPredicates: resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      runOverride: testCaseOverrides?.successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+      envelope: (testCaseOverrides?.predicates ??
+        (testCase as { predicates?: unknown }).predicates) as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
+      legacyCase: (testCase as { successPredicates?: unknown })
+        .successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+    }),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -1229,6 +1293,10 @@ export async function streamEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
+  const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
   const suiteHostConfig = await loadSuiteHostConfig(
     convexClient,
     testCase.evalTestSuiteId,
@@ -1262,13 +1330,22 @@ export async function streamEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
-    // Thread the predicate gate from the per-run override (or the persisted
-    // case, once Convex `testCase` carries it) into the runtime case so the
-    // runner evaluates it.
-    successPredicates: (testCaseOverrides?.successPredicates ??
-      (testCase as { successPredicates?: unknown }).successPredicates) as
-      | import("@/shared/eval-matching").Predicate[]
-      | undefined,
+    // Thread the predicate gate into the runtime case so the runner evaluates
+    // it. See `resolveCaseSuccessPredicates` for the full precedence rules.
+    successPredicates: resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      runOverride: testCaseOverrides?.successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+      envelope: (testCaseOverrides?.predicates ??
+        (testCase as { predicates?: unknown }).predicates) as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
+      legacyCase: (testCase as { successPredicates?: unknown })
+        .successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+    }),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };

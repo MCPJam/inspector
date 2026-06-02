@@ -37,7 +37,30 @@ export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
  */
 export const matchOptionsSchema = z
   .object({
-    toolCallOrder: z.enum(["ignore", "strict"]).optional(),
+    toolCallOrder: z.enum(["ignore", "strict", "superset"]).optional(),
+    /**
+     * Bound on extra actual tool calls beyond what was paired with
+     * expected. `null` = unlimited; a non-negative integer caps the count.
+     * Must be `Number.isInteger(n) && n >= 0` when not null — the
+     * Zod refinement here rejects -1 / 0.5 / NaN / Infinity at the
+     * wire boundary before the matcher's runtime guard fires.
+     */
+    maxExtraToolCalls: z
+      .union([
+        z
+          .number()
+          .refine(
+            (n) => Number.isInteger(n) && n >= 0,
+            "maxExtraToolCalls must be a non-negative integer or null",
+          ),
+        z.null(),
+      ])
+      .optional(),
+    /**
+     * LEGACY: prefer `maxExtraToolCalls`. Accepted on the wire so older
+     * persisted rows and in-flight clients keep working; the SDK matcher
+     * shims `true -> null`, `false -> 0`. Remove after v<NEXT_MINOR>.
+     */
     allowExtraToolCalls: z.boolean().optional(),
     argumentMatching: z.enum(["exact", "partial", "ignore"]).optional(),
   })
@@ -123,6 +146,11 @@ export {
   evaluatePredicates,
   allPredicatesPassed,
   buildIterationTranscript,
+  predicateSchema,
+  predicateArraySchema,
+  argMatcherSchema,
+  casePredicatesSchema,
+  PREDICATE_PLACEHOLDER_STRINGS,
 } from "@mcpjam/sdk/predicates";
 export type {
   Predicate,
@@ -135,4 +163,122 @@ export type {
   TranscriptUsage,
   ToolErrorRecord,
   ToolErrorKind,
+  CasePredicates,
+  PredicatePlaceholder,
 } from "@mcpjam/sdk/predicates";
+
+import type {
+  CasePredicates as CasePredicatesType,
+  Predicate as PredicateType,
+} from "@mcpjam/sdk/predicates";
+
+/**
+ * Collapse `matchOptions.maxExtraToolCalls` + the legacy
+ * `allowExtraToolCalls` field into a single nullable cap value:
+ *
+ *   - `null`            → unlimited extras
+ *   - a non-negative N  → at most N extras
+ *
+ * Precedence:
+ *   1. Explicit `maxExtraToolCalls` (any value, including 0 / null) wins.
+ *   2. Else, legacy `allowExtraToolCalls === false` translates to 0;
+ *      any other legacy state (true / undefined) → null.
+ *
+ * LEGACY: drop the `allowExtraToolCalls` fallback after v<NEXT_MINOR>.
+ */
+export function resolveExtrasCap(
+  matchOptions:
+    | {
+        maxExtraToolCalls?: number | null;
+        allowExtraToolCalls?: boolean;
+      }
+    | undefined
+    | null,
+): number | null {
+  if (!matchOptions) return null;
+  if (matchOptions.maxExtraToolCalls !== undefined) {
+    return matchOptions.maxExtraToolCalls;
+  }
+  return matchOptions.allowExtraToolCalls === false ? 0 : null;
+}
+
+/**
+ * Resolve the effective predicate list for a single case from suite defaults
+ * plus the case's `predicates: { mode, list }` envelope.
+ *
+ * Mirrors the backend `convex/lib/matchOptions.ts#resolvePredicates`
+ * semantics — keep these in lockstep:
+ *
+ *   - no case envelope        → suite defaults (or empty)
+ *   - `mode: "inherit"`       → suite defaults (case `list` ignored)
+ *   - `mode: "replace"`       → case `list`
+ *   - `mode: "extend"`        → suite defaults followed by case `list`
+ *
+ * Returns `undefined` when the effective list is empty so the runner's
+ * existing `successPredicates?.length` checks keep treating "no gate" as
+ * the absence of the field.
+ */
+export function resolveCasePredicates(
+  suiteDefaults: PredicateType[] | undefined,
+  caseOverride: CasePredicatesType | undefined,
+): PredicateType[] | undefined {
+  const defaults = suiteDefaults ?? [];
+  const overrideList = (caseOverride?.list ?? []) as PredicateType[];
+  let resolved: PredicateType[];
+  if (!caseOverride) {
+    resolved = defaults;
+  } else {
+    switch (caseOverride.mode) {
+      case "inherit":
+        resolved = defaults;
+        break;
+      case "replace":
+        resolved = overrideList;
+        break;
+      case "extend":
+        resolved = [...defaults, ...overrideList];
+        break;
+      default:
+        resolved = defaults;
+    }
+  }
+  return resolved.length > 0 ? resolved : undefined;
+}
+
+/**
+ * Single source of truth for the per-case `successPredicates` resolution
+ * used by both single-case run paths (`runEvalTestCaseWithManager`,
+ * `streamEvalTestCaseWithManager`) and the suite-run recorder.
+ *
+ * Precedence — higher beats lower:
+ *
+ *   1. `runOverride` — legacy per-run flat list (oldest contract).
+ *   2. `envelope` — `{mode,list}` from per-run or persisted case. When
+ *      present this is AUTHORITATIVE, including the explicit opt-out
+ *      `{mode: "replace", list: []}`. `resolveCasePredicates` collapses
+ *      empty lists to `undefined`, so when the envelope says "no gate"
+ *      we return `undefined` and the runner sees no `successPredicates`
+ *      — which is the user's intent. Falling through to legacy/suite
+ *      defaults here would silently re-apply the very checks the user
+ *      opted out of.
+ *   3. `legacyCase` — pre-envelope persisted `testCase.successPredicates`.
+ *      Only consulted when the case has no envelope at all, so adding
+ *      a suite-level default doesn't replace existing gates on
+ *      un-migrated cases.
+ *   4. `suiteDefaults` — last resort when no case-level signal exists.
+ */
+export function resolveCaseSuccessPredicates(args: {
+  suiteDefaults: PredicateType[] | undefined;
+  runOverride?: PredicateType[] | undefined;
+  envelope?: CasePredicatesType | undefined;
+  legacyCase?: PredicateType[] | undefined;
+}): PredicateType[] | undefined {
+  if (args.runOverride !== undefined) return args.runOverride;
+  if (args.envelope !== undefined) {
+    return resolveCasePredicates(args.suiteDefaults, args.envelope);
+  }
+  if (Array.isArray(args.legacyCase) && args.legacyCase.length > 0) {
+    return args.legacyCase;
+  }
+  return args.suiteDefaults;
+}

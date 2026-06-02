@@ -1,0 +1,235 @@
+{
+  "__readme": "Shared parity fixtures for the @mcpjam/sdk Zod `predicateSchema` (this repo: mcpjam-inspector) and the Convex hand-mirrored `predicateValidator` v.union (sibling repo: mcpjam-backend at tests/convex/fixtures/predicates-parity-fixtures.json). The two files MUST stay in sync — every accept here must parse on both sides; every reject must fail on both sides. A future PR will publish them as a shared package. When adding a new predicate kind, edit BOTH files in the SAME PR (Phase 2 plan: jaunty-wiggling-lecun.md).",
+  "accept": [
+    {
+      "label": "toolCalledWith — minimal (only required fields)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": { "args": {} }
+      }
+    },
+    {
+      "label": "toolCalledWith — all optional fields populated",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "book_flight",
+        "args": {
+          "args": { "airline": "DL", "seat": "1A" },
+          "argumentMatching": "partial"
+        },
+        "minCount": 2
+      }
+    },
+    {
+      "label": "toolCalledWith — exact argumentMatching",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "echo",
+        "args": { "args": { "msg": "hi" }, "argumentMatching": "exact" }
+      }
+    },
+    {
+      "label": "toolCalledWith — ignore argumentMatching (args still required)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "ping",
+        "args": { "args": {}, "argumentMatching": "ignore" }
+      }
+    },
+    {
+      "label": "toolCalledWith — partial with placeholder strings",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "fs.read",
+        "args": {
+          "args": { "path": "string", "count": "number" },
+          "argumentMatching": "partial"
+        }
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — minimal",
+      "value": { "type": "toolCalledAtLeastOnce", "toolName": "search" }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — long tool name",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "very.deeply.namespaced.tool"
+      }
+    },
+    {
+      "label": "toolNeverCalled — minimal",
+      "value": { "type": "toolNeverCalled", "toolName": "delete_account" }
+    },
+    {
+      "label": "toolNeverCalled — long tool name",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "admin.dangerous.purge"
+      }
+    },
+    {
+      "label": "firstToolWas — minimal",
+      "value": { "type": "firstToolWas", "toolName": "search" }
+    },
+    {
+      "label": "firstToolWas — alternate tool name",
+      "value": { "type": "firstToolWas", "toolName": "list_dir" }
+    },
+    {
+      "label": "responseContains — minimal (no caseSensitive)",
+      "value": { "type": "responseContains", "needle": "refund issued" }
+    },
+    {
+      "label": "responseContains — caseSensitive true",
+      "value": {
+        "type": "responseContains",
+        "needle": "ERROR",
+        "caseSensitive": true
+      }
+    },
+    {
+      "label": "responseMatches — minimal regex",
+      "value": { "type": "responseMatches", "pattern": "\\d+" }
+    },
+    {
+      "label": "responseMatches — anchored regex",
+      "value": { "type": "responseMatches", "pattern": "^Order #\\d{4} confirmed$" }
+    },
+    {
+      "label": "noToolErrors — no fields beyond type",
+      "value": { "type": "noToolErrors" }
+    },
+    {
+      "label": "noToolErrors — second example (still no fields)",
+      "value": { "type": "noToolErrors" }
+    },
+    {
+      "label": "finalAssistantMessageNonEmpty — no fields beyond type",
+      "value": { "type": "finalAssistantMessageNonEmpty" }
+    },
+    {
+      "label": "finalAssistantMessageNonEmpty — second example",
+      "value": { "type": "finalAssistantMessageNonEmpty" }
+    },
+    {
+      "label": "tokenBudgetUnder — minimal",
+      "value": { "type": "tokenBudgetUnder", "tokens": 1000 }
+    },
+    {
+      "label": "tokenBudgetUnder — large budget",
+      "value": { "type": "tokenBudgetUnder", "tokens": 100000 }
+    }
+  ],
+  "reject": [
+    {
+      "label": "missing type discriminator",
+      "value": { "toolName": "search" }
+    },
+    {
+      "label": "unknown predicate kind",
+      "value": { "type": "toolMaybeCalled", "toolName": "search" }
+    },
+    {
+      "label": "toolCalledWith — toolName is a number (wrong field type)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": 42,
+        "args": { "args": {} }
+      }
+    },
+    {
+      "label": "toolCalledWith — args is missing",
+      "value": { "type": "toolCalledWith", "toolName": "search" }
+    },
+    {
+      "label": "toolCalledWith — illegal argumentMatching enum value",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": { "args": {}, "argumentMatching": "fuzzy" }
+      }
+    },
+    {
+      "label": "toolCalledWith — negative minCount",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": { "args": {} },
+        "minCount": -1
+      }
+    },
+    {
+      "label": "toolCalledWith — zero minCount (must be positive)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": { "args": {} },
+        "minCount": 0
+      }
+    },
+    {
+      "label": "toolCalledWith — fractional minCount",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": { "args": {} },
+        "minCount": 1.5
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — empty toolName",
+      "value": { "type": "toolCalledAtLeastOnce", "toolName": "" }
+    },
+    {
+      "label": "toolNeverCalled — toolName is null",
+      "value": { "type": "toolNeverCalled", "toolName": null }
+    },
+    {
+      "label": "firstToolWas — missing toolName",
+      "value": { "type": "firstToolWas" }
+    },
+    {
+      "label": "firstToolWas — empty toolName",
+      "value": { "type": "firstToolWas", "toolName": "" }
+    },
+    {
+      "label": "responseContains — empty needle",
+      "value": { "type": "responseContains", "needle": "" }
+    },
+    {
+      "label": "responseContains — caseSensitive is a string",
+      "value": {
+        "type": "responseContains",
+        "needle": "ok",
+        "caseSensitive": "yes"
+      }
+    },
+    {
+      "label": "responseMatches — empty pattern",
+      "value": { "type": "responseMatches", "pattern": "" }
+    },
+    {
+      "label": "responseMatches — non-string pattern (number)",
+      "value": { "type": "responseMatches", "pattern": 42 }
+    },
+    {
+      "label": "tokenBudgetUnder — negative tokens",
+      "value": { "type": "tokenBudgetUnder", "tokens": -1 }
+    },
+    {
+      "label": "tokenBudgetUnder — zero tokens (must be positive)",
+      "value": { "type": "tokenBudgetUnder", "tokens": 0 }
+    },
+    {
+      "label": "tokenBudgetUnder — fractional tokens",
+      "value": { "type": "tokenBudgetUnder", "tokens": 100.5 }
+    },
+    {
+      "label": "tokenBudgetUnder — tokens missing",
+      "value": { "type": "tokenBudgetUnder" }
+    }
+  ]
+}

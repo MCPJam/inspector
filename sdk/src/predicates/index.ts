@@ -27,4 +27,13 @@ export type {
   TranscriptUsage,
   ToolErrorRecord,
   ToolErrorKind,
+  CasePredicates,
+  PredicatePlaceholder,
+} from "./types.js";
+export {
+  predicateSchema,
+  predicateArraySchema,
+  argMatcherSchema,
+  casePredicatesSchema,
+  PREDICATE_PLACEHOLDER_STRINGS,
 } from "./types.js";

@@ -214,6 +214,34 @@ export function evaluatePredicate(
         : fail(predicate, `tool "${predicate.toolName}" was never called`);
     }
 
+    case "firstToolWas": {
+      // A missing toolName would otherwise PASS any transcript whose first call
+      // happens to satisfy `undefined === undefined` after read — fail closed.
+      if (
+        typeof predicate.toolName !== "string" ||
+        predicate.toolName.length === 0
+      ) {
+        return fail(predicate, `firstToolWas requires a non-empty toolName`);
+      }
+      const first = (transcript.toolCalls ?? [])[0];
+      if (!first) {
+        return fail(
+          predicate,
+          `expected first tool "${predicate.toolName}" but no tools were called`,
+        );
+      }
+      // Hard Constraint 4 (plan): tool calls carry `.toolName`, not `.name`.
+      return first.toolName === predicate.toolName
+        ? pass(
+            predicate,
+            `first tool call was "${predicate.toolName}"`,
+          )
+        : fail(
+            predicate,
+            `expected first tool "${predicate.toolName}", got "${first.toolName}"`,
+          );
+    }
+
     case "toolNeverCalled": {
       // A missing toolName matches no calls, which would otherwise PASS the
       // forbidden-tool check — fail closed on a malformed predicate instead.

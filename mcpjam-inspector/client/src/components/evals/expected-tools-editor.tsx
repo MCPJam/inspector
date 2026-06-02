@@ -1,9 +1,9 @@
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import { Textarea } from "@mcpjam/design-system/textarea";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Combobox } from "@/components/ui/combobox";
+import { ArgLeafPicker, isPlaceholder } from "./arg-leaf-picker";
 
 type ToolCall = {
   toolName: string;
@@ -20,12 +20,24 @@ type ExpectedToolsEditorProps = {
   toolCalls: ToolCall[];
   onChange: (toolCalls: ToolCall[]) => void;
   availableTools?: AvailableTool[];
+  /**
+   * Effective `argumentMatching` mode resolved for this case (suite
+   * default merged with the case override). When `"partial"` the per-leaf
+   * picker offers the 7 placeholder strings; when `"exact"` only literal;
+   * when `"ignore"` the whole args UI is disabled with a hint.
+   *
+   * Optional so legacy call sites that haven't been updated continue to
+   * render without the picker (defaults to `"partial"`, matching the
+   * matcher's default).
+   */
+  argumentMatching?: "exact" | "partial" | "ignore";
 };
 
 export function ExpectedToolsEditor({
   toolCalls,
   onChange,
   availableTools = [],
+  argumentMatching = "partial",
 }: ExpectedToolsEditorProps) {
   const addToolCall = () => {
     onChange([...toolCalls, { toolName: "", arguments: {} }]);
@@ -103,34 +115,11 @@ export function ExpectedToolsEditor({
   const updateArgumentValue = (
     toolIndex: number,
     argKey: string,
-    value: string,
+    nextValue: unknown,
   ) => {
     const updated = [...toolCalls];
     const args = { ...(updated[toolIndex].arguments || {}) };
-
-    // Try to parse as JSON if it looks like a number, boolean, array, or object
-    let parsedValue: any = value;
-    if (value.trim() !== "") {
-      try {
-        // Check if it's a number
-        if (/^-?\d+\.?\d*$/.test(value)) {
-          parsedValue = parseFloat(value);
-        }
-        // Check if it's a boolean
-        else if (value === "true" || value === "false") {
-          parsedValue = value === "true";
-        }
-        // Check if it's JSON (array or object)
-        else if (value.startsWith("[") || value.startsWith("{")) {
-          parsedValue = JSON.parse(value);
-        }
-      } catch {
-        // If parsing fails, keep as string
-        parsedValue = value;
-      }
-    }
-
-    args[argKey] = parsedValue;
+    args[argKey] = nextValue;
     updated[toolIndex] = { ...updated[toolIndex], arguments: args };
     onChange(updated);
   };
@@ -154,7 +143,16 @@ export function ExpectedToolsEditor({
     }));
   };
 
-  const isArgumentValueInvalid = (value: any): boolean => {
+  const isArgumentValueInvalid = (value: unknown): boolean => {
+    // Ignore mode doesn't compare arguments at all and the leaf picker is
+    // disabled there, so an empty value isn't reachable as user error —
+    // surfacing a destructive ring would just leave a state the user has
+    // no way to clear.
+    if (argumentMatching === "ignore") return false;
+    // Placeholders are always valid in partial mode. Empty string is
+    // still treated as "user hasn't filled it in yet" — same convention
+    // as before Phase 3.
+    if (argumentMatching === "partial" && isPlaceholder(value)) return false;
     return value === "";
   };
 
@@ -273,25 +271,23 @@ export function ExpectedToolsEditor({
                         </p>
                       )}
                     </div>
-                    <div className="min-w-0 flex-[2]">
-                      <Textarea
-                        value={
-                          typeof value === "string"
-                            ? value
-                            : JSON.stringify(value)
+                    <div
+                      className={cn(
+                        "min-w-0 flex-[2] rounded-md",
+                        isArgumentValueInvalid(value) &&
+                          "ring-1 ring-destructive/45",
+                      )}
+                    >
+                      <ArgLeafPicker
+                        value={value}
+                        onChange={(next) =>
+                          updateArgumentValue(toolIndex, key, next)
                         }
-                        onChange={(e) =>
-                          updateArgumentValue(toolIndex, key, e.target.value)
-                        }
-                        placeholder={
+                        argumentMatching={argumentMatching}
+                        inferredType={argSchema?.type}
+                        inputPlaceholder={
                           argSchema?.type ? `${argSchema.type}` : "Value"
                         }
-                        className={cn(
-                          "font-mono text-sm resize-none min-h-[36px]",
-                          isArgumentValueInvalid(value) &&
-                            "border-destructive/45 focus-visible:ring-destructive/25 dark:border-destructive/55",
-                        )}
-                        rows={1}
                       />
                     </div>
                     <Button

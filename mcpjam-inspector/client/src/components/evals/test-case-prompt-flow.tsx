@@ -45,6 +45,12 @@ type TestCasePromptFlowProps = {
   removePromptTurn: (index: number) => void;
   movePromptTurn: (index: number, direction: -1 | 1) => void;
   togglePromptTurnExpanded: (turnId: string) => void;
+  /**
+   * Effective `argumentMatching` mode for this case (suite default merged
+   * with the case override). Threaded through to {@link ExpectedToolsEditor}
+   * so the per-leaf placeholder picker offers the right options (Phase 3).
+   */
+  argumentMatching?: "exact" | "partial" | "ignore";
 };
 
 export function TestCasePromptFlow({
@@ -59,6 +65,7 @@ export function TestCasePromptFlow({
   removePromptTurn,
   movePromptTurn,
   togglePromptTurnExpanded,
+  argumentMatching,
 }: TestCasePromptFlowProps) {
   const multi = promptTurns.length > 1;
 
@@ -312,6 +319,7 @@ export function TestCasePromptFlow({
                                     }))
                                   }
                                   availableTools={availableTools}
+                                  argumentMatching={argumentMatching}
                                 />
                                 {toolsAttention ? (
                                   <p className="text-xs text-muted-foreground">

@@ -50,12 +50,12 @@ export function PredicatesList({ predicates }: { predicates: PredicateResult[] }
   return (
     <div
       role="region"
-      aria-label="Predicate gate"
+      aria-label="Checks"
       className="space-y-2 rounded-md border border-border/40 bg-muted/10 p-3"
     >
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Predicates
+          Checks
         </div>
         <div
           className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
@@ -64,7 +64,9 @@ export function PredicatesList({ predicates }: { predicates: PredicateResult[] }
               : "bg-destructive/50 text-foreground"
           }`}
         >
-          {allPassed ? "PASS" : `${passed}/${predicates.length} PASSED`}
+          {allPassed
+            ? `${predicates.length} / ${predicates.length} checks passed`
+            : `${passed} / ${predicates.length} checks passed`}
         </div>
       </div>
 
@@ -143,6 +145,8 @@ export function summarizePredicate(predicate: Predicate): string {
         return `tool "${predicate.toolName}" called ≥1×`;
       case "toolNeverCalled":
         return `tool "${predicate.toolName}" never called`;
+      case "firstToolWas":
+        return `first tool was "${predicate.toolName}"`;
       case "responseContains":
         return `needle "${truncate(predicate.needle, 60)}"${
           predicate.caseSensitive ? " (case-sensitive)" : ""

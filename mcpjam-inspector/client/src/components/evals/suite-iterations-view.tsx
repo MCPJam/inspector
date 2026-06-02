@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
 import { toast } from "sonner";
@@ -16,7 +16,8 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
 import { JudgesSection } from "./judges-section";
-import type { EvalMatchOptions } from "@/shared/eval-matching";
+import { ChecksSection, areAllChecksValid } from "./checks-section";
+import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
@@ -272,6 +273,14 @@ export function SuiteIterationsView({
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
+  // Local in-progress state for the suite-default checks editor. Mirrors the
+  // case editor's `editForm.predicates.list` mediation: `ChecksSection` fires
+  // onChange on every keystroke (including the blank-template insertion from
+  // `Add check`), so we keep edits local and only persist when every check
+  // is valid. See `areAllChecksValid` and `test-template-editor.tsx`.
+  const [draftDefaultPredicates, setDraftDefaultPredicates] = useState<
+    Predicate[]
+  >(suite.defaultPredicates ?? []);
   const [editedDescription, setEditedDescription] = useState(
     suite.description || ""
   );
@@ -422,6 +431,89 @@ export function SuiteIterationsView({
   useEffect(() => {
     setEditedDescription(suite.description || "");
   }, [suite.description]);
+
+  // Sync local draft of default checks when the suite identity or its
+  // persisted value changes. `suite._id` is included so navigating to a
+  // different suite with the same persisted value (commonly
+  // `undefined → undefined`) still resets the draft — otherwise the old
+  // suite's in-progress edits would be saved into the new one on the next
+  // valid keystroke.
+  useEffect(() => {
+    setDraftDefaultPredicates(suite.defaultPredicates ?? []);
+  }, [suite._id, suite.defaultPredicates]);
+
+  // Debounced commit of the default-checks draft. Earlier this was fired
+  // directly inside ChecksSection's onChange, which kicked off one
+  // unsynchronized `updateSuite` per keystroke — out-of-order responses
+  // could land in the wrong order and persist stale predicate text, and
+  // the toast spammed once per character.
+  //
+  // The debounce alone is not enough: if a user pauses (timer fires →
+  // updateSuite A starts) and then keeps editing (timer fires again →
+  // updateSuite B starts before A resolves), Convex's "last write wins"
+  // means whichever request lands second persists, which can roll the
+  // draft back to A's stale snapshot. We serialize: the next save waits
+  // for any in-flight one to settle, then reads the latest draft and
+  // fires exactly one write.
+  const persistedDefaultPredicatesKey = useMemo(
+    () => JSON.stringify(suite.defaultPredicates ?? []),
+    [suite.defaultPredicates],
+  );
+  const draftDefaultPredicatesKey = useMemo(
+    () => JSON.stringify(draftDefaultPredicates),
+    [draftDefaultPredicates],
+  );
+  const defaultChecksInFlightRef = useRef<Promise<unknown> | null>(null);
+  useEffect(() => {
+    if (draftDefaultPredicatesKey === persistedDefaultPredicatesKey) return;
+    if (!areAllChecksValid(draftDefaultPredicates)) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        // Wait for any in-flight save to settle before starting the next
+        // one. The pending one captured an earlier draft; if we raced it
+        // and lost, Convex would persist the stale snapshot.
+        while (defaultChecksInFlightRef.current) {
+          try {
+            await defaultChecksInFlightRef.current;
+          } catch {
+            // Errors are surfaced by the call site that started the
+            // in-flight promise; we just need it to settle.
+          }
+        }
+        if (cancelled) return;
+        const snapshot = draftDefaultPredicates;
+        const promise = updateSuite({
+          suiteId: suite._id,
+          defaultPredicates: snapshot.length === 0 ? null : snapshot,
+        });
+        defaultChecksInFlightRef.current = promise as Promise<unknown>;
+        try {
+          await promise;
+          toast.success("Default checks updated");
+        } catch (error) {
+          toast.error(
+            getBillingErrorMessage(error, "Failed to update suite"),
+          );
+          console.error("Failed to update default checks:", error);
+        } finally {
+          if (defaultChecksInFlightRef.current === promise) {
+            defaultChecksInFlightRef.current = null;
+          }
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    draftDefaultPredicatesKey,
+    persistedDefaultPredicatesKey,
+    draftDefaultPredicates,
+    suite._id,
+    updateSuite,
+  ]);
 
   // Load default pass criteria from suite
   useEffect(() => {
@@ -1134,6 +1226,24 @@ export function SuiteIterationsView({
                     );
                   }
                 }}
+              />
+            </div>
+
+            {/* Default checks (predicate gate) — suite-level deterministic
+                checks applied to every case unless the case opts out via its
+                `predicates.mode`. Phase 2 plan: primary authoring surface. */}
+            <div className="space-y-3">
+              <ChecksSection
+                title="Default checks"
+                description="Deterministic checks applied to every case in this suite. Cases can override or extend these defaults."
+                // Local draft so the user can finish authoring a check
+                // before it's persisted (matches the case editor's
+                // mediated form pattern). The actual mutation is fired
+                // from a debounced effect below — firing inside onChange
+                // produced one in-flight `updateSuite` per keystroke,
+                // and out-of-order responses could persist stale text.
+                value={draftDefaultPredicates}
+                onChange={setDraftDefaultPredicates}
               />
             </div>
 

@@ -61,7 +61,10 @@ import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
   resolveMatchOptions,
   type EvalMatchOptions,
+  type CasePredicates,
+  type Predicate,
 } from "@/shared/eval-matching";
+import { CaseChecksSection, areAllChecksValid } from "./checks-section";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
@@ -128,6 +131,8 @@ interface TestTemplate {
   promptTurns: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
   matchOptions?: EvalMatchOptions;
+  /** Case-level predicate gate override; undefined ⇒ inherit suite defaults. */
+  predicates?: CasePredicates;
 }
 
 interface TestTemplateEditorProps {
@@ -522,6 +527,7 @@ export function TestTemplateEditor({
       promptTurns,
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
       matchOptions: currentTestCase.matchOptions,
+      predicates: currentTestCase.predicates,
     });
     setExpandedPromptTurnIds(promptTurns.map((turn) => turn.id));
     // Seed the transient picker from the persisted runs so a user who saved
@@ -652,6 +658,12 @@ export function TestTemplateEditor({
     const normalizedCurrentMatchOptions = JSON.stringify(
       normalizeForComparison(currentTestCase.matchOptions ?? null)
     );
+    const normalizedPredicates = JSON.stringify(
+      normalizeForComparison(editForm.predicates ?? null),
+    );
+    const normalizedCurrentPredicates = JSON.stringify(
+      normalizeForComparison(currentTestCase.predicates ?? null),
+    );
 
     return (
       editForm.title !== currentTestCase.title ||
@@ -660,6 +672,7 @@ export function TestTemplateEditor({
       normalizedPromptTurns !== normalizedCurrentPromptTurns ||
       normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
       normalizedMatchOptions !== normalizedCurrentMatchOptions ||
+      normalizedPredicates !== normalizedCurrentPredicates ||
       serverNegativeFlagMismatch
     );
   }, [editForm, currentAdvancedConfig, currentPromptTurns, currentTestCase]);
@@ -669,7 +682,20 @@ export function TestTemplateEditor({
     return validatePromptTurns(editForm.promptTurns);
   }, [editForm]);
 
-  const savePrimaryDisabled = !arePromptTurnsValid || isRunningCompare;
+  const arePredicatesValid = useMemo(() => {
+    if (!editForm?.predicates) return true;
+    // In `inherit` mode the case's `list` is semantically ignored by the
+    // runner — only suite defaults gate the run. The setMode("inherit")
+    // handler preserves non-empty lists for UX convenience (so the user
+    // can flip back to replace/extend without losing their work), which
+    // means stale invalid rows from a previous mode are reachable. Don't
+    // let those block the Save button.
+    if (editForm.predicates.mode === "inherit") return true;
+    return areAllChecksValid(editForm.predicates.list);
+  }, [editForm?.predicates]);
+
+  const savePrimaryDisabled =
+    !arePromptTurnsValid || !arePredicatesValid || isRunningCompare;
 
   const saveDisabledTooltip = useMemo(() => {
     if (!savePrimaryDisabled) {
@@ -681,8 +707,17 @@ export function TestTemplateEditor({
     if (!arePromptTurnsValid && editForm) {
       return getPromptTurnBlockReason(editForm.promptTurns);
     }
+    if (!arePredicatesValid) {
+      return "Fix invalid checks before saving.";
+    }
     return null;
-  }, [savePrimaryDisabled, isRunningCompare, arePromptTurnsValid, editForm]);
+  }, [
+    savePrimaryDisabled,
+    isRunningCompare,
+    arePromptTurnsValid,
+    arePredicatesValid,
+    editForm,
+  ]);
 
   const runPrimaryDisabled =
     selectedModelValues.length === 0 ||
@@ -814,6 +849,19 @@ export function TestTemplateEditor({
       : form.promptTurns;
     const legacy = deriveLegacyPromptFields(normalizedPromptTurns);
 
+    // Normalize the predicate envelope before it crosses the wire. The
+    // in-memory editForm keeps a draft `list` in `inherit` mode so the
+    // user can flip back to `replace`/`extend` without losing their work,
+    // but the persisted envelope must carry an empty list there — the
+    // runner ignores it AND `casePredicatesSchema` still validates each
+    // row with `predicateSchema` regardless of mode, so a stale invalid
+    // row would be rejected downstream even though the case is "safe".
+    const normalizedPredicates = form.predicates
+      ? form.predicates.mode === "inherit"
+        ? { ...form.predicates, list: [] }
+        : form.predicates
+      : form.predicates;
+
     return {
       title: form.title,
       runs: form.runs,
@@ -825,6 +873,7 @@ export function TestTemplateEditor({
       isNegativeTest,
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
+      predicates: normalizedPredicates,
     };
   };
 
@@ -867,6 +916,8 @@ export function TestTemplateEditor({
         // Pass `null` (not undefined) so the mutation knows to clear a
         // previously-persisted case-level override when the user resets it.
         matchOptions: savePayload.matchOptions ?? null,
+        // Same null-clears-the-field convention for the predicate override.
+        predicates: savePayload.predicates ?? null,
       });
       toast.success("Changes saved");
     } catch (error) {
@@ -920,6 +971,7 @@ export function TestTemplateEditor({
             // null (not undefined) signals "clear" — required to wipe a
             // previously-persisted case-level matchOptions override.
             matchOptions: savePayload.matchOptions ?? null,
+            predicates: savePayload.predicates ?? null,
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -2069,6 +2121,16 @@ export function TestTemplateEditor({
                   removePromptTurn={removePromptTurn}
                   movePromptTurn={movePromptTurn}
                   togglePromptTurnExpanded={togglePromptTurnExpanded}
+                  // Phase 3: thread the effective argumentMatching mode
+                  // (suite default merged with case override) so the
+                  // per-leaf placeholder picker offers the right options
+                  // and disables itself in `ignore` mode.
+                  argumentMatching={
+                    resolveMatchOptions(
+                      suite?.defaultMatchOptions,
+                      editForm.matchOptions,
+                    ).argumentMatching
+                  }
                 />
               ) : null}
             </div>
@@ -2087,8 +2149,22 @@ export function TestTemplateEditor({
                       current ? { ...current, matchOptions: next } : current
                     )
                   }
+                  showBadges
                 />
               </div>
+            ) : null}
+
+            {editForm ? (
+              <CaseChecksSection
+                value={editForm.predicates}
+                onChange={(next: CasePredicates | undefined) =>
+                  setEditForm((current) =>
+                    current ? { ...current, predicates: next } : current,
+                  )
+                }
+                suiteDefaults={(suite?.defaultPredicates ?? []) as Predicate[]}
+                availableTools={availableTools.map((t) => t.name)}
+              />
             ) : null}
 
             {currentTestCase.lastMessageRun ? (
