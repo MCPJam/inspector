@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen } from "@/test";
+import { fireEvent, renderWithProviders, screen } from "@/test";
 import { SuiteDashboard } from "../suite-dashboard";
 import type { EvalSuite, EvalSuiteRun } from "../types";
 
@@ -57,7 +57,7 @@ const completedRun: EvalSuiteRun = {
 };
 
 describe("SuiteDashboard", () => {
-  it("renders run insights directly under the chart grid, before cases and runs columns", () => {
+  it("renders chart and insights above the Runs/Cases tablist and defaults to Runs when runs exist", () => {
     renderWithProviders(
       <SuiteDashboard
         suite={suite}
@@ -74,13 +74,62 @@ describe("SuiteDashboard", () => {
 
     const chart = screen.getByTestId("chart-grid");
     const insights = screen.getByRole("button", { name: /Run insights/i });
-    const cases = screen.getByTestId("cases-overview");
+    const runsTab = screen.getByRole("tab", { name: /Runs/i });
 
     expect(
       chart.compareDocumentPosition(insights) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      insights.compareDocumentPosition(cases) & Node.DOCUMENT_POSITION_FOLLOWING,
+      insights.compareDocumentPosition(runsTab) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+
+    expect(runsTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("runs-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("cases-overview")).not.toBeInTheDocument();
+  });
+
+  it("defaults to Cases tab when no runs exist", () => {
+    renderWithProviders(
+      <SuiteDashboard
+        suite={suite}
+        cases={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        runTrendData={[]}
+        modelStats={[]}
+        onTestCaseClick={() => {}}
+        onRunClick={() => {}}
+      />,
+    );
+
+    const casesTab = screen.getByRole("tab", { name: /Cases/i });
+    expect(casesTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("runs-list")).not.toBeInTheDocument();
+  });
+
+  it("switches between Runs and Cases on tab click", () => {
+    renderWithProviders(
+      <SuiteDashboard
+        suite={suite}
+        cases={[]}
+        allIterations={[]}
+        runs={[completedRun]}
+        runsLoading={false}
+        runTrendData={[]}
+        modelStats={[]}
+        onTestCaseClick={() => {}}
+        onRunClick={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: /Cases/i }));
+    expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("runs-list")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Runs/i }));
+    expect(screen.getByTestId("runs-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("cases-overview")).not.toBeInTheDocument();
   });
 });

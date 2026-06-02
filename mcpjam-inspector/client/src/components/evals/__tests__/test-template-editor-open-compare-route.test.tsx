@@ -935,113 +935,6 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("renders the host-style control before the scenario form", async () => {
-    renderWithProviders(
-      <TestTemplateEditor
-        suiteId="suite-1"
-        selectedTestCaseId="case-1"
-        connectedServerNames={new Set(["srv"])}
-        projectId={null}
-        availableModels={[
-          {
-            provider: "openai",
-            id: "gpt-4",
-            model: "gpt-4",
-            name: "GPT-4",
-            label: "GPT-4",
-          } as any,
-        ]}
-      />,
-      { hostStyle: "claude" },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
-    });
-
-    const hostHeaderRow = screen.getByTestId("test-template-host-header-row");
-    const scenarioHeading = screen.getByText("Test scenario");
-
-    expect(
-      hostHeaderRow.compareDocumentPosition(scenarioHeading) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
-    // The new TestCaseClientHeader sources its baseline from suite
-    // hostConfigsV2 — the mock returns null → seeded empty input →
-    // `DEFAULT_HOST_STYLE_V2` ("mcpjam"). The `renderWithProviders`
-    // `hostStyle: "claude"` only seeds the GLOBAL preferences store,
-    // which the new header intentionally no longer reads (per-case
-    // tweaks must not leak across views).
-    expect(
-      within(hostHeaderRow).getByTestId("test-case-host-style-mcpjam"),
-    ).toHaveAttribute("data-selected", "true");
-  });
-
-  it("treats host-style pill clicks as per-case tweaks that don't leak to other surfaces", async () => {
-    // Replaces the prior "carries it across compare columns" test. The
-    // old test locked in cross-view leak behavior: clicking a host pill
-    // in the test case editor mutated `usePreferencesStore.hostStyle`,
-    // which downstream surfaces (CompareResultColumn, playground, chat
-    // UI) all read. The new TestCaseClientHeader writes to a per-case
-    // local override; the global preference store is untouched. A
-    // follow-up will plumb the override into the iteration snapshot so
-    // result cards can read it from there.
-    const user = userEvent.setup();
-
-    streamEvalTestCaseMock.mockImplementation(
-      async () => new Promise<void>(() => {}),
-    );
-
-    renderWithProviders(
-      <TestTemplateEditor
-        suiteId="suite-1"
-        selectedTestCaseId="case-1"
-        connectedServerNames={new Set(["srv"])}
-        projectId={null}
-        availableModels={[
-          {
-            provider: "openai",
-            id: "gpt-4",
-            model: "gpt-4",
-            name: "GPT-4",
-            label: "GPT-4",
-          } as any,
-        ]}
-      />,
-      { hostStyle: "claude" },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
-    });
-
-    const hostHeaderRow = screen.getByTestId("test-template-host-header-row");
-
-    // Baseline starts on the v2 default ("mcpjam") — the suite hostConfig
-    // mock returns null, so emptyHostConfigInputV2 wins. No "Tweaked"
-    // badge until the user makes a tweak.
-    expect(
-      within(hostHeaderRow).getByTestId("test-case-host-style-mcpjam"),
-    ).toHaveAttribute("data-selected", "true");
-    expect(
-      screen.queryByTestId("test-case-host-tweaked-badge"),
-    ).not.toBeInTheDocument();
-
-    await user.click(
-      within(hostHeaderRow).getByTestId("test-case-host-style-chatgpt"),
-    );
-
-    // The tweak applies locally and surfaces the Tweaked badge.
-    await waitFor(() => {
-      expect(
-        within(hostHeaderRow).getByTestId("test-case-host-style-chatgpt"),
-      ).toHaveAttribute("data-selected", "true");
-    });
-    expect(
-      screen.getByTestId("test-case-host-tweaked-badge"),
-    ).toBeInTheDocument();
-  });
-
   it("defaults to Results tab when expected tool calls are on a non-first prompt turn (multi-turn case)", async () => {
     const user = userEvent.setup();
     // Multi-turn case: turn 1 has no expected tool calls, turn 2 has one.
@@ -1133,7 +1026,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("removes the pre-run host-style selector and only applies the host shell on Chat", async () => {
+  it("only applies the host shell on Chat in the result column", async () => {
     const user = userEvent.setup();
     const caseWithExpectedToolCalls = {
       ...caseDoc,
@@ -1218,22 +1111,14 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    expect(
-      screen.getByTestId("test-template-host-header-row"),
-    ).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: /run$/i }));
 
     await waitFor(() => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
     });
 
-    // The header lives in the config view only; flipping to the run /
-    // compare view removes it. No `[data-selected]` host-style markers
-    // should remain in the result tree.
-    expect(
-      screen.queryByTestId("test-template-host-header-row"),
-    ).not.toBeInTheDocument();
+    // No `[data-selected]` host-style markers should appear in the
+    // result tree — host-style chrome only renders inside the Chat tab.
     expect(
       view.container.querySelector('[data-testid^="test-case-host-style-"]'),
     ).toBeNull();

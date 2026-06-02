@@ -1,10 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { RunCaseIterationOutcome } from "./run-case-groups";
-import {
-  EVAL_FAIL_BAR_CLASS,
-  EVAL_LOW_PASS_RATE_TEXT_CLASS,
-} from "./constants";
+import { EVAL_FAIL_BAR_CLASS } from "./constants";
 import { evalSurfaceHeaderClass } from "./eval-surface-chrome";
 
 /**
@@ -74,10 +71,8 @@ export function RunCaseIterationBar({
       <div className="flex w-full min-w-0 items-baseline gap-2">
         <span
           className={cn(
-            "font-metric text-xs font-semibold tabular-nums tracking-tight shrink-0",
-            total === 0 && "text-muted-foreground",
-            total > 0 && passed === total && "text-foreground",
-            total > 0 && passed < total && EVAL_LOW_PASS_RATE_TEXT_CLASS,
+            "text-xs font-semibold tabular-nums tracking-tight shrink-0",
+            total === 0 ? "text-muted-foreground" : "text-foreground",
           )}
         >
           {passed}/{total}
@@ -115,7 +110,5 @@ export const RunCaseIterationDots = RunCaseIterationBar;
 
 export const runCasePassCheckClass = "text-success";
 
-export const runCaseFailCountClass = cn(
-  "font-mono text-xs font-semibold tabular-nums",
-  EVAL_LOW_PASS_RATE_TEXT_CLASS,
-);
+export const runCaseFailCountClass =
+  "text-xs font-semibold tabular-nums text-muted-foreground";

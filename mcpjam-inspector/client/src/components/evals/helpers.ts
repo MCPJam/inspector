@@ -14,19 +14,21 @@ import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 /**
- * Union of the suite's flat `environment.servers`, every attached host's
- * resolved server names, AND the suite-level standalone server
- * attachment (when present). This is what "what servers can this suite
- * see?" means in a host-aware world — generate, rerun-eligibility, and
- * any other "does this suite have any servers?" gates should consult
- * this instead of `environment.servers` alone, otherwise host-only or
- * attachment-only suites read as empty.
+ * What servers can this suite see at run-time? Mirrors the precedence
+ * `startTestSuiteRun` applies server-side (testSuites.ts ~4584):
  *
- * Standalone-attachment-only case: when the suite has a `serverAttachment`
- * the per-host attachments carry empty `resolvedServerNames` because the
- * standalone overrides per-host server picks at run-start. We must
- * include the standalone's names here so eligibility doesn't gate "Run
- * all" on a falsely-empty server list.
+ *   1. `suite.serverAttachment` (standalone) — overrides EVERYTHING for
+ *      ALL hosts. Per-host picks and the legacy flat `environment.servers`
+ *      list are inert when this is set.
+ *   2. Per-host `hostAttachments[].resolvedServerNames` ∪ legacy
+ *      `environment.servers`.
+ *
+ * Without the standalone short-circuit, a suite that had a per-host
+ * attachment carrying old servers (e.g. seeded at suite-create time)
+ * and later got a narrower standalone picked still gates "Run all" /
+ * per-case Run on the shadowed per-host set — including any OAuth
+ * servers in there, which surfaces as a spurious "Re-authenticate with
+ * <staging>" toast even though the active attachment doesn't use them.
  */
 export function getEffectiveSuiteServers(
   // Accept a structurally narrower suite than the full `EvalSuite`: some
@@ -41,17 +43,21 @@ export function getEffectiveSuiteServers(
     serverAttachment?: EvalSuite["serverAttachment"];
   },
 ): string[] {
+  if (suite.serverAttachment) {
+    return Array.from(
+      new Set(suite.serverAttachment.resolvedServerNames ?? []),
+    );
+  }
   const flatServers = suite.environment?.servers ?? [];
   const hostAttachmentServers =
     suite.hostAttachments?.flatMap(
       (attachment) => attachment.resolvedServerNames ?? [],
     ) ?? [];
-  const standaloneServers = suite.serverAttachment?.resolvedServerNames ?? [];
-  if (hostAttachmentServers.length === 0 && standaloneServers.length === 0) {
+  if (hostAttachmentServers.length === 0) {
     return flatServers;
   }
   return Array.from(
-    new Set([...flatServers, ...hostAttachmentServers, ...standaloneServers]),
+    new Set([...flatServers, ...hostAttachmentServers]),
   );
 }
 

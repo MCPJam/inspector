@@ -23,7 +23,11 @@ describe("ValidatorsSection", () => {
       name: /unlimited/i,
     });
     expect(unlimitedSwitch).toBeChecked();
-    expect(screen.getByText("Unlimited")).toBeInTheDocument();
+    // Two "Unlimited" labels now exist when extras is unlimited: the
+    // placeholder pill that replaces the number input, and the existing
+    // switch label. Either is sufficient signal that the unlimited state
+    // is reflected in the UI.
+    expect(screen.getAllByText("Unlimited").length).toBeGreaterThan(0);
     expect(screen.getByText("Partial")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /reset/i })).not.toBeInTheDocument();
   });

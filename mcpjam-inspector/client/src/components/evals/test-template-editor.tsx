@@ -45,7 +45,6 @@ import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
   prepareSingleTestCaseRun,
-  projectHostConfigRunOverride,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
 } from "./single-test-case-runner";
@@ -64,7 +63,8 @@ import {
   type CasePredicates,
   type Predicate,
 } from "@/shared/eval-matching";
-import { CaseChecksSection, areAllChecksValid } from "./checks-section";
+import { areAllChecksValid } from "./checks-section";
+import { CasePassCriteriaSection } from "./case-pass-criteria-section";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
@@ -74,8 +74,6 @@ import {
 import { cn } from "@/lib/utils";
 import { getEffectiveSuiteServers } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
-import { ValidatorsSection } from "./validators-section";
-import { RunValidatorsPopover } from "./run-validators-popover";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
@@ -122,7 +120,6 @@ import {
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { TestCaseClientHeader } from "./TestCaseClientHeader";
 
 interface TestTemplate {
   title: string;
@@ -344,16 +341,6 @@ export function TestTemplateEditor({
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
-  const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
-    EvalMatchOptions | undefined
-  >(undefined);
-  /**
-   * Per-case in-place tweak to the suite's hostConfig. `null` = no tweak,
-   * the suite baseline is used as-is. Mirrors `runMatchOptionsOverride`:
-   * never persists, resets on case switch, consumed by the next Run.
-   */
-  const [hostConfigOverride, setHostConfigOverride] =
-    useState<HostConfigInputV2 | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
@@ -448,8 +435,7 @@ export function TestTemplateEditor({
   /**
    * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
    * uses — single source of truth for model / system / temperature /
-   * hostContext / capabilities / style at the suite level. Per-case Run
-   * tweaks are layered on top as `hostConfigOverride` (added in Phase 2).
+   * hostContext / capabilities / style at the suite level.
    */
   const suiteHostConfigDto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
@@ -485,8 +471,6 @@ export function TestTemplateEditor({
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
-    // Per-case ephemeral tweak; switching cases starts fresh.
-    setHostConfigOverride(null);
   }, [openCompareFromRoute, selectedTestCaseId]);
 
   useEffect(() => {
@@ -1319,10 +1303,6 @@ export function TestTemplateEditor({
             advancedConfig,
             matchOptions: savePayload.matchOptions,
           },
-          matchOptionsOverride: runMatchOptionsOverride,
-          hostConfigOverride: hostConfigOverride
-            ? projectHostConfigRunOverride(hostConfigOverride)
-            : undefined,
         });
 
         return {
@@ -1985,16 +1965,6 @@ export function TestTemplateEditor({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="inline-flex items-center gap-2">
-                        <RunValidatorsPopover
-                          persistedEffective={resolveMatchOptions(
-                            suite?.defaultMatchOptions,
-                            editForm?.matchOptions ?? currentTestCase?.matchOptions,
-                          )}
-                          runOverride={runMatchOptionsOverride}
-                          onChange={setRunMatchOptionsOverride}
-                          variant="icon"
-                          disabled={isRunningCompare}
-                        />
                         <Button
                           type="button"
                           size="sm"
@@ -2036,16 +2006,6 @@ export function TestTemplateEditor({
                   </Tooltip>
                 ) : (
                   <span className="inline-flex items-center gap-2">
-                    <RunValidatorsPopover
-                      persistedEffective={resolveMatchOptions(
-                        suite?.defaultMatchOptions,
-                        editForm?.matchOptions ?? currentTestCase?.matchOptions,
-                      )}
-                      runOverride={runMatchOptionsOverride}
-                      onChange={setRunMatchOptionsOverride}
-                      variant="icon"
-                      disabled={isRunningCompare}
-                    />
                     <Button
                       type="button"
                       size="sm"
@@ -2092,19 +2052,6 @@ export function TestTemplateEditor({
               </p>
             ) : null}
 
-            {hostConfigBaseline ? (
-              <div
-                data-testid="test-template-host-header-row"
-                className="px-1 pt-2"
-              >
-                <TestCaseClientHeader
-                  baseline={hostConfigBaseline}
-                  value={hostConfigOverride}
-                  onChange={setHostConfigOverride}
-                />
-              </div>
-            ) : null}
-
             <div className="space-y-4 pt-1">
               {editForm ? (
                 <TestCasePromptFlow
@@ -2136,33 +2083,23 @@ export function TestTemplateEditor({
             </div>
 
             {editForm ? (
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
-                <ValidatorsSection
-                  title="Validators"
-                  description="Validator settings for this case. Reset to follow the suite default."
-                  value={editForm.matchOptions}
-                  inheritedFrom={resolveMatchOptions(
-                    suite?.defaultMatchOptions,
-                  )}
-                  onChange={(next) =>
-                    setEditForm((current) =>
-                      current ? { ...current, matchOptions: next } : current
-                    )
-                  }
-                  showBadges
-                />
-              </div>
-            ) : null}
-
-            {editForm ? (
-              <CaseChecksSection
-                value={editForm.predicates}
-                onChange={(next: CasePredicates | undefined) =>
+              <CasePassCriteriaSection
+                matchOptions={editForm.matchOptions}
+                onMatchOptionsChange={(next) =>
+                  setEditForm((current) =>
+                    current ? { ...current, matchOptions: next } : current,
+                  )
+                }
+                suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                predicates={editForm.predicates}
+                onPredicatesChange={(next: CasePredicates | undefined) =>
                   setEditForm((current) =>
                     current ? { ...current, predicates: next } : current,
                   )
                 }
-                suiteDefaults={(suite?.defaultPredicates ?? []) as Predicate[]}
+                suiteDefaultPredicates={
+                  (suite?.defaultPredicates ?? []) as Predicate[]
+                }
                 availableTools={availableTools.map((t) => t.name)}
               />
             ) : null}
@@ -2378,7 +2315,6 @@ export function TestTemplateEditor({
                           })
                         }
                         baselineHostStyle={hostConfigBaseline?.hostStyle}
-                        liveOverrideHostStyle={hostConfigOverride?.hostStyle}
                       />
                     </div>
                   );
@@ -2404,7 +2340,6 @@ function RunColumn({
   onTabChange,
   onRetry,
   baselineHostStyle,
-  liveOverrideHostStyle,
 }: {
   record: CompareRunRecord;
   allRecords: CompareRunRecord[];
@@ -2422,14 +2357,6 @@ function RunColumn({
    * override. May be undefined when the suite hostConfig hasn't loaded.
    */
   baselineHostStyle: string | undefined;
-  /**
-   * The transient per-case hostStyle override that was passed to the
-   * current run. Used as the streaming fallback so the chrome matches the
-   * actual run-time style until the iteration snapshot lands and takes
-   * over. Without this, the first run after tweaking host chrome briefly
-   * renders with the wrong shell.
-   */
-  liveOverrideHostStyle: string | undefined;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const globalPreferenceHostStyle = usePreferencesStore(
@@ -2439,11 +2366,8 @@ function RunColumn({
    * Effective hostStyle for this iteration's result chrome:
    *   1. iteration snapshot's per-Run override (authoritative — what
    *      the run actually ran with);
-   *   2. live per-case override (what we just dispatched to the server
-   *      for the in-flight run — matches the chrome until the snapshot
-   *      catches up);
-   *   3. suite baseline (the suite's saved default);
-   *   4. global preference (last resort — old leaky behavior, kept
+   *   2. suite baseline (the suite's saved default);
+   *   3. global preference (last resort — old leaky behavior, kept
    *      so multi-pane views still have a value while data loads).
    *
    * Index into the snapshot is loose (`any`) because the schema treats
@@ -2455,7 +2379,6 @@ function RunColumn({
       ?.hostConfigOverride?.hostStyle;
   const hostStyle =
     snapshotHostStyle ??
-    liveOverrideHostStyle ??
     baselineHostStyle ??
     globalPreferenceHostStyle;
   const { toolsMetadata, toolServerMap, connectedServerIds } =
@@ -2813,16 +2736,6 @@ function RunColumn({
               Retry
             </Button>
           </>
-        }
-        footerNote={
-          record.metrics.mismatchCount != null &&
-          record.metrics.mismatchCount > 0 ? (
-            <>
-              {record.metrics.mismatchCount} mismatch
-              {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
-              tool calls.
-            </>
-          ) : null
         }
       />
 

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
@@ -28,6 +28,8 @@ interface ModelStat {
   total: number;
 }
 
+type SuiteDashboardTab = "runs" | "cases";
+
 export interface SuiteDashboardProps {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -53,8 +55,9 @@ export interface SuiteDashboardProps {
 }
 
 /**
- * Unified suite detail view: pass-rate / model charts on top, run insights
- * under the charts when available, then test cases and runs side by side.
+ * Unified suite detail view: persistent accuracy chart + run insights, then
+ * a Runs / Cases sub-tab switcher. Defaults to Cases when no runs exist so
+ * the empty state nudges authoring; otherwise Runs is the hero.
  */
 export function SuiteDashboard({
   suite,
@@ -75,7 +78,6 @@ export function SuiteDashboard({
   testCasesClickHint,
   userMap,
 }: SuiteDashboardProps) {
-  const isByHostView = (suite.hostAttachments?.length ?? 0) >= 2;
   const hasRuns = runs.length > 0;
   const hostNamesById = useMemo(() => {
     const map = new Map<string, string | null>();
@@ -84,6 +86,10 @@ export function SuiteDashboard({
     }
     return map;
   }, [suite.hostAttachments]);
+
+  const [activeTab, setActiveTab] = useState<SuiteDashboardTab>(
+    hasRuns ? "runs" : "cases",
+  );
 
   const testCasesSection = (
     <TestCasesOverview
@@ -118,10 +124,35 @@ export function SuiteDashboard({
       userMap={userMap}
       runsLoading={runsLoading}
       hostNamesById={hostNamesById}
-      maxVisibleRuns={isByHostView ? 6 : undefined}
-      className={isByHostView ? "max-h-[280px]" : undefined}
     />
   );
+
+  const renderTab = (next: SuiteDashboardTab, label: string, count?: number) => {
+    const active = activeTab === next;
+    return (
+      <button
+        key={next}
+        type="button"
+        role="tab"
+        aria-selected={active}
+        onClick={() => setActiveTab(next)}
+        className={cn(
+          "relative -mb-px flex items-center gap-2 border-b-2 border-transparent px-1 pb-3 pt-1 text-sm font-medium transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
+          active
+            ? "border-primary text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <span>{label}</span>
+        {typeof count === "number" ? (
+          <span className="text-xs font-normal tabular-nums text-muted-foreground">
+            {count}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -134,22 +165,15 @@ export function SuiteDashboard({
       />
       {hasRuns ? <SuiteInsightsCollapsible runs={runs} /> : null}
       <div
-        className={cn(
-          "grid min-h-0 gap-4",
-          isByHostView ? "lg:grid-cols-1" : "lg:grid-cols-2",
-        )}
+        role="tablist"
+        aria-label="Suite content"
+        className="flex w-full shrink-0 items-center gap-8 border-b border-border/40"
       >
-        {isByHostView ? (
-          <>
-            {runsSection}
-            {testCasesSection}
-          </>
-        ) : (
-          <>
-            {testCasesSection}
-            {runsSection}
-          </>
-        )}
+        {renderTab("runs", "Runs", runs.length)}
+        {renderTab("cases", "Cases", cases.length)}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {activeTab === "runs" ? runsSection : testCasesSection}
       </div>
     </div>
   );

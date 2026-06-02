@@ -32,6 +32,7 @@ export async function generateNegativeTestCases(
   convexHttpUrl: string,
   convexAuthToken: string,
   serverAttachment?: ServerAttachmentInput,
+  projectId?: string,
 ): Promise<GeneratedNegativeTestCase[]> {
   const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
@@ -42,6 +43,7 @@ export async function generateNegativeTestCases(
     body: JSON.stringify({
       mode: "negative",
       toolSnapshot,
+      ...(projectId ? { projectId } : {}),
       ...(serverAttachment ? { serverAttachment } : {}),
     }),
   });

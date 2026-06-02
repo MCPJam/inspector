@@ -31,17 +31,34 @@ function runInsightsHeaderSubtitle({
   failedGeneration,
   summary,
   requested,
+  open,
 }: {
   pending: boolean;
   failedGeneration: boolean;
   summary: string | null;
   requested: boolean;
+  open: boolean;
 }): string {
   if (pending) return "Generating…";
   if (failedGeneration) return "Summary unavailable";
+  // When collapsed, surface the first sentence as a one-line preview so the
+  // section header itself carries the signal — saves the user from expanding
+  // for the headline finding.
+  if (summary && !open) {
+    return firstSentence(summary);
+  }
   if (summary) return "Compared to your previous completed run";
   if (requested) return "Requesting…";
   return "Compared to your previous completed run";
+}
+
+function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const match = trimmed.match(/[^.!?]+[.!?]/);
+  const sentence = (match ? match[0] : trimmed).trim();
+  if (sentence.length <= 180) return sentence;
+  return `${sentence.slice(0, 177).trimEnd()}…`;
 }
 
 const RUN_INSIGHTS_FAILED_FALLBACK =
@@ -75,7 +92,10 @@ export function SuiteInsightsCollapsible({
   runs,
   title = "Run insights",
 }: SuiteInsightsCollapsibleProps) {
-  const [open, setOpen] = useState(true);
+  // Default closed so the surface starts compact: the first sentence of the
+  // summary is surfaced inline as the header subtitle (see
+  // `runInsightsHeaderSubtitle`); users click to expand for the full text.
+  const [open, setOpen] = useState(false);
   const shouldReduceMotion = useReducedMotion();
   const latestCompleted = useMemo(() => pickLatestCompletedRun(runs), [runs]);
 
@@ -98,6 +118,7 @@ export function SuiteInsightsCollapsible({
     failedGeneration,
     summary,
     requested,
+    open,
   });
 
   // Persisted error fields land on `testSuiteRun` via PR B (judge worker).

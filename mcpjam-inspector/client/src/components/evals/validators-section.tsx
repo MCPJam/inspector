@@ -68,6 +68,14 @@ interface ValidatorsSectionProps {
    * input is disabled to reinforce that the case isn't pinning it).
    */
   showBadges?: boolean;
+  /**
+   * When true, suppress the "Inherited" chip on inheriting rows but still
+   * render the "overriding · suite: X" chip on overridden rows. Used by the
+   * suite-header Run-overrides popover, where the popover's intro copy
+   * already establishes that every field inherits by default — labeling
+   * each row "Inherited" is then pure noise.
+   */
+  hideInheritedBadge?: boolean;
 }
 
 function pruneUndefined(
@@ -162,6 +170,7 @@ export function ValidatorsSection({
   description,
   density = "default",
   showBadges = false,
+  hideInheritedBadge = false,
 }: ValidatorsSectionProps) {
   const inherited = inheritedFrom ?? MATCH_OPTIONS_DEFAULTS;
   const isCompact = density === "compact";
@@ -303,30 +312,33 @@ export function ValidatorsSection({
     </div>
   );
 
+  const showHeader = Boolean(title) || Boolean(description);
   return (
     <div className={isCompact ? "space-y-2" : "space-y-3"}>
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h4 className="text-sm font-medium">{title}</h4>
-          {description && !isCompact ? (
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {description}
-            </p>
+      {showHeader || hasAnyOverride ? (
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            {title ? <h4 className="text-sm font-medium">{title}</h4> : null}
+            {description && !isCompact ? (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {description}
+              </p>
+            ) : null}
+          </div>
+          {hasAnyOverride ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 -mr-1 px-2 text-xs text-muted-foreground"
+              onClick={() => onChange(undefined)}
+              title="Discard overrides at this layer"
+            >
+              Reset
+            </Button>
           ) : null}
         </div>
-        {hasAnyOverride ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 -mr-1 px-2 text-xs text-muted-foreground"
-            onClick={() => onChange(undefined)}
-            title="Discard overrides at this layer"
-          >
-            Reset
-          </Button>
-        ) : null}
-      </div>
+      ) : null}
       <div className={isCompact ? "space-y-1.5" : "space-y-2"}>
         {renderRow(
           orderLabel,
@@ -338,7 +350,7 @@ export function ValidatorsSection({
               v as "ignore" | "strict" | "superset",
             ),
           ORDER_OPTIONS as Array<{ value: string; label: string }>,
-          showBadges ? (
+          showBadges && !(hideInheritedBadge && orderInheriting) ? (
             <OverrideBadge
               isInheriting={orderInheriting}
               suiteDefaultLabel={orderLabelFor(inheritedOrderForLabel)}
@@ -359,7 +371,7 @@ export function ValidatorsSection({
             <Label htmlFor={extrasFieldId} className="text-sm">
               {extrasLabel}
             </Label>
-            {showBadges ? (
+            {showBadges && !(hideInheritedBadge && extrasInheriting) ? (
               <OverrideBadge
                 isInheriting={extrasInheriting}
                 suiteDefaultLabel={extrasLabelFor(inheritedExtrasForLabel)}
@@ -367,37 +379,44 @@ export function ValidatorsSection({
               />
             ) : null}
           </div>
+          {/*
+            Extras editor: a single control surface that swaps between a
+            number input (capped extras) and an "Unlimited" pill, never
+            both. Showing a disabled empty number input next to an active
+            Unlimited toggle (the old layout) read as a broken form field.
+          */}
           <div className="flex items-center gap-2">
-            <Input
-              id={extrasFieldId}
-              type="number"
-              inputMode="numeric"
-              min={0}
-              step={1}
-              disabled={extrasUnlimited}
-              value={extrasUnlimited ? "" : String(extrasNumber)}
-              placeholder={extrasUnlimited ? "—" : "0"}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === "") {
-                  setExtrasCap(0);
-                  return;
-                }
-                const parsed = Number(raw);
-                if (
-                  !Number.isFinite(parsed) ||
-                  !Number.isInteger(parsed) ||
-                  parsed < 0
-                ) {
-                  // Ignore invalid keystrokes; the input itself constrains
-                  // type=number, but defensive guard for paste etc.
-                  return;
-                }
-                setExtrasCap(parsed);
-              }}
-              className={isCompact ? "h-8 w-16 text-sm" : "h-8 w-20 text-sm"}
-              aria-label="Maximum extra tool calls"
-            />
+            {extrasUnlimited ? null : (
+              <Input
+                id={extrasFieldId}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                value={String(extrasNumber)}
+                placeholder="0"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setExtrasCap(0);
+                    return;
+                  }
+                  const parsed = Number(raw);
+                  if (
+                    !Number.isFinite(parsed) ||
+                    !Number.isInteger(parsed) ||
+                    parsed < 0
+                  ) {
+                    // Ignore invalid keystrokes; the input itself constrains
+                    // type=number, but defensive guard for paste etc.
+                    return;
+                  }
+                  setExtrasCap(parsed);
+                }}
+                className={isCompact ? "h-8 w-16 text-sm" : "h-8 w-20 text-sm"}
+                aria-label="Maximum extra tool calls"
+              />
+            )}
             <Label
               htmlFor={extrasUnlimitedId}
               className="flex items-center gap-1.5 text-xs text-muted-foreground"
@@ -407,7 +426,6 @@ export function ValidatorsSection({
                 checked={extrasUnlimited}
                 onCheckedChange={(checked) => {
                   if (checked) {
-                    // Unlimited
                     setExtrasCap(null);
                   } else {
                     // Drop unlimited; default to 0 (strict, no extras) so
@@ -431,7 +449,7 @@ export function ValidatorsSection({
               v as "partial" | "exact" | "ignore",
             ),
           ARGS_OPTIONS as Array<{ value: string; label: string }>,
-          showBadges ? (
+          showBadges && !(hideInheritedBadge && argsInheriting) ? (
             <OverrideBadge
               isInheriting={argsInheriting}
               suiteDefaultLabel={argsLabelFor(inheritedArgsForLabel)}

@@ -17,7 +17,12 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
 import { JudgesSection } from "./judges-section";
-import { ChecksSection, areAllChecksValid } from "./checks-section";
+import {
+  AddCheckMenu,
+  ChecksSection,
+  areAllChecksValid,
+  blankPredicate,
+} from "./checks-section";
 import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
@@ -77,6 +82,60 @@ export interface SuiteNavigation {
     options?: { openCompare?: boolean; replace?: boolean; iteration?: string }
   ) => void;
   toSuiteEdit: (suiteId: string) => void;
+}
+
+/**
+ * Settings sheet primitives — used by the suite-edit branch below. Kept
+ * file-local because they encode the eyebrow-label + hairline-divider
+ * pattern that's specific to this surface; if a second consumer appears,
+ * lift into a shared module then.
+ */
+function SettingsSection({
+  label,
+  hint,
+  layout = "stack",
+  children,
+  inlineSlot,
+}: {
+  label: string;
+  hint?: string;
+  /**
+   * "stack" — eyebrow on top, hint right-aligned next to it, content
+   *           below in space-y-3 rows.
+   * "inline" — single row: eyebrow on the left, `inlineSlot` on the
+   *            right. `children` (if any) flow underneath. Used for
+   *            sections that resolve to one primary control.
+   */
+  layout?: "stack" | "inline";
+  inlineSlot?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  if (layout === "inline") {
+    return (
+      <section className="py-5 first:pt-2 last:pb-2">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+            {label}
+          </h2>
+          {inlineSlot}
+        </div>
+        {children ? <div className="mt-3 space-y-2">{children}</div> : null}
+      </section>
+    );
+  }
+  return (
+    <section className="py-6 first:pt-2 last:pb-2">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+          {label}
+        </h2>
+        {hint ? (
+          <p className="text-[11px] text-muted-foreground/60">{hint}</p>
+        ) : null}
+      </div>
+      <div className="space-y-3">{children}</div>
+    </section>
+  );
 }
 
 export function SuiteIterationsView({
@@ -282,10 +341,8 @@ export function SuiteIterationsView({
   const [draftDefaultPredicates, setDraftDefaultPredicates] = useState<
     Predicate[]
   >(suite.defaultPredicates ?? []);
-  const [editedDescription, setEditedDescription] = useState(
-    suite.description || ""
-  );
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  // Description editor is hidden in the current pass — handlers and draft
+  // state were removed; re-add together when the About section returns.
   const [exportState, setExportState] = useState<{
     scope: "suite" | "test-case";
     cases: EvalExportCaseInput[];
@@ -428,11 +485,6 @@ export function SuiteIterationsView({
     }
   };
 
-  // Update local description state when suite changes
-  useEffect(() => {
-    setEditedDescription(suite.description || "");
-  }, [suite.description]);
-
   // Sync local draft of default checks when the suite identity or its
   // persisted value changes. `suite._id` is included so navigating to a
   // different suite with the same persisted value (commonly
@@ -542,42 +594,6 @@ export function SuiteIterationsView({
       }
     }
   }, [suite._id, suite.defaultPassCriteria]);
-
-  const handleDescriptionClick = useCallback(() => {
-    setIsEditingDescription(true);
-    setEditedDescription(suite.description || "");
-  }, [suite.description]);
-
-  const handleDescriptionBlur = useCallback(async () => {
-    setIsEditingDescription(false);
-    if (editedDescription !== suite.description) {
-      try {
-        await updateSuite({
-          suiteId: suite._id,
-          description: editedDescription,
-        });
-        toast.success("Suite description updated");
-      } catch (error) {
-        toast.error(
-          getBillingErrorMessage(error, "Failed to update suite description")
-        );
-        console.error("Failed to update suite description:", error);
-        setEditedDescription(suite.description || "");
-      }
-    } else {
-      setEditedDescription(suite.description || "");
-    }
-  }, [editedDescription, suite.description, suite._id, updateSuite]);
-
-  const handleDescriptionKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setIsEditingDescription(false);
-        setEditedDescription(suite.description || "");
-      }
-    },
-    [suite.description]
-  );
 
   const handleUpdateHostAttachments = async (
     attachments: Array<{
@@ -1117,190 +1133,168 @@ export function SuiteIterationsView({
 
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
-          <div className="p-6 max-w-5xl mx-auto space-y-8">
-            {/* SuiteExecutionConfigEditor was rendered here; hidden in the
-                judge-config rework so suite settings stays focused on the
-                eval contract surfaces (description, pass-fail, validators,
-                judges). Execution config (model / system prompt /
-                temperature / host-style) is editable from its dedicated
-                surfaces elsewhere and was duplicating affordances here. */}
+          <div className="px-6 py-8 max-w-2xl mx-auto">
+            {/* Settings sheet — a single quiet surface with hairline-divided
+                sections. Each row follows the [label · helper] / [control]
+                definition-list pattern, so the sheet reads top-to-bottom as
+                a preference list rather than a stack of feature cards.
+                Section labels are eyebrow-style (uppercase, tracking-wider,
+                muted) — visual hierarchy without visual weight. */}
+            <dl className="divide-y divide-border/60">
+              {/* About / Description is intentionally hidden in the current
+                  pass — surface lives elsewhere when the user wants context
+                  on the suite. */}
 
-            {/* Suite Description Section */}
-            <div className="space-y-3">
-              <div>
-                <h2 className="text-base font-semibold text-foreground">
-                  Description
-                </h2>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Provide context about what this evaluation suite tests
-                </p>
-              </div>
-              {isEditingDescription ? (
-                <textarea
-                  value={editedDescription}
-                  onChange={(e) => setEditedDescription(e.target.value)}
-                  onBlur={handleDescriptionBlur}
-                  onKeyDown={handleDescriptionKeyDown}
-                  placeholder="Enter a description for this suite..."
-                  autoFocus
-                  className="w-full px-4 py-3 text-sm border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring resize-none min-h-[100px] bg-background"
-                  rows={4}
+              {/* ── Minimum accuracy (one row) ───────────────────────── */}
+              <SettingsSection
+                label="Minimum accuracy"
+                layout="inline"
+                inlineSlot={
+                  <PassCriteriaSelector
+                    hideLabel
+                    minimumPassRate={defaultMinimumPassRate}
+                    onMinimumPassRateChange={async (rate) => {
+                      setDefaultMinimumPassRate(rate);
+                      localStorage.setItem(
+                        `suite-${suite._id}-criteria-rate`,
+                        String(rate),
+                      );
+                      try {
+                        await updateSuite({
+                          suiteId: suite._id,
+                          defaultPassCriteria: { minimumPassRate: rate },
+                        });
+                        toast.success("Suite updated successfully");
+                      } catch (error) {
+                        toast.error(
+                          getBillingErrorMessage(
+                            error,
+                            "Failed to update suite",
+                          ),
+                        );
+                        console.error("Failed to update suite:", error);
+                        setDefaultMinimumPassRate(
+                          suite.defaultPassCriteria?.minimumPassRate ?? 100,
+                        );
+                      }
+                    }}
+                  />
+                }
+              />
+
+              {/* ── Tool calls ───────────────────────────────────────── */}
+              <SettingsSection
+                label="Tool calls"
+                hint="Cases and run overrides can change these."
+              >
+                <ValidatorsSection
+                  title=""
+                  value={suite.defaultMatchOptions}
+                  inheritedFrom={MATCH_OPTIONS_DEFAULTS}
+                  onChange={async (next: EvalMatchOptions | undefined) => {
+                    try {
+                      await updateSuite({
+                        suiteId: suite._id,
+                        defaultMatchOptions: next ?? null,
+                      });
+                      toast.success("Default validators updated");
+                    } catch (error) {
+                      toast.error(
+                        getBillingErrorMessage(error, "Failed to update suite"),
+                      );
+                      console.error(
+                        "Failed to update default validators:",
+                        error,
+                      );
+                    }
+                  }}
                 />
-              ) : (
-                <button
-                  onClick={handleDescriptionClick}
-                  className="w-full px-4 py-3 text-sm text-left rounded-lg border border-border hover:border-input hover:bg-accent/50 whitespace-pre-wrap transition-all"
-                >
-                  {suite.description ? (
-                    <span className="text-foreground leading-relaxed">
-                      {suite.description}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground italic">
-                      Click to add a description...
-                    </span>
-                  )}
-                </button>
-              )}
-            </div>
+              </SettingsSection>
 
-            {/* Default Pass/Fail Criteria Section */}
-            <div className="space-y-3">
-              <div>
-                <h2 className="text-base font-semibold text-foreground">
-                  Default Pass/Fail Criteria
-                </h2>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Set the default criteria for <strong>new</strong> evaluation
-                  runs of this suite. Existing runs keep their original
-                  criteria.
-                </p>
-              </div>
-              <PassCriteriaSelector
-                minimumPassRate={defaultMinimumPassRate}
-                onMinimumPassRateChange={async (rate) => {
-                  setDefaultMinimumPassRate(rate);
-                  localStorage.setItem(
-                    `suite-${suite._id}-criteria-rate`,
-                    String(rate)
-                  );
-                  try {
-                    await updateSuite({
-                      suiteId: suite._id,
-                      defaultPassCriteria: {
-                        minimumPassRate: rate,
-                      },
-                    });
-                    toast.success("Suite updated successfully");
-                  } catch (error) {
-                    toast.error(
-                      getBillingErrorMessage(error, "Failed to update suite")
-                    );
-                    console.error("Failed to update suite:", error);
-                    setDefaultMinimumPassRate(
-                      suite.defaultPassCriteria?.minimumPassRate ?? 100
-                    );
-                  }
-                }}
-              />
-            </div>
+              {/* ── Checks ───────────────────────────────────────────── */}
+              <SettingsSection
+                label="Checks"
+                layout="inline"
+                inlineSlot={
+                  <AddCheckMenu
+                    onAdd={(kind) =>
+                      setDraftDefaultPredicates((prev) => [
+                        ...prev,
+                        blankPredicate(kind),
+                      ])
+                    }
+                  />
+                }
+              >
+                {/* The list (when non-empty) renders under the eyebrow row.
+                    Empty state copy + the inner AddCheckMenu are both
+                    suppressed — the eyebrow row's AddCheckMenu is the only
+                    affordance, so "no checks" reads as a clean section
+                    with just the eyebrow + add button. */}
+                <ChecksSection
+                  title=""
+                  hideAddButton
+                  hideEmptyState
+                  value={draftDefaultPredicates}
+                  onChange={setDraftDefaultPredicates}
+                />
+              </SettingsSection>
 
-            {/* Default Validators Section */}
-            <div className="space-y-3">
-              <ValidatorsSection
-                title="Default validators"
-                description="Applied to every run unless a test case or 'this run' popover changes them."
-                value={suite.defaultMatchOptions}
-                inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                onChange={async (next: EvalMatchOptions | undefined) => {
-                  try {
-                    await updateSuite({
-                      suiteId: suite._id,
-                      defaultMatchOptions: next ?? null,
-                    });
-                    toast.success("Default validators updated");
-                  } catch (error) {
-                    toast.error(
-                      getBillingErrorMessage(error, "Failed to update suite")
-                    );
-                    console.error(
-                      "Failed to update default validators:",
-                      error
-                    );
-                  }
-                }}
-              />
-            </div>
+              {/* ── Judges ───────────────────────────────────────────── */}
+              <SettingsSection
+                label="Judges"
+                hint="Advisory LLM scorers. Calibrate per suite."
+              >
+                <JudgesSection
+                  chrome="bare"
+                  value={suite.judgeConfig}
+                  availableModels={availableModels}
+                  onChange={async (next) => {
+                    try {
+                      await updateSuite({
+                        suiteId: suite._id,
+                        judgeConfig: next ?? null,
+                      });
+                      toast.success("Judges updated");
+                    } catch (error) {
+                      toast.error(
+                        getBillingErrorMessage(error, "Failed to update suite"),
+                      );
+                      console.error("Failed to update judges:", error);
+                    }
+                  }}
+                />
+              </SettingsSection>
 
-            {/* Default checks (predicate gate) — suite-level deterministic
-                checks applied to every case unless the case opts out via its
-                `predicates.mode`. Phase 2 plan: primary authoring surface. */}
-            <div className="space-y-3">
-              <ChecksSection
-                title="Default checks"
-                description="Deterministic checks applied to every case in this suite. Cases can override or extend these defaults."
-                // Local draft so the user can finish authoring a check
-                // before it's persisted (matches the case editor's
-                // mediated form pattern). The actual mutation is fired
-                // from a debounced effect below — firing inside onChange
-                // produced one in-flight `updateSuite` per keystroke,
-                // and out-of-order responses could persist stale text.
-                value={draftDefaultPredicates}
-                onChange={setDraftDefaultPredicates}
-              />
-            </div>
-
-            {/* Judges Section — suite-level authoritative judge config. The
-                run-detail card reads run.configSnapshot.judgeConfig (pinned
-                at run start) and lets a single run override via the
-                "⚙ Override for this run" disclosure; this section is the
-                canonical home for what the suite calibrates against. */}
-            <div className="space-y-3">
-              <JudgesSection
-                value={suite.judgeConfig}
-                availableModels={availableModels}
-                onChange={async (next) => {
-                  try {
-                    await updateSuite({
-                      suiteId: suite._id,
-                      judgeConfig: next ?? null,
-                    });
-                    toast.success("Judges updated");
-                  } catch (error) {
-                    toast.error(
-                      getBillingErrorMessage(error, "Failed to update suite")
-                    );
-                    console.error("Failed to update judges:", error);
-                  }
-                }}
-              />
-            </div>
-
-            {canDeleteSuite ? (
-              <div className="border-t border-border pt-8 space-y-3">
-                <h2 className="text-base font-semibold text-destructive">
-                  Danger zone
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  Deleting removes this suite from the project. Run history and
-                  cases cannot be recovered.
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
-                  onClick={() => onDelete(suite)}
-                  disabled={deletingSuiteId === suite._id}
-                >
-                  {deletingSuiteId === suite._id ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Trash2 className="h-4 w-4 mr-2" />
-                  )}
-                  Delete suite
-                </Button>
-              </div>
-            ) : null}
+              {/* ── Delete ───────────────────────────────────────────── */}
+              {canDeleteSuite ? (
+                <div className="flex items-center justify-between gap-4 py-5">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+                      Delete suite
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground/70">
+                      Runs and cases can&apos;t be recovered.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => onDelete(suite)}
+                    disabled={deletingSuiteId === suite._id}
+                  >
+                    {deletingSuiteId === suite._id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                    Delete
+                  </Button>
+                </div>
+              ) : null}
+            </dl>
           </div>
         </div>
       )}

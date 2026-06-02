@@ -2479,6 +2479,11 @@ const runTestCase = async (params: {
         orgModelConfigTarget,
         convexAuthToken,
       });
+  // MCPJam-paid models bill an org wallet; backend `/stream` rejects the
+  // request without a projectId. Same target the org-BYOK path threads.
+  const jamBillingTarget = isJamModel
+    ? resolveOrgTargetForEval(test, orgModelConfigTarget)
+    : undefined;
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -2546,6 +2551,7 @@ const runTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -4363,6 +4369,11 @@ export const streamTestCase = async (params: {
         orgModelConfigTarget,
         convexAuthToken,
       });
+  // MCPJam-paid models bill an org wallet; backend `/stream` rejects the
+  // request without a projectId. Same target the org-BYOK path threads.
+  const jamBillingTarget = isJamModel
+    ? resolveOrgTargetForEval(test, orgModelConfigTarget)
+    : undefined;
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -4433,6 +4444,7 @@ export const streamTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
         convexClient,
         modelApiKeys,
         orgModelConfig,

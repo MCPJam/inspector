@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import {
+  ChevronDown,
   Code2,
   GitBranch,
   Loader2,
@@ -19,10 +20,15 @@ import {
   Play,
   Plus,
   RotateCw,
-  Settings2,
   Sparkles,
+  Settings2,
   X,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -40,7 +46,7 @@ import { toast } from "sonner";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
-import { RunValidatorsPopover } from "./run-validators-popover";
+import { ValidatorsSection } from "./validators-section";
 import { resolveMatchOptions, type EvalMatchOptions } from "@/shared/eval-matching";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -290,8 +296,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const isMobile = useIsMobile();
 
   if (isEditMode) {
+    // Settings sheet header — matches the body's max-w-2xl column so the
+    // title sits flush over the form. Title is light-weight (semibold,
+    // not text-xl bold) so the eyebrow-labelled sections below carry the
+    // visual rhythm; Done is a ghost chip, not a heavy outline button.
     return (
-      <div className="mb-2 flex w-full max-w-5xl items-center justify-between gap-4 px-6 pt-6 mx-auto min-w-0">
+      <div className="mb-1 flex w-full max-w-2xl items-center justify-between gap-4 px-6 pt-8 mx-auto min-w-0">
         <div className="min-w-0 flex-1 pr-2">
           {isEditingName && !readOnlyConfig ? (
             <input
@@ -301,11 +311,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               onBlur={handleNameBlur}
               onKeyDown={handleNameKeyDown}
               autoFocus
-              className="w-full min-w-0 max-w-full px-4 py-2 text-xl font-bold border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring bg-background"
+              className="w-full min-w-0 max-w-full -ml-2 px-2 py-1 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
             />
           ) : readOnlyConfig ? (
             <h1
-              className="truncate px-4 py-2 text-xl font-bold"
+              className="truncate text-lg font-semibold tracking-tight"
               title={suite.name}
             >
               {suite.name}
@@ -314,7 +324,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             <Button
               variant="ghost"
               onClick={handleNameClick}
-              className="h-auto max-w-full min-w-0 justify-start -ml-4 rounded-lg px-4 py-2 text-left text-xl font-bold hover:bg-accent/50"
+              className="h-auto max-w-full min-w-0 justify-start -ml-2 rounded-md px-2 py-1 text-left text-lg font-semibold tracking-tight hover:bg-accent/40"
               title={suite.name}
             >
               <span className="min-w-0 truncate text-left">{suite.name}</span>
@@ -322,12 +332,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           )}
         </div>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
+          className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
           onClick={() => onViewModeChange("overview")}
         >
-          <X className="h-4 w-4 mr-2" />
           Done
+          <X className="h-3.5 w-3.5" />
         </Button>
       </div>
     );
@@ -470,45 +481,17 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   : null;
           const runAllConnectionHint =
             missingServers.length > 0 ? "Connect and run." : null;
-          const iterationPicker = onIterationOverrideChange ? (
-            <label className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span>Iterations</span>
-              <select
-                className="h-8 rounded-md border border-input bg-background px-2 text-foreground"
-                value={iterationOverride ?? ""}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  onIterationOverrideChange(raw === "" ? undefined : Number(raw));
-                }}
-                aria-label="Iterations per test case for the next run"
-                disabled={isRunAllDisabled}
-              >
-                <option value="">Auto</option>
-                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null;
+          const hasRunOverride =
+            (runMatchOptionsOverride &&
+              Object.keys(runMatchOptionsOverride).length > 0) ||
+            iterationOverride !== undefined;
           const runAllButton = (
-            <div className="flex items-center gap-2">
-              {iterationPicker}
-              <RunValidatorsPopover
-                persistedEffective={resolveMatchOptions(
-                  suite.defaultMatchOptions,
-                )}
-                runOverride={runMatchOptionsOverride}
-                onChange={setRunMatchOptionsOverride}
-                variant="icon"
-                disabled={isRerunning}
-              />
+            <div className="inline-flex items-center">
               <Button
                 type="button"
                 variant="default"
                 size="sm"
-                className="h-8 gap-1.5"
+                className="h-8 gap-1.5 rounded-r-none"
                 disabled={isRunAllDisabled}
                 aria-label="Run all cases in this suite"
                 aria-busy={isRerunning}
@@ -540,6 +523,79 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 )}
                 Run all
               </Button>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    disabled={isRerunning}
+                    aria-label="Configure next run"
+                    title="Configure next run"
+                    className="relative h-8 w-7 rounded-l-none border-l border-primary-foreground/30 px-0"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                    {hasRunOverride ? (
+                      <span
+                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-orange-400"
+                        aria-hidden
+                      />
+                    ) : null}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[22rem] space-y-3 p-3"
+                  align="end"
+                >
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    These settings apply to the{" "}
+                    <strong>next run only</strong>. To change the suite&apos;s
+                    defaults, open Suite settings.
+                  </p>
+                  {onIterationOverrideChange ? (
+                    <div className="flex items-center justify-between gap-3">
+                      <label
+                        htmlFor="run-all-iterations"
+                        className="text-xs font-medium text-foreground"
+                      >
+                        Iterations
+                      </label>
+                      <select
+                        id="run-all-iterations"
+                        className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                        value={iterationOverride ?? ""}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          onIterationOverrideChange(
+                            raw === "" ? undefined : Number(raw),
+                          );
+                        }}
+                        aria-label="Iterations per test case for the next run"
+                      >
+                        <option value="">Auto</option>
+                        {Array.from({ length: 10 }, (_, i) => i + 1).map(
+                          (n) => (
+                            <option key={n} value={n}>
+                              {n}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </div>
+                  ) : null}
+                  <ValidatorsSection
+                    title="Matchers"
+                    density="compact"
+                    value={runMatchOptionsOverride}
+                    inheritedFrom={resolveMatchOptions(
+                      suite.defaultMatchOptions,
+                    )}
+                    onChange={setRunMatchOptionsOverride}
+                    showBadges
+                    hideInheritedBadge
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
           );
           if (isRunAllDisabled && runAllDisabledReasonTooltip) {
@@ -722,7 +778,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ) : null}
 
         {overviewHasCaseTools ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 border-l border-border/40 pl-3">
             {overviewRunAllCta}
             {showTestCaseCtas && onGenerateTestCases ? (
               <Tooltip>

@@ -604,15 +604,42 @@ describe("TraceViewer", () => {
     expect(screen.getByTestId("trace-viewer-actual-loading")).toBeInTheDocument();
   });
 
-  it("normalises actual tool call key order so toolName always precedes arguments", async () => {
-    // Build the entry with arguments appearing BEFORE toolName (via JSON.parse,
-    // which preserves property order) so the test fails unless TraceViewer
-    // normalises the key order at render time.
+  it("toggles between diff and JSON layouts in tools compare view", async () => {
+    render(
+      <TraceViewer
+        trace={simpleTextTrace}
+        estimatedDurationMs={100}
+        expectedToolCalls={[{ toolName: "read_me", arguments: {} }]}
+        actualToolCalls={[{ toolName: "read_me", arguments: {} }]}
+        forcedViewMode="tools"
+      />,
+    );
+
+    expect(
+      screen.getByTestId("trace-viewer-tools-layout-diff"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("All 1 expected tool call matched.")).toBeInTheDocument();
+    expect(screen.queryAllByTestId("json-editor")).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-json"));
+    expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
+
+    fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-diff"));
+    expect(screen.getByText("All 1 expected tool call matched.")).toBeInTheDocument();
+    expect(screen.queryAllByTestId("json-editor")).toHaveLength(0);
+  });
+
+  it("renders paired diff rows regardless of source object key order", async () => {
+    // Tools mode now renders expected/actual via the structured
+    // ToolCallsDiffView (one row per pair) instead of raw JsonEditor
+    // panels — so the historical "arguments-before-toolName" hazard
+    // can't surface visually. This test pins that the row still
+    // renders correctly when the actual entry was produced with
+    // alphabetical key order (arguments, toolName).
     const argsFirstEntry = JSON.parse(
       '{"arguments": {"path": "/x"}, "toolName": "read_me"}',
     ) as { toolName: string; arguments: Record<string, unknown> };
 
-    // Sanity check: the input really does have arguments first.
     expect(Object.keys(argsFirstEntry)).toEqual(["arguments", "toolName"]);
 
     render(
@@ -625,14 +652,11 @@ describe("TraceViewer", () => {
       />,
     );
 
-    const editors = screen.getAllByTestId("json-editor");
-    const actualEditor = editors[1];
-    const serialized = actualEditor.textContent ?? "";
-    const toolNameIdx = serialized.indexOf('"toolName"');
-    const argumentsIdx = serialized.indexOf('"arguments"');
-    expect(toolNameIdx).toBeGreaterThanOrEqual(0);
-    expect(argumentsIdx).toBeGreaterThanOrEqual(0);
-    expect(toolNameIdx).toBeLessThan(argumentsIdx);
+    expect(
+      screen.getByTestId("trace-viewer-tools-compare"),
+    ).toBeInTheDocument();
+    // Tool name appears as a row label (paired-row contains both sides).
+    expect(screen.getAllByText("read_me").length).toBeGreaterThan(0);
   });
 
   it("hides Tools tab when there are no expected or actual tool calls", async () => {
