@@ -24,7 +24,6 @@ vi.mock("../use-suite-data", () => ({
   }),
   useRunDetailData: () => ({
     caseGroupsForSelectedRun: [],
-    selectedRunChartData: [],
   }),
 }));
 

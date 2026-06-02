@@ -368,7 +368,7 @@ export function SuiteIterationsView({
     aggregate
   );
 
-  const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
+  const { caseGroupsForSelectedRun } = useRunDetailData(
     selectedRunId,
     allIterations,
     effectiveRunDetailSortBy
@@ -1075,7 +1075,6 @@ export function SuiteIterationsView({
                     caseGroupsForSelectedRun={caseGroupsForSelectedRun}
                     currentSuiteJudgeConfig={suite.judgeConfig ?? null}
                     source={suite.source}
-                    selectedRunChartData={selectedRunChartData}
                     runDetailSortBy={effectiveRunDetailSortBy}
                     onSortChange={effectiveRunDetailSortChange}
                     serverNames={suite.environment?.servers || []}

@@ -467,18 +467,19 @@ function GroupRunRows({
 }: GroupRunRowsProps) {
   const canRenderMatrix =
     !!suite && !!cases && !!onTestCaseClick && group.runs.length >= 2;
+  const shouldRenderMatrix = isExpanded && canRenderMatrix;
   const groupRunIds = useMemo(
     () => new Set(group.runs.map((r) => r._id)),
     [group.runs],
   );
   const groupIterations = useMemo(
     () =>
-      canRenderMatrix
+      shouldRenderMatrix
         ? allIterations.filter(
             (it) => it.suiteRunId && groupRunIds.has(it.suiteRunId),
           )
         : [],
-    [canRenderMatrix, allIterations, groupRunIds],
+    [shouldRenderMatrix, allIterations, groupRunIds],
   );
   // Per-child effective stats — same source the standalone rows use.
   const childStats = group.runs.map((run) => ({
@@ -601,7 +602,7 @@ function GroupRunRows({
               nested
             />
           ))}
-          {canRenderMatrix ? (
+          {shouldRenderMatrix ? (
             <div className="border-t border-border/40">
               <CrossHostDashboard
                 suite={suite!}

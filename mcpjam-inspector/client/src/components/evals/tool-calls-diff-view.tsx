@@ -165,7 +165,8 @@ function DiffRow({
   row: PairedRow;
   index: number;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  // Auto-expand mismatches; collapse matches so large traces stay light.
+  const [expanded, setExpanded] = useState(() => row.status !== "match");
 
   return (
     <div

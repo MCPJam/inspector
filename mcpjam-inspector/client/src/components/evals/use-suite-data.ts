@@ -6,10 +6,7 @@ import {
   computeIterationSummary,
   getTemplateKey,
 } from "./helpers";
-import {
-  computeIterationResult,
-  computeIterationPassed,
-} from "./pass-criteria";
+import { computeIterationResult } from "./pass-criteria";
 import {
   EvalCase,
   EvalIteration,
@@ -17,8 +14,6 @@ import {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
-import { groupRunIterationsByTestCase } from "./run-case-groups";
-import { buildRunMetricsChartData } from "./run-chart-data";
 
 function desanitizeEvalIteration(iter: EvalIteration): EvalIteration {
   return {
@@ -476,108 +471,8 @@ export function useRunDetailData(
     return sorted.map((item) => item.iteration);
   }, [selectedRunId, iterationsForSelectedRun, runDetailSortBy]);
 
-  // Data for run detail charts
-  const selectedRunChartData = useMemo(() => {
-    if (!selectedRunId || caseGroupsForSelectedRun.length === 0) {
-      return { donutData: [], durationData: [], tokensData: [], modelData: [] };
-    }
-
-    let totalPassed = 0;
-    let totalFailed = 0;
-    let totalPending = 0;
-    let totalCancelled = 0;
-
-    const modelMap = new Map<
-      string,
-      { passed: number; failed: number; total: number; modelName: string }
-    >();
-
-    iterationsForSelectedRun.forEach((iteration) => {
-      const model = iteration.testCaseSnapshot?.model || "Unknown";
-      const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
-
-      // Only count completed iterations - exclude pending/cancelled
-      const result = computeIterationResult(iteration);
-      if (result !== "passed" && result !== "failed") {
-        return; // Skip pending/cancelled iterations
-      }
-
-      if (!modelMap.has(model)) {
-        modelMap.set(model, { passed: 0, failed: 0, total: 0, modelName });
-      }
-
-      const stats = modelMap.get(model)!;
-      stats.total += 1;
-
-      if (result === "passed") {
-        stats.passed += 1;
-      } else {
-        stats.failed += 1;
-      }
-    });
-
-    // Sort alphabetically by model name for consistent, fixed ordering
-    const modelData = Array.from(modelMap.entries())
-      .map(([_model, stats]) => ({
-        model: stats.modelName,
-        passRate:
-          stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
-        passed: stats.passed,
-        failed: stats.failed,
-        total: stats.total,
-      }))
-      .sort((a, b) => a.model.localeCompare(b.model));
-
-    caseGroupsForSelectedRun.forEach((iteration) => {
-      if (iteration.result === "pending" || iteration.status === "running")
-        totalPending++;
-      else if (iteration.result === "cancelled") totalCancelled++;
-      else if (computeIterationPassed(iteration)) totalPassed++;
-      else totalFailed++;
-    });
-
-    const runCaseGroups = groupRunIterationsByTestCase(
-      caseGroupsForSelectedRun,
-      "test",
-    );
-    const { durationData, tokensData } = buildRunMetricsChartData(runCaseGroups);
-
-    const donutData = [];
-    if (totalPassed > 0) {
-      donutData.push({
-        name: "Passed",
-        value: totalPassed,
-        fill: "hsl(142.1 76.2% 36.3%)",
-      });
-    }
-    if (totalFailed > 0) {
-      donutData.push({
-        name: "Failed",
-        value: totalFailed,
-        fill: "hsl(0 84.2% 60.2%)",
-      });
-    }
-    if (totalPending > 0) {
-      donutData.push({
-        name: "Pending",
-        value: totalPending,
-        fill: "hsl(45.4 93.4% 47.5%)",
-      });
-    }
-    if (totalCancelled > 0) {
-      donutData.push({
-        name: "Cancelled",
-        value: totalCancelled,
-        fill: "hsl(240 3.7% 15.9%)",
-      });
-    }
-
-    return { donutData, durationData, tokensData, modelData };
-  }, [selectedRunId, caseGroupsForSelectedRun, iterationsForSelectedRun]);
-
   return {
     iterationsForSelectedRun,
     caseGroupsForSelectedRun,
-    selectedRunChartData,
   };
 }

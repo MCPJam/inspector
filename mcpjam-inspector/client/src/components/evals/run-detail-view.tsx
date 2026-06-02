@@ -34,10 +34,6 @@ import {
 import { RunCaseListWithSections } from "./run-case-list";
 import type { RunCaseGroup } from "./run-case-groups";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
-import type {
-  DurationChartDatum,
-  TokensChartDatum,
-} from "./run-chart-data";
 import { RunDetailKpiStrip } from "./run-detail-kpis";
 import { ClientChip } from "@/components/clients/client-chip";
 import {
@@ -87,11 +83,6 @@ interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
   caseGroupsForSelectedRun: EvalIteration[];
   source?: "ui" | "sdk";
-  selectedRunChartData: {
-    donutData: Array<{ name: string; value: number; fill: string }>;
-    durationData: DurationChartDatum[];
-    tokensData: TokensChartDatum[];
-  };
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
   serverNames?: string[];

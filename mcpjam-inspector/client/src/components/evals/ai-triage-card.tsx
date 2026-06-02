@@ -156,9 +156,7 @@ export function AiTriageCard({
       <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">
-            AI insights
-          </span>
+          <h3 className="text-sm font-medium text-foreground">AI insights</h3>
           <span className="truncate text-sm text-muted-foreground">
             {headerSubtitle}
           </span>

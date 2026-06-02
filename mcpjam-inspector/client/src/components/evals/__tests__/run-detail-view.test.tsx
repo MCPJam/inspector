@@ -118,36 +118,6 @@ function makeIteration(overrides: Partial<EvalIteration> = {}): EvalIteration {
   };
 }
 
-const chartDataUsable = {
-  donutData: [{ name: "passed", value: 1, fill: "green" }],
-  durationData: [
-    {
-      name: "Short name",
-      p50Ms: 4000,
-      p95Ms: 5000,
-      p50Seconds: 4,
-      p95TailSeconds: 1,
-    },
-  ],
-  tokensData: [
-    {
-      name: "Short name",
-      inputP50: 400,
-      outputP50: 800,
-      inputP95Tail: 100,
-      outputP95Tail: 200,
-    },
-  ],
-  modelData: [],
-};
-
-const emptyChartData = {
-  donutData: [],
-  durationData: [],
-  tokensData: [],
-  modelData: [],
-};
-
 function defaultRunInsightsReturn() {
   return {
     summary: null as string | null,
@@ -183,7 +153,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -214,7 +183,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -253,7 +221,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -281,7 +248,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -334,7 +300,6 @@ describe("RunDetailView", () => {
           }),
         ]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId="iter-case"
@@ -422,7 +387,6 @@ describe("RunDetailView", () => {
         })}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
