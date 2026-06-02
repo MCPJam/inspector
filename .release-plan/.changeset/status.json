@@ -3,23 +3,56 @@
     {
       "releases": [
         {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        },
+        {
           "name": "@mcpjam/inspector",
-          "type": "patch"
+          "type": "minor"
         }
       ],
-      "summary": "Inspector updates:\n\n- Show refund and dispute status badges in the credit purchase history, with a hover detail for partial refunds",
-      "id": "payment-history-status-badges"
+      "summary": "Workspace release rollup:\n\n- Add the advisory Goal Completion judge panel for eval test-case iterations\n- Surface partial-state visibility and insight error details in eval run views",
+      "id": "inspector-evals-ui-release"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.8.0",
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.9.0",
       "changesets": [
-        "payment-history-status-badges"
+        "inspector-evals-ui-release"
       ],
-      "newVersion": "2.8.1"
+      "newVersion": "1.10.0"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "minor",
+      "oldVersion": "3.3.5",
+      "changesets": [
+        "inspector-evals-ui-release"
+      ],
+      "newVersion": "3.4.0"
+    },
+    {
+      "name": "@mcpjam/inspector",
+      "type": "minor",
+      "oldVersion": "2.8.1",
+      "changesets": [
+        "inspector-evals-ui-release"
+      ],
+      "newVersion": "2.9.0"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }
