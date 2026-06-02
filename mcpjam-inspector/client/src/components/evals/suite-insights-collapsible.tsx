@@ -29,36 +29,16 @@ export interface SuiteInsightsCollapsibleProps {
 function runInsightsHeaderSubtitle({
   pending,
   failedGeneration,
-  summary,
   requested,
-  open,
 }: {
   pending: boolean;
   failedGeneration: boolean;
-  summary: string | null;
   requested: boolean;
-  open: boolean;
 }): string {
   if (pending) return "Generating…";
   if (failedGeneration) return "Summary unavailable";
-  // When collapsed, surface the first sentence as a one-line preview so the
-  // section header itself carries the signal — saves the user from expanding
-  // for the headline finding.
-  if (summary && !open) {
-    return firstSentence(summary);
-  }
-  if (summary) return "Compared to your previous completed run";
   if (requested) return "Requesting…";
   return "Compared to your previous completed run";
-}
-
-function firstSentence(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  const match = trimmed.match(/[^.!?]+[.!?]/);
-  const sentence = (match ? match[0] : trimmed).trim();
-  if (sentence.length <= 180) return sentence;
-  return `${sentence.slice(0, 177).trimEnd()}…`;
 }
 
 const RUN_INSIGHTS_FAILED_FALLBACK =
@@ -116,9 +96,7 @@ export function SuiteInsightsCollapsible({
   const headerSubtitle = runInsightsHeaderSubtitle({
     pending,
     failedGeneration,
-    summary,
     requested,
-    open,
   });
 
   // Persisted error fields land on `testSuiteRun` via PR B (judge worker).
@@ -151,7 +129,7 @@ export function SuiteInsightsCollapsible({
             transition={{ type: "spring", stiffness: 520, damping: 32 }}
           >
             <motion.span
-              className="inline-flex shrink-0 text-primary/70"
+              className="inline-flex shrink-0 text-muted-foreground"
               aria-hidden
               initial={false}
               animate={{ rotate: open ? 0 : -90 }}

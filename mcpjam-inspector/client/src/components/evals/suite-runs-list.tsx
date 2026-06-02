@@ -19,16 +19,23 @@ import {
   formatTime,
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import {
   evalSurfaceCardClass,
   evalSurfaceHeaderClass,
   evalSurfaceRowHoverClass,
 } from "./eval-surface-chrome";
+import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 
-/** Shared column template: run label flexes; Acc/Dur/Time share equal width. */
+/** Shared column template: run label flexes; Acc/Dur fixed; Time + chevron share the tail. */
 const RUNS_LIST_ROW_GRID =
-  "grid w-full grid-cols-[minmax(0,1.25fr)_repeat(3,minmax(4.5rem,1fr))_1rem] items-center gap-x-4";
+  "grid w-full grid-cols-[minmax(0,1fr)_3rem_3.5rem_minmax(9.5rem,1.15fr)_0.875rem] items-center gap-x-3";
+
+const RUNS_LIST_METRIC_HEADER_CLASS =
+  "text-right text-[11px] font-medium uppercase tracking-[0.06em] tabular-nums";
+
+const RUNS_LIST_METRIC_CELL_CLASS =
+  "text-right text-xs font-mono tabular-nums text-muted-foreground";
 
 /**
  * Per-row effective pass-rate stats. Prefers the live iteration set when
@@ -77,6 +84,13 @@ export interface SuiteRunsListProps {
    */
   hostNamesById?: Map<string, string | null>;
   className?: string;
+  /**
+   * When provided, expanding a multi-host run group renders the cross-host
+   * comparison matrix for that group's runs. Click a case row to drill in.
+   */
+  suite?: EvalSuite;
+  cases?: EvalCase[];
+  onTestCaseClick?: (testCaseId: string) => void;
 }
 
 type RunGroupNode = {
@@ -119,6 +133,9 @@ export function SuiteRunsList({
   runsLoading = false,
   hostNamesById,
   className,
+  suite,
+  cases,
+  onTestCaseClick,
 }: SuiteRunsListProps) {
   const isSdk = suiteSource === "sdk";
   const accuracyLabel = isSdk ? "Pass" : "Acc";
@@ -224,9 +241,11 @@ export function SuiteRunsList({
         )}
       >
         <div className="min-w-0 truncate">Run</div>
-        <div className="text-right">{accuracyLabel}</div>
-        <div className="text-right">Dur</div>
-        <div className="truncate text-right">Time</div>
+        <div className={RUNS_LIST_METRIC_HEADER_CLASS}>{accuracyLabel}</div>
+        <div className={RUNS_LIST_METRIC_HEADER_CLASS}>Dur</div>
+        <div className={cn(RUNS_LIST_METRIC_HEADER_CLASS, "truncate")}>
+          Time
+        </div>
         <span aria-hidden />
       </div>
 
@@ -264,6 +283,10 @@ export function SuiteRunsList({
                 onRunClick={onRunClick}
                 isExpanded={isExpanded}
                 onToggle={() => toggleGroup(node.runGroupId)}
+                suite={suite}
+                cases={cases}
+                allIterations={allIterations}
+                onTestCaseClick={onTestCaseClick}
               />
             );
           })
@@ -285,6 +308,7 @@ interface StandaloneRunRowProps {
   hostNamesById?: Map<string, string | null>;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   onRunClick: (runId: string) => void;
+  nested?: boolean;
 }
 
 function StandaloneRunRow({
@@ -293,6 +317,7 @@ function StandaloneRunRow({
   hostNamesById,
   userMap,
   onRunClick,
+  nested = false,
 }: StandaloneRunRowProps) {
   const { passRate } = computeRunEffectiveStats(run, runIterations);
 
@@ -327,7 +352,12 @@ function StandaloneRunRow({
         )}
         aria-label={`Open run ${formatRunId(run._id)}`}
       >
-        <div className="flex min-w-0 items-center gap-2">
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-2",
+            nested && "border-l border-border/50 pl-3",
+          )}
+        >
           <span className="truncate text-xs font-medium">
             Run {formatRunId(run._id)}
           </span>
@@ -357,20 +387,18 @@ function StandaloneRunRow({
             </Tooltip>
           ) : null}
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {passRate !== null ? `${passRate}%` : "—"}
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
-          {duration}
-        </div>
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>{duration}</div>
         <div
-          className="truncate text-right text-xs tabular-nums text-muted-foreground"
+          className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}
           title={formatTime(timestamp)}
         >
           {timestampLabel}
         </div>
         <ChevronRight
-          className="h-3.5 w-3.5 text-muted-foreground"
+          className="size-3.5 shrink-0 justify-self-end text-muted-foreground"
           aria-hidden
         />
       </button>
@@ -386,6 +414,11 @@ interface GroupRunRowsProps {
   onRunClick: (runId: string) => void;
   isExpanded: boolean;
   onToggle: () => void;
+  /** Enables the inline cross-host matrix on expand when present. */
+  suite?: EvalSuite;
+  cases?: EvalCase[];
+  allIterations: EvalIteration[];
+  onTestCaseClick?: (testCaseId: string) => void;
 }
 
 function computeChildDuration(run: EvalSuiteRun): number | null {
@@ -427,7 +460,27 @@ function GroupRunRows({
   onRunClick,
   isExpanded,
   onToggle,
+  suite,
+  cases,
+  allIterations,
+  onTestCaseClick,
 }: GroupRunRowsProps) {
+  const canRenderMatrix =
+    !!suite && !!cases && !!onTestCaseClick && group.runs.length >= 2;
+  const shouldRenderMatrix = isExpanded && canRenderMatrix;
+  const groupRunIds = useMemo(
+    () => new Set(group.runs.map((r) => r._id)),
+    [group.runs],
+  );
+  const groupIterations = useMemo(
+    () =>
+      shouldRenderMatrix
+        ? allIterations.filter(
+            (it) => it.suiteRunId && groupRunIds.has(it.suiteRunId),
+          )
+        : [],
+    [shouldRenderMatrix, allIterations, groupRunIds],
+  );
   // Per-child effective stats — same source the standalone rows use.
   const childStats = group.runs.map((run) => ({
     run,
@@ -521,26 +574,23 @@ function GroupRunRows({
             {group.runs.length} hosts
           </span>
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {meanPassRate !== null ? `${meanPassRate}%` : "—"}
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {maxDuration !== null ? formatDuration(maxDuration) : "—"}
         </div>
         <div
-          className="truncate text-right text-xs tabular-nums text-muted-foreground"
+          className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}
           title={timestampLabel}
         >
           {timestampLabel}
         </div>
-        <span aria-hidden />
+        <span aria-hidden className="size-3.5 shrink-0 justify-self-end" />
       </button>
 
       {isExpanded ? (
-        <div
-          className="border-t bg-muted/10 pl-4"
-          data-testid="run-group-children"
-        >
+        <div className="border-t bg-muted/10" data-testid="run-group-children">
           {childStats.map(({ run, iterations }) => (
             <StandaloneRunRow
               key={run._id}
@@ -549,8 +599,25 @@ function GroupRunRows({
               hostNamesById={hostNamesById}
               userMap={userMap}
               onRunClick={onRunClick}
+              nested
             />
           ))}
+          {shouldRenderMatrix ? (
+            <div className="border-t border-border/40">
+              <CrossHostDashboard
+                suite={suite!}
+                cases={cases!}
+                runs={group.runs}
+                allIterations={groupIterations}
+                expanded
+                onTestCaseClick={onTestCaseClick}
+                onCellOpen={(cell) => {
+                  const runId = cell.iterations[0]?.suiteRunId;
+                  if (runId) onRunClick(runId);
+                }}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

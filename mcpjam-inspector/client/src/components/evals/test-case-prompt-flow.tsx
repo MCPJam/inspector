@@ -308,7 +308,7 @@ export function TestCasePromptFlow({
 
                               <section className="space-y-2">
                                 <Label className="text-xs font-medium text-foreground">
-                                  Tool triggered
+                                  Expected tool calls
                                 </Label>
                                 <ExpectedToolsEditor
                                   toolCalls={turn.expectedToolCalls}

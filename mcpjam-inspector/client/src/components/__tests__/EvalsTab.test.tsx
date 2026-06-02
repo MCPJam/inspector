@@ -29,6 +29,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvex: () => ({ query: vi.fn().mockResolvedValue([]) }),
+  useMutation: () => vi.fn().mockResolvedValue({ _id: "stub-id" }),
 }));
 
 vi.mock("posthog-js", () => ({

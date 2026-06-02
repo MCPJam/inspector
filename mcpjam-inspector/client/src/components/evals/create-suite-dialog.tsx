@@ -11,6 +11,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
@@ -64,6 +65,9 @@ export function CreateSuiteDialog({
     isAuthenticated: isAuthenticated && shouldFetchDefaults,
     projectId: shouldFetchDefaults ? projectId : null,
   });
+  const [previewedHostId] = usePreviewedHostId(
+    shouldFetchDefaults ? projectId : null,
+  );
 
   useEffect(() => {
     if (!open) {
@@ -83,12 +87,13 @@ export function CreateSuiteDialog({
 
   useEffect(() => {
     if (!shouldFetchDefaults) return;
-    if (hostAttachments.length === 0 && hosts.length > 0) {
-      setHostAttachments([
-        { namedHostId: hosts[0].hostId, enabledOptionalServerIds: [] },
-      ]);
-    }
-  }, [shouldFetchDefaults, hostAttachments.length, hosts]);
+    if (hostAttachments.length > 0 || hosts.length === 0) return;
+    const preferred =
+      hosts.find((h) => h.hostId === previewedHostId) ?? hosts[0];
+    setHostAttachments([
+      { namedHostId: preferred.hostId, enabledOptionalServerIds: [] },
+    ]);
+  }, [shouldFetchDefaults, hostAttachments.length, hosts, previewedHostId]);
 
   const attachmentsRequired = hostsEnabled && projectId !== null;
   const hasRequiredAttachments =

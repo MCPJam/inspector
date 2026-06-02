@@ -14,7 +14,7 @@ import {
 import {
   computeIterationPassed,
 } from "./pass-criteria";
-import { EvalIteration, EvalSuiteRun } from "./types";
+import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
@@ -24,7 +24,7 @@ import { GoalCompletionCard } from "./goal-completion-card";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { useSharedAppState } from "@/state/app-state-context";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowLeftRight, ArrowUpDown } from "lucide-react";
+import { ArrowUpDown } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
@@ -34,16 +34,10 @@ import {
 import { RunCaseListWithSections } from "./run-case-list";
 import type { RunCaseGroup } from "./run-case-groups";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
-import {
-  tokensChartDatumTotal,
-  type DurationChartDatum,
-  type TokensChartDatum,
-} from "./run-chart-data";
 import { RunDetailKpiStrip } from "./run-detail-kpis";
 import { ClientChip } from "@/components/clients/client-chip";
 import {
   RunAccuracyHeroBand,
-  RunDetailMetricsCharts,
   RunInsightRail,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
@@ -89,11 +83,6 @@ interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
   caseGroupsForSelectedRun: EvalIteration[];
   source?: "ui" | "sdk";
-  selectedRunChartData: {
-    donutData: Array<{ name: string; value: number; fill: string }>;
-    durationData: DurationChartDatum[];
-    tokensData: TokensChartDatum[];
-  };
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
   serverNames?: string[];
@@ -119,7 +108,11 @@ interface RunDetailViewProps {
    * `body` = KPI row stays in this view (CI / commit detail).
    */
   kpiPlacement?: "header" | "body";
-  /** Previous completed run offered as the default deterministic diff base. */
+  /**
+   * Previous completed run offered as the deterministic diff base. Plumbed
+   * through to {@link RunAccuracyHeroBand} for future re-surfacing; no
+   * header UI consumes it today.
+   */
   compareBaseRun?: EvalSuiteRun | null;
   onCompareWithRun?: (baseRunId: string) => void;
   /**
@@ -137,6 +130,13 @@ interface RunDetailViewProps {
    * the default `buildEvalsPath` (`/evals/...`).
    */
   onSelectRun?: (runId: string) => void;
+  /**
+   * Current (live) suite judge config. Threaded into the goal-completion
+   * card so older runs whose snapshot doesn't reflect the current toggle
+   * state can still trigger a re-run when the suite is enabled today.
+   * Optional — CI/commit-detail parents don't have a live suite handle.
+   */
+  currentSuiteJudgeConfig?: EvalJudgeConfig | null;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -322,7 +322,6 @@ export function RunDetailView({
   selectedRunDetails,
   caseGroupsForSelectedRun,
   source,
-  selectedRunChartData,
   runDetailSortBy,
   onSortChange,
   serverNames: _serverNames = [],
@@ -343,6 +342,7 @@ export function RunDetailView({
   hostNamesById,
   runTrendData = [],
   onSelectRun,
+  currentSuiteJudgeConfig,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -406,13 +406,6 @@ export function RunDetailView({
     [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source]
   );
 
-  const hasTokenData = useMemo(
-    () =>
-      selectedRunChartData.tokensData.length > 0 &&
-      selectedRunChartData.tokensData.some((d) => tokensChartDatumTotal(d) > 0),
-    [selectedRunChartData.tokensData]
-  );
-
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
       <AiTriageCard
@@ -448,6 +441,7 @@ export function RunDetailView({
         failedGeneration={goalCompletionFailedGeneration}
         error={goalCompletionError}
         onRun={(args, force) => requestGoalCompletion(args, force)}
+        currentSuiteJudgeConfig={currentSuiteJudgeConfig}
       />
     ) : null;
 
@@ -499,15 +493,6 @@ export function RunDetailView({
     />
   ) : null;
 
-  const runMetricsCharts = (
-    <RunDetailMetricsCharts
-      durationData={selectedRunChartData.durationData}
-      tokensData={selectedRunChartData.tokensData}
-      hasTokenData={hasTokenData}
-      className="mb-4"
-    />
-  );
-
   const insightRail = (
     <RunInsightRail
       triageCard={serverQualityTriage}
@@ -548,23 +533,6 @@ export function RunDetailView({
         </p>
       ) : null}
 
-      {/* When the accuracy band renders, the compare action lives in its
-          Recent runs section. This top-level button is only a fallback for
-          runs without enough data to show the band. */}
-      {compareBaseRun && onCompareWithRun && !showAccuracyHero ? (
-        <div className="mb-4 flex justify-end">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onCompareWithRun(compareBaseRun._id)}
-            className="h-8 text-xs"
-          >
-            <ArrowLeftRight className="mr-2 h-3.5 w-3.5" aria-hidden />
-            Compare to previous run
-          </Button>
-        </div>
-      ) : null}
     </>
   );
 
@@ -579,7 +547,6 @@ export function RunDetailView({
     <div className="space-y-4">
       {bodyKpiStrip}
       {accuracyHero}
-      {runMetricsCharts}
       {insightRail}
     </div>
   );
@@ -620,7 +587,6 @@ export function RunDetailView({
         <>
           {bodyKpiStrip}
           {accuracyHero}
-          {runMetricsCharts}
           {lgUp ? (
             <ResizablePanelGroup
               direction="horizontal"

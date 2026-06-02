@@ -6,13 +6,11 @@ const DEFAULT_MODELS: CreateEvalTestCaseInput["models"] = [
 
 /**
  * Curated case payloads used by the Evaluate empty-state quickstart against
- * the Excalidraw MCP server. `suiteId` is filled in by the caller.
- *
- * Tool names and argument shapes target the public Excalidraw MCP server at
- * https://mcp.excalidraw.com/mcp. The matcher options are intentionally
- * permissive (default partial / superset semantics) so the first run lights
- * up the diff view even if the model picks slightly different arguments —
- * the goal is to showcase what an eval looks like, not to gate.
+ * the Excalidraw MCP server (https://mcp.excalidraw.com/mcp). The server
+ * exposes `read_me`, `create_view`, `export_to_excalidraw`, plus checkpoint
+ * helpers; drawing flows through a single `create_view` call that accepts an
+ * elements array. Matchers only check tool names — arguments are left empty
+ * so the first run lights up the diff view without gating on shape choices.
  */
 export const EXCALIDRAW_QUICKSTART_CASES: Array<
   Omit<CreateEvalTestCaseInput, "suiteId">
@@ -23,15 +21,13 @@ export const EXCALIDRAW_QUICKSTART_CASES: Array<
       "Add a single rectangle labeled \"Hello\" near the center of the canvas.",
     models: DEFAULT_MODELS,
     expectedToolCalls: [
-      {
-        toolName: "create_element",
-        arguments: { type: "rectangle" },
-      },
+      { toolName: "read_me", arguments: {} },
+      { toolName: "create_view", arguments: {} },
     ],
     runs: 1,
     isNegativeTest: false,
     scenario:
-      "Smoke test: the agent should reach for the create-element tool and ask for a rectangle.",
+      "Smoke test: consult read_me on first use, then render with create_view.",
   },
   {
     title: "Sketch a two-node flow",
@@ -39,25 +35,27 @@ export const EXCALIDRAW_QUICKSTART_CASES: Array<
       "Sketch a tiny flow: a box labeled \"Start\" with an arrow pointing to a box labeled \"End\".",
     models: DEFAULT_MODELS,
     expectedToolCalls: [
-      { toolName: "create_element", arguments: { type: "rectangle" } },
-      { toolName: "create_element", arguments: { type: "rectangle" } },
-      { toolName: "create_element", arguments: { type: "arrow" } },
+      { toolName: "read_me", arguments: {} },
+      { toolName: "create_view", arguments: {} },
     ],
     runs: 1,
     isNegativeTest: false,
     scenario:
-      "Multi-step composition: two rectangles plus an arrow. Tests that the agent fans out across several tool calls.",
+      "Composition: multiple elements (two boxes + arrow) in a single create_view call.",
   },
   {
-    title: "Read the canvas",
-    query: "What's currently on the canvas? Summarize what you see.",
+    title: "Draw and share a diagram",
+    query:
+      "Draw a quick two-step flow (\"Idea\" → \"Ship\") and give me a shareable excalidraw.com link.",
     models: DEFAULT_MODELS,
     expectedToolCalls: [
-      { toolName: "read_canvas", arguments: {} },
+      { toolName: "read_me", arguments: {} },
+      { toolName: "create_view", arguments: {} },
+      { toolName: "export_to_excalidraw", arguments: {} },
     ],
     runs: 1,
     isNegativeTest: false,
     scenario:
-      "Read-side coverage: the agent should query canvas state before answering, not invent contents.",
+      "Multi-tool composition: render with create_view, then publish via export_to_excalidraw.",
   },
 ];

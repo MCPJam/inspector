@@ -118,36 +118,6 @@ function makeIteration(overrides: Partial<EvalIteration> = {}): EvalIteration {
   };
 }
 
-const chartDataUsable = {
-  donutData: [{ name: "passed", value: 1, fill: "green" }],
-  durationData: [
-    {
-      name: "Short name",
-      p50Ms: 4000,
-      p95Ms: 5000,
-      p50Seconds: 4,
-      p95TailSeconds: 1,
-    },
-  ],
-  tokensData: [
-    {
-      name: "Short name",
-      inputP50: 400,
-      outputP50: 800,
-      inputP95Tail: 100,
-      outputP95Tail: 200,
-    },
-  ],
-  modelData: [],
-};
-
-const emptyChartData = {
-  donutData: [],
-  durationData: [],
-  tokensData: [],
-  modelData: [],
-};
-
 function defaultRunInsightsReturn() {
   return {
     summary: null as string | null,
@@ -183,7 +153,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -197,7 +166,7 @@ describe("RunDetailView", () => {
     expect(root).not.toHaveClass("overflow-hidden");
   });
 
-  it("places body KPI strip and charts below the run hero band", () => {
+  it("places body KPI strip below the run hero band and above the resizable group", () => {
     vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
       matches: query.includes("min-width: 1024px"),
       media: query,
@@ -214,7 +183,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -222,9 +190,6 @@ describe("RunDetailView", () => {
       />,
     );
 
-    const durationChartHeading = screen.getByRole("heading", {
-      name: "Latency by test (p50 / p95)",
-    });
     const kpiStrip = screen.getByText("Passed").closest(".mb-4");
     expect(kpiStrip).not.toBeNull();
     const kpi = within(kpiStrip as HTMLElement);
@@ -236,27 +201,17 @@ describe("RunDetailView", () => {
 
     const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
     const panelGroup = screen.getByTestId("run-detail-resizable-group");
-    const sections = Array.from(document.querySelectorAll("section"));
-    const heroIndex = sections.findIndex((section) =>
-      section.contains(runHeading),
-    );
-    const chartsIndex = sections.findIndex((section) =>
-      section.contains(durationChartHeading),
-    );
-    expect(heroIndex).toBeGreaterThanOrEqual(0);
-    expect(chartsIndex).toBeGreaterThan(heroIndex);
     expect(
-      durationChartHeading.compareDocumentPosition(panelGroup) &
+      runHeading.compareDocumentPosition(panelGroup) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
-    expect(durationChartHeading).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Tokens by test (p50 / p95)" }),
-    ).toBeVisible();
+      screen.queryByRole("heading", { name: "Latency by test (p50 / p95)" }),
+    ).not.toBeInTheDocument();
     expect(
-      document.querySelectorAll('[data-slot="chart"]').length,
-    ).toBeGreaterThanOrEqual(2);
+      screen.queryByRole("heading", { name: "Tokens by test (p50 / p95)" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
@@ -266,7 +221,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -277,7 +231,7 @@ describe("RunDetailView", () => {
     expect(screen.queryByText(/1 passed · 0 failed · 100%/)).not.toBeInTheDocument();
   });
 
-  it("keeps run-level KPIs and bar charts visible with the iteration list in a resizable two-column layout", () => {
+  it("keeps run-level KPIs visible with the iteration list in a resizable two-column layout", () => {
     vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
       matches: query.includes("min-width: 1024px"),
       media: query,
@@ -294,7 +248,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -303,12 +256,6 @@ describe("RunDetailView", () => {
     );
 
     expect(screen.getByText("Passed")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Latency by test (p50 / p95)" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Tokens by test (p50 / p95)" }),
-    ).toBeInTheDocument();
     expect(screen.getByText(/Test cases/)).toBeInTheDocument();
     expect(screen.getByText("P50")).toBeInTheDocument();
     expect(screen.getByText("Fail")).toBeInTheDocument();
@@ -317,38 +264,6 @@ describe("RunDetailView", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByTestId("run-detail-resizable-panel")).toHaveLength(2);
     expect(screen.getByTestId("run-detail-resizable-handle")).toBeInTheDocument();
-  });
-
-  it("hides chart section when there is no duration or token data", () => {
-    render(
-      <RunDetailView
-        selectedRunDetails={makeRun()}
-        caseGroupsForSelectedRun={[makeIteration()]}
-        source="ui"
-        selectedRunChartData={{
-          donutData: [{ name: "passed", value: 1, fill: "green" }],
-          durationData: [],
-          tokensData: [
-            {
-              name: "x",
-              inputP50: 0,
-              outputP50: 0,
-              inputP95Tail: 0,
-              outputP95Tail: 0,
-            },
-          ],
-          modelData: [],
-        }}
-        runDetailSortBy="test"
-        onSortChange={() => {}}
-        selectedIterationId={null}
-        onSelectIteration={() => {}}
-      />,
-    );
-
-    expect(
-      screen.queryByRole("button", { name: /Duration and token charts/i }),
-    ).not.toBeInTheDocument();
   });
 
   it("does not surface per-iteration case insight captions in the run view (open a test from the list to inspect a case)", () => {
@@ -385,7 +300,6 @@ describe("RunDetailView", () => {
           }),
         ]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId="iter-case"
@@ -473,7 +387,6 @@ describe("RunDetailView", () => {
         })}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}

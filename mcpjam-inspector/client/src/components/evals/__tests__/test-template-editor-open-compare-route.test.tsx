@@ -307,9 +307,6 @@ describe("TestTemplateEditor run view from route", () => {
         // "still loading" and would suppress the header row entirely.
         return null;
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -362,6 +359,7 @@ describe("TestTemplateEditor run view from route", () => {
   it("opens compare run mode when the route requests run view", async () => {
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -381,16 +379,16 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.queryByText("No compare run yet")).not.toBeInTheDocument();
     });
 
-    expect(useQueryMock).toHaveBeenCalledWith("testSuites:listTestIterations", {
-      testCaseId: "case-1",
-      limit: 200,
-    });
     expect(
       screen.getByRole("button", { name: /retry all/i })
     ).toBeInTheDocument();
   });
 
   it("shows a loading spinner instead of config UI while route-open compare data is unresolved", async () => {
+    // Iterations are now a prop, not a query — the remaining loading gates
+    // are `testCases === undefined`, the init ref mismatch, and the route
+    // anchor iteration. Withholding `testSuites:listTestCases` drives the
+    // spinner here; once that query resolves the route can settle.
     let queriesReady = false;
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (!queriesReady) {
@@ -418,9 +416,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "hostConfigsV2:getSuiteConfig") {
         return null;
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -434,6 +429,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     const view = renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -456,6 +452,7 @@ describe("TestTemplateEditor run view from route", () => {
     view.rerender(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
         <TestTemplateEditor
+        suiteIterations={[baseIteration]}
           suiteId="suite-1"
           selectedTestCaseId="case-1"
           connectedServerNames={new Set(["srv"])}
@@ -508,9 +505,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "hostConfigsV2:getSuiteConfig") {
         return null;
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [newerQuickIteration, clickedIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -526,6 +520,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[newerQuickIteration, clickedIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -549,9 +544,10 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("renders flat User prompt / Tool triggered for a single-turn case", async () => {
+  it("renders flat User prompt / Expected tool calls for a single-turn case", async () => {
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -571,7 +567,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByText("User prompt")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Tool triggered")).toBeInTheDocument();
+    expect(screen.getByText("Expected tool calls")).toBeInTheDocument();
     expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
   });
 
@@ -582,6 +578,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -659,19 +656,17 @@ describe("TestTemplateEditor run view from route", () => {
       lastMessageRun: undefined,
     };
 
-    useQueryMock.mockImplementation((name: string, args: unknown) => {
+    useQueryMock.mockImplementation((name: string) => {
       if (name === "testSuites:listTestCases") return [draftCase];
       if (name === "testSuites:getTestSuite") {
         return { _id: "suite-1", environment: { servers: ["srv"] } };
-      }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [];
       }
       return undefined;
     });
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -737,6 +732,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -797,9 +793,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "testSuites:getTestSuite") {
         return { _id: "suite-1", environment: { servers: ["srv"] } };
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -818,6 +811,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -889,6 +883,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -969,9 +964,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "hostConfigsV2:getSuiteConfig") {
         return null;
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -988,6 +980,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1071,9 +1064,6 @@ describe("TestTemplateEditor run view from route", () => {
           hostContext: {},
         };
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -1090,6 +1080,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     const view = renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1215,6 +1206,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1337,6 +1329,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1462,6 +1455,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1593,6 +1587,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}

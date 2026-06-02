@@ -368,7 +368,7 @@ export function SuiteIterationsView({
     aggregate
   );
 
-  const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
+  const { caseGroupsForSelectedRun } = useRunDetailData(
     selectedRunId,
     allIterations,
     effectiveRunDetailSortBy
@@ -785,6 +785,7 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
+                  suiteIterations={allIterations}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
@@ -799,16 +800,12 @@ export function SuiteIterationsView({
                     navigation.toSuiteOverview(suite._id, "test-cases")
                   }
                   onContinueInChat={onContinueInChat}
-                  onOpenLastRun={(iteration) => {
-                    if (!iteration.suiteRunId) {
-                      return;
-                    }
-                    navigation.toRunDetail(
-                      suite._id,
-                      iteration.suiteRunId,
-                      iteration._id
-                    );
-                  }}
+                  onSelectTab={(tab) =>
+                    navigation.toTestEdit(suite._id, selectedTestId, {
+                      openCompare: tab === "runs",
+                      replace: true,
+                    })
+                  }
                 />
               </motion.div>
             ) : viewMode === "test-detail" && selectedTestId ? (
@@ -1076,8 +1073,8 @@ export function SuiteIterationsView({
                   <RunDetailView
                     selectedRunDetails={selectedRunDetails}
                     caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                    currentSuiteJudgeConfig={suite.judgeConfig ?? null}
                     source={suite.source}
-                    selectedRunChartData={selectedRunChartData}
                     runDetailSortBy={effectiveRunDetailSortBy}
                     onSortChange={effectiveRunDetailSortChange}
                     serverNames={suite.environment?.servers || []}
@@ -1240,10 +1237,10 @@ export function SuiteIterationsView({
                 />
               </SettingsSection>
 
-              {/* ── Judges ───────────────────────────────────────────── */}
+              {/* ── LLM as Judge ─────────────────────────────────────── */}
               <SettingsSection
-                label="Judges"
-                hint="Advisory LLM scorers. Calibrate per suite."
+                label="LLM as Judge"
+                hint="Advisory grading against each case's objective. Calibrate per suite."
               >
                 <JudgesSection
                   chrome="bare"

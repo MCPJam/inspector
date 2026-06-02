@@ -220,7 +220,7 @@ function CommitSuiteRunDetail({
     [suiteDetails],
   );
 
-  const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
+  const { caseGroupsForSelectedRun } = useRunDetailData(
     run._id,
     allIterations,
     runDetailSortBy,
@@ -266,7 +266,6 @@ function CommitSuiteRunDetail({
         selectedRunDetails={run}
         caseGroupsForSelectedRun={caseGroupsForSelectedRun}
         source={run.source as "ui" | "sdk" | undefined}
-        selectedRunChartData={selectedRunChartData}
         runDetailSortBy={runDetailSortBy}
         onSortChange={onSortChange}
         serverNames={run.configSnapshot?.environment?.servers ?? []}

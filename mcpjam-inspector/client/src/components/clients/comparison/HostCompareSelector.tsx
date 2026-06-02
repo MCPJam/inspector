@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
@@ -98,21 +99,28 @@ function HostCompareChip({
           subject.config.chatUiOverride,
         )
       : null;
+  const reduceMotion = useReducedMotion();
 
   return (
-    <button
+    <motion.button
       type="button"
       disabled={disabled}
       aria-pressed={selected}
       data-testid={`host-compare-chip-${host.hostId}`}
       data-selected={selected ? "true" : "false"}
       className={cn(
-        "inline-flex max-w-[180px] items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] transition-colors",
+        "inline-flex max-w-[180px] items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px]",
+        "transition-colors duration-150",
         "disabled:cursor-not-allowed disabled:opacity-50",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         selected
           ? "border-primary/35 bg-primary/8 text-foreground shadow-xs"
           : "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",
       )}
+      whileHover={reduceMotion || disabled ? undefined : { scale: 1.04 }}
+      whileTap={reduceMotion || disabled ? undefined : { scale: 0.94 }}
+      animate={reduceMotion ? undefined : { y: selected ? -1 : 0 }}
+      transition={{ type: "spring", stiffness: 480, damping: 28, mass: 0.5 }}
       onClick={onToggle}
     >
       {logoSrc ? (
@@ -124,7 +132,7 @@ function HostCompareChip({
         />
       )}
       <span className="truncate">{host.name}</span>
-    </button>
+    </motion.button>
   );
 }
 

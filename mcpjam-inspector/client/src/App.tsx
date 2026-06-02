@@ -50,6 +50,8 @@ import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
 import { HostConfigCompareView } from "./components/clients/comparison/HostConfigCompareView";
 import { ConnectViewHeader } from "./components/clients/ConnectViewHeader";
+import { motion } from "framer-motion";
+import { SNAPPY_RAIL } from "./components/clients/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -649,7 +651,13 @@ export function HostCompareRoute() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <motion.div
+      key="host-compare"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
       <ConnectViewHeader
         value="compare"
         previewedHostId={previewedHostId}
@@ -662,7 +670,7 @@ export function HostCompareRoute() {
         }}
       />
       <div className="min-h-0 flex-1">{compareView}</div>
-    </div>
+    </motion.div>
   );
 }
 

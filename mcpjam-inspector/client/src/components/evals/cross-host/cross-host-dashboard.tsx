@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 import { evalSurfaceCardClass } from "../eval-surface-chrome";
 import { CrossHostMatrix } from "./cross-host-matrix";
-import { useCrossHostData } from "./use-cross-host-data";
+import { useCrossHostData, type CellData } from "./use-cross-host-data";
 
 interface CrossHostDashboardProps {
   suite: EvalSuite;
@@ -18,6 +18,8 @@ interface CrossHostDashboardProps {
   /** Full-height matrix inside the suite dashboard By host view. */
   expanded?: boolean;
   onTestCaseClick?: (testCaseId: string) => void;
+  /** Click a matrix cell → drill into that (case, host) iteration. */
+  onCellOpen?: (cell: CellData, hostId: string, caseId: string) => void;
 }
 
 export function CrossHostDashboard({
@@ -28,6 +30,7 @@ export function CrossHostDashboard({
   onConfigureHosts,
   expanded = false,
   onTestCaseClick,
+  onCellOpen,
 }: CrossHostDashboardProps) {
   const data = useCrossHostData(suite, cases, runs, allIterations);
   const posthog = usePostHog();
@@ -126,6 +129,7 @@ export function CrossHostDashboard({
           data={data}
           expanded={expanded}
           onTestCaseClick={onTestCaseClick}
+          onCellOpen={onCellOpen}
         />
       </div>
     </div>
