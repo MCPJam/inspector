@@ -294,9 +294,17 @@ export function ConvertChatSessionDialog({
         testCaseId: string;
         createdSuite?: boolean;
         updatedSuiteEnvironment?: boolean;
+        addedServers?: string[];
       };
 
-      toast.success("Chat session promoted to a test case");
+      const added = result.addedServers ?? [];
+      if (destinationMode === "existing" && added.length > 0) {
+        toast.success(
+          `Chat session promoted to a test case. Added ${added.join(", ")} to the suite.`,
+        );
+      } else {
+        toast.success("Chat session promoted to a test case");
+      }
       onOpenChange(false);
       onImported({ suiteId: result.suiteId, testCaseId: result.testCaseId });
     } catch (error) {

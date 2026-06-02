@@ -113,7 +113,7 @@ export function SaveAsTestCaseAction({
     }
     setSubmitting(true);
     try {
-      await saveAsTestCase({
+      const result = (await saveAsTestCase({
         chatSessionId,
         promptIndex,
         projectId,
@@ -122,8 +122,15 @@ export function SaveAsTestCaseAction({
         ...(destinationMode === "existing"
           ? { destinationSuiteId: selectedSuiteId }
           : { newSuiteName: newSuiteName.trim() }),
-      });
-      toast.success("Saved as test case");
+      })) as { addedServers?: string[] } | undefined;
+      const added = result?.addedServers ?? [];
+      if (destinationMode === "existing" && added.length > 0) {
+        toast.success(
+          `Saved as test case. Added ${added.join(", ")} to the suite.`,
+        );
+      } else {
+        toast.success("Saved as test case");
+      }
       setOpen(false);
     } catch (error) {
       const message = getBillingErrorMessage(
