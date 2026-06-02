@@ -706,6 +706,34 @@ export function useEvalHandlers({
               ? `All ${runPlans.length} host runs started.`
               : "Eval run completed!",
           );
+
+          // Drop the user on the new run's detail page so they can see
+          // results without hunting through the runs list. Multi-host
+          // fan-outs land on the suite's runs view instead, since there
+          // are multiple sibling runs to pick from.
+          if (runPlans.length === 1) {
+            const firstSettled = settled[0];
+            const newRunId =
+              firstSettled?.status === "fulfilled"
+                ? (firstSettled.value as { runId?: unknown } | null | undefined)
+                    ?.runId
+                : undefined;
+            if (typeof newRunId === "string" && newRunId.length > 0) {
+              navigateEvalRoute(
+                {
+                  type: "run-detail",
+                  suiteId: suite._id,
+                  runId: newRunId,
+                },
+                evalsNavigationContext,
+              );
+            }
+          } else {
+            navigateEvalRoute(
+              { type: "suite-overview", suiteId: suite._id, view: "runs" },
+              evalsNavigationContext,
+            );
+          }
         } else if (failures.length < runPlans.length) {
           const failedHostNames = failures
             .map((failure) => failure.plan.hostName ?? "(unnamed host)")
@@ -738,6 +766,7 @@ export function useEvalHandlers({
       projectServers,
       getSuiteExecutionContext,
       handleReplayRun,
+      evalsNavigationContext,
     ]
   );
 

@@ -549,7 +549,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("renders flat User prompt / Tool triggered for a single-turn case", async () => {
+  it("renders flat User prompt / Expected tool calls for a single-turn case", async () => {
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -571,7 +571,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByText("User prompt")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Tool triggered")).toBeInTheDocument();
+    expect(screen.getByText("Expected tool calls")).toBeInTheDocument();
     expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
   });
 

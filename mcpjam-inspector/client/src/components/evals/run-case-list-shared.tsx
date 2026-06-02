@@ -24,7 +24,7 @@ export const runCaseListSortGutterClassName = "flex w-7 shrink-0 items-center ju
 
 /** Header row — mirrors `.matrix-row.head` from evals_playground_design.html */
 export const runCaseListHeadClassName = cn(
-  "min-h-9 font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground",
+  "min-h-9 text-xs font-medium uppercase tracking-wide text-muted-foreground",
   evalSurfaceHeaderClass,
 );
 
@@ -93,7 +93,7 @@ export function RunCaseIterationBar({
             key={index}
             className={cn(
               "min-h-1 min-w-0 rounded-[1px]",
-              result === "pass" && "bg-success",
+              result === "pass" && "bg-success/50",
               result === "fail" && EVAL_FAIL_BAR_CLASS,
               result === "pending" && "bg-muted-foreground/25",
               result === "cancelled" && "bg-muted-foreground/20",

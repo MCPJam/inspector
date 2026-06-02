@@ -9,7 +9,6 @@ import {
 import { cn } from "@/lib/utils";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from "recharts";
 import type { DotProps } from "recharts";
-import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import {
   evalSurfaceCardClass,
   evalSurfaceHeaderClass,
@@ -45,7 +44,10 @@ function computeTrendDelta(
   return {
     value: delta,
     label: `${delta > 0 ? "+" : ""}${delta}% vs previous`,
-    colorClass: delta > 0 ? "text-success" : EVAL_LOW_PASS_RATE_TEXT_CLASS,
+    colorClass:
+      delta > 0
+        ? "bg-success/50 text-foreground"
+        : "bg-destructive/50 text-foreground",
   };
 }
 
@@ -162,7 +164,7 @@ function TrendDeltaBadge({ delta }: { delta: TrendDelta }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 text-xs font-medium tabular-nums",
+        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium tabular-nums",
         delta.colorClass,
       )}
     >

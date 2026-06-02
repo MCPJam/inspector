@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Loader2, RotateCw } from "lucide-react";
+import { Copy, Loader2, RotateCw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
@@ -56,11 +56,9 @@ function CategoryChip({ row }: { row: TriageRow }) {
 
 function TriageRowItem({ row }: { row: TriageRow }) {
   return (
-    <li className="flex items-start gap-3 border-t border-border/40 px-3 py-2.5 pl-3.5 transition-colors first:border-t-0 hover:bg-primary/[0.03]">
+    <li className="flex items-start gap-3 px-3 py-2.5">
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">
-          {row.title}
-        </div>
+        <div className="truncate text-sm text-foreground">{row.title}</div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
           <CategoryChip row={row} />
         </div>
@@ -68,9 +66,9 @@ function TriageRowItem({ row }: { row: TriageRow }) {
       <div className="flex shrink-0 items-center gap-2">
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="h-7 gap-1 text-xs"
+          className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
           title={`Copy a fix prompt for your coding agent (${row.title})`}
           aria-label={`${COPY_FIX_PROMPT_LABEL}: ${row.title}`}
           onClick={() =>
@@ -154,25 +152,16 @@ export function AiTriageCard({
   })();
 
   return (
-    <section
-      className={cn(
-        "relative rounded-xl border text-card-foreground shadow-sm",
-        "border-primary/20 bg-gradient-to-br from-primary/[0.07] via-card to-card",
-        "ring-1 ring-inset ring-primary/10",
-      )}
-    >
-      <div
-        className="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-primary/50"
-        aria-hidden
-      />
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-primary/10 bg-primary/[0.04] px-3 py-2.5 pl-3.5">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold tracking-tight text-foreground sm:text-lg">
-            AI Insights
-          </h2>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+    <section className="rounded-lg border border-border bg-card text-card-foreground">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-sm font-medium text-foreground">
+            AI insights
+          </span>
+          <span className="truncate text-sm text-muted-foreground">
             {headerSubtitle}
-          </p>
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {error || failedGeneration ? (
@@ -189,9 +178,9 @@ export function AiTriageCard({
           ) : null}
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className="h-7 shrink-0 gap-1 text-xs"
+            className="h-7 shrink-0 gap-1 text-xs text-muted-foreground hover:text-foreground"
             disabled={!hasRows || pending}
             title={`Copy the top ${topRows.length} fix prompt${topRows.length === 1 ? "" : "s"} to paste into your coding agent`}
             aria-label={copyTopFixPromptsLabel(topRows.length)}
@@ -208,36 +197,29 @@ export function AiTriageCard({
         </div>
       </header>
 
-      <div className="border-t border-border/40 px-3 py-3 pl-3.5">
+      <div className="border-t border-border/50 px-3 py-2.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className={runDetailSectionLabelClass}>{metricLabel}</span>
-          <span className="tabular-nums">
+          <div className="flex items-baseline gap-2">
+            <span className={runDetailSectionLabelClass}>{metricLabel}</span>
+            <span
+              className={cn(
+                "text-sm tabular-nums",
+                passFailStats.total === 0
+                  ? "text-muted-foreground"
+                  : passRateColorClass(passRate),
+              )}
+            >
+              {passFailStats.total === 0 ? "—" : `${passRate}%`}
+            </span>
+          </div>
+          <span className="text-xs tabular-nums text-muted-foreground">
             {passFailStats.total === 0
               ? "No cases recorded yet"
               : `${passFailStats.passed} passed · ${passFailStats.failed} failed`}
           </span>
         </div>
-        <div className="mt-1.5">
-          <span
-            className={cn(
-              "font-metric text-xl font-semibold tabular-nums leading-none",
-              passRateColorClass(passRate),
-            )}
-          >
-            {passFailStats.total === 0 ? (
-              <span className="text-muted-foreground">—</span>
-            ) : (
-              <>
-                {passRate}
-                <span className="text-sm font-medium text-muted-foreground">
-                  %
-                </span>
-              </>
-            )}
-          </span>
-        </div>
         <div
-          className="mt-2.5 flex h-2.5 w-full overflow-hidden rounded-full bg-muted"
+          className="mt-2 flex h-1 w-full overflow-hidden rounded-full bg-muted/60"
           role="img"
           aria-label={
             passFailStats.total === 0
@@ -257,7 +239,7 @@ export function AiTriageCard({
 
       <div
         className={cn(
-          "border-t border-border/40 bg-card/40",
+          "border-t border-border/50",
           hasRows && "max-h-[min(50vh,24rem)] overflow-y-auto overscroll-y-contain",
         )}
       >
@@ -296,7 +278,7 @@ export function AiTriageCard({
           )
         ) : (
           <>
-            <ul className="divide-y divide-border/40">
+            <ul className="divide-y divide-border/50">
               {visibleRows.map((row) => (
                 <TriageRowItem key={row.id} row={row} />
               ))}
@@ -304,7 +286,7 @@ export function AiTriageCard({
             {hasMoreSuggestions ? (
               <button
                 type="button"
-                className="w-full border-t border-border/40 py-2 text-xs font-medium text-primary transition-colors hover:bg-muted/50"
+                className="w-full border-t border-border/50 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                 aria-expanded={showAllSuggestions}
                 onClick={() => setShowAllSuggestions((v) => !v)}
               >

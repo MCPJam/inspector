@@ -19,12 +19,13 @@ import {
   formatTime,
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import {
   evalSurfaceCardClass,
   evalSurfaceHeaderClass,
   evalSurfaceRowHoverClass,
 } from "./eval-surface-chrome";
+import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 
 /** Shared column template: run label flexes; Acc/Dur fixed; Time + chevron share the tail. */
 const RUNS_LIST_ROW_GRID =
@@ -83,6 +84,13 @@ export interface SuiteRunsListProps {
    */
   hostNamesById?: Map<string, string | null>;
   className?: string;
+  /**
+   * When provided, expanding a multi-host run group renders the cross-host
+   * comparison matrix for that group's runs. Click a case row to drill in.
+   */
+  suite?: EvalSuite;
+  cases?: EvalCase[];
+  onTestCaseClick?: (testCaseId: string) => void;
 }
 
 type RunGroupNode = {
@@ -125,6 +133,9 @@ export function SuiteRunsList({
   runsLoading = false,
   hostNamesById,
   className,
+  suite,
+  cases,
+  onTestCaseClick,
 }: SuiteRunsListProps) {
   const isSdk = suiteSource === "sdk";
   const accuracyLabel = isSdk ? "Pass" : "Acc";
@@ -272,6 +283,10 @@ export function SuiteRunsList({
                 onRunClick={onRunClick}
                 isExpanded={isExpanded}
                 onToggle={() => toggleGroup(node.runGroupId)}
+                suite={suite}
+                cases={cases}
+                allIterations={allIterations}
+                onTestCaseClick={onTestCaseClick}
               />
             );
           })
@@ -399,6 +414,11 @@ interface GroupRunRowsProps {
   onRunClick: (runId: string) => void;
   isExpanded: boolean;
   onToggle: () => void;
+  /** Enables the inline cross-host matrix on expand when present. */
+  suite?: EvalSuite;
+  cases?: EvalCase[];
+  allIterations: EvalIteration[];
+  onTestCaseClick?: (testCaseId: string) => void;
 }
 
 function computeChildDuration(run: EvalSuiteRun): number | null {
@@ -440,7 +460,26 @@ function GroupRunRows({
   onRunClick,
   isExpanded,
   onToggle,
+  suite,
+  cases,
+  allIterations,
+  onTestCaseClick,
 }: GroupRunRowsProps) {
+  const canRenderMatrix =
+    !!suite && !!cases && !!onTestCaseClick && group.runs.length >= 2;
+  const groupRunIds = useMemo(
+    () => new Set(group.runs.map((r) => r._id)),
+    [group.runs],
+  );
+  const groupIterations = useMemo(
+    () =>
+      canRenderMatrix
+        ? allIterations.filter(
+            (it) => it.suiteRunId && groupRunIds.has(it.suiteRunId),
+          )
+        : [],
+    [canRenderMatrix, allIterations, groupRunIds],
+  );
   // Per-child effective stats — same source the standalone rows use.
   const childStats = group.runs.map((run) => ({
     run,
@@ -550,10 +589,7 @@ function GroupRunRows({
       </button>
 
       {isExpanded ? (
-        <div
-          className="border-t bg-muted/10"
-          data-testid="run-group-children"
-        >
+        <div className="border-t bg-muted/10" data-testid="run-group-children">
           {childStats.map(({ run, iterations }) => (
             <StandaloneRunRow
               key={run._id}
@@ -565,6 +601,22 @@ function GroupRunRows({
               nested
             />
           ))}
+          {canRenderMatrix ? (
+            <div className="border-t border-border/40">
+              <CrossHostDashboard
+                suite={suite!}
+                cases={cases!}
+                runs={group.runs}
+                allIterations={groupIterations}
+                expanded
+                onTestCaseClick={onTestCaseClick}
+                onCellOpen={(cell) => {
+                  const runId = cell.iterations[0]?.suiteRunId;
+                  if (runId) onRunClick(runId);
+                }}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

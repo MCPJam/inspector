@@ -139,10 +139,11 @@ interface TestTemplateEditorProps {
   projectId: string | null;
   availableModels: ModelDefinition[];
   onBackToList?: () => void;
-  onOpenLastRun?: (iteration: EvalIteration) => void;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
-  /** Deep link: open compare run surface once iteration data is ready (same as View results). */
+  /** Route-driven tab switch. Editor reflects {@link openCompareFromRoute} after the URL changes. */
+  onSelectTab?: (tab: "edit" | "runs") => void;
+  /** Deep link: open compare run surface once iteration data is ready (same as the Runs tab). */
   openCompareFromRoute?: boolean;
   /** Deep link: exact iteration to anchor compare hydration to. */
   openCompareIterationId?: string | null;
@@ -323,6 +324,56 @@ function readCompareRunIdFromIteration(
     : null;
 }
 
+type CaseEditorTab = "edit" | "runs";
+
+/** Underline Edit / Runs section nav: drives the URL via onSelect; mirrors the last-run status as a dot on Runs. */
+function CaseEditorTabs({
+  active,
+  onSelect,
+  runsDotClass,
+  runsAriaLabel,
+}: {
+  active: CaseEditorTab;
+  onSelect: (tab: CaseEditorTab) => void;
+  /** When provided, shown to the left of the Runs label. */
+  runsDotClass?: string;
+  runsAriaLabel?: string;
+}) {
+  const baseClass =
+    "inline-flex h-9 items-center gap-1.5 -mb-px border-b-2 px-1 text-sm font-medium transition-colors";
+  const inactiveClass =
+    "border-transparent text-muted-foreground hover:text-foreground";
+  const activeClass = "border-foreground text-foreground";
+  return (
+    <div
+      role="tablist"
+      aria-label="Case view"
+      className="flex items-center gap-6 border-b border-border/60"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === "edit"}
+        className={cn(baseClass, active === "edit" ? activeClass : inactiveClass)}
+        onClick={() => onSelect("edit")}
+      >
+        Edit
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === "runs"}
+        aria-label={runsAriaLabel}
+        className={cn(baseClass, active === "runs" ? activeClass : inactiveClass)}
+        onClick={() => onSelect("runs")}
+      >
+        Runs
+        {runsDotClass ? <span className={runsDotClass} aria-hidden /> : null}
+      </button>
+    </div>
+  );
+}
+
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
@@ -330,9 +381,9 @@ export function TestTemplateEditor({
   projectId,
   availableModels,
   onBackToList,
-  onOpenLastRun,
   onExportDraft,
   onContinueInChat,
+  onSelectTab,
   openCompareFromRoute = false,
   openCompareIterationId = null,
   isDirectGuest = false,
@@ -1139,16 +1190,11 @@ export function TestTemplateEditor({
     [compareRunRecords, modelLabelByValue, selectedModelValues]
   );
 
-  const hasRunViewContent = selectedCompareRecords.some(
-    (record) =>
-      record.iteration != null ||
-      record.status === "running" ||
-      Boolean(record.error)
-  );
 
   const openRunView = useCallback(
     (source: "run_compare" | "config_toggle") => {
       setEditorMode("run");
+      onSelectTab?.("runs");
       setMobileVisibleModelValue((current) =>
         current && selectedModelValues.includes(current)
           ? current
@@ -1164,7 +1210,7 @@ export function TestTemplateEditor({
         models: selectedModelValues,
       });
     },
-    [currentTestCase?._id, selectedModelValues, suiteId]
+    [currentTestCase?._id, onSelectTab, selectedModelValues, suiteId]
   );
 
   const handleStopCompare = useCallback(() => {
@@ -1797,15 +1843,6 @@ export function TestTemplateEditor({
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
-  const canOpenLastRun =
-    Boolean(onOpenLastRun) &&
-    Boolean(lastSavedIteration?.suiteRunId) &&
-    Boolean(lastSavedIteration?._id);
-
-  if (editorMode === "run" && isCompareRouteLoading) {
-    return compareRouteLoadingState;
-  }
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
@@ -1858,42 +1895,6 @@ export function TestTemplateEditor({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {latestAvailableIteration ? (
-                  hasRunViewContent ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className={cn(
-                        "h-8 gap-1.5 px-2 text-xs",
-                        latestRunNavCue.buttonTextClass
-                      )}
-                      aria-label={latestRunNavCue.ariaResults}
-                      onClick={() => openRunView("config_toggle")}
-                    >
-                      <span className={latestRunNavCue.dotClass} aria-hidden />
-                      View results
-                    </Button>
-                  ) : canOpenLastRun ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className={cn(
-                        "h-8 gap-1.5 px-2 text-xs",
-                        latestRunNavCue.buttonTextClass
-                      )}
-                      aria-label={latestRunNavCue.ariaOpen}
-                      onClick={() =>
-                        lastSavedIteration &&
-                        onOpenLastRun?.(lastSavedIteration)
-                      }
-                    >
-                      <span className={latestRunNavCue.dotClass} aria-hidden />
-                      Open last run
-                    </Button>
-                  ) : null
-                ) : null}
                 {onExportDraft ? (
                   <Button
                     type="button"
@@ -2043,6 +2044,22 @@ export function TestTemplateEditor({
                 )}
               </div>
             </div>
+            <CaseEditorTabs
+              active="edit"
+              onSelect={(tab) => {
+                if (tab === "runs") {
+                  openRunView("config_toggle");
+                }
+              }}
+              runsDotClass={
+                latestAvailableIteration ? latestRunNavCue.dotClass : undefined
+              }
+              runsAriaLabel={
+                latestAvailableIteration
+                  ? latestRunNavCue.ariaResults
+                  : "Runs (no runs yet)"
+              }
+            />
             {runPrimaryDisabled && !isRunningCompare && runDisabledTooltip ? (
               <p
                 className="text-xs leading-snug text-muted-foreground sm:text-right"
@@ -2233,6 +2250,28 @@ export function TestTemplateEditor({
               ) : null}
             </div>
 
+            <div className="mt-3">
+              <CaseEditorTabs
+                active="runs"
+                onSelect={(tab) => {
+                  if (tab === "edit") {
+                    setEditorMode("config");
+                    onSelectTab?.("edit");
+                  }
+                }}
+                runsDotClass={
+                  latestAvailableIteration
+                    ? latestRunNavCue.dotClass
+                    : undefined
+                }
+                runsAriaLabel={
+                  latestAvailableIteration
+                    ? latestRunNavCue.ariaResults
+                    : "Runs"
+                }
+              />
+            </div>
+
             {selectedCompareRecords.length > 1 ? (
               <div className="mt-4 flex gap-2 overflow-x-auto lg:hidden">
                 {selectedCompareRecords.map((record) => (
@@ -2258,13 +2297,15 @@ export function TestTemplateEditor({
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6">
-            {selectedCompareRecords.length === 0 ? (
+            {isCompareRouteLoading ? (
+              compareRouteLoadingState
+            ) : selectedCompareRecords.length === 0 ? (
               <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
                 <div>
-                  <div className="text-sm font-medium">No compare run yet</div>
+                  <div className="text-sm font-medium">No runs yet</div>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Choose at least one model and run compare from the prompt
-                    editor.
+                    Switch back to Edit and click Run to create your first
+                    iteration.
                   </p>
                 </div>
               </div>

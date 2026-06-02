@@ -9,7 +9,6 @@ import { computeIterationResult } from "../pass-criteria";
 import { RunCaseIterationBar } from "../run-case-list-shared";
 import type { RunCaseIterationOutcome } from "../run-case-groups";
 import { formatRunCaseLatencyMs } from "../run-case-groups";
-import { passRateColorClass } from "../suite-overview-presentation";
 import type { CellData } from "./use-cross-host-data";
 import type { EvalIteration } from "../types";
 
@@ -268,12 +267,7 @@ export function HostCell({ data, metricComparisons }: HostCellProps) {
     data.passRate !== null ? `${Math.round(data.passRate)}%` : null;
   const accuracyBadge =
     accuracyLabel != null ? (
-      <span
-        className={cn(
-          "font-mono text-xs font-semibold tabular-nums leading-none",
-          passRateColorClass(data.passRate)
-        )}
-      >
+      <span className="font-mono text-xs tabular-nums leading-none text-muted-foreground">
         {accuracyLabel}
       </span>
     ) : null;

@@ -10,7 +10,7 @@ import {
   evalSurfaceRowHoverClass,
 } from "../eval-surface-chrome";
 import { HostCell } from "./host-cell";
-import type { CrossHostData, HostColumn } from "./use-cross-host-data";
+import type { CellData, CrossHostData, HostColumn } from "./use-cross-host-data";
 import {
   buildBaseMetricComparisons,
   formatHostFallback,
@@ -21,6 +21,12 @@ interface CrossHostMatrixProps {
   data: CrossHostData;
   expanded?: boolean;
   onTestCaseClick?: (testCaseId: string) => void;
+  /**
+   * Click a per-(case,host) cell. The cell carries the iterations that
+   * produced its aggregate; consumers route to that iteration's trace
+   * (typically the run-detail view filtered to that case).
+   */
+  onCellOpen?: (cell: CellData, hostId: string, caseId: string) => void;
 }
 
 function HostColumnHeader({ col }: { col: HostColumn }) {
@@ -51,6 +57,7 @@ export function CrossHostMatrix({
   data,
   expanded = false,
   onTestCaseClick,
+  onCellOpen,
 }: CrossHostMatrixProps) {
   const { hostColumns, caseRows, matrix } = data;
 
@@ -61,15 +68,13 @@ export function CrossHostMatrix({
           <tr className={runCaseListHeadClassName}>
             <th
               className={cn(
-                "sticky left-0 z-20 min-w-[14rem] border-b border-r border-border/60 text-left",
+                "sticky left-0 z-20 min-w-[14rem] border-b border-r border-border/60 px-4 py-2 text-left",
                 evalSurfaceHeaderClass,
-                runCaseTitleClassName,
-                "px-4 py-2.5 font-sans text-base font-semibold normal-case tracking-normal text-foreground sm:text-lg"
               )}
             >
               Case
-              <span className="ml-1.5 font-mono text-sm font-normal tabular-nums text-muted-foreground">
-                · {caseRows.length}
+              <span className="ml-1.5 font-mono tabular-nums text-muted-foreground/80">
+                {caseRows.length}
               </span>
             </th>
             {hostColumns.map((col) => (
@@ -97,54 +102,91 @@ export function CrossHostMatrix({
               <tr
                 key={row.caseId}
                 data-testid={`test-case-row-${row.caseId}`}
-                className={cn(
-                  onTestCaseClick && "cursor-pointer",
-                  onTestCaseClick && evalSurfaceRowHoverClass
-                )}
-                tabIndex={onTestCaseClick ? 0 : undefined}
-                role={onTestCaseClick ? "button" : undefined}
-                aria-label={
-                  onTestCaseClick
-                    ? `Open test case: ${row.caseTitle}`
-                    : undefined
-                }
-                onClick={onTestCaseClick ? openCase : undefined}
-                onKeyDown={
-                  onTestCaseClick
-                    ? (event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openCase();
-                        }
-                      }
-                    : undefined
-                }
               >
-                <td className="sticky left-0 z-10 border-r border-border/40 bg-inherit px-4 py-2.5 backdrop-blur-sm">
+                <td
+                  className={cn(
+                    "sticky left-0 z-10 border-r border-border/40 bg-inherit px-4 py-2.5 backdrop-blur-sm",
+                    onTestCaseClick && "cursor-pointer hover:bg-muted/40",
+                  )}
+                  tabIndex={onTestCaseClick ? 0 : undefined}
+                  role={onTestCaseClick ? "button" : undefined}
+                  aria-label={
+                    onTestCaseClick
+                      ? `Open test case: ${row.caseTitle}`
+                      : undefined
+                  }
+                  onClick={onTestCaseClick ? openCase : undefined}
+                  onKeyDown={
+                    onTestCaseClick
+                      ? (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openCase();
+                          }
+                        }
+                      : undefined
+                  }
+                >
                   <span
-                    className={cn(runCaseTitleClassName, "block")}
+                    className={cn(
+                      runCaseTitleClassName,
+                      "block",
+                      onTestCaseClick &&
+                        "underline decoration-dotted underline-offset-4 decoration-muted-foreground/40",
+                    )}
                     title={row.caseTitle}
                   >
                     {row.caseTitle}
                   </span>
                 </td>
-                {hostColumns.map((col) => (
-                  <td
-                    key={col.hostId}
-                    className={cn(
-                      "border-r border-border/50 align-top",
-                      evalSurfaceCellClass
-                    )}
-                  >
-                    <HostCell
-                      data={byHost?.get(col.hostId)}
-                      metricComparisons={projectComparisonsForHost(
-                        baseComparisons,
-                        col.hostId,
+                {hostColumns.map((col) => {
+                  const cell = byHost?.get(col.hostId);
+                  const cellInteractive = !!(
+                    onCellOpen &&
+                    cell &&
+                    cell.totalCount > 0
+                  );
+                  const openCell = () => {
+                    if (cell) onCellOpen?.(cell, col.hostId, row.caseId);
+                  };
+                  return (
+                    <td
+                      key={col.hostId}
+                      className={cn(
+                        "border-r border-border/50 align-top",
+                        evalSurfaceCellClass,
+                        cellInteractive &&
+                          cn("cursor-pointer", evalSurfaceRowHoverClass),
                       )}
-                    />
-                  </td>
-                ))}
+                      tabIndex={cellInteractive ? 0 : undefined}
+                      role={cellInteractive ? "button" : undefined}
+                      aria-label={
+                        cellInteractive
+                          ? `Open ${col.hostName ?? col.hostId} iteration for ${row.caseTitle}`
+                          : undefined
+                      }
+                      onClick={cellInteractive ? openCell : undefined}
+                      onKeyDown={
+                        cellInteractive
+                          ? (event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openCell();
+                              }
+                            }
+                          : undefined
+                      }
+                    >
+                      <HostCell
+                        data={cell}
+                        metricComparisons={projectComparisonsForHost(
+                          baseComparisons,
+                          col.hostId,
+                        )}
+                      />
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}

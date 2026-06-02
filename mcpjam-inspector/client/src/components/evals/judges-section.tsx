@@ -1,6 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import { Sparkles } from "lucide-react";
-import { Input } from "@mcpjam/design-system/input";
+import { useMemo } from "react";
 import { Label } from "@mcpjam/design-system/label";
 import {
   Select,
@@ -27,7 +25,6 @@ import type { EvalJudgeConfig } from "./types";
  */
 
 const MANAGED_DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
-const DEFAULT_THRESHOLD = 0.7;
 
 interface JudgesSectionProps {
   value: EvalJudgeConfig | undefined;
@@ -60,19 +57,18 @@ export function JudgesSection({
   value,
   onChange,
   availableModels,
-  title = "Judges",
-  description = "Advisory LLM-as-judge scorers that grade run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
+  title = "LLM as Judge",
+  description = "Advisory grading of run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
   chrome = "panel",
 }: JudgesSectionProps) {
   const isBare = chrome === "bare";
   const gc = value?.goalCompletion;
-  // Treat absence as "enabled" to mirror GOAL_COMPLETION_DEFAULTS
-  // (`enabled: true`). Only an explicit `enabled: false` switches the
-  // suite to off; otherwise the toggle reads as on by default so users
-  // see the configuration affordance instead of an opt-in gate.
+  // Default-on: GOAL_COMPLETION_DEFAULTS.enabled = true. Only an explicit
+  // `enabled: false` flips the toggle off, matching what the resolver
+  // does at run time. Cost stays gated by `autoRun: false` + the explicit
+  // Run judge click on the run-detail card.
   const enabled = gc?.enabled !== false;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
-  const threshold = gc?.threshold ?? DEFAULT_THRESHOLD;
   const autoRun = gc?.autoRun === true;
 
   const modelOptions = useMemo(() => {
@@ -100,50 +96,28 @@ export function JudgesSection({
     onChange(pruneEmpty(nextConfig));
   };
 
-  // The threshold field keeps a local draft so typing doesn't fight the
-  // persisted prop: `onChange` here drives an async `updateSuite`, and feeding
-  // the input straight from the round-tripped prop snaps a half-typed decimal
-  // back mid-edit. Type into the draft, commit (clamp / default) on blur, and
-  // re-sync the draft whenever the persisted value changes from elsewhere.
-  const [thresholdDraft, setThresholdDraft] = useState(String(threshold));
-  useEffect(() => {
-    setThresholdDraft(String(threshold));
-  }, [threshold]);
-
-  const commitThreshold = () => {
-    const raw = thresholdDraft.trim();
-    if (raw === "") {
-      update({ threshold: undefined });
-      return;
-    }
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) {
-      setThresholdDraft(String(threshold));
-      return;
-    }
-    const clamped = Math.min(1, Math.max(0, parsed));
-    update({ threshold: clamped === DEFAULT_THRESHOLD ? undefined : clamped });
-  };
-
   const body = (
     <>
-      {/* Goal Completion — V1 only judge */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground">
-              Goal completion
-            </span>
-            {!isBare ? (
-              <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                advisory · LLM judge
+          {isBare ? (
+            // Parent `SettingsSection` already labels "LLM as Judge" and
+            // describes it; surfacing the same name + blurb here would just
+            // repeat the section header. In `panel` chrome there's no outer
+            // label, so we keep the sub-heading + description.
+            <p className="text-[12px] text-muted-foreground">
+              Grade each case&apos;s final answer against its objective.
+            </p>
+          ) : (
+            <>
+              <span className="text-sm font-medium text-foreground">
+                LLM as Judge
               </span>
-            ) : null}
-          </div>
-          <p className="mt-0.5 text-[11px] text-muted-foreground/80">
-            Grades whether each case&apos;s final answer satisfied its{" "}
-            <code className="font-mono">expectedOutput</code>.
-          </p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground/80">
+                Grades each case&apos;s final answer against its objective.
+              </p>
+            </>
+          )}
         </div>
         <Switch
           checked={enabled}
@@ -154,7 +128,7 @@ export function JudgesSection({
             // the user just disabled.
             update({ enabled: checked })
           }
-          aria-label="Enable Goal Completion judge for this suite"
+          aria-label="Enable LLM as Judge for this suite"
         />
       </div>
 
@@ -190,30 +164,11 @@ export function JudgesSection({
             </SelectContent>
           </Select>
 
-          {/* Threshold + Auto-run are intentionally hidden in `bare` mode —
-              the suite settings sheet keeps Judges down to a single
-              enable-toggle + model selector. Both are still configurable
-              in the full panel chrome and persisted via the same shape. */}
+          {/* Threshold is hidden from the suite UI — runs grade against a
+              fixed default and surface only the model choice. Auto-run is
+              still configurable in the full panel chrome. */}
           {!isBare ? (
             <>
-              <Label
-                htmlFor="suite-goal-threshold"
-                className="text-sm text-muted-foreground"
-              >
-                Threshold
-              </Label>
-              <Input
-                id="suite-goal-threshold"
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={thresholdDraft}
-                onChange={(e) => setThresholdDraft(e.target.value)}
-                onBlur={commitThreshold}
-                className="h-8 w-20 text-right text-sm tabular-nums"
-              />
-
               <Label
                 htmlFor="suite-goal-auto-run"
                 className="text-sm text-muted-foreground"
@@ -226,7 +181,7 @@ export function JudgesSection({
                 onCheckedChange={(checked: boolean) =>
                   update({ autoRun: checked || undefined })
                 }
-                aria-label="Auto-run the Goal Completion judge on every new completed run"
+                aria-label="Auto-run the LLM as Judge on every new completed run"
               />
             </>
           ) : null}
@@ -249,10 +204,7 @@ export function JudgesSection({
       className="rounded-lg border border-border/40 bg-card/30 p-4 space-y-4"
     >
       <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">{title}</h3>
-        </div>
+        <h3 className="text-sm font-semibold">{title}</h3>
         {description ? (
           <p className="text-[12px] text-muted-foreground">{description}</p>
         ) : null}
