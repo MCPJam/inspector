@@ -67,9 +67,16 @@ export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
 /** Foreground text color for low pass rates, negative deltas, and fail counts in dense eval UI. */
 export const EVAL_LOW_PASS_RATE_TEXT_CLASS = "text-destructive";
 
-/** Filled delete/destructive actions — pastel surface `/50`, neutral text. */
+/**
+ * Filled delete/destructive actions — pastel surface `/50`, neutral text.
+ *
+ * `hover:bg-destructive/50` is an explicit override: without it, the design-system
+ * `Button` default variant's `hover:bg-primary/90` wins under twMerge and the
+ * button would flash brand-orange on hover. Pinning hover-bg to the same `/50`
+ * destructive token lets `hover:brightness-95` do the affordance work.
+ */
 export const EVAL_DESTRUCTIVE_BUTTON_CLASS =
-  "border-transparent bg-destructive/50 text-foreground shadow-xs hover:brightness-95 focus-visible:ring-destructive/35";
+  "border-transparent bg-destructive/50 text-foreground shadow-xs hover:bg-destructive/50 hover:brightness-95 focus-visible:ring-destructive/35";
 
 /** Pastel fail fill for stacked iteration bars. */
 export const EVAL_FAIL_BAR_CLASS = "bg-destructive/50";
@@ -90,7 +97,7 @@ export const UI_CONFIG = {
     PASSED: "var(--color-success)",
     FAILED: "var(--color-destructive)",
     PENDING: "var(--color-warning)",
-    CANCELLED: "var(--muted-foreground)",
+    CANCELLED: "var(--color-muted-foreground)",
   },
 } as const;
 
