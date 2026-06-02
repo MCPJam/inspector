@@ -438,7 +438,6 @@ function EvalsTabContent({
         const createdSuite = await mutations.createTestSuiteMutation({
           projectId,
           name: payload.name,
-          description: payload.description,
           // environment.servers is left empty: hosts own server selection
           // now, and the runner derives the per-run server set from each
           // attachment's snapshot. Suites with zero attachments are valid

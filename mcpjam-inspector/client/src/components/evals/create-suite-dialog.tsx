@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useConvexAuth } from "convex/react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import { Textarea } from "@mcpjam/design-system/textarea";
+import { useProjectServerAttachments } from "@/hooks/useViews";
+import { useHostList } from "@/hooks/useClients";
 import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
@@ -12,7 +14,6 @@ import { ServerAttachmentPicker } from "./server-attachment-picker";
 
 export type CreateSuitePayload = {
   name: string;
-  description?: string;
   /**
    * Hosts the suite runs against. Each attachment fans out into its own
    * run on "Run all hosts" — the host's snapshotted config is the source
@@ -40,7 +41,6 @@ export function CreateSuiteDialog({
   projectId = null,
 }: CreateSuiteDialogProps) {
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
   const [hostAttachments, setHostAttachments] = useState<
     HostAttachmentDraft[]
   >([]);
@@ -49,17 +49,48 @@ export function CreateSuiteDialog({
   );
   const [isSaving, setIsSaving] = useState(false);
 
+  const { isAuthenticated } = useConvexAuth();
+  const shouldFetchDefaults = open && hostsEnabled && projectId !== null;
+  const { serverAttachments } = useProjectServerAttachments({
+    isAuthenticated: isAuthenticated && shouldFetchDefaults,
+    projectId: shouldFetchDefaults ? projectId : null,
+  });
+  const { hosts } = useHostList({
+    isAuthenticated: isAuthenticated && shouldFetchDefaults,
+    projectId: shouldFetchDefaults ? projectId : null,
+  });
+
   useEffect(() => {
     if (!open) {
       setName("");
-      setDescription("");
       setHostAttachments([]);
       setServerAttachmentId(null);
       setIsSaving(false);
     }
   }, [open]);
 
-  const canSubmit = name.trim().length > 0 && !isSaving;
+  useEffect(() => {
+    if (!shouldFetchDefaults) return;
+    if (serverAttachmentId === null && serverAttachments.length > 0) {
+      setServerAttachmentId(serverAttachments[0]._id);
+    }
+  }, [shouldFetchDefaults, serverAttachmentId, serverAttachments]);
+
+  useEffect(() => {
+    if (!shouldFetchDefaults) return;
+    if (hostAttachments.length === 0 && hosts.length > 0) {
+      setHostAttachments([
+        { namedHostId: hosts[0].hostId, enabledOptionalServerIds: [] },
+      ]);
+    }
+  }, [shouldFetchDefaults, hostAttachments.length, hosts]);
+
+  const attachmentsRequired = hostsEnabled && projectId !== null;
+  const hasRequiredAttachments =
+    !attachmentsRequired ||
+    (serverAttachmentId !== null && hostAttachments.length > 0);
+  const canSubmit =
+    name.trim().length > 0 && hasRequiredAttachments && !isSaving;
 
   const handleSubmit = async () => {
     if (!canSubmit) {
@@ -70,7 +101,6 @@ export function CreateSuiteDialog({
     try {
       await onSubmit({
         name: name.trim(),
-        description: description.trim() || undefined,
         ...(hostAttachments.length > 0 ? { hostAttachments } : {}),
         ...(serverAttachmentId ? { serverAttachmentId } : {}),
       });
@@ -102,17 +132,6 @@ export function CreateSuiteDialog({
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Customer support workflows"
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium text-foreground">
-              Description
-            </label>
-            <Textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Optional context for what this suite covers."
             />
           </div>
 
@@ -154,7 +173,12 @@ export function CreateSuiteDialog({
           ) : null}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="sm:items-center">
+          {attachmentsRequired && !hasRequiredAttachments && name.trim().length > 0 ? (
+            <p className="mr-auto text-xs text-muted-foreground">
+              Attach a server and at least one client to create the suite.
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="outline"
