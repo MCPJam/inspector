@@ -395,7 +395,12 @@ export function TestCasesOverview({
               </div>
             ) : null}
           </div>
-        ) : !showDisconnectedPlaygroundEmptyState ? (
+        ) : !showDisconnectedPlaygroundEmptyState &&
+          !(
+            !isByHostView &&
+            hideViewModeSelect &&
+            testCaseStats.length === 0
+          ) ? (
           <div
             className={cn(
               "shrink-0 flex items-center justify-between gap-3 border-b",
@@ -483,12 +488,13 @@ export function TestCasesOverview({
                 className="h-auto min-h-[240px]"
               />
             ) : hideViewModeSelect ? (
-              <EmptyState
-                icon={Puzzle}
-                title="No test cases yet"
-                description="Click Generate to create a starter set from your tools, or New case to add one manually."
-                className="h-auto min-h-[240px]"
-              />
+              <div className="flex min-h-[200px] items-center justify-center px-4 py-12">
+                <p className="text-sm text-muted-foreground">
+                  No test cases yet — click{" "}
+                  <span className="text-foreground">Generate</span> or{" "}
+                  <span className="text-foreground">New case</span>.
+                </p>
+              </div>
             ) : (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No cases found.

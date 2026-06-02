@@ -146,14 +146,7 @@ export function SuiteDashboard({
       >
         <span>{label}</span>
         {typeof count === "number" ? (
-          <span
-            className={cn(
-              "rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
-              active
-                ? "bg-primary/10 text-foreground"
-                : "bg-muted text-muted-foreground",
-            )}
-          >
+          <span className="text-xs font-normal tabular-nums text-muted-foreground">
             {count}
           </span>
         ) : null}
@@ -174,7 +167,7 @@ export function SuiteDashboard({
       <div
         role="tablist"
         aria-label="Suite content"
-        className="flex w-full shrink-0 items-center gap-8 border-b border-border/60"
+        className="flex w-full shrink-0 items-center gap-8 border-b border-border/40"
       >
         {renderTab("runs", "Runs", runs.length)}
         {renderTab("cases", "Cases", cases.length)}
