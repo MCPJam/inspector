@@ -17,7 +17,7 @@
  * inline error and disable save up the tree.
  */
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -639,39 +639,22 @@ function StructuredArgsEditor({
       ) : (
         <ul className="space-y-1.5">
           {entries.map(([key, val]) => (
-            <li
+            <StructuredArgsRow
+              // `key` here doubles as React's reconciliation id AND the
+              // current persisted key. The row keeps its own draft of
+              // edits so intermediate collisions don't lose user input.
               key={key}
-              className="flex items-start gap-1.5 rounded-md bg-background/60 p-1.5 ring-1 ring-border/30"
-            >
-              <Input
-                value={key}
-                onChange={(e) => setEntry(key, e.target.value, val)}
-                placeholder="key"
-                className="h-9 w-28 shrink-0 font-mono text-xs"
-                disabled={readOnly}
-                aria-label="Argument key"
-              />
-              <div className="min-w-0 flex-1">
-                <ArgLeafPicker
-                  value={val}
-                  onChange={(next) => setEntry(key, key, next)}
-                  argumentMatching={mode}
-                  disabled={readOnly}
-                />
-              </div>
-              {!readOnly ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                  onClick={() => removeKey(key)}
-                  aria-label={`Remove argument ${key}`}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              ) : null}
-            </li>
+              persistedKey={key}
+              value={val}
+              mode={mode}
+              readOnly={readOnly}
+              isKeyTaken={(candidate) =>
+                candidate !== key && Object.hasOwn(value, candidate)
+              }
+              onCommitKey={(newKey) => setEntry(key, newKey, val)}
+              onChangeValue={(next) => setEntry(key, key, next)}
+              onRemove={() => removeKey(key)}
+            />
           ))}
         </ul>
       )}
@@ -688,6 +671,109 @@ function StructuredArgsEditor({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Single row in {@link StructuredArgsEditor}. Owns a draft of the key
+ * input so a rename to a colliding name doesn't immediately overwrite
+ * another row (sequential writes in the parent's loop made the loser
+ * non-deterministic). On collision we render a red border and suppress
+ * the commit; the user fixes the name (or leaves it equal to the
+ * persisted key) before any onChange fires upward. Value edits commit
+ * normally — they're independent of the key rename.
+ */
+function StructuredArgsRow({
+  persistedKey,
+  value,
+  mode,
+  readOnly,
+  isKeyTaken,
+  onCommitKey,
+  onChangeValue,
+  onRemove,
+}: {
+  persistedKey: string;
+  value: unknown;
+  mode: ArgMatchMode;
+  readOnly: boolean;
+  isKeyTaken: (candidate: string) => boolean;
+  onCommitKey: (next: string) => void;
+  onChangeValue: (next: unknown) => void;
+  onRemove: () => void;
+}) {
+  const [draftKey, setDraftKey] = useState(persistedKey);
+
+  // Re-sync the draft when the persisted key changes (e.g. a successful
+  // upstream commit, or an out-of-band reset).
+  useEffect(() => {
+    setDraftKey(persistedKey);
+  }, [persistedKey]);
+
+  const collides = draftKey !== persistedKey && isKeyTaken(draftKey);
+  const isEmpty = draftKey.length === 0;
+
+  return (
+    <li className="flex items-start gap-1.5 rounded-md bg-background/60 p-1.5 ring-1 ring-border/30">
+      <div className="flex flex-col">
+        <Input
+          value={draftKey}
+          onChange={(e) => {
+            const candidate = e.target.value;
+            setDraftKey(candidate);
+            // Only commit when the candidate is unique and non-empty;
+            // collisions / empties stay in local state so the user can
+            // finish typing without overwriting another row.
+            if (candidate === persistedKey) return;
+            if (candidate.length === 0) return;
+            if (isKeyTaken(candidate)) return;
+            onCommitKey(candidate);
+          }}
+          placeholder="key"
+          className={
+            "h-9 w-28 shrink-0 font-mono text-xs" +
+            (collides || isEmpty
+              ? " border-destructive focus-visible:ring-destructive"
+              : "")
+          }
+          disabled={readOnly}
+          aria-invalid={collides || isEmpty ? true : undefined}
+          aria-label="Argument key"
+          title={
+            collides
+              ? "Key already exists"
+              : isEmpty
+                ? "Key cannot be empty"
+                : undefined
+          }
+        />
+        {collides ? (
+          <span className="mt-0.5 text-[10px] text-destructive">
+            Key already exists
+          </span>
+        ) : null}
+      </div>
+      <div className="min-w-0 flex-1">
+        <ArgLeafPicker
+          value={value}
+          onChange={(next) => onChangeValue(next)}
+          argumentMatching={mode}
+          disabled={readOnly}
+        />
+      </div>
+      {!readOnly ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+          onClick={onRemove}
+          aria-label={`Remove argument ${persistedKey}`}
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
+    </li>
   );
 }
 
