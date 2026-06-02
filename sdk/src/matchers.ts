@@ -266,6 +266,16 @@ function callsCompatible(
 type PairResult = {
   /** expected index → actual index, for every successful pairing */
   expectedToActual: Map<number, number>;
+  /**
+   * For `superset` mode only: the actual-index cursor value at the moment
+   * pass 1 began searching for each expected index. The diagnostics pass
+   * uses this to bound its left edge so it never pairs a still-unmatched
+   * expected against an actual that occurred BEFORE the previous
+   * successful superset pairing (which would yield wrong "called with
+   * wrong args" diagnostics). Indexed by expected position; entries
+   * `>= actual.length` mean pass 1 exhausted actuals before this E.
+   */
+  supersetCursorByExpected?: number[];
 };
 
 /**
@@ -296,9 +306,14 @@ function pair(
   if (mode === "superset") {
     // Greedy left-to-right consume: cursor k walks forward through actual,
     // never backtracks. For each expected[i] in order, advance k until
-    // a compatible actual is found; pair and k++.
+    // a compatible actual is found; pair and k++. Snapshot the cursor at
+    // the moment we begin scanning for each expected[i] so the
+    // diagnostics pass can preserve the same left-bound and not regress
+    // into actuals before the previous successful pairing.
     let k = 0;
+    const supersetCursorByExpected: number[] = new Array(expected.length);
     for (let i = 0; i < expected.length; i++) {
+      supersetCursorByExpected[i] = k;
       while (k < actual.length) {
         if (callsCompatible(expected[i], actual[k], argumentMatching)) {
           expectedToActual.set(i, k);
@@ -308,11 +323,15 @@ function pair(
         k++;
       }
       if (k >= actual.length) {
-        // Remaining expected[i+1..] are missing; loop will exit naturally.
+        // Remaining expected[i+1..] are missing; record the exhausted cursor
+        // for them too so pass 2 leaves their left-bound at actual.length.
+        for (let j = i + 1; j < expected.length; j++) {
+          supersetCursorByExpected[j] = k;
+        }
         break;
       }
     }
-    return { expectedToActual };
+    return { expectedToActual, supersetCursorByExpected };
   }
 
   // mode === "ignore": greedy by expected iteration order over unconsumed
@@ -412,7 +431,7 @@ export function evaluateToolCalls(
   }
 
   // Pass 1: trajectory-aware pairing on toolName + args.
-  const { expectedToActual } = pair(
+  const { expectedToActual, supersetCursorByExpected } = pair(
     normalizedExpected,
     normalizedActual,
     toolCallOrder,
@@ -426,23 +445,29 @@ export function evaluateToolCalls(
   // a same-name pairing and report it as an argument mismatch. This keeps
   // the "tool was called with wrong args" diagnostic that existed before
   // the trajectory rework. Order of scan mirrors the per-mode primitive:
-  // strict checks the same index; superset advances a cursor; ignore
-  // scans left-to-right.
+  // strict checks the same index; superset preserves the pass 1 cursor so
+  // a missing-expected is never paired against an actual that occurred
+  // before the previous successful superset match; ignore scans
+  // left-to-right.
   for (let ei = 0; ei < normalizedExpected.length; ei++) {
     if (matchedExpectedIndices.has(ei)) continue;
     const exp = normalizedExpected[ei];
     const expectedArgs = exp.arguments || {};
 
     // In strict mode, only the same-index actual is eligible. In superset,
-    // we already advanced past anything to the left; scan forward from the
-    // smallest unconsumed index ≥ the last successful pairing. In ignore,
-    // any unconsumed actual is eligible. For Pass 2 we keep things simple
-    // and consistent across modes: scan left-to-right over unconsumed.
+    // start the scan at the pass 1 cursor for this expected — anything to
+    // the left of it was already considered (and skipped or consumed) by
+    // pass 1's monotonic walk. In ignore, any unconsumed actual is eligible.
     let scanStart = 0;
     let scanEnd = normalizedActual.length;
     if (toolCallOrder === "strict") {
       scanStart = ei;
       scanEnd = Math.min(ei + 1, normalizedActual.length);
+    } else if (toolCallOrder === "superset" && supersetCursorByExpected) {
+      scanStart = Math.min(
+        supersetCursorByExpected[ei] ?? 0,
+        normalizedActual.length,
+      );
     }
 
     for (let ai = scanStart; ai < scanEnd; ai++) {

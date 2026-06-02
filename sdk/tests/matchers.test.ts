@@ -385,6 +385,26 @@ describe("evaluateToolCalls — toolCallOrder: superset", () => {
     );
     expect(result.passed).toBe(false);
   });
+
+  it("diagnostics pass preserves the superset cursor with argumentMatching:ignore", () => {
+    // E=[a,b], A=[b,a]: pass 1 pairs E[0]=a with A[1]=a (cursor advances
+    // past A[0]=b). E[1]=b is unpaired. With the cursor preserved into
+    // pass 2 we must NOT pair E[1]=b against A[0]=b (which sits BEFORE
+    // the prior successful match at A[1]) — that pairing would
+    // misrepresent the trajectory. So b stays "missing" (unmatched
+    // expected) and the leading A[0]=b shows up as "extra".
+    const result = evaluateToolCalls(
+      [tc("a"), tc("b")],
+      [tc("b"), tc("a")],
+      { toolCallOrder: "superset", argumentMatching: "ignore" },
+    );
+    expect(result.passed).toBe(false);
+    expect(result.missing.map((c) => c.toolName)).toEqual(["b"]);
+    expect(result.extra.map((c) => c.toolName)).toEqual(["b"]);
+    // The b in argumentMismatches would only appear if pass 2 wrongly
+    // paired E[1]=b against A[0]=b — assert it didn't.
+    expect(result.argumentMismatches).toEqual([]);
+  });
 });
 
 describe("evaluateToolCalls — argumentMatching: exact", () => {
