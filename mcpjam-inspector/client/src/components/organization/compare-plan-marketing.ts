@@ -1,7 +1,7 @@
 /**
  * Marketing compare-plans table: product rows mirror `mcpjam_pricing_page.html`;
- * tier caps and org/project limits follow the internal tier-limits spec (projects,
- * members, servers, audit retention, project modes, SSO, custom roles).
+ * count-based usage is uncapped, while credits and enterprise security features
+ * carry the remaining commercial distinctions.
  */
 
 export type ComparePlanCell =
@@ -36,13 +36,13 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     rows: [
       {
         label: "Seat limit",
-        free: t("5"),
+        free: t("Unlimited"),
         team: t("Unlimited", true),
         enterprise: t("Custom", true),
       },
       {
         label: "Projects",
-        free: t("3"),
+        free: t("Unlimited"),
         team: t("Unlimited", true),
         enterprise: t("Custom", true),
       },
@@ -78,7 +78,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       },
       {
         label: "Triage Insights",
-        free: x,
+        free: c,
         team: c,
         enterprise: c,
       },
@@ -87,19 +87,6 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         free: x,
         team: x,
         enterprise: c,
-      },
-      {
-        label: "Eval iteration cap",
-        free: t("100 iter. / mo"),
-        team: t("5,000 iter. / mo", true),
-        enterprise: t("Custom", true),
-      },
-      {
-        label: "Eval iteration overage",
-        tooltipKey: "Eval iteration overage",
-        free: x,
-        team: t("$0.02 / iter.", true),
-        enterprise: t("Custom", true),
       },
     ],
   },
