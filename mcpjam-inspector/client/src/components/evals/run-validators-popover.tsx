@@ -14,8 +14,10 @@ interface RunValidatorsPopoverProps {
   /**
    * Fully-resolved options that already apply to this run (suite default
    * merged with case override). The popover layers `runOverride` on top.
+   * Returned by `resolveMatchOptions`, which has dropped legacy
+   * `allowExtraToolCalls` in favor of `maxExtraToolCalls`.
    */
-  persistedEffective?: Required<EvalMatchOptions>;
+  persistedEffective?: Required<Omit<EvalMatchOptions, "allowExtraToolCalls">>;
   runOverride: EvalMatchOptions | undefined;
   onChange: (next: EvalMatchOptions | undefined) => void;
   disabled?: boolean;

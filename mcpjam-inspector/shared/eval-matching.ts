@@ -37,7 +37,30 @@ export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
  */
 export const matchOptionsSchema = z
   .object({
-    toolCallOrder: z.enum(["ignore", "strict"]).optional(),
+    toolCallOrder: z.enum(["ignore", "strict", "superset"]).optional(),
+    /**
+     * Bound on extra actual tool calls beyond what was paired with
+     * expected. `null` = unlimited; a non-negative integer caps the count.
+     * Must be `Number.isInteger(n) && n >= 0` when not null — the
+     * Zod refinement here rejects -1 / 0.5 / NaN / Infinity at the
+     * wire boundary before the matcher's runtime guard fires.
+     */
+    maxExtraToolCalls: z
+      .union([
+        z
+          .number()
+          .refine(
+            (n) => Number.isInteger(n) && n >= 0,
+            "maxExtraToolCalls must be a non-negative integer or null",
+          ),
+        z.null(),
+      ])
+      .optional(),
+    /**
+     * LEGACY: prefer `maxExtraToolCalls`. Accepted on the wire so older
+     * persisted rows and in-flight clients keep working; the SDK matcher
+     * shims `true -> null`, `false -> 0`. Remove after v<NEXT_MINOR>.
+     */
     allowExtraToolCalls: z.boolean().optional(),
     argumentMatching: z.enum(["exact", "partial", "ignore"]).optional(),
   })

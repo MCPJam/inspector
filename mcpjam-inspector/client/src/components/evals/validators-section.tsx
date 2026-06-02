@@ -1,4 +1,6 @@
+import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import {
   Select,
@@ -7,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { Switch } from "@mcpjam/design-system/switch";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 
@@ -14,13 +17,9 @@ const ORDER_OPTIONS: Array<{
   value: Exclude<EvalMatchOptions["toolCallOrder"], undefined>;
   label: string;
 }> = [
+  { value: "strict", label: "Strict order" },
+  { value: "superset", label: "Allow gaps (superset)" },
   { value: "ignore", label: "Any order" },
-  { value: "strict", label: "Strict" },
-];
-
-const EXTRAS_OPTIONS: Array<{ value: "true" | "false"; label: string }> = [
-  { value: "true", label: "Allow extras" },
-  { value: "false", label: "Forbidden" },
 ];
 
 const ARGS_OPTIONS: Array<{
@@ -44,8 +43,14 @@ interface ValidatorsSectionProps {
    * the dropdowns when this layer hasn't pinned a field, and (b) detect when
    * a user picked the same value as the inherited one (we treat that as a
    * no-op and keep the field unpinned).
+   *
+   * `allowExtraToolCalls` on this object is shimmed at read time
+   * (`true → null`, `false → 0`) so legacy persisted records still render
+   * correctly while we transition to `maxExtraToolCalls`.
    */
-  inheritedFrom?: Required<EvalMatchOptions>;
+  inheritedFrom?: Required<
+    Omit<EvalMatchOptions, "allowExtraToolCalls">
+  > & { allowExtraToolCalls?: boolean };
   onChange: (next: EvalMatchOptions | undefined) => void;
   title?: string;
   description?: string;
@@ -59,6 +64,42 @@ function pruneUndefined(
   return entries.length === 0
     ? undefined
     : (Object.fromEntries(entries) as EvalMatchOptions);
+}
+
+/**
+ * LEGACY: read-side shim for `inheritedFrom`. New code writes
+ * `maxExtraToolCalls` directly; old persisted rows may carry
+ * `allowExtraToolCalls`. Translate at the boundary so the UI only ever
+ * deals with the new field. Remove after v<NEXT_MINOR>.
+ */
+function inheritedExtrasCap(
+  inheritedFrom: ValidatorsSectionProps["inheritedFrom"],
+): number | null {
+  if (!inheritedFrom) return MATCH_OPTIONS_DEFAULTS.maxExtraToolCalls;
+  if (inheritedFrom.maxExtraToolCalls !== undefined) {
+    return inheritedFrom.maxExtraToolCalls;
+  }
+  if (inheritedFrom.allowExtraToolCalls !== undefined) {
+    return inheritedFrom.allowExtraToolCalls ? null : 0;
+  }
+  return MATCH_OPTIONS_DEFAULTS.maxExtraToolCalls;
+}
+
+/**
+ * LEGACY: read-side shim for the layer's own pinned value. A row written
+ * before the schema change still has `allowExtraToolCalls`; the UI must
+ * render its number/Unlimited state correctly without an explicit
+ * migration. Remove after v<NEXT_MINOR>.
+ */
+function localExtrasCap(
+  value: EvalMatchOptions | undefined,
+): number | null | undefined {
+  if (!value) return undefined;
+  if (value.maxExtraToolCalls !== undefined) return value.maxExtraToolCalls;
+  if (value.allowExtraToolCalls !== undefined) {
+    return value.allowExtraToolCalls ? null : 0;
+  }
+  return undefined;
 }
 
 const LABELS_COMPACT = {
@@ -81,6 +122,9 @@ export function ValidatorsSection({
   const extrasLabel = isCompact ? LABELS_COMPACT.extras : "Extra tool calls";
   const argsLabel = isCompact ? LABELS_COMPACT.args : "Arguments";
 
+  const extrasFieldId = useId();
+  const extrasUnlimitedId = useId();
+
   const setField = <K extends keyof EvalMatchOptions>(
     field: K,
     next: EvalMatchOptions[K],
@@ -88,22 +132,46 @@ export function ValidatorsSection({
     const merged: EvalMatchOptions = { ...value };
     // If user picked the value already inherited from above, treat as unpin —
     // keeps state minimal and the "Reset" affordance honest.
-    merged[field] = next === inherited[field] ? undefined : next;
+    if (next === (inherited as Record<string, unknown>)[field]) {
+      merged[field] = undefined;
+    } else {
+      merged[field] = next;
+    }
     onChange(pruneUndefined(merged));
   };
 
-  const orderValue: "ignore" | "strict" =
+  /**
+   * Setter for `maxExtraToolCalls` that also strips any legacy
+   * `allowExtraToolCalls` field from the persisted value so we don't
+   * round-trip both. New writes use the new field only.
+   */
+  const setExtrasCap = (next: number | null | undefined) => {
+    const inheritedCap = inheritedExtrasCap(inheritedFrom);
+    const merged: EvalMatchOptions = { ...value };
+    delete merged.allowExtraToolCalls;
+    if (next === undefined || next === inheritedCap) {
+      merged.maxExtraToolCalls = undefined;
+    } else {
+      merged.maxExtraToolCalls = next;
+    }
+    onChange(pruneUndefined(merged));
+  };
+
+  const orderValue: "ignore" | "strict" | "superset" =
     value?.toolCallOrder ?? inherited.toolCallOrder;
-  const extrasValue: "true" | "false" = (
-    value?.allowExtraToolCalls ?? inherited.allowExtraToolCalls
-  )
-    ? "true"
-    : "false";
+
+  const localCap = localExtrasCap(value);
+  const inheritedCap = inheritedExtrasCap(inheritedFrom);
+  const effectiveCap = localCap !== undefined ? localCap : inheritedCap;
+  const extrasUnlimited = effectiveCap === null;
+  const extrasNumber = effectiveCap ?? 0;
+
   const argsValue = value?.argumentMatching ?? inherited.argumentMatching;
 
   const hasAnyOverride =
     !!value &&
     (value.toolCallOrder !== undefined ||
+      value.maxExtraToolCalls !== undefined ||
       value.allowExtraToolCalls !== undefined ||
       value.argumentMatching !== undefined);
 
@@ -124,7 +192,7 @@ export function ValidatorsSection({
           className={
             isCompact
               ? "h-8 w-[10rem] max-w-full shrink-0 text-sm"
-              : "h-8 w-40 text-sm"
+              : "h-8 w-44 text-sm"
           }
         >
           <SelectValue />
@@ -169,16 +237,73 @@ export function ValidatorsSection({
           orderLabel,
           "validators-order",
           orderValue,
-          (v) => setField("toolCallOrder", v as "ignore" | "strict"),
+          (v) =>
+            setField(
+              "toolCallOrder",
+              v as "ignore" | "strict" | "superset",
+            ),
           ORDER_OPTIONS as Array<{ value: string; label: string }>,
         )}
-        {renderRow(
-          extrasLabel,
-          "validators-extras",
-          extrasValue,
-          (v) => setField("allowExtraToolCalls", v === "true"),
-          EXTRAS_OPTIONS as Array<{ value: string; label: string }>,
-        )}
+        {/* Extras row: number input + Unlimited toggle. Unlimited persists
+            null; toggling off persists the current number. */}
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor={extrasFieldId} className="text-sm">
+            {extrasLabel}
+          </Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id={extrasFieldId}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={1}
+              disabled={extrasUnlimited}
+              value={extrasUnlimited ? "" : String(extrasNumber)}
+              placeholder={extrasUnlimited ? "—" : "0"}
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (raw === "") {
+                  setExtrasCap(0);
+                  return;
+                }
+                const parsed = Number(raw);
+                if (
+                  !Number.isFinite(parsed) ||
+                  !Number.isInteger(parsed) ||
+                  parsed < 0
+                ) {
+                  // Ignore invalid keystrokes; the input itself constrains
+                  // type=number, but defensive guard for paste etc.
+                  return;
+                }
+                setExtrasCap(parsed);
+              }}
+              className={isCompact ? "h-8 w-16 text-sm" : "h-8 w-20 text-sm"}
+              aria-label="Maximum extra tool calls"
+            />
+            <Label
+              htmlFor={extrasUnlimitedId}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
+              <Switch
+                id={extrasUnlimitedId}
+                checked={extrasUnlimited}
+                onCheckedChange={(checked) => {
+                  if (checked) {
+                    // Unlimited
+                    setExtrasCap(null);
+                  } else {
+                    // Drop unlimited; default to 0 (strict, no extras) so
+                    // the new bound is immediately meaningful.
+                    setExtrasCap(0);
+                  }
+                }}
+                aria-label="Allow unlimited extra tool calls"
+              />
+              <span>Unlimited</span>
+            </Label>
+          </div>
+        </div>
         {renderRow(
           argsLabel,
           "validators-args",

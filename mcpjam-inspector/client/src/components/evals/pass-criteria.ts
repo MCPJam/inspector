@@ -117,10 +117,17 @@ export function computeIterationPassed(
   }
 
   // For positive tests with no expected calls but tools were called: pass
-  // unless extras are disallowed at this snapshot, in which case those
-  // calls are unexpected extras and must fail.
+  // unless extras are bounded at this snapshot, in which case those calls
+  // are unexpected extras and must fail when over the cap.
+  // LEGACY: drop the allowExtraToolCalls fallback after v<NEXT_MINOR>.
   if (expected.length === 0 && actual.length > 0) {
-    return snapshotMatchOptions?.allowExtraToolCalls !== false;
+    const cap =
+      snapshotMatchOptions?.maxExtraToolCalls !== undefined
+        ? snapshotMatchOptions.maxExtraToolCalls
+        : snapshotMatchOptions?.allowExtraToolCalls === false
+          ? 0
+          : null;
+    return cap === null || actual.length <= cap;
   }
 
   // Apply tolerances from criteria (aggregate-suite leniency, not
@@ -136,12 +143,19 @@ export function computeIterationPassed(
     return false;
   }
 
-  // Snapshot may also fail on out-of-order or extras (when strict).
+  // Snapshot may also fail on out-of-order or extras (when bounded).
   // Mirror the matcher's `passed` for those cases.
+  // LEGACY: drop the allowExtraToolCalls fallback after v<NEXT_MINOR>.
   if (matchResult.outOfOrder.length > 0) {
     return false;
   }
-  if (snapshotMatchOptions?.allowExtraToolCalls === false && matchResult.extra.length > 0) {
+  const cap =
+    snapshotMatchOptions?.maxExtraToolCalls !== undefined
+      ? snapshotMatchOptions.maxExtraToolCalls
+      : snapshotMatchOptions?.allowExtraToolCalls === false
+        ? 0
+        : null;
+  if (cap !== null && matchResult.extra.length > cap) {
     return false;
   }
   return true;
