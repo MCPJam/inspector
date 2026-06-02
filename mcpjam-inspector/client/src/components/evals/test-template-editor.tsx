@@ -139,11 +139,11 @@ interface TestTemplateEditorProps {
   projectId: string | null;
   availableModels: ModelDefinition[];
   /**
-   * Iterations for the entire suite, loaded once by the parent via
+   * Iterations for the entire suite, already subscribed by the parent via
    * `getAllTestCasesAndIterationsBySuite`. We filter to the current case
-   * locally rather than firing a per-case `listTestIterations` query —
-   * same Convex cache key as the parent means navigating into the Runs
-   * tab is a synchronous cache hit instead of a network round trip.
+   * locally instead of opening a second `listTestIterations` subscription
+   * for data the parent already has — one reactive subscription instead
+   * of two, and no spinner when the user drills into the Runs tab.
    */
   suiteIterations: EvalIteration[];
   onBackToList?: () => void;
@@ -483,18 +483,15 @@ export function TestTemplateEditor({
       : "skip"
   ) as EvalIteration | undefined;
 
-  /**
-   * Iterations belonging to the currently-selected case, filtered from the
-   * suite-wide list the parent already subscribes to. Reusing the same
-   * Convex query (cache key) means this is a synchronous derive once the
-   * parent's subscription has hydrated — no separate per-case fetch, no
-   * spinner on the Runs tab when the user drills in.
-   */
+  // Iterations for the currently-selected case, filtered from the suite-wide
+  // list the parent already subscribes to. Cap matches the old per-case
+  // `listTestIterations({ limit: 200 })` so downstream consumers see the same
+  // bounded slice they did before.
   const recentIterations = useMemo<EvalIteration[]>(() => {
     if (!selectedTestCaseId) return [];
-    return suiteIterations.filter(
-      (iteration) => iteration.testCaseId === selectedTestCaseId,
-    );
+    return suiteIterations
+      .filter((iteration) => iteration.testCaseId === selectedTestCaseId)
+      .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
 
   const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
@@ -1030,7 +1027,7 @@ export function TestTemplateEditor({
   };
 
   const latestHistoricalCompareRunId = useMemo(
-    () => resolveLatestCompareRunId(recentIterations ?? []),
+    () => resolveLatestCompareRunId(recentIterations),
     [recentIterations]
   );
   const routeCompareAnchorModelValue = useMemo(
@@ -1126,7 +1123,6 @@ export function TestTemplateEditor({
   useEffect(() => {
     if (
       !currentTestCase ||
-      !recentIterations ||
       selectedModelValues.length === 0 ||
       (routeCompareAnchorIterationId &&
         routeCompareAnchorIteration === undefined)
@@ -1819,7 +1815,7 @@ export function TestTemplateEditor({
       : "lg:grid-cols-3";
   const latestAvailableIteration =
     routeCompareAnchorIteration ??
-    recentIterations?.[0] ??
+    recentIterations[0] ??
     lastSavedIteration ??
     null;
   const latestAvailableResult = latestAvailableIteration
@@ -2152,7 +2148,7 @@ export function TestTemplateEditor({
 
             <TestCaseIterationsTable
               testCase={currentTestCase}
-              iterations={recentIterations ?? []}
+              iterations={recentIterations}
               serverNames={effectiveSuiteServers}
               label="Iteration history"
               emptyState="No iterations yet — run this case to see results here."
