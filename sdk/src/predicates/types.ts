@@ -139,7 +139,20 @@ export const predicateSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("responseMatches"),
-    pattern: z.string().min(1),
+    pattern: z
+      .string()
+      .min(1)
+      .refine(
+        (p) => {
+          try {
+            new RegExp(p);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { message: "Invalid regular expression" },
+      ),
   }),
   z.object({
     type: z.literal("noToolErrors"),

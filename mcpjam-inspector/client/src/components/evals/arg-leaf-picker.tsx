@@ -169,7 +169,10 @@ function stringToLiteral(raw: string): unknown {
   if (raw === "") return "";
   // Match the pre-Phase-3 heuristics so existing cases round-trip
   // identically when the user is still typing literals.
-  if (/^-?\d+\.?\d*$/.test(raw)) {
+  // Require fractional digits when a decimal point is present so an
+  // intermediate `42.` (user is typing `42.5`) does not snap to `42` on
+  // every keystroke. Integers and well-formed decimals both coerce.
+  if (/^-?\d+(\.\d+)?$/.test(raw)) {
     const n = parseFloat(raw);
     if (Number.isFinite(n)) return n;
   }

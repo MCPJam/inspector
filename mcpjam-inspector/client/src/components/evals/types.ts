@@ -207,6 +207,15 @@ export type EvalIteration = {
     advancedConfig?: Record<string, unknown>;
     /** Effective validator options used for this iteration's pass/fail. */
     matchOptions?: EvalMatchOptions;
+    /**
+     * Effective deterministic predicate gate frozen at run-precreate time.
+     * Resolved from suite `defaultPredicates` + the case `predicates`
+     * envelope; matches the contract documented on
+     * {@link EvalTestSuite.defaultPredicates}. Without this field, run-detail
+     * UIs silently fall through to live suite/case state instead of the
+     * snapshot the iteration was actually evaluated against.
+     */
+    predicates?: Predicate[];
   };
   suiteRunId?: string;
   configRevision?: string;
