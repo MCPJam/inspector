@@ -246,7 +246,7 @@ describe("EvalsSuiteListSidebar", () => {
 
     const row = screen.getByTestId("suite-row-s1");
     expect(within(row).getByText("4/10")).toBeInTheDocument();
-    expect(within(row).getByText("sdk")).toBeInTheDocument();
+    expect(within(row).getByText("SDK")).toBeInTheDocument();
   });
 
   it("filters suites with failures-only toggle", async () => {
