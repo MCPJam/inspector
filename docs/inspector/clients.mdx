@@ -90,9 +90,32 @@ From the Clients index page:
 
 Clients are scoped to the project, like servers and views. Every member of a shared project sees the same Client list and any saves sync automatically. This means a teammate can reproduce your exact test conditions by selecting the same Client from the picker — no copy-pasting settings.
 
+## Comparing hosts
+
+The **Compare** view lets you see how multiple host configurations stack up side by side — useful for spotting differences in capabilities, sandbox policies, or protocol settings before you ship to a specific host.
+
+### Opening Compare
+
+Compare is the third tab in the Connect section of the sidebar (`Servers | Client | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
+
+### Deep-linking to a specific selection
+
+Append `?hosts=<id1>,<id2>` to the `/host-compare` URL to pre-select a specific set of hosts on load:
+
+```
+/host-compare?hosts=host-abc,host-def
+```
+
+The URL updates automatically as you toggle hosts on or off. When all live hosts are selected (the default), the `?hosts` parameter is omitted so shared links stay clean.
+
+### Compare from the Eval Playground
+
+In the Eval Playground, the **Hosts** row next to **+ Attach host** includes a **Compare** button. When two or more hosts are attached to the suite, clicking **Compare** opens the Compare view with exactly those hosts pre-selected. The button is disabled (with a tooltip) when fewer than two hosts are attached.
+
 ## Best practices
 
 - **Mirror your target hosts.** Create one Client per real host you care about (`Claude Desktop`, `ChatGPT`, your own product) and keep its `clientInfo`, capabilities, and sandbox settings aligned with what that host actually advertises.
 - **Test the negative paths.** Build a "minimal" Client with most capabilities disabled and a strict CSP — running your server against it surfaces assumptions that won't hold on more restrictive hosts.
 - **Pin Evals to a Client.** Always select a Client before running an eval suite so the results are reproducible. Evals run against ambient settings drift the moment someone toggles something elsewhere.
 - **Duplicate before debugging.** When you're chasing a bug, duplicate the Client first and tweak the copy. Your baseline stays intact for comparison.
+- **Share Compare links.** Toggle down to the hosts you care about and copy the URL — the `?hosts=` parameter preserves your selection for teammates.
