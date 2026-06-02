@@ -242,7 +242,7 @@ export function TestsStep({
           variant="outline"
           onClick={onAddNegativeTestTemplate}
           aria-label="Add negative test case"
-          className="flex-1 border-info/50 text-info hover:bg-info/50"
+          className="flex-1 border-info/50 text-info hover:bg-info/50 hover:text-foreground"
         >
           <ShieldX className="h-4 w-4 mr-2" />
           Add negative test
@@ -307,7 +307,7 @@ export function TestsStep({
               variant="outline"
               onClick={onGenerateNegativeTests}
               disabled={isAnyGenerating}
-              className="border-info/50 text-info hover:bg-info/50"
+              className="border-info/50 text-info hover:bg-info/50 hover:text-foreground"
             >
               {isGeneratingNegativeTests
                 ? "Generating..."

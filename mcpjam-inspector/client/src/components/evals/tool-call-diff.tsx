@@ -217,7 +217,7 @@ function toneClass(tone: Tone): string {
     case "extra":
       return "bg-info/50 text-foreground";
     case "order":
-      return "bg-info/50 text-foreground";
+      return "bg-warning/50 text-foreground";
     case "arg":
       return "bg-warning/50 text-foreground";
   }
@@ -230,7 +230,7 @@ function toneBorderClass(tone: Tone): string {
     case "extra":
       return "border-info/50";
     case "order":
-      return "border-info/50";
+      return "border-warning/50";
     case "arg":
       return "border-warning/50";
   }

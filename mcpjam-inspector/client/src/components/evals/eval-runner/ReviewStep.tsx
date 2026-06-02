@@ -172,7 +172,7 @@ export function ReviewStep({
                     </p>
                   </div>
                   {template.isNegativeTest && template.scenario && (
-                    <p className="mt-1 text-xs text-info italic">
+                    <p className="mt-1 text-xs text-foreground italic">
                       Scenario: {template.scenario}
                     </p>
                   )}
@@ -202,7 +202,7 @@ export function ReviewStep({
                         </span>
                       )}
                     {template.isNegativeTest && (
-                      <span className="text-info">
+                      <span className="text-foreground">
                         Expected: No tools triggered
                       </span>
                     )}
