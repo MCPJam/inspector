@@ -16,7 +16,7 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
 import { JudgesSection } from "./judges-section";
-import { ChecksSection } from "./checks-section";
+import { ChecksSection, areAllChecksValid } from "./checks-section";
 import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
@@ -273,6 +273,14 @@ export function SuiteIterationsView({
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
+  // Local in-progress state for the suite-default checks editor. Mirrors the
+  // case editor's `editForm.predicates.list` mediation: `ChecksSection` fires
+  // onChange on every keystroke (including the blank-template insertion from
+  // `Add check`), so we keep edits local and only persist when every check
+  // is valid. See `areAllChecksValid` and `test-template-editor.tsx`.
+  const [draftDefaultPredicates, setDraftDefaultPredicates] = useState<
+    Predicate[]
+  >(suite.defaultPredicates ?? []);
   const [editedDescription, setEditedDescription] = useState(
     suite.description || ""
   );
@@ -423,6 +431,12 @@ export function SuiteIterationsView({
   useEffect(() => {
     setEditedDescription(suite.description || "");
   }, [suite.description]);
+
+  // Sync local draft of default checks when the suite's persisted value
+  // changes (after our own valid save, or an out-of-band update).
+  useEffect(() => {
+    setDraftDefaultPredicates(suite.defaultPredicates ?? []);
+  }, [suite.defaultPredicates]);
 
   // Load default pass criteria from suite
   useEffect(() => {
@@ -1145,20 +1159,42 @@ export function SuiteIterationsView({
               <ChecksSection
                 title="Default checks"
                 description="Deterministic checks applied to every case in this suite. Cases can override or extend these defaults."
-                value={suite.defaultPredicates ?? []}
-                onChange={async (next: Predicate[]) => {
-                  try {
-                    await updateSuite({
-                      suiteId: suite._id,
-                      defaultPredicates: next.length === 0 ? null : next,
-                    });
-                    toast.success("Default checks updated");
-                  } catch (error) {
-                    toast.error(
-                      getBillingErrorMessage(error, "Failed to update suite"),
-                    );
-                    console.error("Failed to update default checks:", error);
+                // Local draft so the user can finish authoring a check
+                // before it's persisted (matches the case editor's
+                // mediated form pattern).
+                value={draftDefaultPredicates}
+                onChange={(next: Predicate[]) => {
+                  setDraftDefaultPredicates(next);
+                  // `ChecksSection` fires onChange for every keystroke,
+                  // including the `Add check` event that inserts a blank
+                  // predicate with empty required fields (e.g. toolName /
+                  // needle). Only persist when every check is valid;
+                  // mirrors `areAllChecksValid` gating used by the case
+                  // editor (`test-template-editor.tsx`).
+                  if (!areAllChecksValid(next)) {
+                    return;
                   }
+                  void (async () => {
+                    try {
+                      await updateSuite({
+                        suiteId: suite._id,
+                        defaultPredicates:
+                          next.length === 0 ? null : next,
+                      });
+                      toast.success("Default checks updated");
+                    } catch (error) {
+                      toast.error(
+                        getBillingErrorMessage(
+                          error,
+                          "Failed to update suite",
+                        ),
+                      );
+                      console.error(
+                        "Failed to update default checks:",
+                        error,
+                      );
+                    }
+                  })();
                 }}
               />
             </div>
