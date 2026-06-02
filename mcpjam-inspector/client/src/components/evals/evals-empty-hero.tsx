@@ -3,7 +3,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 
 const FIRST_SUITE_EMPTY_DESCRIPTION =
-  "A suite groups eval cases with the MCP servers they use. Create one, then generate cases or import a chat transcript.";
+  "A suite groups test cases with the MCP servers they use. Run it across clients to get insights into your design.";
 
 interface EvalsEmptyHeroProps {
   onCreateSuite: () => void;
@@ -47,7 +47,7 @@ export function EvalsEmptyHero({
                 {isQuickstartRunning ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                 ) : null}
-                Try the Excalidraw quickstart
+                Try sample suite
               </Button>
             ) : null}
           </div>
@@ -157,13 +157,13 @@ function ToolCallDiffPreview() {
         <span>2 of 3 calls matched</span>
       </div>
       <DiffPreviewRow
-        toolName="create_element"
+        toolName="create_view"
         leftArg="rectangle"
         rightArg="rectangle"
         match
       />
       <DiffPreviewRow
-        toolName="create_element"
+        toolName="create_view"
         leftArg='label: "Hi"'
         rightArg='label: "Hello"'
         match={false}

@@ -117,10 +117,13 @@ export function SuiteDashboard({
 
   const runsSection = (
     <SuiteRunsList
+      suite={suite}
+      cases={cases}
       runs={runs}
       allIterations={allIterations}
       suiteSource={suite.source}
       onRunClick={onRunClick}
+      onTestCaseClick={onTestCaseClick}
       userMap={userMap}
       runsLoading={runsLoading}
       hostNamesById={hostNamesById}

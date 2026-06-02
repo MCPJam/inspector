@@ -12,12 +12,6 @@ vi.mock("convex/react", () => ({
 vi.mock("../use-suite-data", () => ({
   useRunDetailData: vi.fn(() => ({
     caseGroupsForSelectedRun: [],
-    selectedRunChartData: {
-      donutData: [],
-      durationData: [],
-      tokensData: [],
-      modelData: [],
-    },
   })),
 }));
 

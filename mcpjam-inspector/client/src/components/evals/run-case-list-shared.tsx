@@ -17,14 +17,14 @@ export function runCaseListRowClassName() {
 
 /** Fixed-width metric columns — shared by header labels and row cells. */
 export const runCaseMetricsRailClassName =
-  "grid w-[16.25rem] shrink-0 grid-cols-[7.5rem_3.25rem_3.25rem_2.25rem] items-center";
+  "grid w-[17.5rem] shrink-0 grid-cols-[7.5rem_3.25rem_3.25rem_3.5rem] items-center";
 
 /** Sort icon column width — aligns header control with row gutter. */
 export const runCaseListSortGutterClassName = "flex w-7 shrink-0 items-center justify-end pr-2";
 
 /** Header row — mirrors `.matrix-row.head` from evals_playground_design.html */
 export const runCaseListHeadClassName = cn(
-  "min-h-9 font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground",
+  "min-h-9 text-xs font-medium uppercase tracking-wide text-muted-foreground",
   evalSurfaceHeaderClass,
 );
 
@@ -93,7 +93,7 @@ export function RunCaseIterationBar({
             key={index}
             className={cn(
               "min-h-1 min-w-0 rounded-[1px]",
-              result === "pass" && "bg-success",
+              result === "pass" && "bg-success/50",
               result === "fail" && EVAL_FAIL_BAR_CLASS,
               result === "pending" && "bg-muted-foreground/25",
               result === "cancelled" && "bg-muted-foreground/20",

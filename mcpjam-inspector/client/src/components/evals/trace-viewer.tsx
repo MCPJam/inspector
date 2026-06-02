@@ -677,86 +677,93 @@ export function TraceViewer({
                 "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
                 fillContent
                   ? "min-h-0 flex-1 overflow-hidden"
-                  : "min-h-0 max-h-[min(70vh,36rem)] overflow-hidden",
+                  : "min-h-0",
               )}
               data-testid="trace-viewer-chat"
             >
-              <StickToBottom
-                className="relative flex min-h-0 flex-1 flex-col"
-                resize="smooth"
-                initial="smooth"
-              >
-                <div className="relative flex-1 min-h-0">
-                  <StickToBottom.Content className="flex flex-col min-h-0">
-                    {(() => {
-                      // Trace `<Thread>` mount. Wrapped in
-                      // `ActiveHostCapsResolverScope` ONLY when the
-                      // caller passed explicit host inputs
-                      // (`activeHost` or `hostStyle`). Otherwise we
-                      // render Thread directly so any outer scope from
-                      // the chat surface (ClientStyledChatTabV2 /
-                      // PlaygroundTab) flows through with the user's
-                      // saved capability edits intact. Installing an
-                      // inner scope unconditionally would shadow the
-                      // outer one with template-seed caps.
-                      const threadEl = (
-                        <Thread
-                          chatSessionId={chatSessionId}
-                          messages={adaptedTrace.messages}
-                          sendFollowUpMessage={sendFollowUpMessage}
-                          model={resolvedModel}
-                          isLoading={isLoading}
-                          toolsMetadata={toolsMetadata}
-                          toolServerMap={toolServerMap}
-                          onWidgetStateChange={onWidgetStateChange}
-                          onModelContextUpdate={onModelContextUpdate}
-                          displayMode={displayMode}
-                          onDisplayModeChange={onDisplayModeChange}
-                          enableFullscreenChatOverlay={
-                            enableFullscreenChatOverlay
-                          }
-                          fullscreenChatPlaceholder={fullscreenChatPlaceholder}
-                          fullscreenChatDisabled={fullscreenChatDisabled}
-                          fullscreenChatSendBlocked={fullscreenChatSendBlocked}
-                          onFullscreenChatStop={onFullscreenChatStop}
-                          onFullscreenChange={onFullscreenChange}
-                          onToolApprovalResponse={onToolApprovalResponse}
-                          toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                          showSaveViewButton={false}
-                          minimalMode={true}
-                          interactive={threadInteractive}
-                          reasoningDisplayMode="collapsed"
-                          focusMessageId={transcriptNavigation.focusMessageId}
-                          highlightedMessageIds={
-                            transcriptNavigation.highlightedMessageIds
-                          }
-                          navigationKey={transcriptNavigation.navigationKey}
-                          contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
-                          getMessageWrapperProps={({ message }) => {
-                            const sourceRange =
-                              adaptedTrace.uiMessageSourceRanges[message.id];
-                            return {
-                              "data-source-range": sourceRange
-                                ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
-                                : undefined,
-                            };
-                          }}
-                        />
-                      );
-                      if (!shouldInstallTraceScope) return threadEl;
-                      return (
-                        <ActiveHostCapsResolverScope
-                          activeHost={activeHost ?? null}
-                          hostStyle={traceScopeHostStyle}
-                        >
-                          {threadEl}
-                        </ActiveHostCapsResolverScope>
-                      );
-                    })()}
-                  </StickToBottom.Content>
-                  <ScrollToBottomButton />
-                </div>
-              </StickToBottom>
+              {(() => {
+                // Trace `<Thread>` mount. Wrapped in
+                // `ActiveHostCapsResolverScope` ONLY when the caller
+                // passed explicit host inputs (`activeHost` or
+                // `hostStyle`). Otherwise we render Thread directly so
+                // any outer scope from the chat surface
+                // (ClientStyledChatTabV2 / PlaygroundTab) flows through
+                // with the user's saved capability edits intact.
+                // Installing an inner scope unconditionally would
+                // shadow the outer one with template-seed caps.
+                const threadEl = (
+                  <Thread
+                    chatSessionId={chatSessionId}
+                    messages={adaptedTrace.messages}
+                    sendFollowUpMessage={sendFollowUpMessage}
+                    model={resolvedModel}
+                    isLoading={isLoading}
+                    toolsMetadata={toolsMetadata}
+                    toolServerMap={toolServerMap}
+                    onWidgetStateChange={onWidgetStateChange}
+                    onModelContextUpdate={onModelContextUpdate}
+                    displayMode={displayMode}
+                    onDisplayModeChange={onDisplayModeChange}
+                    enableFullscreenChatOverlay={enableFullscreenChatOverlay}
+                    fullscreenChatPlaceholder={fullscreenChatPlaceholder}
+                    fullscreenChatDisabled={fullscreenChatDisabled}
+                    fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                    onFullscreenChatStop={onFullscreenChatStop}
+                    onFullscreenChange={onFullscreenChange}
+                    onToolApprovalResponse={onToolApprovalResponse}
+                    toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+                    showSaveViewButton={false}
+                    minimalMode={true}
+                    interactive={threadInteractive}
+                    reasoningDisplayMode="collapsed"
+                    focusMessageId={transcriptNavigation.focusMessageId}
+                    highlightedMessageIds={
+                      transcriptNavigation.highlightedMessageIds
+                    }
+                    navigationKey={transcriptNavigation.navigationKey}
+                    contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                    getMessageWrapperProps={({ message }) => {
+                      const sourceRange =
+                        adaptedTrace.uiMessageSourceRanges[message.id];
+                      return {
+                        "data-source-range": sourceRange
+                          ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
+                          : undefined,
+                      };
+                    }}
+                  />
+                );
+                const scoped = shouldInstallTraceScope ? (
+                  <ActiveHostCapsResolverScope
+                    activeHost={activeHost ?? null}
+                    hostStyle={traceScopeHostStyle}
+                  >
+                    {threadEl}
+                  </ActiveHostCapsResolverScope>
+                ) : (
+                  threadEl
+                );
+                // Live streaming (fillContent): keep StickToBottom so
+                // new messages auto-pin to the bottom inside the
+                // viewport-bounded shell. Static replay: render
+                // directly and let the surrounding page own scroll,
+                // starting from the first message.
+                if (!fillContent) return scoped;
+                return (
+                  <StickToBottom
+                    className="relative flex min-h-0 flex-1 flex-col"
+                    resize="smooth"
+                    initial="smooth"
+                  >
+                    <div className="relative flex-1 min-h-0">
+                      <StickToBottom.Content className="flex flex-col min-h-0">
+                        {scoped}
+                      </StickToBottom.Content>
+                      <ScrollToBottomButton />
+                    </div>
+                  </StickToBottom>
+                );
+              })()}
             </div>
           ))}
 

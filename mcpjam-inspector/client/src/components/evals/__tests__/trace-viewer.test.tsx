@@ -526,7 +526,9 @@ describe("TraceViewer", () => {
   });
 
   it("uses the shared stick-to-bottom shell in chat mode", () => {
-    render(<TraceViewer trace={simpleTextTrace} forcedViewMode="chat" />);
+    render(
+      <TraceViewer trace={simpleTextTrace} forcedViewMode="chat" fillContent />,
+    );
 
     expect(screen.getByTestId("trace-viewer-chat")).toBeInTheDocument();
     expect(screen.getByTestId("stick-to-bottom")).toBeInTheDocument();
@@ -536,7 +538,9 @@ describe("TraceViewer", () => {
   it("shows the shared scroll-to-bottom button when chat is off bottom", () => {
     mockStickToBottomContext.isAtBottom = false;
 
-    render(<TraceViewer trace={simpleTextTrace} forcedViewMode="chat" />);
+    render(
+      <TraceViewer trace={simpleTextTrace} forcedViewMode="chat" fillContent />,
+    );
 
     fireEvent.click(
       within(screen.getByTestId("stick-to-bottom")).getByRole("button"),
