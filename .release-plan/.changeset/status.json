@@ -4,48 +4,35 @@
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
+          "type": "patch"
         },
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Workspace release rollup:\n\n- Add the advisory Goal Completion judge panel for eval test-case iterations\n- Surface partial-state visibility and insight error details in eval run views",
-      "id": "inspector-evals-ui-release"
+      "summary": "Inspector updates:\n\n- Polish the Evaluate surface: refreshed empty hero, suite list sidebar, suite header, dashboard, executions overview, run insights and metrics charts\n- Gate the Evaluate tab and flask buttons behind the `evaluate-ui` flag, and gate suite creation\n- Improve test generation, with safer empty server/client handling and a clearer tooltip on the create-suite dialog\n- New tool-calls diff view and the Excalidraw quickstart cases for the eval surface",
+      "id": "eval-ui-polish"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.9.0",
+      "type": "patch",
+      "oldVersion": "1.10.0",
       "changesets": [
-        "inspector-evals-ui-release"
+        "eval-ui-polish"
       ],
-      "newVersion": "1.10.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.3.5",
-      "changesets": [
-        "inspector-evals-ui-release"
-      ],
-      "newVersion": "3.4.0"
+      "newVersion": "1.10.1"
     },
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.8.1",
+      "type": "patch",
+      "oldVersion": "2.9.0",
       "changesets": [
-        "inspector-evals-ui-release"
+        "eval-ui-polish"
       ],
-      "newVersion": "2.9.0"
+      "newVersion": "2.9.1"
     },
     {
       "name": "@mcpjam/mcp",
