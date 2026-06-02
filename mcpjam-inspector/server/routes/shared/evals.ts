@@ -1058,20 +1058,33 @@ export async function runEvalTestCaseWithManager(
     //      suite defaults — Phase 2 wire field, now actually consumed.
     //   4. Legacy persisted flat field (`testCase.successPredicates`).
     //   5. Suite defaults alone when no case-level signal is present.
-    successPredicates:
-      (testCaseOverrides?.successPredicates as
+    successPredicates: (() => {
+      const runOverride = testCaseOverrides?.successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined) ??
-      resolveCasePredicates(
-        suiteDefaultPredicates,
-        (testCaseOverrides?.predicates ??
-          (testCase as { predicates?: unknown }).predicates) as
-          | import("@/shared/eval-matching").CasePredicates
-          | undefined,
-      ) ??
-      ((testCase as { successPredicates?: unknown }).successPredicates as
+        | undefined;
+      if (runOverride !== undefined) return runOverride;
+      const envelope = (testCaseOverrides?.predicates ??
+        (testCase as { predicates?: unknown }).predicates) as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined;
+      // Only consult `resolveCasePredicates` when the case actually has an
+      // envelope. Calling it with `undefined` would return suite defaults
+      // and silently replace any legacy `testCase.successPredicates` for
+      // un-migrated cases.
+      if (envelope !== undefined) {
+        const resolved = resolveCasePredicates(
+          suiteDefaultPredicates,
+          envelope,
+        );
+        if (resolved && resolved.length > 0) return resolved;
+      }
+      const legacy = (testCase as { successPredicates?: unknown })
+        .successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined),
+        | undefined;
+      if (Array.isArray(legacy) && legacy.length > 0) return legacy;
+      return suiteDefaultPredicates;
+    })(),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -1337,20 +1350,33 @@ export async function streamEvalTestCaseWithManager(
     ),
     // Thread the predicate gate into the runtime case so the runner evaluates
     // it. See `runEvalTestCaseWithManager` above for the full precedence rules.
-    successPredicates:
-      (testCaseOverrides?.successPredicates as
+    successPredicates: (() => {
+      const runOverride = testCaseOverrides?.successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined) ??
-      resolveCasePredicates(
-        suiteDefaultPredicates,
-        (testCaseOverrides?.predicates ??
-          (testCase as { predicates?: unknown }).predicates) as
-          | import("@/shared/eval-matching").CasePredicates
-          | undefined,
-      ) ??
-      ((testCase as { successPredicates?: unknown }).successPredicates as
+        | undefined;
+      if (runOverride !== undefined) return runOverride;
+      const envelope = (testCaseOverrides?.predicates ??
+        (testCase as { predicates?: unknown }).predicates) as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined;
+      // Only consult `resolveCasePredicates` when the case actually has an
+      // envelope. Calling it with `undefined` would return suite defaults
+      // and silently replace any legacy `testCase.successPredicates` for
+      // un-migrated cases.
+      if (envelope !== undefined) {
+        const resolved = resolveCasePredicates(
+          suiteDefaultPredicates,
+          envelope,
+        );
+        if (resolved && resolved.length > 0) return resolved;
+      }
+      const legacy = (testCase as { successPredicates?: unknown })
+        .successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined),
+        | undefined;
+      if (Array.isArray(legacy) && legacy.length > 0) return legacy;
+      return suiteDefaultPredicates;
+    })(),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };

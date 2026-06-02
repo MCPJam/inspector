@@ -431,13 +431,18 @@ export const startSuiteRunWithRecorder = async ({
 
   // Resolve suite default predicates once so per-case envelopes can be
   // collapsed to a flat list for the runner. Prefer the configSnapshot when
-  // present (mirrors how Convex freezes other suite defaults onto the run),
-  // fall back to a live suite query, then to undefined.
-  let suiteDefaultPredicates =
-    ((response?.configSnapshot as any)?.defaultPredicates as
-      | import("@/shared/eval-matching").Predicate[]
-      | undefined) ?? undefined;
-  if (!Array.isArray(suiteDefaultPredicates) || suiteDefaultPredicates.length === 0) {
+  // present (mirrors how Convex freezes other suite defaults onto the run);
+  // an intentionally empty snapshot (`[]`) means "this run was frozen with
+  // no suite defaults" and must NOT fall back to the live suite, otherwise
+  // suite defaults added after run-precreate retroactively gate frozen
+  // cases. Only the absent-or-non-array case falls back to a live query.
+  const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
+  let suiteDefaultPredicates: import("@/shared/eval-matching").Predicate[] | undefined;
+  if (Array.isArray(snapshotDefaults)) {
+    suiteDefaultPredicates = snapshotDefaults.length > 0
+      ? (snapshotDefaults as import("@/shared/eval-matching").Predicate[])
+      : undefined;
+  } else {
     try {
       const suite = await convexClient.query(
         "testSuites:getTestSuite" as any,
@@ -451,8 +456,6 @@ export const startSuiteRunWithRecorder = async ({
     } catch {
       suiteDefaultPredicates = undefined;
     }
-  } else if (suiteDefaultPredicates.length === 0) {
-    suiteDefaultPredicates = undefined;
   }
 
   const resolvePredicatesForCase = (
@@ -461,13 +464,19 @@ export const startSuiteRunWithRecorder = async ({
     const envelope = tc.predicates as
       | import("@/shared/eval-matching").CasePredicates
       | undefined;
-    const resolved = resolveCasePredicates(suiteDefaultPredicates, envelope);
-    if (resolved && resolved.length > 0) return resolved;
-    // Legacy flat field on the persisted case — fallback when no envelope.
+    // Precedence: when the case has no `{mode,list}` envelope, the legacy
+    // persisted `successPredicates` is the per-case gate and must win over
+    // suite defaults — otherwise adding a suite-level default check would
+    // silently replace existing legacy gates on un-migrated cases.
+    if (envelope !== undefined) {
+      const resolved = resolveCasePredicates(suiteDefaultPredicates, envelope);
+      if (resolved && resolved.length > 0) return resolved;
+    }
     const legacy = tc.successPredicates;
-    return Array.isArray(legacy) && legacy.length > 0
-      ? (legacy as import("@/shared/eval-matching").Predicate[])
-      : undefined;
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      return legacy as import("@/shared/eval-matching").Predicate[];
+    }
+    return suiteDefaultPredicates;
   };
 
   // Build config from test cases for backward compatibility
