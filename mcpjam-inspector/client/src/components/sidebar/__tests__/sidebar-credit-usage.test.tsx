@@ -11,6 +11,11 @@ let balanceState:
       freeDailyCreditsRemaining: number;
       freeDailyCreditsTotal: number;
       walletLocked: boolean;
+      billingModel?: "daily" | "monthly_per_seat";
+      monthlyAllowanceTotal?: number;
+      monthlyAllowanceRemaining?: number;
+      monthlyResetAt?: number | null;
+      paidCreditsRemaining?: number;
     }
   | undefined;
 let isLoadingState = false;
@@ -215,5 +220,49 @@ describe("SidebarCreditUsage", () => {
     const wrapper = screen.getByTestId("sidebar-credit-usage");
     await user.click(wrapper);
     expect(onWrapperClick).toHaveBeenCalled();
+  });
+
+  describe("team monthly model", () => {
+    beforeEach(() => {
+      balanceState = {
+        availableCredits: 19_500,
+        hasPurchaseHistory: true,
+        freeDailyPercentUsed: 0,
+        freeDailyResetAt: 0,
+        freeDailyCreditsRemaining: 0,
+        freeDailyCreditsTotal: 0,
+        walletLocked: false,
+        billingModel: "monthly_per_seat",
+        monthlyAllowanceTotal: 18_000,
+        monthlyAllowanceRemaining: 13_950,
+        monthlyResetAt: Date.now() + 12 * 24 * 60 * 60 * 1000,
+        paidCreditsRemaining: 1_500,
+      };
+    });
+
+    it("renders the monthly allowance row with a days countdown", () => {
+      render(<SidebarCreditUsage />);
+      const row = screen.getByTestId("sidebar-usage-monthly");
+      expect(row).toHaveTextContent("Monthly team credits");
+      expect(row).toHaveTextContent("4,050 / 18,000");
+      expect(row).toHaveTextContent("resets in 12 days");
+      expect(
+        screen.queryByTestId("sidebar-usage-daily")
+      ).not.toBeInTheDocument();
+    });
+
+    it("omits the absolute reset date in the strip variant", () => {
+      render(<SidebarCreditUsage variant="strip" />);
+      const row = screen.getByTestId("sidebar-usage-monthly");
+      expect(row).toHaveTextContent("resets in 12 days");
+      // No parenthesized date in the narrow strip.
+      expect(row.textContent ?? "").not.toMatch(/resets in 12 days \(/);
+    });
+
+    it("shows paid top-ups separately in the full variant", () => {
+      render(<SidebarCreditUsage variant="full" />);
+      const paid = screen.getByTestId("sidebar-usage-paid");
+      expect(paid).toHaveTextContent("1,500");
+    });
   });
 });

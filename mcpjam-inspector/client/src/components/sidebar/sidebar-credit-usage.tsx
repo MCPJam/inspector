@@ -9,7 +9,10 @@ import {
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
-import { formatCreditResetText } from "@/lib/credit-usage";
+import {
+  formatCreditResetText,
+  formatMonthlyResetText,
+} from "@/lib/credit-usage";
 import { cn } from "@/lib/utils";
 
 interface SidebarCreditUsageProps {
@@ -42,12 +45,29 @@ export function SidebarCreditUsage({
     return null;
   }
 
+  const isMonthly = balance?.billingModel === "monthly_per_seat";
+  const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
+  const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const monthlySpent = Math.max(0, monthlyTotal - monthlyRemaining);
+  const paidRemaining = isMonthly
+    ? (balance?.paidCreditsRemaining ?? 0)
+    : (balance?.availableCredits ?? 0);
+
   const resetText = balance
-    ? formatCreditResetText(balance.freeDailyResetAt)
+    ? isMonthly
+      ? formatMonthlyResetText(balance.monthlyResetAt, {
+          // Strip is narrow — drop the absolute date there, keep it in full.
+          withDate: variant === "full",
+        })
+      : formatCreditResetText(balance.freeDailyResetAt)
     : null;
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
   const showGuestUpgradeHint =
-    variant === "strip" && includeGuests && !hasWorkOsUser && !isLoading;
+    variant === "strip" &&
+    includeGuests &&
+    !hasWorkOsUser &&
+    !isLoading &&
+    !isMonthly;
 
   const innerContent = (
     <div className={cn("px-2 py-1.5", variant === "full" && "px-2.5 py-2")}>
@@ -57,39 +77,58 @@ export function SidebarCreditUsage({
           variant === "full" ? "gap-2.5" : "gap-0"
         )}
       >
-        <SidebarUsageRow
-          label="Free daily credits"
-          percentText={
-            balance
-              ? `${(
-                  balance.freeDailyCreditsTotal -
-                  balance.freeDailyCreditsRemaining
-                ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
-              : ""
-          }
-          eyebrowText={
-            showGuestUpgradeHint ? "Sign in for 10× the credits" : null
-          }
-          helperText={resetText}
-          // "spent / total": the count and the bar both grow as credits are
-          // used — 0/300 empty when fresh, 300/300 full when drained.
-          fillPercent={
-            balance && balance.freeDailyCreditsTotal > 0
-              ? ((balance.freeDailyCreditsTotal -
-                  balance.freeDailyCreditsRemaining) /
-                  balance.freeDailyCreditsTotal) *
-                100
-              : 0
-          }
-          isLoading={isLoading}
-          // Signed-in only — guests don't get the coin accent.
-          showCoin={hasWorkOsUser}
-          testId="sidebar-usage-daily"
-        />
+        {isMonthly ? (
+          <SidebarUsageRow
+            label="Monthly team credits"
+            percentText={
+              balance
+                ? `${monthlySpent.toLocaleString()} / ${monthlyTotal.toLocaleString()}`
+                : ""
+            }
+            eyebrowText={null}
+            helperText={resetText}
+            fillPercent={
+              monthlyTotal > 0 ? (monthlySpent / monthlyTotal) * 100 : 0
+            }
+            isLoading={isLoading}
+            showCoin={hasWorkOsUser}
+            testId="sidebar-usage-monthly"
+          />
+        ) : (
+          <SidebarUsageRow
+            label="Free daily credits"
+            percentText={
+              balance
+                ? `${(
+                    balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining
+                  ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
+                : ""
+            }
+            eyebrowText={
+              showGuestUpgradeHint ? "Sign in for 10× the credits" : null
+            }
+            helperText={resetText}
+            // "spent / total": the count and the bar both grow as credits are
+            // used — 0/300 empty when fresh, 300/300 full when drained.
+            fillPercent={
+              balance && balance.freeDailyCreditsTotal > 0
+                ? ((balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining) /
+                    balance.freeDailyCreditsTotal) *
+                  100
+                : 0
+            }
+            isLoading={isLoading}
+            // Signed-in only — guests don't get the coin accent.
+            showCoin={hasWorkOsUser}
+            testId="sidebar-usage-daily"
+          />
+        )}
         {variant === "full" && !isLoading && hasPaidHistory && balance ? (
           <SidebarUsageRow
             label="Paid credits"
-            percentText={`${balance.availableCredits.toLocaleString()}`}
+            percentText={`${paidRemaining.toLocaleString()}`}
             helperText={null}
             // Absolute credit count, not a percentage — render no progress
             // bar (a permanently 0%-filled bar reads as a bug).
@@ -98,7 +137,11 @@ export function SidebarCreditUsage({
             fillPercent={0}
             isLoading={false}
             testId="sidebar-usage-paid"
-            tooltip="Shared across your organization. Spent after the free daily credits run out."
+            tooltip={
+              isMonthly
+                ? "Top-ups, used only after the monthly team credits run out. Never expire."
+                : "Shared across your organization. Spent after the free daily credits run out."
+            }
           />
         ) : null}
       </div>
