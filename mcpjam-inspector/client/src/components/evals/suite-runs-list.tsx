@@ -26,9 +26,15 @@ import {
   evalSurfaceRowHoverClass,
 } from "./eval-surface-chrome";
 
-/** Shared column template: run label flexes; Acc/Dur/Time share equal width. */
+/** Shared column template: run label flexes; Acc/Dur fixed; Time + chevron share the tail. */
 const RUNS_LIST_ROW_GRID =
-  "grid w-full grid-cols-[minmax(0,1.25fr)_repeat(3,minmax(4.5rem,1fr))_1rem] items-center gap-x-4";
+  "grid w-full grid-cols-[minmax(0,1fr)_3rem_3.5rem_minmax(9.5rem,1.15fr)_0.875rem] items-center gap-x-3";
+
+const RUNS_LIST_METRIC_HEADER_CLASS =
+  "text-right text-[11px] font-medium uppercase tracking-[0.06em] tabular-nums";
+
+const RUNS_LIST_METRIC_CELL_CLASS =
+  "text-right text-xs font-mono tabular-nums text-muted-foreground";
 
 /**
  * Per-row effective pass-rate stats. Prefers the live iteration set when
@@ -224,9 +230,11 @@ export function SuiteRunsList({
         )}
       >
         <div className="min-w-0 truncate">Run</div>
-        <div className="text-right">{accuracyLabel}</div>
-        <div className="text-right">Dur</div>
-        <div className="truncate text-right">Time</div>
+        <div className={RUNS_LIST_METRIC_HEADER_CLASS}>{accuracyLabel}</div>
+        <div className={RUNS_LIST_METRIC_HEADER_CLASS}>Dur</div>
+        <div className={cn(RUNS_LIST_METRIC_HEADER_CLASS, "truncate")}>
+          Time
+        </div>
         <span aria-hidden />
       </div>
 
@@ -285,6 +293,7 @@ interface StandaloneRunRowProps {
   hostNamesById?: Map<string, string | null>;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   onRunClick: (runId: string) => void;
+  nested?: boolean;
 }
 
 function StandaloneRunRow({
@@ -293,6 +302,7 @@ function StandaloneRunRow({
   hostNamesById,
   userMap,
   onRunClick,
+  nested = false,
 }: StandaloneRunRowProps) {
   const { passRate } = computeRunEffectiveStats(run, runIterations);
 
@@ -327,7 +337,12 @@ function StandaloneRunRow({
         )}
         aria-label={`Open run ${formatRunId(run._id)}`}
       >
-        <div className="flex min-w-0 items-center gap-2">
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-2",
+            nested && "border-l border-border/50 pl-3",
+          )}
+        >
           <span className="truncate text-xs font-medium">
             Run {formatRunId(run._id)}
           </span>
@@ -357,20 +372,18 @@ function StandaloneRunRow({
             </Tooltip>
           ) : null}
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {passRate !== null ? `${passRate}%` : "—"}
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
-          {duration}
-        </div>
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>{duration}</div>
         <div
-          className="truncate text-right text-xs tabular-nums text-muted-foreground"
+          className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}
           title={formatTime(timestamp)}
         >
           {timestampLabel}
         </div>
         <ChevronRight
-          className="h-3.5 w-3.5 text-muted-foreground"
+          className="size-3.5 shrink-0 justify-self-end text-muted-foreground"
           aria-hidden
         />
       </button>
@@ -521,24 +534,24 @@ function GroupRunRows({
             {group.runs.length} hosts
           </span>
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {meanPassRate !== null ? `${meanPassRate}%` : "—"}
         </div>
-        <div className="text-right text-xs font-mono tabular-nums text-muted-foreground">
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {maxDuration !== null ? formatDuration(maxDuration) : "—"}
         </div>
         <div
-          className="truncate text-right text-xs tabular-nums text-muted-foreground"
+          className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}
           title={timestampLabel}
         >
           {timestampLabel}
         </div>
-        <span aria-hidden />
+        <span aria-hidden className="size-3.5 shrink-0 justify-self-end" />
       </button>
 
       {isExpanded ? (
         <div
-          className="border-t bg-muted/10 pl-4"
+          className="border-t bg-muted/10"
           data-testid="run-group-children"
         >
           {childStats.map(({ run, iterations }) => (
@@ -549,6 +562,7 @@ function GroupRunRows({
               hostNamesById={hostNamesById}
               userMap={userMap}
               onRunClick={onRunClick}
+              nested
             />
           ))}
         </div>

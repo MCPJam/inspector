@@ -78,11 +78,6 @@ function RunAccuracyRunCard({
         >
           {point.runIdDisplay}
         </span>
-        {isCurrent ? (
-          <span className="shrink-0 rounded-sm bg-primary/15 px-1 text-[9px] font-semibold uppercase tracking-wide text-primary">
-            now
-          </span>
-        ) : null}
       </div>
       <span className="text-base font-semibold tabular-nums leading-tight tracking-tight text-foreground">
         {point.passRate}%

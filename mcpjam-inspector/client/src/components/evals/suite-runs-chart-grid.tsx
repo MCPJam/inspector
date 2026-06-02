@@ -157,6 +157,8 @@ function createSparklineDot(
 }
 
 function TrendDeltaBadge({ delta }: { delta: TrendDelta }) {
+  if (delta.value === null || delta.value === 0) return null;
+
   return (
     <span
       className={cn(

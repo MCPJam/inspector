@@ -17,7 +17,7 @@ export function runCaseListRowClassName() {
 
 /** Fixed-width metric columns — shared by header labels and row cells. */
 export const runCaseMetricsRailClassName =
-  "grid w-[16.25rem] shrink-0 grid-cols-[7.5rem_3.25rem_3.25rem_2.25rem] items-center";
+  "grid w-[17.5rem] shrink-0 grid-cols-[7.5rem_3.25rem_3.25rem_3.5rem] items-center";
 
 /** Sort icon column width — aligns header control with row gutter. */
 export const runCaseListSortGutterClassName = "flex w-7 shrink-0 items-center justify-end pr-2";

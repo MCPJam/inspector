@@ -34,16 +34,14 @@ import {
 import { RunCaseListWithSections } from "./run-case-list";
 import type { RunCaseGroup } from "./run-case-groups";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
-import {
-  tokensChartDatumTotal,
-  type DurationChartDatum,
-  type TokensChartDatum,
+import type {
+  DurationChartDatum,
+  TokensChartDatum,
 } from "./run-chart-data";
 import { RunDetailKpiStrip } from "./run-detail-kpis";
 import { ClientChip } from "@/components/clients/client-chip";
 import {
   RunAccuracyHeroBand,
-  RunDetailMetricsCharts,
   RunInsightRail,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
@@ -406,13 +404,6 @@ export function RunDetailView({
     [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source]
   );
 
-  const hasTokenData = useMemo(
-    () =>
-      selectedRunChartData.tokensData.length > 0 &&
-      selectedRunChartData.tokensData.some((d) => tokensChartDatumTotal(d) > 0),
-    [selectedRunChartData.tokensData]
-  );
-
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
       <AiTriageCard
@@ -499,15 +490,6 @@ export function RunDetailView({
     />
   ) : null;
 
-  const runMetricsCharts = (
-    <RunDetailMetricsCharts
-      durationData={selectedRunChartData.durationData}
-      tokensData={selectedRunChartData.tokensData}
-      hasTokenData={hasTokenData}
-      className="mb-4"
-    />
-  );
-
   const insightRail = (
     <RunInsightRail
       triageCard={serverQualityTriage}
@@ -579,7 +561,6 @@ export function RunDetailView({
     <div className="space-y-4">
       {bodyKpiStrip}
       {accuracyHero}
-      {runMetricsCharts}
       {insightRail}
     </div>
   );
@@ -620,7 +601,6 @@ export function RunDetailView({
         <>
           {bodyKpiStrip}
           {accuracyHero}
-          {runMetricsCharts}
           {lgUp ? (
             <ResizablePanelGroup
               direction="horizontal"

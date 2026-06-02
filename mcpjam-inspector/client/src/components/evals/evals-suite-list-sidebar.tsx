@@ -341,7 +341,7 @@ function SuiteTableHeader({
             <span className="text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
               Score
             </span>
-            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+            <span className="text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
               Last run
             </span>
             <span className="sr-only">Actions</span>
@@ -490,7 +490,7 @@ function SuiteOverviewRow({
           type="button"
           aria-hidden
           tabIndex={-1}
-          className={cn(METRIC_CELL_CLASS, "justify-start text-left")}
+          className={cn(METRIC_CELL_CLASS, "justify-end text-right")}
           onClick={() => onSelectSuite(suite._id)}
         >
           {lastRunTimestampLabel ? (
