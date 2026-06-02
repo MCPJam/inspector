@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
 import { toast } from "sonner";
@@ -432,11 +432,66 @@ export function SuiteIterationsView({
     setEditedDescription(suite.description || "");
   }, [suite.description]);
 
-  // Sync local draft of default checks when the suite's persisted value
-  // changes (after our own valid save, or an out-of-band update).
+  // Sync local draft of default checks when the suite identity or its
+  // persisted value changes. `suite._id` is included so navigating to a
+  // different suite with the same persisted value (commonly
+  // `undefined → undefined`) still resets the draft — otherwise the old
+  // suite's in-progress edits would be saved into the new one on the next
+  // valid keystroke.
   useEffect(() => {
     setDraftDefaultPredicates(suite.defaultPredicates ?? []);
-  }, [suite.defaultPredicates]);
+  }, [suite._id, suite.defaultPredicates]);
+
+  // Debounced commit of the default-checks draft. Earlier this was fired
+  // directly inside ChecksSection's onChange, which kicked off one
+  // unsynchronized `updateSuite` per keystroke — out-of-order responses
+  // could land in the wrong order and persist stale predicate text, and
+  // the toast spammed once per character. The token guard ensures only
+  // the latest debounced attempt produces user-visible feedback.
+  const persistedDefaultPredicatesKey = useMemo(
+    () => JSON.stringify(suite.defaultPredicates ?? []),
+    [suite.defaultPredicates],
+  );
+  const draftDefaultPredicatesKey = useMemo(
+    () => JSON.stringify(draftDefaultPredicates),
+    [draftDefaultPredicates],
+  );
+  const defaultChecksSaveTokenRef = useRef(0);
+  useEffect(() => {
+    if (draftDefaultPredicatesKey === persistedDefaultPredicatesKey) return;
+    if (!areAllChecksValid(draftDefaultPredicates)) return;
+    const token = ++defaultChecksSaveTokenRef.current;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          await updateSuite({
+            suiteId: suite._id,
+            defaultPredicates:
+              draftDefaultPredicates.length === 0
+                ? null
+                : draftDefaultPredicates,
+          });
+          if (token === defaultChecksSaveTokenRef.current) {
+            toast.success("Default checks updated");
+          }
+        } catch (error) {
+          if (token === defaultChecksSaveTokenRef.current) {
+            toast.error(
+              getBillingErrorMessage(error, "Failed to update suite"),
+            );
+            console.error("Failed to update default checks:", error);
+          }
+        }
+      })();
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [
+    draftDefaultPredicatesKey,
+    persistedDefaultPredicatesKey,
+    draftDefaultPredicates,
+    suite._id,
+    updateSuite,
+  ]);
 
   // Load default pass criteria from suite
   useEffect(() => {
@@ -1161,41 +1216,12 @@ export function SuiteIterationsView({
                 description="Deterministic checks applied to every case in this suite. Cases can override or extend these defaults."
                 // Local draft so the user can finish authoring a check
                 // before it's persisted (matches the case editor's
-                // mediated form pattern).
+                // mediated form pattern). The actual mutation is fired
+                // from a debounced effect below — firing inside onChange
+                // produced one in-flight `updateSuite` per keystroke,
+                // and out-of-order responses could persist stale text.
                 value={draftDefaultPredicates}
-                onChange={(next: Predicate[]) => {
-                  setDraftDefaultPredicates(next);
-                  // `ChecksSection` fires onChange for every keystroke,
-                  // including the `Add check` event that inserts a blank
-                  // predicate with empty required fields (e.g. toolName /
-                  // needle). Only persist when every check is valid;
-                  // mirrors `areAllChecksValid` gating used by the case
-                  // editor (`test-template-editor.tsx`).
-                  if (!areAllChecksValid(next)) {
-                    return;
-                  }
-                  void (async () => {
-                    try {
-                      await updateSuite({
-                        suiteId: suite._id,
-                        defaultPredicates:
-                          next.length === 0 ? null : next,
-                      });
-                      toast.success("Default checks updated");
-                    } catch (error) {
-                      toast.error(
-                        getBillingErrorMessage(
-                          error,
-                          "Failed to update suite",
-                        ),
-                      );
-                      console.error(
-                        "Failed to update default checks:",
-                        error,
-                      );
-                    }
-                  })();
-                }}
+                onChange={setDraftDefaultPredicates}
               />
             </div>
 

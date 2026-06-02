@@ -144,6 +144,11 @@ export function ExpectedToolsEditor({
   };
 
   const isArgumentValueInvalid = (value: unknown): boolean => {
+    // Ignore mode doesn't compare arguments at all and the leaf picker is
+    // disabled there, so an empty value isn't reachable as user error —
+    // surfacing a destructive ring would just leave a state the user has
+    // no way to clear.
+    if (argumentMatching === "ignore") return false;
     // Placeholders are always valid in partial mode. Empty string is
     // still treated as "user hasn't filled it in yet" — same convention
     // as before Phase 3.

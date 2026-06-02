@@ -794,14 +794,38 @@ function RawArgsJsonEditor({
   readOnly: boolean;
 }) {
   const argsId = useId();
-  const [draftJson, setDraftJson] = useState(() => {
+  const formatValue = (v: unknown): string => {
     try {
-      return JSON.stringify(value ?? {}, null, 2);
+      return JSON.stringify(v ?? {}, null, 2);
     } catch {
       return "{}";
     }
-  });
+  };
+  const [draftJson, setDraftJson] = useState(() => formatValue(value));
   const [jsonError, setJsonError] = useState<string | null>(null);
+
+  // Resync the draft text when `value` changes from outside this instance
+  // (e.g. switching cases, deleting/reordering checks). Predicate rows are
+  // keyed by index, so the same RawArgsJsonEditor instance is reused with
+  // a different `value` prop — without this, the textarea kept showing the
+  // previous predicate's JSON and the next edit could clobber the new
+  // predicate's args. We compare against the parse of our own draft to
+  // avoid overwriting mid-edit (when the user's draft is the upstream of
+  // `value`, JSON parses equal and we leave the text alone).
+  useEffect(() => {
+    let drift = true;
+    try {
+      const parsed = JSON.parse(draftJson);
+      drift = JSON.stringify(parsed) !== JSON.stringify(value ?? {});
+    } catch {
+      drift = true;
+    }
+    if (drift) {
+      setDraftJson(formatValue(value));
+      setJsonError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
   return (
     <div className="space-y-1">

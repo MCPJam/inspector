@@ -684,6 +684,13 @@ export function TestTemplateEditor({
 
   const arePredicatesValid = useMemo(() => {
     if (!editForm?.predicates) return true;
+    // In `inherit` mode the case's `list` is semantically ignored by the
+    // runner — only suite defaults gate the run. The setMode("inherit")
+    // handler preserves non-empty lists for UX convenience (so the user
+    // can flip back to replace/extend without losing their work), which
+    // means stale invalid rows from a previous mode are reachable. Don't
+    // let those block the Save button.
+    if (editForm.predicates.mode === "inherit") return true;
     return areAllChecksValid(editForm.predicates.list);
   }, [editForm?.predicates]);
 
@@ -700,8 +707,17 @@ export function TestTemplateEditor({
     if (!arePromptTurnsValid && editForm) {
       return getPromptTurnBlockReason(editForm.promptTurns);
     }
+    if (!arePredicatesValid) {
+      return "Fix invalid checks before saving.";
+    }
     return null;
-  }, [savePrimaryDisabled, isRunningCompare, arePromptTurnsValid, editForm]);
+  }, [
+    savePrimaryDisabled,
+    isRunningCompare,
+    arePromptTurnsValid,
+    arePredicatesValid,
+    editForm,
+  ]);
 
   const runPrimaryDisabled =
     selectedModelValues.length === 0 ||
