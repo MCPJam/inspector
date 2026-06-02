@@ -497,7 +497,7 @@ export function evalOverviewEntryLastRunStatusClass(
   const r = entry.latestRun;
   if (!r) return "text-muted-foreground";
   if (r.status === "running" || r.status === "pending") {
-    return "text-amber-600 dark:text-amber-400";
+    return "text-warning";
   }
   if (r.result === "passed") return "text-success";
   if (r.result === "failed" || r.status === "failed") {

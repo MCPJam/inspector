@@ -131,13 +131,13 @@ export function TestsStep({
   const renderNegativeTestCard = (template: TestTemplate, index: number) => (
     <div
       key={index}
-      className="space-y-3 rounded-lg border border-orange-500/50 bg-orange-50/5 p-4"
+      className="space-y-3 rounded-lg border border-info/50 bg-info/50 p-4"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <Badge
             variant="outline"
-            className="bg-orange-500/10 text-orange-600 border-orange-500/30"
+            className="bg-info/50 text-foreground border-info/50"
           >
             <ShieldX className="h-3 w-3 mr-1" />
             Negative Test
@@ -242,7 +242,7 @@ export function TestsStep({
           variant="outline"
           onClick={onAddNegativeTestTemplate}
           aria-label="Add negative test case"
-          className="flex-1 border-orange-500/30 text-orange-600 hover:bg-orange-50/10"
+          className="flex-1 border-info/50 text-info hover:bg-info/50"
         >
           <ShieldX className="h-4 w-4 mr-2" />
           Add negative test
@@ -307,7 +307,7 @@ export function TestsStep({
               variant="outline"
               onClick={onGenerateNegativeTests}
               disabled={isAnyGenerating}
-              className="border-orange-500/30 text-orange-600 hover:bg-orange-50/10"
+              className="border-info/50 text-info hover:bg-info/50"
             >
               {isGeneratingNegativeTests
                 ? "Generating..."

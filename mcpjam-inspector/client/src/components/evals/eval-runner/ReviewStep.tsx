@@ -153,7 +153,7 @@ export function ReviewStep({
                   className={cn(
                     "rounded-md border p-3",
                     template.isNegativeTest
-                      ? "bg-orange-50/5 border-orange-500/30"
+                      ? "bg-info/50 border-info/50"
                       : "bg-muted/30",
                   )}
                 >
@@ -161,7 +161,7 @@ export function ReviewStep({
                     {template.isNegativeTest && (
                       <Badge
                         variant="outline"
-                        className="bg-orange-500/10 text-orange-600 border-orange-500/30 text-xs"
+                        className="bg-info/50 text-foreground border-info/50 text-xs"
                       >
                         <ShieldX className="h-3 w-3 mr-1" />
                         Negative
@@ -172,7 +172,7 @@ export function ReviewStep({
                     </p>
                   </div>
                   {template.isNegativeTest && template.scenario && (
-                    <p className="mt-1 text-xs text-orange-600/80 italic">
+                    <p className="mt-1 text-xs text-info italic">
                       Scenario: {template.scenario}
                     </p>
                   )}
@@ -202,7 +202,7 @@ export function ReviewStep({
                         </span>
                       )}
                     {template.isNegativeTest && (
-                      <span className="text-orange-600">
+                      <span className="text-info">
                         Expected: No tools triggered
                       </span>
                     )}

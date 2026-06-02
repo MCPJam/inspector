@@ -1594,7 +1594,7 @@ function TimelineDetailPane({
             className={cn(
               "space-y-2",
               row.span.category === "error" || toolErrorExcerpt
-                ? "rounded-md border border-red-500/25 bg-red-500/5 p-2"
+                ? "rounded-md border border-destructive/50 bg-destructive/50 p-2"
                 : "",
             )}
           >
@@ -1603,7 +1603,7 @@ function TimelineDetailPane({
             </div>
             <PayloadPreview value={tabOutputValue ?? undefined} />
             {toolErrorExcerpt ? (
-              <pre className="max-h-40 overflow-auto rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs whitespace-pre-wrap break-words text-red-900 dark:text-red-100">
+              <pre className="max-h-40 overflow-auto rounded-md border border-destructive/50 bg-destructive/50 p-3 text-xs whitespace-pre-wrap break-words text-foreground">
                 {toolErrorExcerpt}
               </pre>
             ) : null}
@@ -2074,7 +2074,7 @@ export function TraceTimeline({
     return (
       <div className="space-y-3">
         <div className="flex items-center gap-2">
-          <Badge className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+          <Badge className="border-warning/50 bg-warning/50 text-foreground">
             Estimated total only
           </Badge>
           <span className="text-xs text-muted-foreground">
