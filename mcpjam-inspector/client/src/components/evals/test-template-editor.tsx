@@ -138,6 +138,14 @@ interface TestTemplateEditorProps {
   connectedServerNames: Set<string>;
   projectId: string | null;
   availableModels: ModelDefinition[];
+  /**
+   * Iterations for the entire suite, loaded once by the parent via
+   * `getAllTestCasesAndIterationsBySuite`. We filter to the current case
+   * locally rather than firing a per-case `listTestIterations` query —
+   * same Convex cache key as the parent means navigating into the Runs
+   * tab is a synchronous cache hit instead of a network round trip.
+   */
+  suiteIterations: EvalIteration[];
   onBackToList?: () => void;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -380,6 +388,7 @@ export function TestTemplateEditor({
   connectedServerNames,
   projectId,
   availableModels,
+  suiteIterations,
   onBackToList,
   onExportDraft,
   onContinueInChat,
@@ -474,12 +483,19 @@ export function TestTemplateEditor({
       : "skip"
   ) as EvalIteration | undefined;
 
-  const recentIterations = useQuery(
-    "testSuites:listTestIterations" as any,
-    currentTestCase?._id
-      ? ({ testCaseId: currentTestCase._id, limit: 200 } as any)
-      : "skip"
-  ) as EvalIteration[] | undefined;
+  /**
+   * Iterations belonging to the currently-selected case, filtered from the
+   * suite-wide list the parent already subscribes to. Reusing the same
+   * Convex query (cache key) means this is a synchronous derive once the
+   * parent's subscription has hydrated — no separate per-case fetch, no
+   * spinner on the Runs tab when the user drills in.
+   */
+  const recentIterations = useMemo<EvalIteration[]>(() => {
+    if (!selectedTestCaseId) return [];
+    return suiteIterations.filter(
+      (iteration) => iteration.testCaseId === selectedTestCaseId,
+    );
+  }, [suiteIterations, selectedTestCaseId]);
 
   const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
 
@@ -1778,7 +1794,6 @@ export function TestTemplateEditor({
     (testCases === undefined ||
       (currentTestCase?._id != null &&
         initializedSelectionCaseRef.current !== currentTestCase._id) ||
-      (currentTestCase?._id != null && recentIterations === undefined) ||
       (routeCompareAnchorIterationId != null &&
         routeCompareAnchorIteration === undefined));
 

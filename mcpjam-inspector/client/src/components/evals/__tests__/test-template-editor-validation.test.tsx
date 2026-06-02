@@ -144,9 +144,6 @@ describe("TestTemplateEditor prompt validation UI", () => {
           environment: { servers: ["srv"] },
         };
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -173,6 +170,7 @@ describe("TestTemplateEditor prompt validation UI", () => {
             label: "GPT-4",
           } as any,
         ]}
+        suiteIterations={[baseIteration]}
       />,
     );
 
