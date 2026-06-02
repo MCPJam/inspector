@@ -177,7 +177,7 @@ export function ServerAttachmentPicker({
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",
             !selectedAttachment
-              ? "border-amber-500/50 bg-amber-500/10 hover:bg-amber-500/20"
+              ? "border-warning/50 bg-warning/50 hover:brightness-95"
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             disabled && "cursor-not-allowed opacity-50"
           )}

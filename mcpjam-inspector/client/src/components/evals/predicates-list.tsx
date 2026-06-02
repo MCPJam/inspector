@@ -60,8 +60,8 @@ export function PredicatesList({ predicates }: { predicates: PredicateResult[] }
         <div
           className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
             allPassed
-              ? "bg-green-500/15 text-green-700 dark:text-green-300"
-              : "bg-red-500/15 text-red-700 dark:text-red-300"
+              ? "bg-success/50 text-foreground"
+              : "bg-destructive/50 text-foreground"
           }`}
         >
           {allPassed ? "PASS" : `${passed}/${predicates.length} PASSED`}
@@ -82,16 +82,16 @@ function PredicateRow({ row }: { row: PredicateResult }) {
     <li
       className={`rounded border p-2 ${
         row.passed
-          ? "border-green-500/20 bg-green-500/5"
-          : "border-red-500/30 bg-red-500/5"
+          ? "border-success/50 bg-success/50"
+          : "border-destructive/50 bg-destructive/50"
       }`}
     >
       <div className="flex items-start gap-2">
         <span
           className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
             row.passed
-              ? "bg-green-500/15 text-green-700 dark:text-green-300"
-              : "bg-red-500/15 text-red-700 dark:text-red-300"
+              ? "bg-success/50 text-foreground"
+              : "bg-destructive/50 text-foreground"
           }`}
           aria-label={row.passed ? "passed" : "failed"}
         >

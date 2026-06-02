@@ -51,9 +51,9 @@ describe("PassDotRow", () => {
     );
     const dots = container.querySelectorAll("span[aria-hidden]");
     // First three should map to iterationNumber 1, 2, 3 — passed, failed, passed
-    expect(dots[0]).toHaveClass("bg-green-500"); // i1 passed
-    expect(dots[1]).toHaveClass("bg-red-500"); // i2 failed
-    expect(dots[2]).toHaveClass("bg-green-500"); // i3 passed
+    expect(dots[0]).toHaveClass("bg-success/50"); // i1 passed
+    expect(dots[1]).toHaveClass("bg-destructive/50"); // i2 failed
+    expect(dots[2]).toHaveClass("bg-success/50"); // i3 passed
   });
 
   it("falls back to createdAt when iterationNumber ties", () => {
@@ -66,8 +66,8 @@ describe("PassDotRow", () => {
       />,
     );
     const dots = container.querySelectorAll("span[aria-hidden]");
-    expect(dots[0]).toHaveClass("bg-green-500"); // i_a first (earlier createdAt)
-    expect(dots[1]).toHaveClass("bg-red-500"); // i_b second
+    expect(dots[0]).toHaveClass("bg-success/50"); // i_a first (earlier createdAt)
+    expect(dots[1]).toHaveClass("bg-destructive/50"); // i_b second
   });
 
   it("includes pending/cancelled counts in the aria summary", () => {

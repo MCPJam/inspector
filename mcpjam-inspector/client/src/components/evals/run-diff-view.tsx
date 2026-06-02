@@ -280,7 +280,7 @@ function RunDiffLoaded({
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge status={row.status} />
                       {row.configChanged ? (
-                        <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                        <span className="rounded bg-warning/50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-foreground">
                           Config changed
                         </span>
                       ) : null}
@@ -406,8 +406,8 @@ function DeltaPill({
   const toneClass = neutral
     ? "bg-muted text-muted-foreground"
     : isGood
-    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-    : "bg-destructive/10 text-destructive";
+    ? "bg-success/50 text-foreground"
+    : "bg-destructive/50 text-foreground";
 
   return (
     <span
@@ -507,13 +507,13 @@ function statusBadgeClass(status: EvalRunDiffCaseStatus): string {
   switch (status) {
     case "regressed":
     case "unchanged_failed":
-      return "bg-destructive/10 text-destructive";
+      return "bg-destructive/50 text-foreground";
     case "fixed":
-      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+      return "bg-success/50 text-foreground";
     case "new_case":
     case "removed_case":
     case "changed":
-      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+      return "bg-warning/50 text-foreground";
     case "unchanged_passed":
       return "bg-muted text-muted-foreground";
   }

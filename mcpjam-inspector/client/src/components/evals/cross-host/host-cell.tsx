@@ -169,7 +169,7 @@ function HostMetricComparisonTooltip({
                     className={cn(
                       "w-14 text-right font-mono text-[10px] tabular-nums",
                       delta === "best"
-                        ? "text-emerald-600 dark:text-emerald-400"
+                        ? "text-success"
                         : "text-muted-foreground"
                     )}
                   >

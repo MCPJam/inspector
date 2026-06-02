@@ -70,11 +70,11 @@ export function PassDotRow({ iterations }: PassDotRowProps) {
             title={result}
             aria-hidden
             className={cn(
-              "inline-block size-2 rounded-full",
-              result === "passed" && "bg-green-500",
-              result === "failed" && "bg-red-500",
-              result === "cancelled" && "bg-gray-400",
-              (result === "pending") && "bg-yellow-400",
+              "inline-block size-2 rounded-full ring-1",
+              result === "passed" && "bg-success/50 ring-success/60",
+              result === "failed" && "bg-destructive/50 ring-destructive/60",
+              result === "cancelled" && "bg-muted-foreground/50 ring-muted-foreground/60",
+              result === "pending" && "bg-warning/50 ring-warning/60",
             )}
           />
         );

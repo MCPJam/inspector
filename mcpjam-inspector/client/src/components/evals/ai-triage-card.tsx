@@ -13,6 +13,10 @@ import {
   type TriageRow,
 } from "./ai-triage-helpers";
 import { runDetailSectionLabelClass } from "./run-detail-typography";
+import {
+  passRateColorClass,
+  passRateSegmentColorClass,
+} from "./suite-overview-presentation";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
 export interface AiTriageCardProps {
@@ -214,7 +218,12 @@ export function AiTriageCard({
           </span>
         </div>
         <div className="mt-1.5">
-          <span className="font-metric text-xl font-semibold tabular-nums leading-none">
+          <span
+            className={cn(
+              "font-metric text-xl font-semibold tabular-nums leading-none",
+              passRateColorClass(passRate),
+            )}
+          >
             {passFailStats.total === 0 ? (
               <span className="text-muted-foreground">—</span>
             ) : (
@@ -238,7 +247,7 @@ export function AiTriageCard({
         >
           {passFailStats.total === 0 ? null : (
             <div
-              className="h-full bg-primary"
+              className={cn("h-full", passRateSegmentColorClass(passRate))}
               style={{ width: `${passRate}%` }}
               title={`${metricLabel}: ${passRate}%`}
             />
@@ -275,7 +284,7 @@ export function AiTriageCard({
             <div className="px-3 py-4 text-sm text-muted-foreground">
               {serverQuality.summary?.trim() ||
                 "The analysis produced no per-tool or per-workflow insights."}
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              <p className="mt-1 text-xs text-warning">
                 No per-tool/workflow breakdown was produced — the analysis may
                 have been truncated. Re-run to retry.
               </p>

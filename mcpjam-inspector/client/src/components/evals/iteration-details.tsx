@@ -891,8 +891,8 @@ export function IterationDetails({
                   className={cn(
                     "rounded-full px-2 py-0.5 text-[10px] font-medium",
                     summary.passed
-                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                      : "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+                      ? "bg-success/50 text-foreground"
+                      : "bg-destructive/50 text-foreground",
                   )}
                 >
                   {summary.passed ? "Passed" : "Failed"}
@@ -906,7 +906,7 @@ export function IterationDetails({
                 {summary.actualToolCalls.length}
               </div>
               {!summary.passed ? (
-                <div className="text-[10px] text-rose-700 dark:text-rose-400">
+                <div className="text-[10px] text-destructive">
                   {formatToolCallsSummary(
                     summary.expectedToolCalls,
                     summary.actualToolCalls,

@@ -120,8 +120,7 @@ export function PassCriteriaBadge({
         {!passed && passRate < minimumPassRate && (
           <div
             className={cn(
-              "mt-2 rounded border-l-2 border-red-800/40 bg-red-800/10 p-2 text-xs dark:border-red-400/40 dark:bg-red-400/10",
-              EVAL_LOW_PASS_RATE_TEXT_CLASS,
+              "mt-2 rounded border-l-2 border-destructive/50 bg-destructive/50 p-2 text-xs text-foreground",
             )}
           >
             {metricLabel} {passRate.toFixed(1)}% below threshold{" "}

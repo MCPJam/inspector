@@ -325,11 +325,11 @@ export function evalStatusMiniBarClasses(result: string): string {
     case "running":
       return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
-      return "bg-muted-foreground/40";
+      return "bg-muted-foreground/50";
     case "mixed":
       return "bg-warning/50";
     default:
-      return "bg-muted-foreground/40";
+      return "bg-muted-foreground/50";
   }
 }
 
@@ -363,7 +363,7 @@ export function evalOverviewEntryMiniBarClass(
     return "bg-success/50";
   }
   if (r.result === "failed") return "bg-destructive/50";
-  return "bg-muted-foreground/40";
+  return "bg-muted-foreground/50";
 }
 
 /**
@@ -426,7 +426,7 @@ export function evalOverviewEntryLastRunStatusClass(
   const r = entry.latestRun;
   if (!r) return "text-muted-foreground";
   if (r.status === "running" || r.status === "pending") {
-    return "text-amber-600 dark:text-amber-400";
+    return "text-warning";
   }
   if (r.result === "passed") return "text-success";
   if (r.result === "failed" || r.status === "failed") {

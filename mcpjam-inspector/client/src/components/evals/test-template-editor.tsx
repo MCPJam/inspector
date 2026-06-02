@@ -1737,31 +1737,31 @@ export function TestTemplateEditor({
     latestAvailableResult === "failed"
       ? {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-rose-500 dark:bg-rose-400",
-          buttonTextClass: "text-rose-700 dark:text-rose-300",
+            "size-1.5 shrink-0 rounded-full bg-destructive/50",
+          buttonTextClass: "text-destructive",
           ariaResults: "View results, last run failed",
           ariaOpen: "Open last run, failed",
         }
       : latestAvailableResult === "passed"
       ? {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400",
-          buttonTextClass: "text-emerald-700 dark:text-emerald-300",
+            "size-1.5 shrink-0 rounded-full bg-success/50",
+          buttonTextClass: "text-success",
           ariaResults: "View results, last run passed",
           ariaOpen: "Open last run passed",
         }
       : latestAvailableResult === "cancelled"
       ? {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400",
-          buttonTextClass: "text-amber-800 dark:text-amber-200",
+            "size-1.5 shrink-0 rounded-full bg-warning/50",
+          buttonTextClass: "text-warning",
           ariaResults: "View results, last run stopped",
           ariaOpen: "Open last run stopped",
         }
       : {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse motion-reduce:animate-none",
-          buttonTextClass: "text-amber-800 dark:text-amber-200",
+            "size-1.5 shrink-0 rounded-full bg-warning/50 animate-pulse motion-reduce:animate-none",
+          buttonTextClass: "text-warning",
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
@@ -2663,9 +2663,9 @@ function RunColumn({
       </div>
     )
   ) : record.status === "cancelled" && !record.iteration ? (
-    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/5 px-6 py-10">
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-warning/50 bg-warning/50 px-6 py-10">
       <div className="max-w-sm text-center">
-        <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
+        <div className="text-sm font-medium text-foreground">
           {record.modelLabel} stopped
         </div>
         <p className="mt-2 text-sm text-muted-foreground">
