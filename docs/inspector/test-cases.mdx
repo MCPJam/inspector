@@ -122,6 +122,51 @@ When you click on a run:
   - Duration per Test (averaged across models)
   - Tokens per Test (averaged across models)
   - Performance by Model
+- **AI Insights** - An insights panel on the right side of completed runs with:
+  - **Server quality triage** - AI-generated analysis of failures
+  - **Goal completion judge** - Advisory LLM-as-judge scoring (see below)
+
+### Goal completion judge
+
+The goal completion judge grades whether each test case's final answer satisfied its `expectedOutput`. It answers the question the deterministic tool-call verdict doesn't: "did the agent actually complete the goal?"
+
+The judge is **advisory only** — it never changes a run's pass/fail result. The deterministic tool-call verdict remains the primary verdict.
+
+To run the judge on a completed run:
+
+1. Open the run detail view and locate the **Goal completion** panel in the AI insights column on the right
+2. Select a **judge model** from the dropdown (default: `openai/gpt-5.4-mini`)
+3. Set a **threshold** — scores at or above this value are marked as meeting the goal (default: `0.7`)
+4. Click **Run judge**
+
+Results show per-case:
+- **Score** (0–100%) — how fully the final answer satisfied the expected output
+- **Advisory verdict** — "meets goal" (score ≥ threshold) or "below threshold"
+- **Reason** — one-line explanation from the judge
+- **Rubric hits** — specific criteria the answer matched or missed
+
+<Note>
+  The goal completion judge spends an LLM call each time it runs. It only fires when you explicitly click **Run judge** — it never runs automatically unless you enable auto-run in suite settings.
+</Note>
+
+#### Per-run overrides
+
+You can change the judge model or threshold for a single run without affecting the suite's default config. When a run uses different settings than the suite default, a banner appears on the panel noting the override so scores from that run aren't mistaken for suite-calibrated results.
+
+To return to the suite's default settings, clear the override fields and click **Re-run judge**.
+
+#### Suite settings for judges
+
+Open suite settings (the **⚙** button next to the suite name) and navigate to the **Judges** section to configure suite-level defaults:
+
+- **Enable/disable** the goal completion judge for the suite
+- **Judge model** — the default model used for all runs
+- **Threshold** — the default advisory pass cutoff
+- **Auto-run** — when enabled, the judge fires automatically as each run completes (off by default to keep each grading an explicit choice)
+
+<Tip>
+  LLM-judge scores are not comparable across domains. Calibrate the threshold against a labeled set of your own test cases rather than relying on the default.
+</Tip>
 
 ### Test Case Detail View
 
