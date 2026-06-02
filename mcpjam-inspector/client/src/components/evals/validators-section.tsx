@@ -347,7 +347,10 @@ export function ValidatorsSection({
               }
             />
           ) : undefined,
-          showBadges && orderInheriting,
+          // Inheriting controls stay editable: picking a non-suite-default
+          // value is how the user authors the first override at this layer.
+          // The badge surfaces the inherited value; the select drives it.
+          false,
         )}
         {/* Extras row: number input + Unlimited toggle. Unlimited persists
             null; toggling off persists the current number. */}
@@ -371,7 +374,7 @@ export function ValidatorsSection({
               inputMode="numeric"
               min={0}
               step={1}
-              disabled={extrasUnlimited || (showBadges && extrasInheriting)}
+              disabled={extrasUnlimited}
               value={extrasUnlimited ? "" : String(extrasNumber)}
               placeholder={extrasUnlimited ? "—" : "0"}
               onChange={(e) => {
@@ -412,7 +415,6 @@ export function ValidatorsSection({
                     setExtrasCap(0);
                   }
                 }}
-                disabled={showBadges && extrasInheriting}
                 aria-label="Allow unlimited extra tool calls"
               />
               <span>Unlimited</span>
@@ -440,7 +442,8 @@ export function ValidatorsSection({
               }
             />
           ) : undefined,
-          showBadges && argsInheriting,
+          // See note on the order row above.
+          false,
         )}
       </div>
     </div>
