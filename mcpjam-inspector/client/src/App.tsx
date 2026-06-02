@@ -716,7 +716,7 @@ export function ToolsRoute() {
 
 export function EvalsRoute() {
   const {
-    playgroundEnabled,
+    evaluateUiEnabled,
     billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
@@ -725,12 +725,12 @@ export function EvalsRoute() {
     handleContinueEvalInChat,
   } = useAppRouteContext();
 
-  if (playgroundEnabled === false) {
+  if (evaluateUiEnabled !== true) {
     return (
       <EmptyState
         icon={Construction}
-        title="Playground Coming Soon"
-        description="The Playground is under construction. Stay tuned!"
+        title="Evaluate Coming Soon"
+        description="The Evaluate suite is under construction. Stay tuned!"
       />
     );
   }
@@ -1162,6 +1162,7 @@ export default function App() {
   const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
@@ -2960,6 +2961,7 @@ export default function App() {
     navigateToTarget,
     pendingDashboardOAuth,
     playgroundEnabled,
+    evaluateUiEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,

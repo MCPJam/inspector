@@ -63,7 +63,7 @@ export function SaveAsTestCaseAction({
   promptPreview,
   projectId,
 }: SaveAsTestCaseActionProps) {
-  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [caseTitle, setCaseTitle] = useState(() =>
@@ -154,8 +154,8 @@ export function SaveAsTestCaseAction({
     return null;
   }
 
-  // Gated behind the same flag as the Playground/Evals sidebar entry.
-  if (playgroundEnabled !== true) {
+  // Gated behind the same flag as the Evaluate sidebar entry.
+  if (evaluateUiEnabled !== true) {
     return null;
   }
 
