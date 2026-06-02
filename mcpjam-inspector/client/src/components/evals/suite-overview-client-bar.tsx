@@ -117,6 +117,9 @@ export function SuiteOverviewClientBar({
 
   const handleRemove = async (namedHostId: string) => {
     if (readOnly || !onUpdate) return;
+    // A suite needs at least one client to be runnable; refuse the last
+    // detach instead of letting the bar fall into the empty state.
+    if (attachments.length <= 1) return;
     await persist(attachments.filter((a) => a.namedHostId !== namedHostId));
   };
 
@@ -172,11 +175,11 @@ export function SuiteOverviewClientBar({
         <button
           type="button"
           className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring dark:bg-background"
-          aria-label="Attach host"
+          aria-label="Attach client"
           disabled={!editable}
         >
           <Plus className="h-3.5 w-3.5" />
-          <span>Attach host</span>
+          <span>Attach client</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -267,7 +270,7 @@ export function SuiteOverviewClientBar({
         >
           {showServersSection ? (
             <span className="shrink-0 text-[11px] text-muted-foreground">
-              Hosts
+              Clients
             </span>
           ) : null}
           <div
@@ -278,7 +281,7 @@ export function SuiteOverviewClientBar({
           >
             {attachments.length === 0 ? (
               <span className="shrink-0 text-[13px] font-normal text-muted-foreground">
-                No hosts attached
+                No clients attached
               </span>
             ) : null}
 
@@ -314,12 +317,20 @@ export function SuiteOverviewClientBar({
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
+                          disabled={attachments.length <= 1}
                           className="text-destructive focus:text-destructive"
                           onSelect={() =>
                             void handleRemove(attachment.namedHostId)
                           }
                         >
-                          Remove from suite
+                          <span className="flex flex-col gap-0.5">
+                            <span>Remove from suite</span>
+                            {attachments.length <= 1 ? (
+                              <span className="text-[10px] font-normal text-muted-foreground">
+                                Attach another client first
+                              </span>
+                            ) : null}
+                          </span>
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
