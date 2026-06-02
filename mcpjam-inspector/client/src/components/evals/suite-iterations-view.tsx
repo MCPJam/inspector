@@ -16,7 +16,8 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
 import { JudgesSection } from "./judges-section";
-import type { EvalMatchOptions } from "@/shared/eval-matching";
+import { ChecksSection } from "./checks-section";
+import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
@@ -1132,6 +1133,31 @@ export function SuiteIterationsView({
                       "Failed to update default validators:",
                       error
                     );
+                  }
+                }}
+              />
+            </div>
+
+            {/* Default checks (predicate gate) — suite-level deterministic
+                checks applied to every case unless the case opts out via its
+                `predicates.mode`. Phase 2 plan: primary authoring surface. */}
+            <div className="space-y-3">
+              <ChecksSection
+                title="Default checks"
+                description="Deterministic checks applied to every case in this suite. Cases can override or extend these defaults."
+                value={suite.defaultPredicates ?? []}
+                onChange={async (next: Predicate[]) => {
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      defaultPredicates: next.length === 0 ? null : next,
+                    });
+                    toast.success("Default checks updated");
+                  } catch (error) {
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite"),
+                    );
+                    console.error("Failed to update default checks:", error);
                   }
                 }}
               />

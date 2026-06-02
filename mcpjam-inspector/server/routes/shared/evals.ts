@@ -36,6 +36,7 @@ import { type PromptTurn } from "@/shared/prompt-turns";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
+  casePredicatesSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
 
@@ -90,6 +91,10 @@ export const RunEvalsRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      // Case-level predicate gate override; threaded through every Zod
+      // boundary on the wire so it doesn't get silently stripped
+      // (feedback_zod_strips_unthreaded_fields).
+      predicates: casePredicatesSchema.optional(),
     }),
   ),
   serverIds: z
@@ -186,6 +191,10 @@ export const RunTestCaseRequestSchema = z.object({
       // validator at authoring time and evaluated deterministically by the
       // runner (unknown types fail closed).
       successPredicates: z.array(z.any()).optional(),
+      // Case-level predicate override envelope ({ mode, list }). Threaded
+      // through every Zod boundary; the runner resolves it against the
+      // suite's `defaultPredicates` per the case mode.
+      predicates: casePredicatesSchema.optional(),
     })
     .optional(),
   /**
@@ -514,6 +523,7 @@ export async function runEvalsWithManager(
       judgeRequirement?: string;
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+      predicates?: import("@/shared/eval-matching").CasePredicates;
     }
   >();
 
@@ -532,6 +542,7 @@ export async function runEvalsWithManager(
         promptTurns: test.promptTurns,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
+        predicates: test.predicates,
       });
     }
     testCaseMap.get(key)!.models.push({
@@ -622,6 +633,11 @@ export async function runEvalsWithManager(
             normalizeForComparison(existingTestCase.matchOptions),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.matchOptions));
+        const predicatesChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.predicates),
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.predicates));
 
         const hasChanges =
           modelsChanged ||
@@ -633,7 +649,8 @@ export async function runEvalsWithManager(
           promptTurnsChanged ||
           judgeRequirementChanged ||
           advancedConfigChanged ||
-          matchOptionsChanged;
+          matchOptionsChanged ||
+          predicatesChanged;
 
         if (hasChanges) {
           await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -651,6 +668,7 @@ export async function runEvalsWithManager(
               testCaseData.advancedConfig,
             ),
             matchOptions: testCaseData.matchOptions,
+            predicates: testCaseData.predicates,
           });
         }
       } else {
@@ -672,6 +690,7 @@ export async function runEvalsWithManager(
             testCaseData.advancedConfig,
           ),
           matchOptions: testCaseData.matchOptions,
+          predicates: testCaseData.predicates,
         });
       }
     }
@@ -711,6 +730,7 @@ export async function runEvalsWithManager(
         judgeRequirement: testCaseData.judgeRequirement,
         advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
         matchOptions: testCaseData.matchOptions,
+        predicates: testCaseData.predicates,
       });
     }
   }

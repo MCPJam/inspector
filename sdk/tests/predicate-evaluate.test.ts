@@ -112,6 +112,48 @@ describe("evaluatePredicate — table driven", () => {
       reasonIncludes: ["never called"],
     },
 
+    // ── firstToolWas ──────────────────────────────────────────────────
+    {
+      name: "firstToolWas: first call matches passes",
+      transcript: transcript({
+        toolCalls: [
+          { toolName: "search", arguments: { q: "x" } },
+          { toolName: "book_flight", arguments: {} },
+        ],
+      }),
+      predicate: { type: "firstToolWas", toolName: "search" },
+      passed: true,
+      reasonIncludes: ["first tool call was", "search"],
+    },
+    {
+      name: "firstToolWas: different first call fails with names in reason",
+      transcript: transcript({
+        toolCalls: [
+          { toolName: "book_flight", arguments: {} },
+          { toolName: "search", arguments: {} },
+        ],
+      }),
+      predicate: { type: "firstToolWas", toolName: "search" },
+      passed: false,
+      reasonIncludes: ["search", "book_flight"],
+    },
+    {
+      name: "firstToolWas: zero tool calls fails closed",
+      transcript: transcript({ toolCalls: [] }),
+      predicate: { type: "firstToolWas", toolName: "search" },
+      passed: false,
+      reasonIncludes: ["no tools were called"],
+    },
+    {
+      name: "firstToolWas: missing toolName fails closed",
+      transcript: transcript({
+        toolCalls: [{ toolName: "search", arguments: {} }],
+      }),
+      predicate: { type: "firstToolWas" } as unknown as Predicate,
+      passed: false,
+      reasonIncludes: ["non-empty toolName"],
+    },
+
     // ── toolNeverCalled ───────────────────────────────────────────────
     {
       name: "toolNeverCalled: forbidden tool absent passes",

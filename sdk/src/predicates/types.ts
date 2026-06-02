@@ -7,7 +7,7 @@
  * the property a CI release gate requires and a stochastic LLM judge cannot
  * provide. The `serverQuality` LLM judge remains the advisory **insight** layer.
  *
- * The union is intentionally small (8 types). It grows only when a real corpus
+ * The union is intentionally small (9 types). It grows only when a real corpus
  * task demands a new one — not speculatively.
  *
  * Hosted in `@mcpjam/sdk` (browser-safe; reuses the `../matchers` argument
@@ -15,6 +15,7 @@
  * implementation.
  */
 
+import { z } from "zod";
 import type { EvalMatchOptions } from "../matchers.js";
 
 /**
@@ -56,6 +57,8 @@ export type Predicate =
   | { type: "toolCalledAtLeastOnce"; toolName: string }
   /** `toolName` was never called (forbidden tool). */
   | { type: "toolNeverCalled"; toolName: string }
+  /** The first tool call observed in the transcript was `toolName`. */
+  | { type: "firstToolWas"; toolName: string }
   /** The final assistant message contains `needle`. Case-insensitive unless `caseSensitive`. */
   | { type: "responseContains"; needle: string; caseSensitive?: boolean }
   /** The final assistant message matches the regular expression `pattern` (regex source, no flags). */
@@ -69,6 +72,106 @@ export type Predicate =
 
 /** The `type` discriminants of {@link Predicate}, for validators. */
 export type PredicateType = Predicate["type"];
+
+// ─── Zod schemas ──────────────────────────────────────────────────────────
+//
+// The predicate union is the wire shape both the inspector forms and the
+// `mcpjam eval` CLI persist into Convex. Convex has its own hand-mirrored
+// `v.union` (Hard Constraint 1: no `@mcpjam/sdk` imports in `convex/`).
+// Parity between the two is proven via the JSON fixtures in
+// `sdk/tests/fixtures/predicates-parity-fixtures.json` (and its sibling in
+// `mcpjam-backend`). Adding a 10th kind requires editing both validator files
+// and the fixtures in the same PR.
+
+/**
+ * Placeholder strings the matcher's `partial` mode treats as type checks
+ * instead of literal equality. Exposed as a Zod literal union so authoring
+ * UIs can offer them as drop-down options when constructing arg matchers.
+ *
+ * The actual leaf may also be any JSON literal (string/number/boolean/object/
+ * array/null) — that's not captured here because the args blob is
+ * `z.record(z.string(), z.unknown())` at the wire boundary.
+ */
+export const PREDICATE_PLACEHOLDER_STRINGS = [
+  "any",
+  "string",
+  "number",
+  "boolean",
+  "object",
+  "array",
+  "null",
+] as const;
+
+/** Zod schema for {@link ArgMatcher}. `args` is unrestricted JSON. */
+export const argMatcherSchema = z.object({
+  args: z.record(z.string(), z.unknown()),
+  argumentMatching: z.enum(["exact", "partial", "ignore"]).optional(),
+});
+
+/**
+ * Zod schema for {@link Predicate}. Uses `z.discriminatedUnion` on `type`
+ * so authoring-side validation surfaces a precise error (e.g. "unknown
+ * predicate type 'firstToolWass'") rather than a generic union failure.
+ */
+export const predicateSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("toolCalledWith"),
+    toolName: z.string().min(1),
+    args: argMatcherSchema,
+    minCount: z.number().int().positive().optional(),
+  }),
+  z.object({
+    type: z.literal("toolCalledAtLeastOnce"),
+    toolName: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("toolNeverCalled"),
+    toolName: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("firstToolWas"),
+    toolName: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("responseContains"),
+    needle: z.string().min(1),
+    caseSensitive: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("responseMatches"),
+    pattern: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("noToolErrors"),
+  }),
+  z.object({
+    type: z.literal("finalAssistantMessageNonEmpty"),
+  }),
+  z.object({
+    type: z.literal("tokenBudgetUnder"),
+    tokens: z.number().int().positive(),
+  }),
+]);
+
+/** Array of predicates — used for both suite defaults and case overrides. */
+export const predicateArraySchema = z.array(predicateSchema);
+
+/**
+ * Case-level predicate override envelope. The {@link mode} eliminates the
+ * `predicates`/`additionalPredicates` ambiguity (see plan Phase 2):
+ *
+ *   - `inherit` — effective predicates = suite defaults (`list` ignored).
+ *   - `replace` — effective predicates = `list`.
+ *   - `extend`  — effective predicates = suite defaults followed by `list`.
+ */
+export const casePredicatesSchema = z.object({
+  mode: z.enum(["inherit", "replace", "extend"]),
+  list: z.array(predicateSchema),
+});
+
+export type CasePredicates = z.infer<typeof casePredicatesSchema>;
+export type PredicatePlaceholder =
+  (typeof PREDICATE_PLACEHOLDER_STRINGS)[number];
 
 /**
  * How a tool failure surfaced. The plan requires `noToolErrors` to distinguish

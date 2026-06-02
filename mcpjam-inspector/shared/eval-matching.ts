@@ -146,6 +146,11 @@ export {
   evaluatePredicates,
   allPredicatesPassed,
   buildIterationTranscript,
+  predicateSchema,
+  predicateArraySchema,
+  argMatcherSchema,
+  casePredicatesSchema,
+  PREDICATE_PLACEHOLDER_STRINGS,
 } from "@mcpjam/sdk/predicates";
 export type {
   Predicate,
@@ -158,4 +163,6 @@ export type {
   TranscriptUsage,
   ToolErrorRecord,
   ToolErrorKind,
+  CasePredicates,
+  PredicatePlaceholder,
 } from "@mcpjam/sdk/predicates";

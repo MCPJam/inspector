@@ -61,7 +61,10 @@ import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
   resolveMatchOptions,
   type EvalMatchOptions,
+  type CasePredicates,
+  type Predicate,
 } from "@/shared/eval-matching";
+import { CaseChecksSection, areAllChecksValid } from "./checks-section";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
@@ -128,6 +131,8 @@ interface TestTemplate {
   promptTurns: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
   matchOptions?: EvalMatchOptions;
+  /** Case-level predicate gate override; undefined ⇒ inherit suite defaults. */
+  predicates?: CasePredicates;
 }
 
 interface TestTemplateEditorProps {
@@ -522,6 +527,7 @@ export function TestTemplateEditor({
       promptTurns,
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
       matchOptions: currentTestCase.matchOptions,
+      predicates: currentTestCase.predicates,
     });
     setExpandedPromptTurnIds(promptTurns.map((turn) => turn.id));
     // Seed the transient picker from the persisted runs so a user who saved
@@ -652,6 +658,12 @@ export function TestTemplateEditor({
     const normalizedCurrentMatchOptions = JSON.stringify(
       normalizeForComparison(currentTestCase.matchOptions ?? null)
     );
+    const normalizedPredicates = JSON.stringify(
+      normalizeForComparison(editForm.predicates ?? null),
+    );
+    const normalizedCurrentPredicates = JSON.stringify(
+      normalizeForComparison(currentTestCase.predicates ?? null),
+    );
 
     return (
       editForm.title !== currentTestCase.title ||
@@ -660,6 +672,7 @@ export function TestTemplateEditor({
       normalizedPromptTurns !== normalizedCurrentPromptTurns ||
       normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
       normalizedMatchOptions !== normalizedCurrentMatchOptions ||
+      normalizedPredicates !== normalizedCurrentPredicates ||
       serverNegativeFlagMismatch
     );
   }, [editForm, currentAdvancedConfig, currentPromptTurns, currentTestCase]);
@@ -669,7 +682,13 @@ export function TestTemplateEditor({
     return validatePromptTurns(editForm.promptTurns);
   }, [editForm]);
 
-  const savePrimaryDisabled = !arePromptTurnsValid || isRunningCompare;
+  const arePredicatesValid = useMemo(() => {
+    if (!editForm?.predicates) return true;
+    return areAllChecksValid(editForm.predicates.list);
+  }, [editForm?.predicates]);
+
+  const savePrimaryDisabled =
+    !arePromptTurnsValid || !arePredicatesValid || isRunningCompare;
 
   const saveDisabledTooltip = useMemo(() => {
     if (!savePrimaryDisabled) {
@@ -825,6 +844,7 @@ export function TestTemplateEditor({
       isNegativeTest,
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
+      predicates: form.predicates,
     };
   };
 
@@ -867,6 +887,8 @@ export function TestTemplateEditor({
         // Pass `null` (not undefined) so the mutation knows to clear a
         // previously-persisted case-level override when the user resets it.
         matchOptions: savePayload.matchOptions ?? null,
+        // Same null-clears-the-field convention for the predicate override.
+        predicates: savePayload.predicates ?? null,
       });
       toast.success("Changes saved");
     } catch (error) {
@@ -920,6 +942,7 @@ export function TestTemplateEditor({
             // null (not undefined) signals "clear" — required to wipe a
             // previously-persisted case-level matchOptions override.
             matchOptions: savePayload.matchOptions ?? null,
+            predicates: savePayload.predicates ?? null,
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -2089,6 +2112,19 @@ export function TestTemplateEditor({
                   }
                 />
               </div>
+            ) : null}
+
+            {editForm ? (
+              <CaseChecksSection
+                value={editForm.predicates}
+                onChange={(next: CasePredicates | undefined) =>
+                  setEditForm((current) =>
+                    current ? { ...current, predicates: next } : current,
+                  )
+                }
+                suiteDefaults={(suite?.defaultPredicates ?? []) as Predicate[]}
+                availableTools={availableTools.map((t) => t.name)}
+              />
             ) : null}
 
             {currentTestCase.lastMessageRun ? (
