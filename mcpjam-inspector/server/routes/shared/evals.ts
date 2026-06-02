@@ -529,6 +529,12 @@ export async function runEvalsWithManager(
 
   let resolvedSuiteId = suiteId ?? null;
 
+  // Per-case upsert outcomes. We don't rollback on partial failure; the point
+  // is visibility — surface which cases were committed vs. which failed so
+  // the UI can show a partial-state banner instead of just a generic error.
+  const committedCases: Array<{ id?: string; name: string }> = [];
+  const failedCases: Array<{ id?: string; name: string; error: string }> = [];
+
   const testCaseMap = new Map<
     string,
     {
@@ -605,6 +611,7 @@ export async function runEvalsWithManager(
           tc.title === testCaseData.title && tc.query === testCaseData.query,
       );
 
+      try {
       if (existingTestCase) {
         const normalize = (val: any) =>
           val === undefined || val === null ? null : val;
@@ -683,6 +690,10 @@ export async function runEvalsWithManager(
             matchOptions: testCaseData.matchOptions,
           });
         }
+        committedCases.push({
+          id: String(existingTestCase._id),
+          name: testCaseData.title,
+        });
       } else {
         await convexClient.mutation("testSuites:createTestCase" as any, {
           suiteId: resolvedSuiteId,
@@ -702,6 +713,19 @@ export async function runEvalsWithManager(
             testCaseData.advancedConfig,
           ),
           matchOptions: testCaseData.matchOptions,
+        });
+        committedCases.push({ name: testCaseData.title });
+      }
+      } catch (error) {
+        failedCases.push({
+          id: existingTestCase ? String(existingTestCase._id) : undefined,
+          name: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        logger.warn("[evals] Failed to upsert test case", {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     }
@@ -725,23 +749,53 @@ export async function runEvalsWithManager(
     resolvedSuiteId = createdSuite._id as string;
 
     for (const [, testCaseData] of testCaseMap.entries()) {
-      await convexClient.mutation("testSuites:createTestCase" as any, {
-        suiteId: resolvedSuiteId,
-        title: testCaseData.title,
-        query: testCaseData.query,
-        models: testCaseData.models,
-        runs: testCaseData.runs,
-        expectedToolCalls: sanitizeForConvexTransport(
-          testCaseData.expectedToolCalls,
-        ),
-        isNegativeTest: testCaseData.isNegativeTest,
-        scenario: testCaseData.scenario,
-        expectedOutput: testCaseData.expectedOutput,
-        promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
-        judgeRequirement: testCaseData.judgeRequirement,
-        advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
-        matchOptions: testCaseData.matchOptions,
-      });
+      try {
+        await convexClient.mutation("testSuites:createTestCase" as any, {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          query: testCaseData.query,
+          models: testCaseData.models,
+          runs: testCaseData.runs,
+          expectedToolCalls: sanitizeForConvexTransport(
+            testCaseData.expectedToolCalls,
+          ),
+          isNegativeTest: testCaseData.isNegativeTest,
+          scenario: testCaseData.scenario,
+          expectedOutput: testCaseData.expectedOutput,
+          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
+          judgeRequirement: testCaseData.judgeRequirement,
+          advancedConfig: sanitizeForConvexTransport(
+            testCaseData.advancedConfig,
+          ),
+          matchOptions: testCaseData.matchOptions,
+        });
+        committedCases.push({ name: testCaseData.title });
+      } catch (error) {
+        failedCases.push({
+          name: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        logger.warn("[evals] Failed to create test case", {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // New-suite path only: if every case create failed, the freshly-made
+    // suite has zero cases. Fall through and `startSuiteRunWithRecorder`
+    // would snapshot nothing, then `runEvalSuiteWithAiSdk` would throw a
+    // generic "No tests supplied for eval run" — masking the structured
+    // failure breakdown we just collected. Short-circuit with an
+    // actionable message instead.
+    if (committedCases.length === 0 && failedCases.length > 0) {
+      const firstError = failedCases[0]?.error ?? "unknown error";
+      throw new Error(
+        `Failed to save any of ${failedCases.length} test case(s) to the new suite. ` +
+          `First failure: ${firstError}. ` +
+          `Run aborted because the suite would have zero cases to execute.`,
+      );
     }
   }
 
@@ -856,6 +910,10 @@ export async function runEvalsWithManager(
     suiteId: resolvedSuiteId,
     runId,
     message: "Evals completed successfully. Check the Evals tab for results.",
+    caseUpsert: {
+      committed: committedCases,
+      failed: failedCases,
+    },
   };
 }
 
