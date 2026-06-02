@@ -367,7 +367,7 @@ export function TestCaseClientHeader({
         {isTweaked ? (
           <div className="flex shrink-0 items-center gap-1">
             <span
-              className="rounded-md border border-warning/50 bg-warning/50 px-1.5 py-0.5 text-[10px] font-medium text-foreground"
+              className="rounded-md border border-warning/50 bg-warning/50 px-1.5 py-0.5 text-[10px] font-medium text-warning-foreground"
               data-testid="test-case-host-tweaked-badge"
             >
               Tweaked

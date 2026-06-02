@@ -299,7 +299,7 @@ function StatusBadge({
   if (status === "passed") {
     return (
       <Badge className="gap-1.5 bg-success/50 text-foreground border-success/50 hover:brightness-95">
-        <span className="h-1.5 w-1.5 rounded-full bg-success/50" />
+        <span className="h-1.5 w-1.5 rounded-full bg-success" />
         Passed
       </Badge>
     );
@@ -307,7 +307,7 @@ function StatusBadge({
   if (status === "failed") {
     return (
       <Badge className="gap-1.5 bg-destructive/50 text-foreground border-destructive/50 hover:brightness-95">
-        <span className="h-1.5 w-1.5 rounded-full bg-destructive/50" />
+        <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
         {failCount} Failed
       </Badge>
     );
@@ -315,14 +315,14 @@ function StatusBadge({
   if (status === "running") {
     return (
       <Badge className="gap-1.5 bg-warning/50 text-foreground border-warning/50 hover:brightness-95">
-        <span className="h-1.5 w-1.5 rounded-full bg-warning/50 animate-pulse" />
+        <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
         Running
       </Badge>
     );
   }
   return (
     <Badge className="gap-1.5 bg-warning/50 text-foreground border-warning/50 hover:brightness-95">
-      <span className="h-1.5 w-1.5 rounded-full bg-warning/50" />
+      <span className="h-1.5 w-1.5 rounded-full bg-warning" />
       Mixed
     </Badge>
   );

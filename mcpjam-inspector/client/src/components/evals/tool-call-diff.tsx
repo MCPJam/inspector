@@ -230,7 +230,7 @@ function toneBorderClass(tone: Tone): string {
     case "extra":
       return "border-info/50";
     case "order":
-      return "border-warning/50";
+      return "border-warning/50 border-dashed";
     case "arg":
       return "border-warning/50";
   }
