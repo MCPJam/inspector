@@ -17,7 +17,6 @@ import {
   Box,
   LayoutGrid,
   GitBranch,
-  Puzzle,
   UserPlus,
   ShieldCheck,
   Loader2,
@@ -391,9 +390,9 @@ function navigateToEvalsRunsList() {
 }
 
 type EvalsSubnavItem = {
-  title: "Playground" | "Runs";
+  title: "Runs";
   href: string;
-  icon: typeof Puzzle | typeof GitBranch;
+  icon: typeof GitBranch;
   isActive: (activeTab?: string) => boolean;
   onClick: () => void;
 };
@@ -401,27 +400,16 @@ type EvalsSubnavItem = {
 export function getEvalsSubnavItems(options: {
   evaluateRunsEnabled: boolean;
 }): EvalsSubnavItem[] {
-  const items: EvalsSubnavItem[] = [
+  if (!options.evaluateRunsEnabled) return [];
+  return [
     {
-      title: "Playground",
-      href: buildEvalsPath({ type: "list" }),
-      icon: Puzzle,
-      isActive: (activeTab) => activeTab === "evals",
-      onClick: navigateToEvalsExploreList,
-    },
-  ];
-
-  if (options.evaluateRunsEnabled) {
-    items.push({
       title: "Runs",
       href: "/ci-evals",
       icon: GitBranch,
       isActive: (activeTab) => activeTab === "ci-evals",
       onClick: navigateToEvalsRunsList,
-    });
-  }
-
-  return items;
+    },
+  ];
 }
 
 export function SidebarEvalsNavGroup({
@@ -446,6 +434,7 @@ export function SidebarEvalsNavGroup({
   const subnavItems = getEvalsSubnavItems({
     evaluateRunsEnabled: showRuns,
   });
+  const hasSubnav = subnavItems.length > 0;
 
   const parentButton = (
     <SidebarMenuButton
@@ -491,55 +480,47 @@ export function SidebarEvalsNavGroup({
                   </TooltipContent>
                 ) : null}
               </Tooltip>
+            ) : isPlaygroundLocked && !hasSubnav ? (
+              <Tooltip>
+                <TooltipTrigger asChild>{parentButton}</TooltipTrigger>
+                <TooltipContent side="right" sideOffset={6}>
+                  Coming soon. Playground is in beta.
+                </TooltipContent>
+              </Tooltip>
             ) : (
               parentButton
             )}
-            <SidebarMenuSub>
-              {subnavItems.map((item) => {
-                const ItemIcon = item.icon;
-                const isItemPlaygroundLocked =
-                  item.title === "Playground" && isPlaygroundLocked;
-                const isItemDisabled = disabled || isItemPlaygroundLocked;
+            {hasSubnav ? (
+              <SidebarMenuSub>
+                {subnavItems.map((item) => {
+                  const ItemIcon = item.icon;
+                  const isItemDisabled = disabled || isPlaygroundLocked;
 
-                const subnavButton = (
-                  <SidebarMenuSubButton
-                    isActive={!isItemDisabled && item.isActive(activeTab)}
-                    href={item.href}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (isItemDisabled) return;
-                      item.onClick();
-                    }}
-                    aria-disabled={isItemDisabled || undefined}
-                    className={cn(
-                      isItemDisabled &&
-                        "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
-                      isItemPlaygroundLocked &&
-                        "aria-disabled:pointer-events-auto",
-                      disabled && "pointer-events-none"
-                    )}
-                  >
-                    <ItemIcon className="h-4 w-4" />
-                    <span className="min-w-0 truncate">{item.title}</span>
-                  </SidebarMenuSubButton>
-                );
-
-                return (
-                  <SidebarMenuSubItem key={item.title}>
-                    {isItemPlaygroundLocked ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>{subnavButton}</TooltipTrigger>
-                        <TooltipContent side="right" sideOffset={6}>
-                          Coming soon. Playground is in beta.
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      subnavButton
-                    )}
-                  </SidebarMenuSubItem>
-                );
-              })}
-            </SidebarMenuSub>
+                  return (
+                    <SidebarMenuSubItem key={item.title}>
+                      <SidebarMenuSubButton
+                        isActive={!isItemDisabled && item.isActive(activeTab)}
+                        href={item.href}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (isItemDisabled) return;
+                          item.onClick();
+                        }}
+                        aria-disabled={isItemDisabled || undefined}
+                        className={cn(
+                          isItemDisabled &&
+                            "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
+                          disabled && "pointer-events-none"
+                        )}
+                      >
+                        <ItemIcon className="h-4 w-4" />
+                        <span className="min-w-0 truncate">{item.title}</span>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  );
+                })}
+              </SidebarMenuSub>
+            ) : null}
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroupContent>
@@ -573,7 +554,7 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");

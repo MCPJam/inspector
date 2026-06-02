@@ -114,7 +114,7 @@ describe("filterByFeatureFlags", () => {
     expect(result[0].items[0].title).toBe("Plain");
   });
 
-  it("keeps Evaluate item visible when evaluate-runs is off", () => {
+  it("keeps Evaluate item visible when evaluate-ci is off", () => {
     const result = filterByFeatureFlags(
       [
         {
@@ -131,26 +131,26 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "evaluate-runs": false },
+      { "evaluate-ci": false },
     );
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toEqual(["Views", "Evaluate"]);
   });
 
-  it("keeps Playground visible when evaluate-runs is off", () => {
+  it("renders no subnav when evaluate-ci is off (Evaluate is a flat link)", () => {
     expect(
       getEvalsSubnavItems({ evaluateRunsEnabled: false }).map(
         (item) => item.title,
       ),
-    ).toEqual(["Playground"]);
+    ).toEqual([]);
   });
 
-  it("shows Runs when evaluate-runs is on", () => {
+  it("shows Runs as the only subnav item when evaluate-ci is on", () => {
     expect(
       getEvalsSubnavItems({ evaluateRunsEnabled: true }).map(
         (item) => item.title,
       ),
-    ).toEqual(["Playground", "Runs"]);
+    ).toEqual(["Runs"]);
   });
 
   it("hides Conformance when the feature flag is off", () => {

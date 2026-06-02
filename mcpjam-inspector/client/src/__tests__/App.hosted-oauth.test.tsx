@@ -2556,7 +2556,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("keeps Playground available when evaluate-runs is disabled", async () => {
+  it("keeps Playground available when evaluate-ci is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/evals");
@@ -2575,7 +2575,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("waits on ci-evals while the evaluate-runs flag is still loading", async () => {
+  it("waits on ci-evals while the evaluate-ci flag is still loading", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2586,7 +2586,7 @@ describe("App hosted OAuth callback handling", () => {
     };
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs"
+      flag === "evaluate-ci"
         ? evaluateRunsState.value
         : flag === "playground-enabled"
     );
@@ -2611,7 +2611,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
   });
 
-  it("redirects ci-evals to evals when evaluate-runs is disabled", async () => {
+  it("redirects ci-evals to evals when evaluate-ci is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2619,7 +2619,7 @@ describe("App hosted OAuth callback handling", () => {
 
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : flag === "playground-enabled"
+      flag === "evaluate-ci" ? undefined : flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2639,14 +2639,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("redirects nested ci-evals routes to evals when evaluate-runs is disabled", async () => {
+  it("redirects nested ci-evals routes to evals when evaluate-ci is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals/suite/s_123?view=runs");
     mockHandleOAuthCallback.mockReset();
 
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : flag === "playground-enabled"
+      flag === "evaluate-ci" ? undefined : flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2840,7 +2840,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("still applies the CI billing redirect when evaluate-runs is enabled", async () => {
+  it("still applies the CI billing redirect when evaluate-ci is enabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2862,7 +2862,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) =>
-        flag === "billing-entitlements-ui" || flag === "evaluate-runs"
+        flag === "billing-entitlements-ui" || flag === "evaluate-ci"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
