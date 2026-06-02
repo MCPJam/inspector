@@ -26,6 +26,7 @@ export function useRunInsights(
   return {
     canRequest: hook.canRequest,
     error: hook.error,
+    errorMessage: hook.errorMessage,
     unavailable: hook.unavailable,
     requested: hook.requested,
     requestRunInsights: hook.requestInsight,

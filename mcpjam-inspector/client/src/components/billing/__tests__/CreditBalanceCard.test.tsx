@@ -6,13 +6,17 @@ import { CreditBalanceCard } from "../CreditBalanceCard";
 
 let balanceState:
   | {
-      paidPercentRemaining: number | null;
+      availableCredits: number;
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
+      freeDailyCreditsRemaining: number;
+      freeDailyCreditsTotal: number;
       freeDailyResetAt: number;
+      walletLocked: boolean;
     }
   | undefined = undefined;
 let isLoadingState = false;
+let creditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -21,11 +25,13 @@ vi.mock("@/hooks/useCreditBalance", () => ({
   }),
 }));
 
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditsFlagState,
+}));
+
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
   CreditTopupDialog: ({ open, source }: { open: boolean; source: string }) =>
-    open ? (
-      <div data-testid="topup-dialog" data-source={source} />
-    ) : null,
+    open ? <div data-testid="topup-dialog" data-source={source} /> : null,
 }));
 
 // Stub the gated button so existing tests don't need to set up the preset
@@ -33,7 +39,7 @@ vi.mock("@/components/billing/CreditTopupDialog", () => ({
 vi.mock("@/components/billing/TopupActionButton", () => ({
   TopupActionButton: ({ onClick }: { onClick: () => void }) => (
     <button type="button" onClick={onClick}>
-      Top up
+      Buy credits
     </button>
   ),
 }));
@@ -47,13 +53,24 @@ vi.mock("@/components/billing/PendingCreditTopupsBanner", () => ({
 describe("CreditBalanceCard", () => {
   beforeEach(() => {
     balanceState = {
-      paidPercentRemaining: null,
+      availableCredits: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 300,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 11 * 60 * 60 * 1000,
+      walletLocked: false,
     };
     isLoadingState = false;
+    creditsFlagState = true;
     window.location.hash = "";
+  });
+
+  it("renders nothing when the credits UI flag is off", () => {
+    creditsFlagState = false;
+    const { container } = render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders a skeleton state while balance is loading", () => {
@@ -68,15 +85,18 @@ describe("CreditBalanceCard", () => {
 
   it("renders the daily-limit row without surfacing any dollar value", () => {
     balanceState = {
-      paidPercentRemaining: null,
+      availableCredits: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 9,
+      freeDailyCreditsRemaining: 273,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 11 * 60 * 60 * 1000,
+      walletLocked: false,
     };
     render(<CreditBalanceCard />);
 
     const dailyRow = screen.getByTestId("usage-daily");
-    expect(dailyRow).toHaveTextContent(/9% used/);
+    expect(dailyRow).toHaveTextContent(/27 \/ 300/);
     expect(dailyRow).toHaveTextContent(/resets/);
     // Regression guard: free credit dollar value must never appear.
     expect(dailyRow.textContent ?? "").not.toMatch(/\$/);
@@ -87,56 +107,93 @@ describe("CreditBalanceCard", () => {
     expect(screen.queryByTestId("usage-paid")).not.toBeInTheDocument();
   });
 
-  it("renders the paid-credits row as a bare percent, with no dollar value", () => {
-    // 32% remaining = 68% used. The bar's right-text is "X% used".
+  it("renders the paid-credits row as org credits, with no dollar value", () => {
     balanceState = {
-      paidPercentRemaining: 32,
+      availableCredits: 1200,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 100,
+      freeDailyCreditsRemaining: 0,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      walletLocked: false,
     };
     render(<CreditBalanceCard />);
 
     const paidRow = screen.getByTestId("usage-paid");
-    expect(paidRow).toHaveTextContent(/68% used/);
+    expect(paidRow).toHaveTextContent(/Shared paid credits/);
+    expect(paidRow).toHaveTextContent(/1,200 credits/);
     // Regression guard: the paid-credits row must NEVER surface a dollar
-    // amount. Pairing a $ with a percent invites the user to compute a
-    // wrong remaining-dollars value, and any credited-domain dollar
-    // exposes the take rate when the user knows what they paid.
+    // amount. Credits are the user-facing unit; internal pricing/margin math
+    // stays off the wire.
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
   });
 
-  it("exposes a tooltip trigger on the paid-credits row explaining consumption order", () => {
+  it("shows the org wallet lock state independent of the paid-credits row", () => {
     balanceState = {
-      paidPercentRemaining: 50,
+      availableCredits: -500,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 300,
+      freeDailyCreditsTotal: 300,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      walletLocked: true,
     };
     render(<CreditBalanceCard />);
 
     const paidRow = screen.getByTestId("usage-paid");
-    // Keyboard- and screen-reader-accessible info button.
-    const infoButton = within(paidRow).getByRole("button", {
-      name: /About Paid credits/i,
-    });
-    expect(infoButton).toBeInTheDocument();
+    expect(paidRow).toHaveTextContent(/-500 credits/);
+    // The lock notice lives in its own block, not inside the paid row.
+    expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
+      /paused pending review/
+    );
+  });
+
+  it("surfaces the wallet lock notice even with no purchase history", () => {
+    // A wallet can be locked (chargeback/dispute) before/without any completed
+    // purchase. Gating the notice on purchase history would hide it exactly
+    // when the user needs to know spending is paused.
+    balanceState = {
+      availableCredits: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 0,
+      freeDailyCreditsRemaining: 300,
+      freeDailyCreditsTotal: 300,
+      freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      walletLocked: true,
+    };
+    render(<CreditBalanceCard />);
+
+    expect(screen.queryByTestId("usage-paid")).toBeNull();
+    expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
+      /paused pending review/
+    );
   });
 
   it("does NOT expose a tooltip trigger on the daily-limit row (no ambiguity to explain there)", () => {
     render(<CreditBalanceCard />);
     const dailyRow = screen.getByTestId("usage-daily");
     expect(
-      within(dailyRow).queryByRole("button", { name: /About/i }),
+      within(dailyRow).queryByRole("button", { name: /About/i })
     ).not.toBeInTheDocument();
+  });
+
+  it("shows an ask-admin hint instead of the Buy credits button for non-managers", () => {
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(
+      screen.queryByRole("button", { name: /Buy credits/i })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("usage-ask-admin")).toHaveTextContent(
+      /Ask org admin to top up credits/
+    );
   });
 
   it("opens the top-up dialog when the Top up button is clicked", async () => {
     const user = userEvent.setup();
-    render(<CreditBalanceCard />);
+    render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
 
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Top up/i }));
+    await user.click(screen.getByRole("button", { name: /Buy credits/i }));
     const dialog = screen.getByTestId("topup-dialog");
     expect(dialog).toBeInTheDocument();
     expect(dialog.getAttribute("data-source")).toBe("billing_page");
@@ -146,9 +203,9 @@ describe("CreditBalanceCard", () => {
     window.history.replaceState(
       {},
       "",
-      "/organizations/org-1/billing?topup=open",
+      "/organizations/org-1/billing?topup=open"
     );
-    render(<CreditBalanceCard />);
+    render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
 
     const dialog = screen.getByTestId("topup-dialog");
     expect(dialog).toBeInTheDocument();
@@ -165,11 +222,13 @@ describe("CreditBalanceCard", () => {
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();
   });
 
-  it("clarifies that credits are user-scoped, not org-scoped", () => {
+  it("clarifies that credits are organization-scoped", () => {
     render(<CreditBalanceCard />);
-    expect(screen.getByText(/Your model credits/)).toBeInTheDocument();
+    expect(screen.getByText(/Organization model credits/)).toBeInTheDocument();
     expect(
-      screen.getByText(/Credits are linked to your user, not the organization/),
+      screen.getByText(
+        /Shared credits are available to everyone in this organization/
+      )
     ).toBeInTheDocument();
   });
 });

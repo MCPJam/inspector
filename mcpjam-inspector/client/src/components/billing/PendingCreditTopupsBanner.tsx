@@ -8,13 +8,17 @@ const formatUsd = (cents: number): string => {
   return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
 };
 
-/** Renders a small notice for any in-flight or recently-failed credit top-up. */
-export function PendingCreditTopupsBanner() {
-  const { pending, failed } = usePendingCreditTopups();
+/** Renders a small notice for any in-flight or recently-failed credit purchase. */
+export function PendingCreditTopupsBanner({
+  organizationId,
+}: {
+  organizationId?: string | null;
+}) {
+  const { pending, failed } = usePendingCreditTopups(organizationId);
 
   const pendingTotalCents = useMemo(
-    () => (pending ?? []).reduce((sum, t) => sum + t.amountCents, 0),
-    [pending],
+    () => (pending ?? []).reduce((sum, t) => sum + t.pricePaidCents, 0),
+    [pending]
   );
 
   if (!pending && !failed) return null;
@@ -51,8 +55,8 @@ function PendingNotice({ totalAmountCents, count }: PendingNoticeProps) {
   const amountLabel = formatUsd(totalAmountCents);
   const headline =
     count === 1
-      ? `Top-up of ${amountLabel} is pending`
-      : `${count} top-ups (${amountLabel} total) are pending`;
+      ? `Credit purchase of ${amountLabel} is pending`
+      : `${count} credit purchases (${amountLabel} total) are pending`;
   return (
     <div
       role="status"
@@ -85,7 +89,8 @@ function FailedNotice({ topup }: FailedNoticeProps) {
       <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
       <div className="space-y-0.5">
         <p className="font-medium">
-          Top-up of {formatUsd(topup.amountCents)} could not be completed
+          Credit purchase of {formatUsd(topup.pricePaidCents)} could not be
+          completed
         </p>
         <p className="text-destructive/80">
           Your payment was declined or returned. No credits were granted —

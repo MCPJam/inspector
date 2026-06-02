@@ -61,6 +61,7 @@ describe("evals-api hosted mode", () => {
       hasPendingLimit: false,
       isOpen: false,
       intent: null,
+      organizationId: null,
       pendingInput: null,
     });
   });
@@ -227,6 +228,7 @@ describe("evals-api hosted mode", () => {
       hasPendingLimit: false,
       isOpen: false,
       intent: null,
+      organizationId: null,
       pendingInput: null,
     });
     authFetchMock.mockResolvedValueOnce(

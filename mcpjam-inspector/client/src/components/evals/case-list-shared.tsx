@@ -1,9 +1,13 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import {
+  evalSurfaceCardClass,
+  evalSurfaceHeaderClass,
+  evalSurfaceRowHoverClass,
+} from "./eval-surface-chrome";
 
 /** Outer shell for a scrollable “cases” table (matches {@link TestCasesOverview}). */
-export const caseListCardClassName =
-  "flex flex-col rounded-xl border border-border/60 bg-card text-card-foreground";
+export const caseListCardClassName = cn("flex flex-col", evalSurfaceCardClass);
 
 /**
  * Column header row: “Case name” + status column, optional gutters for checkboxes or actions.
@@ -30,7 +34,8 @@ export function CaseListColumnHeaders({
   return (
     <div
       className={cn(
-        "flex w-full items-center gap-3 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground",
+        "flex w-full items-center gap-3 px-4 py-2 text-xs font-medium text-muted-foreground",
+        evalSurfaceHeaderClass,
         className,
       )}
     >
@@ -59,8 +64,6 @@ export function caseListDataRowClassName(options: {
   return cn(
     "flex w-full min-w-0 items-center gap-2 px-4 py-2.5 transition-colors",
     isDimmed && "opacity-60",
-    isSelected
-      ? "bg-muted/50"
-      : "bg-background hover:bg-muted/50",
+    isSelected ? "bg-muted/65" : cn("bg-background", evalSurfaceRowHoverClass),
   );
 }

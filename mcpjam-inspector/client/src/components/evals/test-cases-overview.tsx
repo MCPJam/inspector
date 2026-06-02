@@ -23,8 +23,10 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
 import {
   EVAL_DESTRUCTIVE_BUTTON_CLASS,
+  EVAL_FAILED_BADGE_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
+import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
@@ -552,7 +554,11 @@ export function TestCasesOverview({
               );
               const failBadge = (
                 <span
-                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+                  className={cn(
+                    ITERATION_RESULT_BADGE_BASE,
+                    "tracking-wider",
+                    EVAL_FAILED_BADGE_CLASS,
+                  )}
                   aria-label="Failed"
                 >
                   Failed

@@ -1,9 +1,11 @@
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { RunCaseIterationOutcome } from "./run-case-groups";
 import {
   EVAL_FAIL_BAR_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
+import { evalSurfaceHeaderClass } from "./eval-surface-chrome";
 
 /**
  * Run case table row: case title flexes on the left, fixed metric rail on the right.
@@ -24,8 +26,10 @@ export const runCaseMetricsRailClassName =
 export const runCaseListSortGutterClassName = "flex w-7 shrink-0 items-center justify-end pr-2";
 
 /** Header row — mirrors `.matrix-row.head` from evals_playground_design.html */
-export const runCaseListHeadClassName =
-  "min-h-9 border-b bg-muted/60 font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground";
+export const runCaseListHeadClassName = cn(
+  "min-h-9 font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground",
+  evalSurfaceHeaderClass,
+);
 
 /** Data row minimum height — mirrors `.matrix-row` min-height */
 export const runCaseListDataRowClassName = "min-h-11";
@@ -48,12 +52,15 @@ export function RunCaseIterationBar({
   total,
   className,
   maxVisible = 10,
+  headerEnd,
 }: {
   results: RunCaseIterationOutcome[];
   passed: number;
   total: number;
   className?: string;
   maxVisible?: number;
+  /** Shown on the same row as the pass/total count (e.g. accuracy %). */
+  headerEnd?: ReactNode;
 }) {
   if (results.length === 0) return null;
 
@@ -64,10 +71,10 @@ export function RunCaseIterationBar({
 
   return (
     <div className={cn("flex w-full min-w-0 flex-col gap-1", className)}>
-      <div className="flex w-full items-baseline">
+      <div className="flex w-full min-w-0 items-baseline gap-2">
         <span
           className={cn(
-            "font-mono text-xs font-semibold tabular-nums",
+            "font-metric text-xs font-semibold tabular-nums tracking-tight shrink-0",
             total === 0 && "text-muted-foreground",
             total > 0 && passed === total && "text-foreground",
             total > 0 && passed < total && EVAL_LOW_PASS_RATE_TEXT_CLASS,
@@ -75,6 +82,9 @@ export function RunCaseIterationBar({
         >
           {passed}/{total}
         </span>
+        {headerEnd ? (
+          <div className="min-w-0 shrink-0">{headerEnd}</div>
+        ) : null}
       </div>
       <div
         className="grid h-1 w-full gap-px"

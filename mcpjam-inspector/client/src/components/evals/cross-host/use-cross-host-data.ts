@@ -9,21 +9,6 @@ export type HostColumn = {
   isHistorical: boolean;
 };
 
-export type CellChips = {
-  /** Total tools available before visibility filter, or null if not stamped. */
-  toolsTotalBefore: number | null;
-  /** Tools exposed to the model after visibility filter. */
-  toolsExposed: number | null;
-  /** Tools dropped by the visibility policy. */
-  toolsDroppedVisibility: number | null;
-  /** Sum of would-require-approval tool calls across iterations (requires requireToolApproval). */
-  approvalsWouldRequire: number | null;
-  /** True when any iteration has progressive_discovery_enabled=true. */
-  progressiveDiscoveryEnabled: boolean;
-  /** True when any iteration has openai_compat_injected=true. */
-  openaiCompatInjected: boolean;
-};
-
 export type CellData = {
   iterations: EvalIteration[];
   passCount: number;
@@ -31,17 +16,12 @@ export type CellData = {
   pendingCount: number;
   totalCount: number;
   passRate: number | null;
-  /**
-   * Median (p50) latency across completed iterations in this cell, in ms.
-   * Median over mean because at small iteration counts (1-10) a single
-   * tail-latency host quirk skews the mean dramatically; the median
-   * surfaces typical-case behavior, which is what the cell wants to
-   * communicate at a glance. Full p95 takes ~20+ samples to be meaningful
-   * and is deferred to a later pass.
-   */
-  medianLatencyMs: number | null;
-  totalTokens: number;
-  chips: CellChips;
+  /** Median (p50) latency across completed iterations in this cell, in ms. */
+  p50LatencyMs: number | null;
+  /** 95th percentile latency across completed iterations in this cell, in ms. */
+  p95LatencyMs: number | null;
+  /** Mean `tokensUsed` per iteration in this cell (all iterations in the latest run). */
+  avgTokensPerIteration: number | null;
 };
 
 export type CrossHostData = {
@@ -51,21 +31,6 @@ export type CrossHostData = {
   hasAnyData: boolean;
   hasHostAttachments: boolean;
 };
-
-function readMetaNumber(
-  meta: Record<string, unknown> | undefined,
-  key: string,
-): number | null {
-  const v = meta?.[key];
-  return typeof v === "number" ? v : null;
-}
-
-function readMetaBool(
-  meta: Record<string, unknown> | undefined,
-  key: string,
-): boolean {
-  return meta?.[key] === true;
-}
 
 /**
  * Median of a numeric array. Returns null on empty input. Sorts a copy —
@@ -81,20 +46,23 @@ export function median(values: number[]): number | null {
     : sorted[mid];
 }
 
+/** Linear-interpolation percentile (PERCENTILE.INC). */
+export function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (p / 100) * (sorted.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+}
+
 function buildCellData(iterations: EvalIteration[]): CellData {
   let passCount = 0;
   let failCount = 0;
   let pendingCount = 0;
   let totalTokens = 0;
   const latencySamples: number[] = [];
-
-  // Chip aggregates — use first stamped value for counts, OR across iterations for booleans
-  let toolsTotalBefore: number | null = null;
-  let toolsExposed: number | null = null;
-  let toolsDroppedVisibility: number | null = null;
-  let approvalsWouldRequire: number | null = null;
-  let progressiveDiscoveryEnabled = false;
-  let openaiCompatInjected = false;
 
   for (const iter of iterations) {
     const result = computeIterationResult(iter);
@@ -110,26 +78,15 @@ function buildCellData(iterations: EvalIteration[]): CellData {
         latencySamples.push(latency);
       }
     }
-
-    const meta = iter.metadata;
-    if (meta) {
-      if (toolsTotalBefore === null) toolsTotalBefore = readMetaNumber(meta, "tools_total_before");
-      if (toolsExposed === null) toolsExposed = readMetaNumber(meta, "tools_exposed");
-      if (toolsDroppedVisibility === null)
-        toolsDroppedVisibility = readMetaNumber(meta, "tools_dropped_visibility");
-      const approvals = readMetaNumber(meta, "approvals_would_require");
-      if (approvals !== null) {
-        approvalsWouldRequire = (approvalsWouldRequire ?? 0) + approvals;
-      }
-      if (readMetaBool(meta, "progressive_discovery_enabled")) progressiveDiscoveryEnabled = true;
-      if (readMetaBool(meta, "openai_compat_injected")) openaiCompatInjected = true;
-    }
   }
 
   const totalCount = iterations.length;
   const completed = passCount + failCount;
   const passRate = completed > 0 ? (passCount / completed) * 100 : null;
-  const medianLatencyMs = median(latencySamples);
+  const p50LatencyMs = median(latencySamples);
+  const p95LatencyMs = percentile(latencySamples, 95);
+  const avgTokensPerIteration =
+    totalCount > 0 && totalTokens > 0 ? totalTokens / totalCount : null;
 
   return {
     iterations,
@@ -138,16 +95,9 @@ function buildCellData(iterations: EvalIteration[]): CellData {
     pendingCount,
     totalCount,
     passRate,
-    medianLatencyMs,
-    totalTokens,
-    chips: {
-      toolsTotalBefore,
-      toolsExposed,
-      toolsDroppedVisibility,
-      approvalsWouldRequire,
-      progressiveDiscoveryEnabled,
-      openaiCompatInjected,
-    },
+    p50LatencyMs,
+    p95LatencyMs,
+    avgTokensPerIteration,
   };
 }
 
@@ -197,7 +147,7 @@ export function useCrossHostData(
     // pinned to the latest run per (case, host). Reruns against the same host
     // would otherwise pile every historical iteration into one cell —
     // contradicting the "Last run" semantics shown by the by-case toggle and
-    // polluting tokens/latency/chips with stale runs.
+    // polluting tokens/latency with stale runs.
     const runRank = new Map<string, number>();
     [...runs]
       .sort((a, b) => {

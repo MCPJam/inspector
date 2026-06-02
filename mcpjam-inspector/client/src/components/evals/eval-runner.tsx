@@ -46,6 +46,7 @@ import {
   type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
 import type { PromptTurn } from "@/shared/prompt-turns";
+import { notifyCaseUpsertPartial } from "./case-upsert-toast";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
@@ -679,7 +680,13 @@ export function EvalRunner({
         },
         notes: criteriaNote,
       });
-      toast.success(result.message || "Evals started successfully!");
+      const hadPartialFailure = notifyCaseUpsertPartial(
+        (result as { caseUpsert?: unknown })?.caseUpsert,
+        { context: "Saved" },
+      );
+      if (!hadPartialFailure) {
+        toast.success(result.message || "Evals started successfully!");
+      }
 
       // Track suite created
       posthog.capture("eval_suite_created", {

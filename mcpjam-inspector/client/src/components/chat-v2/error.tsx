@@ -28,6 +28,9 @@ interface ErrorBoxProps {
   onRetry?: () => void;
   canTopUp?: boolean;
   onTopUp?: () => void;
+  /** When top-up is the relevant fix but the current user lacks permission
+   * to buy credits, render an "ask org admin" hint instead of the button. */
+  askAdminToTopUp?: boolean;
   /** When true, render the locked-account banner instead of any other state. */
   walletLocked?: boolean;
   /** Sub-classification of a rate-limit error. `"concurrency"` triggers the
@@ -59,6 +62,7 @@ export function ErrorBox({
   onRetry,
   canTopUp,
   onTopUp,
+  askAdminToTopUp,
   walletLocked,
   limitKind,
   retryAfterMs,
@@ -121,8 +125,8 @@ export function ErrorBox({
   const errorLabel = isMCPJamModelLimit
     ? "Free daily credits used up"
     : isPlatformError
-      ? "MCPJam platform issue"
-      : "An error occurred";
+    ? "MCPJam platform issue"
+    : "An error occurred";
   const errorPrefix = isMCPJamModelLimit ? `${errorLabel}.` : `${errorLabel}:`;
 
   if (isWalletLocked) {
@@ -139,8 +143,7 @@ export function ErrorBox({
               Account under review
             </p>
             <p className="text-sm leading-6 opacity-90">
-              We&apos;ve paused this account while a recent payment is
-              reviewed.{" "}
+              We&apos;ve paused this account while a recent payment is reviewed.{" "}
               <a
                 className="underline hover:no-underline"
                 href="mailto:founders@mcpjam.com?subject=MCPJam%20Account%20Review"
@@ -166,18 +169,15 @@ export function ErrorBox({
     // Another credit-funded chat is still in flight server-side. Short
     // wait, then retry — render a transient-feeling banner with a retry
     // button. Top-up doesn't help here; just wait it out.
-    const retrySeconds = Math.max(
-      1,
-      Math.ceil((retryAfterMs ?? 0) / 1000),
-    );
+    const retrySeconds = Math.max(1, Math.ceil((retryAfterMs ?? 0) / 1000));
     return (
       <div className="flex flex-col gap-2 border rounded p-3 border-border bg-muted/40 text-foreground">
         <div className="flex items-start gap-3">
           <CircleAlert className="h-4 w-4 flex-shrink-0 text-muted-foreground mt-0.5" />
           <div className="min-w-0 flex-1">
             <p className="text-xs leading-5">
-              Another credit-funded chat is finishing. Retry in{" "}
-              {retrySeconds} second{retrySeconds === 1 ? "" : "s"}.
+              Another credit-funded chat is finishing. Retry in {retrySeconds}{" "}
+              second{retrySeconds === 1 ? "" : "s"}.
             </p>
           </div>
           <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
@@ -229,11 +229,18 @@ export function ErrorBox({
           )}
         </div>
         <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
-          {canTopUp && onTopUp && (
+          {canTopUp && onTopUp ? (
             <Button type="button" onClick={onTopUp}>
-              Top up to keep chatting
+              Buy credits to keep chatting
             </Button>
-          )}
+          ) : askAdminToTopUp ? (
+            <span
+              className="self-center text-sm text-muted-foreground"
+              data-testid="chat-error-ask-admin"
+            >
+              Ask org admin to top up credits
+            </span>
+          ) : null}
           {isRetryable && onRetry && (
             <Button
               type="button"
@@ -261,7 +268,7 @@ export function ErrorBox({
           <CollapsibleTrigger
             className={cn(
               "flex items-center gap-1.5 text-xs transition-colors",
-              triggerClasses,
+              triggerClasses
             )}
           >
             <span>More details</span>
@@ -275,7 +282,7 @@ export function ErrorBox({
             <div
               className={cn(
                 "rounded border bg-background/50 p-2",
-                borderClasses,
+                borderClasses
               )}
             >
               {errorDetailsJson ? (
@@ -289,7 +296,7 @@ export function ErrorBox({
                 <pre
                   className={cn(
                     "text-xs font-mono whitespace-pre-wrap overflow-x-auto",
-                    preClasses,
+                    preClasses
                   )}
                 >
                   {errorDetails}

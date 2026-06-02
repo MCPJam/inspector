@@ -9,7 +9,10 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteOverviewEntry } from "./types";
-import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
+import {
+  EVAL_FAIL_BAR_CLASS,
+  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+} from "./constants";
 
 /** Strip trailing timestamp suffixes from suite names for display. */
 export function stripTimestampSuffix(name: string): string {
@@ -107,6 +110,14 @@ export function passRateColorClass(percent: number | null): string {
   if (percent >= 95) return "text-emerald-500";
   if (percent >= 75) return "text-amber-500";
   return EVAL_LOW_PASS_RATE_TEXT_CLASS;
+}
+
+/** Segment fills for pass-rate bars — thresholds aligned with {@link passRateColorClass}. */
+export function passRateSegmentColorClass(percent: number | null): string {
+  if (percent === null) return "bg-muted-foreground/15";
+  if (percent >= 95) return "bg-emerald-500";
+  if (percent >= 75) return "bg-amber-500";
+  return EVAL_FAIL_BAR_CLASS;
 }
 
 export function Sparkline({

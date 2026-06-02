@@ -118,7 +118,7 @@ describe("SidebarUser", () => {
     expect(authState.signInMock).toHaveBeenCalled();
   });
 
-  it("renders credit usage inside the signed-in account dropdown", () => {
+  it("no longer renders credit usage in the account dropdown (moved to the org switcher)", () => {
     authState.user = {
       email: "owner@example.com",
       firstName: "Owner",
@@ -127,10 +127,9 @@ describe("SidebarUser", () => {
 
     render(<SidebarUser />);
 
-    const creditUsage = screen.getByTestId("sidebar-credit-usage");
-    expect(screen.getByTestId("account-menu")).toContainElement(creditUsage);
-    expect(creditUsage).toHaveAttribute("data-variant", "full");
-    expect(creditUsage).toHaveClass("px-1", "pb-1");
+    expect(
+      screen.queryByTestId("sidebar-credit-usage")
+    ).not.toBeInTheDocument();
   });
 
   it("returns logout to the app origin instead of the callback route", () => {

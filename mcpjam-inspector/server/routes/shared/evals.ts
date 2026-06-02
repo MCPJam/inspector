@@ -147,6 +147,17 @@ export const RunEvalsRequestSchema = z.object({
    * so connecting new servers cannot silently contaminate existing suites.
    */
   refreshSnapshot: z.boolean().optional(),
+  /**
+   * Client-generated UUID set on every per-host POST when a multi-host
+   * eval launch fans out (N > 1). Threaded into Convex `startTestSuiteRun`
+   * so the resulting `testSuiteRun` rows share a group id, which the UI
+   * uses to collapse them into a single parent row. Absent on single-host
+   * launches and on legacy runs — those render ungrouped.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  runGroupId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -283,11 +294,28 @@ export function assertTestCaseRunWithinCap(
   }
 }
 
+// Optional attachment metadata threaded into the backend eval-generation
+// endpoint so the LLM can scope the cases by the suite's saved server
+// attachment (per-server tests + at least one explicit cross-server test
+// when the attachment spans ≥2 servers). `resolvedServerNames` carries
+// runtime server identifiers — NOT Convex serverAttachment document ids —
+// to avoid ambiguity at the wire boundary.
+export const ServerAttachmentInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().optional(),
+  resolvedServerNames: z.array(z.string().min(1)).min(1),
+});
+
+export type ServerAttachmentInput = z.infer<
+  typeof ServerAttachmentInputSchema
+>;
+
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
@@ -297,6 +325,7 @@ export const GenerateNegativeTestsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateNegativeTestsRequest = z.infer<
@@ -467,6 +496,7 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
     refreshSnapshot,
+    runGroupId,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -507,6 +537,12 @@ export async function runEvalsWithManager(
     );
 
   let resolvedSuiteId = suiteId ?? null;
+
+  // Per-case upsert outcomes. We don't rollback on partial failure; the point
+  // is visibility — surface which cases were committed vs. which failed so
+  // the UI can show a partial-state banner instead of just a generic error.
+  const committedCases: Array<{ id?: string; name: string }> = [];
+  const failedCases: Array<{ id?: string; name: string; error: string }> = [];
 
   const testCaseMap = new Map<
     string,
@@ -586,6 +622,7 @@ export async function runEvalsWithManager(
           tc.title === testCaseData.title && tc.query === testCaseData.query,
       );
 
+      try {
       if (existingTestCase) {
         const normalize = (val: any) =>
           val === undefined || val === null ? null : val;
@@ -671,6 +708,10 @@ export async function runEvalsWithManager(
             predicates: testCaseData.predicates,
           });
         }
+        committedCases.push({
+          id: String(existingTestCase._id),
+          name: testCaseData.title,
+        });
       } else {
         await convexClient.mutation("testSuites:createTestCase" as any, {
           suiteId: resolvedSuiteId,
@@ -691,6 +732,19 @@ export async function runEvalsWithManager(
           ),
           matchOptions: testCaseData.matchOptions,
           predicates: testCaseData.predicates,
+        });
+        committedCases.push({ name: testCaseData.title });
+      }
+      } catch (error) {
+        failedCases.push({
+          id: existingTestCase ? String(existingTestCase._id) : undefined,
+          name: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        logger.warn("[evals] Failed to upsert test case", {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     }
@@ -714,24 +768,54 @@ export async function runEvalsWithManager(
     resolvedSuiteId = createdSuite._id as string;
 
     for (const [, testCaseData] of testCaseMap.entries()) {
-      await convexClient.mutation("testSuites:createTestCase" as any, {
-        suiteId: resolvedSuiteId,
-        title: testCaseData.title,
-        query: testCaseData.query,
-        models: testCaseData.models,
-        runs: testCaseData.runs,
-        expectedToolCalls: sanitizeForConvexTransport(
-          testCaseData.expectedToolCalls,
-        ),
-        isNegativeTest: testCaseData.isNegativeTest,
-        scenario: testCaseData.scenario,
-        expectedOutput: testCaseData.expectedOutput,
-        promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
-        judgeRequirement: testCaseData.judgeRequirement,
-        advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
-        matchOptions: testCaseData.matchOptions,
-        predicates: testCaseData.predicates,
-      });
+      try {
+        await convexClient.mutation("testSuites:createTestCase" as any, {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          query: testCaseData.query,
+          models: testCaseData.models,
+          runs: testCaseData.runs,
+          expectedToolCalls: sanitizeForConvexTransport(
+            testCaseData.expectedToolCalls,
+          ),
+          isNegativeTest: testCaseData.isNegativeTest,
+          scenario: testCaseData.scenario,
+          expectedOutput: testCaseData.expectedOutput,
+          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
+          judgeRequirement: testCaseData.judgeRequirement,
+          advancedConfig: sanitizeForConvexTransport(
+            testCaseData.advancedConfig,
+          ),
+          matchOptions: testCaseData.matchOptions,
+          predicates: testCaseData.predicates,
+        });
+        committedCases.push({ name: testCaseData.title });
+      } catch (error) {
+        failedCases.push({
+          name: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        logger.warn("[evals] Failed to create test case", {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // New-suite path only: if every case create failed, the freshly-made
+    // suite has zero cases. Fall through and `startSuiteRunWithRecorder`
+    // would snapshot nothing, then `runEvalSuiteWithAiSdk` would throw a
+    // generic "No tests supplied for eval run" — masking the structured
+    // failure breakdown we just collected. Short-circuit with an
+    // actionable message instead.
+    if (committedCases.length === 0 && failedCases.length > 0) {
+      const firstError = failedCases[0]?.error ?? "unknown error";
+      throw new Error(
+        `Failed to save any of ${failedCases.length} test case(s) to the new suite. ` +
+          `First failure: ${firstError}. ` +
+          `Run aborted because the suite would have zero cases to execute.`,
+      );
     }
   }
 
@@ -751,6 +835,7 @@ export async function runEvalsWithManager(
     iterationOverride,
     matchOptionsOverride,
     namedHostId,
+    runGroupId,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -845,6 +930,10 @@ export async function runEvalsWithManager(
     suiteId: resolvedSuiteId,
     runId,
     message: "Evals completed successfully. Check the Evals tab for results.",
+    caseUpsert: {
+      committed: committedCases,
+      failed: failedCases,
+    },
   };
 }
 
@@ -1063,6 +1152,7 @@ export async function generateEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
   );
 
   return {
@@ -1105,6 +1195,7 @@ export async function generateNegativeEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
   );
 
   return {

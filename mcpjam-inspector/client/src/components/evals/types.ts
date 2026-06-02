@@ -368,6 +368,13 @@ export type EvalSuiteRun = {
    * "host matrix" view.
    */
   namedHostId?: string;
+  /**
+   * Client-generated UUID shared by every per-host run from the same
+   * multi-host eval launch. The UI groups runs by this id; runs without
+   * a `runGroupId` (legacy or single-host launches) render as standalone
+   * rows. Set client-side at fan-out and persisted on `testSuiteRun`.
+   */
+  runGroupId?: string;
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";

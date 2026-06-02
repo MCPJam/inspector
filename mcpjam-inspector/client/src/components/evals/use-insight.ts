@@ -23,6 +23,8 @@ export interface InsightConfig<TResult> {
 export interface InsightHookResult<TResult> {
   canRequest: boolean;
   error: string | null;
+  /** User-facing message for a REQUEST-TIME rejection (e.g. spend-cap). */
+  errorMessage: string | null;
   unavailable: boolean;
   requested: boolean;
   pending: boolean;
@@ -46,18 +48,34 @@ function classifyInsightError(err: unknown): {
   permanent: boolean;
   message: string;
 } {
-  const message = err instanceof Error ? err.message : String(err);
+  const raw = err instanceof Error ? err.message : String(err);
+
+  // Known structured rejections short-circuit ahead of the generic
+  // unavailable/permanent classification. Convex wraps mutation rejections
+  // with a "Server Error" prefix, so a spend-cap rejection would otherwise
+  // be misclassified as `unavailable: true` and the calling component
+  // hides the surface entirely (SuiteInsightsCollapsible returns null on
+  // unavailable). These are *rejections*, not unavailability — the
+  // feature works, the user is rate-limited / quota-bound.
+  if (raw.includes("insights_daily_limit_reached")) {
+    return {
+      unavailable: false,
+      permanent: false,
+      message:
+        "Daily insights limit reached for your workspace. Try again tomorrow or upgrade.",
+    };
+  }
+
   // "Feature missing" — the backend mutation isn't deployed at all. This is
   // permanent for the session: a Convex function-lookup failure won't change
   // between runs, so the panel should stay hidden without re-attempting.
   const permanent =
-    message.includes("Could not find") ||
-    message.includes("is not a function");
+    raw.includes("Could not find") || raw.includes("is not a function");
   const unavailable =
     permanent ||
-    message.includes("not found") || // run-specific, e.g. "Suite run not found"
-    message.includes("Server Error");
-  return { unavailable, permanent, message };
+    raw.includes("not found") || // run-specific, e.g. "Suite run not found"
+    raw.includes("Server Error");
+  return { unavailable, permanent, message: raw };
 }
 
 export function useInsight<TResult extends { summary?: string }>(
@@ -191,6 +209,7 @@ export function useInsight<TResult extends { summary?: string }>(
   return {
     canRequest,
     error,
+    errorMessage: error,
     unavailable,
     requested,
     requestInsight,

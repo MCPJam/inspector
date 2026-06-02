@@ -299,7 +299,7 @@ export function RunIterationsSidebar({
             "min-h-0 min-w-0 flex-1 overflow-hidden"
           )}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto bg-background">
+          <div className="min-h-0 flex-1 overflow-y-auto bg-muted/10 dark:bg-muted/15">
             <RunCaseListWithSections
               iterations={caseGroupsForSelectedRun}
               sortBy={runDetailSortBy}
