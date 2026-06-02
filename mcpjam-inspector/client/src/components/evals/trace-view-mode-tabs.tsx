@@ -1,4 +1,4 @@
-import { AlignLeft, Code2, GitCompare, MessageSquare } from "lucide-react";
+import { AlignLeft, Code2, MessageSquare, Wrench } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/utils";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -59,7 +59,7 @@ export function TraceViewModeTabs({
           title="Expected vs actual tool calls"
           data-testid="trace-viewer-tools-tab"
         >
-          <GitCompare className="h-3 w-3 shrink-0" />
+          <Wrench className="h-3 w-3 shrink-0" />
           <span className="truncate">Results</span>
         </button>
       ) : null}

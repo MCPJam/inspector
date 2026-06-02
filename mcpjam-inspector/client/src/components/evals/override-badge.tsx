@@ -61,15 +61,21 @@ export function OverrideBadge({
   onReset,
 }: OverrideBadgeProps) {
   if (isInheriting) {
+    // The dropdown already shows the resolved value — duplicating it inside
+    // the chip ("suite default · X" next to a dropdown showing X) makes the
+    // row feel doubly-labeled. Collapse to a one-word "Inherited" pill with
+    // the source in the tooltip; if the user wants to know the current
+    // value, they read the dropdown.
     return (
       <span
         className={cn(
           "inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/40",
           "px-2 py-0.5 text-[10px] font-medium leading-none text-muted-foreground",
         )}
+        title={`Inheriting suite default: ${suiteDefaultLabel}`}
         data-testid="override-badge-inheriting"
       >
-        suite default · {suiteDefaultLabel}
+        Inherited
       </span>
     );
   }

@@ -1100,11 +1100,24 @@ export function CaseChecksSection({
       </fieldset>
 
       {mode === "inherit" ? (
-        <div className="rounded-md border border-border/40 bg-background p-3 text-xs text-muted-foreground">
-          {suiteDefaults.length === 0
-            ? "Suite has no default checks. This case will be ungated."
-            : `${suiteDefaults.length} check${suiteDefaults.length === 1 ? "" : "s"} inherited from suite — view defaults on the suite settings page.`}
-        </div>
+        suiteDefaults.length === 0 ? (
+          // "Will be ungated" is a warning, not a neutral status — promote
+          // to the warning palette so the user notices before saving a
+          // case that no checks gate.
+          <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs text-foreground">
+            <span aria-hidden className="mt-0.5 text-warning">⚠</span>
+            <span>
+              Suite has no default checks. This case will be{" "}
+              <strong className="font-semibold">ungated</strong> — it will
+              always pass on the deterministic-checks axis. Switch to
+              Replace or Extend to author case-specific checks.
+            </span>
+          </div>
+        ) : (
+          <div className="rounded-md border border-border/40 bg-background p-3 text-xs text-muted-foreground">
+            {`${suiteDefaults.length} check${suiteDefaults.length === 1 ? "" : "s"} inherited from suite — view defaults on the suite settings page.`}
+          </div>
+        )
       ) : null}
 
       {mode === "extend" && suiteDefaults.length > 0 ? (

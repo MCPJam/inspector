@@ -53,7 +53,6 @@ export function ModelCompareCardHeader({
   showToolsTab = false,
   tabsInline = false,
   actionsSlot,
-  footerNote,
   className,
 }: {
   /** Full model definition (used in Chat multi-model). Optional when `modelLabel` is provided. */
@@ -91,8 +90,6 @@ export function ModelCompareCardHeader({
   tabsInline?: boolean;
   /** Extra action buttons placed to the right of the inline tab strip. */
   actionsSlot?: ReactNode;
-  /** Short note shown below the metrics block (e.g. mismatch count). */
-  footerNote?: ReactNode;
   className?: string;
 }) {
   if (!showComparisonChrome && !showTraceTabs) {
@@ -350,12 +347,6 @@ export function ModelCompareCardHeader({
               {actionsSlot ? (
                 <div className="flex items-center gap-1">{actionsSlot}</div>
               ) : null}
-            </div>
-          ) : null}
-
-          {footerNote ? (
-            <div className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
-              {footerNote}
             </div>
           ) : null}
         </div>

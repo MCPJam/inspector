@@ -19,8 +19,8 @@ import {
   Play,
   Plus,
   RotateCw,
-  Settings2,
   Sparkles,
+  Wrench,
   X,
 } from "lucide-react";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
@@ -706,7 +706,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   )
                 }
               >
-                <Settings2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <Wrench className="h-3.5 w-3.5 shrink-0" aria-hidden />
               </Button>
             </TooltipTrigger>
             <TooltipContent
@@ -722,7 +722,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ) : null}
 
         {overviewHasCaseTools ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 border-l border-border/40 pl-3">
             {overviewRunAllCta}
             {showTestCaseCtas && onGenerateTestCases ? (
               <Tooltip>

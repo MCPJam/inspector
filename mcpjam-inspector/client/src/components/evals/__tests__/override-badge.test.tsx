@@ -3,7 +3,7 @@ import { renderWithProviders, screen, fireEvent } from "@/test";
 import { OverrideBadge } from "../override-badge";
 
 describe("OverrideBadge", () => {
-  it("renders 'suite default · X' chip and no reset when inheriting", () => {
+  it("renders compact 'Inherited' chip (with the resolved value in the tooltip) and no reset when inheriting", () => {
     renderWithProviders(
       <OverrideBadge
         isInheriting
@@ -13,9 +13,12 @@ describe("OverrideBadge", () => {
         }}
       />,
     );
-    expect(
-      screen.getByTestId("override-badge-inheriting"),
-    ).toHaveTextContent(/suite default · Strict order/);
+    const chip = screen.getByTestId("override-badge-inheriting");
+    expect(chip).toHaveTextContent(/^Inherited$/);
+    expect(chip).toHaveAttribute(
+      "title",
+      "Inheriting suite default: Strict order",
+    );
     expect(
       screen.queryByRole("button", { name: /reset to suite default/i }),
     ).not.toBeInTheDocument();

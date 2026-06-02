@@ -50,10 +50,18 @@ function computeTrendDelta(
   };
 }
 
+/**
+ * Pick which sparkline points get a "%" label printed above them.
+ *
+ * The old rule was "annotate every dot when there are ≤10 runs," but that
+ * spammed identical labels on flat trends ("25% 25% 25% 25% …"). We now
+ * always show first + last, and add the run-wide min/max only when they
+ * actually differ from those endpoints — so a perfectly flat trend shows
+ * exactly two labels and a varying trend still surfaces its extremes.
+ */
 function sparklineAnnotatedIndices(data: Array<{ passRate: number }>): Set<number> {
-  if (data.length <= 10) {
-    return new Set(data.map((_, index) => index));
-  }
+  if (data.length === 0) return new Set();
+  if (data.length === 1) return new Set([0]);
 
   const indices = new Set<number>([0, data.length - 1]);
   let minIndex = 0;
@@ -62,8 +70,14 @@ function sparklineAnnotatedIndices(data: Array<{ passRate: number }>): Set<numbe
     if (data[index].passRate < data[minIndex].passRate) minIndex = index;
     if (data[index].passRate > data[maxIndex].passRate) maxIndex = index;
   }
-  indices.add(minIndex);
-  indices.add(maxIndex);
+  const firstValue = data[0].passRate;
+  const lastValue = data[data.length - 1].passRate;
+  if (data[minIndex].passRate !== firstValue && data[minIndex].passRate !== lastValue) {
+    indices.add(minIndex);
+  }
+  if (data[maxIndex].passRate !== firstValue && data[maxIndex].passRate !== lastValue) {
+    indices.add(maxIndex);
+  }
   return indices;
 }
 

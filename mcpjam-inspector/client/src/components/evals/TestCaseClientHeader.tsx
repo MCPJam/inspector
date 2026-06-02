@@ -18,7 +18,18 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { Clock, Cpu, Globe, Hand, MousePointer2, Paintbrush, RotateCcw, Settings2 } from "lucide-react";
+import {
+  ChevronDown,
+  Clock,
+  Cpu,
+  Globe,
+  Hand,
+  MousePointer2,
+  Paintbrush,
+  RotateCcw,
+  Settings2,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -156,9 +167,90 @@ export function TestCaseClientHeader({
 
   const hostStyles = useMemo(() => listHostStyles(), []);
 
+  // Outer popover state. The chip row used to live inline and ate 60-80px
+  // of vertical space on every test-case-edit view — even though the
+  // typical user never tweaks locale/timezone/style per case. We collapse
+  // to a single trigger button and surface the full row on click.
+  const [scenarioOpen, setScenarioOpen] = useState(false);
+
   return (
     <div className={cn("min-w-0 max-w-full", className)}>
-      <div className="@container/test-case-host-header flex min-w-0 max-w-full items-center gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <Popover open={scenarioOpen} onOpenChange={setScenarioOpen}>
+        <div className="flex flex-wrap items-center gap-2">
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs",
+                isTweaked &&
+                  "border-primary/40 bg-primary/[0.06] text-foreground",
+              )}
+              data-testid="test-case-scenario-context-trigger"
+              aria-label="Scenario context"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              <span className="whitespace-nowrap">
+                Scenario:{" "}
+                <span
+                  className={cn(
+                    "font-medium",
+                    isTweaked ? "text-primary" : "text-muted-foreground",
+                  )}
+                >
+                  {isTweaked ? "customized" : "suite default"}
+                </span>
+              </span>
+              <ChevronDown
+                className="h-3 w-3 text-muted-foreground"
+                aria-hidden
+              />
+            </Button>
+          </PopoverTrigger>
+          {isTweaked ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 gap-1 px-1.5 text-[11px] text-muted-foreground"
+                  onClick={handleReset}
+                  data-testid="test-case-host-reset"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  Reset
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+                <p className="font-medium">Reset to suite default</p>
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+        </div>
+
+        <PopoverContent
+          align="start"
+          sideOffset={8}
+          className="w-[min(40rem,calc(100vw-2rem))] p-3"
+        >
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Scenario context
+            </span>
+            <span className="h-px flex-1 bg-border/40" aria-hidden />
+            {isTweaked ? (
+              <span className="text-[10px] font-medium text-primary">
+                Overriding suite default
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/70">
+                Inheriting suite default
+              </span>
+            )}
+          </div>
+          <div className="@container/test-case-host-header flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
         {/* Locale */}
         <Popover open={localePopoverOpen} onOpenChange={setLocalePopoverOpen}>
           <Tooltip>
@@ -220,15 +312,18 @@ export function TestCaseClientHeader({
           </PopoverContent>
         </Popover>
 
-        {/* Hover / Touch capabilities */}
-        <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
+        {/* Input capabilities: labeled segmented control */}
+        <div className="flex shrink-0 items-center gap-1 rounded-md border bg-background p-0.5 pl-1.5 shadow-xs">
+          <span className="text-[10px] font-medium text-muted-foreground">
+            Input
+          </span>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant={capabilities.hover ? "secondary" : "ghost"}
                 size="icon"
                 onClick={() => handleCapabilityToggle("hover")}
-                className="h-7 w-7"
+                className="h-6 w-6"
                 data-testid="test-case-host-hover-toggle"
                 aria-label="Toggle hover capability"
                 aria-pressed={capabilities.hover}
@@ -237,7 +332,7 @@ export function TestCaseClientHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Hover</p>
+              <p className="font-medium">Hover (pointer)</p>
               <p className="text-xs font-light text-muted-foreground">
                 {capabilities.hover ? "Enabled" : "Disabled"}
               </p>
@@ -249,7 +344,7 @@ export function TestCaseClientHeader({
                 variant={capabilities.touch ? "secondary" : "ghost"}
                 size="icon"
                 onClick={() => handleCapabilityToggle("touch")}
-                className="h-7 w-7"
+                className="h-6 w-6"
                 data-testid="test-case-host-touch-toggle"
                 aria-label="Toggle touch capability"
                 aria-pressed={capabilities.touch}
@@ -265,6 +360,12 @@ export function TestCaseClientHeader({
             </TooltipContent>
           </Tooltip>
         </div>
+
+        {/* Group separator between Client and Host concerns */}
+        <span
+          className="mx-1 h-5 w-px shrink-0 bg-border/60"
+          aria-hidden
+        />
 
         {/* Host Context dialog */}
         <Tooltip>
@@ -310,17 +411,18 @@ export function TestCaseClientHeader({
           </TooltipContent>
         </Tooltip>
 
-        {/* Host Style brand pills */}
+        {/* Host Style brand pills — expand on hover/focus, otherwise compact */}
         <Tooltip>
           <TooltipTrigger asChild>
             <div
               className={cn(
-                "group/host-styles flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs transition-[border-color,background-color,box-shadow]",
-                "border-border/40 bg-muted/15 shadow-none hover:border-border hover:bg-background hover:shadow-xs focus-within:border-border focus-within:bg-background focus-within:shadow-xs",
+                "group/host-styles flex shrink-0 items-center gap-1 rounded-md border bg-background p-0.5 pl-2 shadow-xs transition-[border-color,background-color,box-shadow]",
+                "hover:border-border focus-within:border-border",
               )}
             >
-              <div className="flex h-6 w-6 shrink-0 items-center justify-center">
-                <Paintbrush className="h-3.5 w-3.5 text-muted-foreground" />
+              <div className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-muted-foreground">
+                <Paintbrush className="h-3 w-3" />
+                Style
               </div>
               <div
                 className={cn(
@@ -359,39 +461,25 @@ export function TestCaseClientHeader({
             </div>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-            <p className="font-medium">Client Styles</p>
+            <p className="font-medium">Host style</p>
+            <p className="text-xs font-light text-muted-foreground">
+              Pick the brand shell this case runs under
+            </p>
           </TooltipContent>
         </Tooltip>
 
         {/* Tweaked badge + Reset */}
         {isTweaked ? (
-          <div className="flex shrink-0 items-center gap-1">
-            <span
-              className="rounded-md border border-warning/50 bg-warning/50 px-1.5 py-0.5 text-[10px] font-medium text-warning-foreground"
-              data-testid="test-case-host-tweaked-badge"
-            >
-              Tweaked
-            </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleReset}
-                  className="h-7 w-7"
-                  data-testid="test-case-host-reset"
-                  aria-label="Reset to suite default"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-                <p className="font-medium">Reset to suite default</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
+          <span
+            className="ml-auto rounded-md border border-primary/40 bg-primary/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-primary"
+            data-testid="test-case-host-tweaked-badge"
+          >
+            Customized
+          </span>
         ) : null}
-      </div>
+          </div>
+        </PopoverContent>
+      </Popover>
 
       <TestCaseClientContextDialog
         open={hostContextDialogOpen}

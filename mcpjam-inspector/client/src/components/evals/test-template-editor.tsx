@@ -2814,16 +2814,6 @@ function RunColumn({
             </Button>
           </>
         }
-        footerNote={
-          record.metrics.mismatchCount != null &&
-          record.metrics.mismatchCount > 0 ? (
-            <>
-              {record.metrics.mismatchCount} mismatch
-              {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
-              tool calls.
-            </>
-          ) : null
-        }
       />
 
       <div className="flex min-w-0 max-lg:min-h-[min(52vh,26rem)] flex-1 flex-col overflow-hidden p-3 lg:min-h-0">

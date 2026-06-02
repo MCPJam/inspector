@@ -11,7 +11,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { GitCompare, Globe, MoreHorizontal, Plus, X } from "lucide-react";
+import { GitCompare, Globe, MoreHorizontal, Plus } from "lucide-react";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { type HostListItem } from "@/hooks/useClients";
 import {
@@ -298,41 +298,31 @@ export function SuiteOverviewClientBar({
                     {label}
                   </span>
                   {editable ? (
-                    <>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                            aria-label={`Client options (${label})`}
-                          >
-                            <MoreHorizontal className="h-3.5 w-3.5" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-52">
-                          <DropdownMenuItem onSelect={() => openHostsPage()}>
-                            Open in Hosts page
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onSelect={() =>
-                              void handleRemove(attachment.namedHostId)
-                            }
-                          >
-                            Remove from suite
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                        aria-label={`Remove ${label}`}
-                        onClick={() => void handleRemove(attachment.namedHostId)}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                          aria-label={`Host options (${label})`}
+                        >
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-52">
+                        <DropdownMenuItem onSelect={() => openHostsPage()}>
+                          Open in Hosts page
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onSelect={() =>
+                            void handleRemove(attachment.namedHostId)
+                          }
+                        >
+                          Remove from suite
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   ) : null}
                 </div>
               );

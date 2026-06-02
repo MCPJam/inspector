@@ -59,7 +59,7 @@ vi.mock("@/components/client-config/ClientCapabilitiesOverrideDialog", () => ({
     ) : null,
 }));
 
-function renderHeader(
+async function renderHeader(
   props: Partial<React.ComponentProps<typeof TestCaseClientHeader>> = {},
 ) {
   const baseline: HostConfigInputV2 =
@@ -83,16 +83,24 @@ function renderHeader(
       />
     </PreferencesStoreProvider>,
   );
+
+  // The scenario controls now live inside a Popover that opens on click.
+  // Open it up front so tests can keep asserting against the per-chip
+  // controls without each test having to repeat the trigger click.
+  await userEvent.setup().click(
+    screen.getByTestId("test-case-scenario-context-trigger"),
+  );
+
   return { ...utils, baseline, onChange };
 }
 
 describe("TestCaseClientHeader", () => {
-  it("renders the baseline values when no override is set", () => {
+  it("renders the baseline values when no override is set", async () => {
     const baseline = emptyHostConfigInputV2({
       hostStyle: "claude",
       hostContext: { locale: "ja-JP", timeZone: "Asia/Tokyo" },
     });
-    renderHeader({ baseline });
+    await renderHeader({ baseline });
 
     // Locale pill displays the baseline locale.
     expect(
@@ -112,12 +120,12 @@ describe("TestCaseClientHeader", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("ignores the global preferences-store hostStyle (no cross-view leak)", () => {
+  it("ignores the global preferences-store hostStyle (no cross-view leak)", async () => {
     // The provider seeds `usePreferencesStore.hostStyle = "claude"`, but
     // the header should display the baseline's "mcpjam". If this ever
     // regresses, the header is reading global state again.
     const baseline = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
-    renderHeader({ baseline });
+    await renderHeader({ baseline });
 
     expect(
       screen.getByTestId("test-case-host-style-mcpjam"),
@@ -131,7 +139,7 @@ describe("TestCaseClientHeader", () => {
     const user = userEvent.setup();
     const baseline = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
     const onChange = vi.fn();
-    renderHeader({ baseline, onChange });
+    await renderHeader({ baseline, onChange });
 
     await user.click(screen.getByTestId("test-case-host-style-chatgpt"));
 
@@ -153,18 +161,22 @@ describe("TestCaseClientHeader", () => {
     expect(next.hostContext).toEqual(expected.hostContext);
   });
 
-  it("shows the Tweaked badge when value differs from baseline", () => {
+  it("shows the Tweaked badge when value differs from baseline", async () => {
     const baseline = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
     const value: HostConfigInputV2 = {
       ...baseline,
       hostStyle: "chatgpt",
     };
-    renderHeader({ baseline, value });
+    await renderHeader({ baseline, value });
 
+    // The outer Reset chip is always visible when isTweaked — no need to
+    // be inside the popover for this assertion.
+    expect(screen.getByTestId("test-case-host-reset")).toBeInTheDocument();
+    // The "Customized" badge lives inside the popover; renderHeader opens
+    // it for us so this assertion still passes.
     expect(
       screen.getByTestId("test-case-host-tweaked-badge"),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("test-case-host-reset")).toBeInTheDocument();
   });
 
   it("collapses the override to null when a tweak is reverted to the baseline", async () => {
@@ -180,7 +192,7 @@ describe("TestCaseClientHeader", () => {
     const value = applyHostStyleToHostConfigInput("chatgpt", baseline);
     expect(hostConfigInputsEqual(value, baseline)).toBe(false); // sanity
     const onChange = vi.fn();
-    renderHeader({ baseline, value, onChange });
+    await renderHeader({ baseline, value, onChange });
 
     await user.click(screen.getByTestId("test-case-host-style-claude"));
 
@@ -196,7 +208,7 @@ describe("TestCaseClientHeader", () => {
       hostStyle: "chatgpt",
     };
     const onChange = vi.fn();
-    renderHeader({ baseline, value, onChange });
+    await renderHeader({ baseline, value, onChange });
 
     await user.click(screen.getByTestId("test-case-host-reset"));
 
@@ -213,7 +225,7 @@ describe("TestCaseClientHeader", () => {
       },
     });
     const onChange = vi.fn();
-    renderHeader({ baseline, onChange });
+    await renderHeader({ baseline, onChange });
 
     await user.click(screen.getByTestId("test-case-host-touch-toggle"));
 
@@ -231,7 +243,7 @@ describe("TestCaseClientHeader", () => {
       hostStyle: "mcpjam",
       hostContext: { locale: "fr-FR", timeZone: "Europe/Paris" },
     });
-    renderHeader({ baseline });
+    await renderHeader({ baseline });
 
     await user.click(screen.getByTestId("test-case-host-context-trigger"));
 
@@ -247,7 +259,7 @@ describe("TestCaseClientHeader", () => {
       ...baseline,
       hostCapabilitiesOverride: { foo: "bar" },
     };
-    renderHeader({ baseline, value });
+    await renderHeader({ baseline, value });
 
     const trigger = screen.getByTestId("test-case-host-capabilities-trigger");
     expect(within(trigger).getByText("Host Capabilities")).toBeInTheDocument();

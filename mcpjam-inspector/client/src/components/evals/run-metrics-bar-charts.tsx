@@ -3,10 +3,7 @@ import { BarChart, Bar, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "./helpers";
 import type { DurationChartDatum, TokensChartDatum } from "./run-chart-data";
-import {
-  runDetailSectionLabelClass,
-  runDetailSupportingClass,
-} from "./run-detail-typography";
+import { runDetailSectionLabelClass } from "./run-detail-typography";
 
 export type DurationDatum = DurationChartDatum;
 export type TokensDatum = TokensChartDatum;
@@ -17,8 +14,45 @@ export interface RunMetricsBarChartsProps {
   hasTokenData: boolean;
 }
 
+// Bumped from h-16 to give the x-axis room to render test-name ticks below
+// the bars. The old "Hover for test name" hint was a tax we paid because
+// the chart was too short to show a name axis.
 const METRICS_CHART_HEIGHT_CLASS =
-  "aspect-auto h-16 w-full max-h-[4.5rem] sm:h-[4.5rem]";
+  "aspect-auto h-32 w-full sm:h-36";
+
+/**
+ * Recharts XAxis tick that renders test names rotated -35° so even ~10
+ * tests fit without truncation. Kept as a function component so we can
+ * compose `<text>`/`<title>` for the hover tooltip; recharts will inject
+ * `x`, `y`, `payload` props at render time.
+ */
+function RotatedTestNameTick(props: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string };
+}) {
+  const { x, y, payload } = props;
+  if (typeof x !== "number" || typeof y !== "number" || !payload?.value) {
+    return null;
+  }
+  const value = String(payload.value);
+  const shown = value.length > 18 ? `${value.slice(0, 16)}…` : value;
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        textAnchor="end"
+        transform="rotate(-35)"
+        dy={4}
+        dx={-2}
+        fontSize={9}
+        fill="hsl(var(--muted-foreground))"
+      >
+        {shown}
+        <title>{value}</title>
+      </text>
+    </g>
+  );
+}
 
 const durationChartConfig = {
   p50Seconds: {
@@ -79,7 +113,14 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
           vertical={false}
           stroke="hsl(var(--muted-foreground) / 0.12)"
         />
-        <XAxis dataKey="name" hide />
+        <XAxis
+          dataKey="name"
+          tickLine={false}
+          axisLine={false}
+          interval={0}
+          height={48}
+          tick={(tickProps) => <RotatedTestNameTick {...tickProps} />}
+        />
         <YAxis
           tickLine={false}
           axisLine={false}
@@ -142,7 +183,14 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
           vertical={false}
           stroke="hsl(var(--muted-foreground) / 0.12)"
         />
-        <XAxis dataKey="name" hide />
+        <XAxis
+          dataKey="name"
+          tickLine={false}
+          axisLine={false}
+          interval={0}
+          height={48}
+          tick={(tickProps) => <RotatedTestNameTick {...tickProps} />}
+        />
         <YAxis
           tickLine={false}
           axisLine={false}
@@ -197,27 +245,13 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
   );
 }
 
-/** Shown once per chart block — belongs on the section title row, not as a banner above the grid. */
-const CHART_HINT = "Hover for test name";
-
 const metricsChartsChromeClass =
   "rounded-md border border-border/25 bg-muted/10 p-2";
 
-function MetricsChartSectionHeader({
-  title,
-  showInteractionHint = false,
-}: {
-  title: string;
-  showInteractionHint?: boolean;
-}) {
+function MetricsChartSectionHeader({ title }: { title: string }) {
   return (
     <div className="mb-1 flex min-w-0 items-baseline justify-between gap-2">
       <h3 className={runDetailSectionLabelClass}>{title}</h3>
-      {showInteractionHint ? (
-        <span className={cn(runDetailSupportingClass, "shrink-0 text-right")}>
-          {CHART_HINT}
-        </span>
-      ) : null}
     </div>
   );
 }
@@ -235,25 +269,16 @@ export function RunMetricsBarCharts({
   const chartCount = (showDuration ? 1 : 0) + (showTokens ? 1 : 0);
   const singleChart = chartCount === 1;
 
-  const showHintOnDuration = showDuration;
-  const showHintOnTokens = showTokens && !showDuration;
-
   const durationSection = showDuration ? (
     <div className={cn("min-w-0", !singleChart && "lg:pr-3")}>
-      <MetricsChartSectionHeader
-        title="Latency by test (p50 / p95)"
-        showInteractionHint={showHintOnDuration}
-      />
+      <MetricsChartSectionHeader title="Latency by test (p50 / p95)" />
       <DurationBarBlock data={durationData} />
     </div>
   ) : null;
 
   const tokensSection = showTokens ? (
     <div className={cn("min-w-0", !singleChart && "lg:pl-3")}>
-      <MetricsChartSectionHeader
-        title="Tokens by test (p50 / p95)"
-        showInteractionHint={showHintOnTokens}
-      />
+      <MetricsChartSectionHeader title="Tokens by test (p50 / p95)" />
       <TokensBarBlock data={tokensData} />
     </div>
   ) : null;

@@ -52,6 +52,7 @@ import {
   type SuiteListSortKey,
 } from "./suite-overview-presentation";
 import { cn } from "@/lib/utils";
+import { PassRateTrendMini } from "./pass-rate-trend-mini";
 import {
   EVAL_DESTRUCTIVE_BUTTON_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
@@ -374,15 +375,20 @@ function SuiteOverviewRow({
   const runCount = entry.totals.runs;
   const statusStripeClass = evalOverviewEntryMiniBarClass(entry);
 
-  const lastRunParts: string[] = [];
+  // Display split: timestamp gets prominence (it's what users scan for to
+  // tell if a suite is stale); servers + run count fade as context. The
+  // previous "X, Y · N runs · 4h ago" comma chain visually equalised them.
+  const lastRunTimestampLabel = lastRunTimestamp
+    ? formatOverviewRelativeTime(lastRunTimestamp)
+    : null;
+  const lastRunContextParts: string[] = [];
   if (servers.length > 0) {
-    lastRunParts.push(serverSummary);
+    lastRunContextParts.push(serverSummary);
   }
   if (runCount > 0) {
-    lastRunParts.push(`${runCount} run${runCount === 1 ? "" : "s"}`);
-  }
-  if (lastRunTimestamp) {
-    lastRunParts.push(formatOverviewRelativeTime(lastRunTimestamp));
+    lastRunContextParts.push(
+      `${runCount} run${runCount === 1 ? "" : "s"}`,
+    );
   }
 
   const gridClass = batchDeleteEnabled
@@ -440,24 +446,52 @@ function SuiteOverviewRow({
           type="button"
           aria-hidden
           tabIndex={-1}
-          className="cursor-pointer text-left font-mono text-xs tabular-nums text-muted-foreground focus:outline-none"
+          className="flex cursor-pointer flex-col items-end gap-0.5 text-right focus:outline-none"
           onClick={() => onSelectSuite(suite._id)}
         >
-          {statusLabel}
+          {/*
+           * Score cell now layers a sparkline on top of the raw N/M when we
+           * have enough run history (≥3 points). The sparkline answers
+           * "is this suite getting better or worse?" — the question the raw
+           * "2/9" never could on its own. Falls back to the legacy label
+           * when there isn't enough history to draw a trend.
+           */}
+          {entry.passRateTrend && entry.passRateTrend.length >= 3 ? (
+            <PassRateTrendMini
+              rawTrend={entry.passRateTrend}
+              rowKey={suite._id}
+              compactSummary
+            />
+          ) : null}
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+            {statusLabel}
+          </span>
         </button>
 
         <button
           type="button"
           aria-hidden
           tabIndex={-1}
-          className="min-w-0 cursor-pointer truncate text-left text-[11px] text-muted-foreground focus:outline-none"
+          className="flex min-w-0 cursor-pointer flex-col items-start gap-0.5 text-left focus:outline-none"
           onClick={() => onSelectSuite(suite._id)}
         >
-          {lastRunParts.length > 0
-            ? lastRunParts.join(" · ")
-            : servers.length === 0
-              ? "No servers"
-              : "—"}
+          {lastRunTimestampLabel ? (
+            <span className="text-xs font-medium text-foreground/85 tabular-nums">
+              {lastRunTimestampLabel}
+            </span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">
+              {servers.length === 0 ? "No servers" : "—"}
+            </span>
+          )}
+          {lastRunContextParts.length > 0 ? (
+            <span
+              className="min-w-0 max-w-full truncate text-[10px] text-muted-foreground"
+              title={lastRunContextParts.join(" · ")}
+            >
+              {lastRunContextParts.join(" · ")}
+            </span>
+          ) : null}
         </button>
 
         <Button

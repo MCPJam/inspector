@@ -19,10 +19,7 @@ import {
   runDetailSupportingClass,
 } from "./run-detail-typography";
 import type { EvalIteration, EvalSuiteRun } from "./types";
-import {
-  passRateColorClass,
-  passRateSegmentColorClass,
-} from "./suite-overview-presentation";
+import { passRateColorClass } from "./suite-overview-presentation";
 import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import { evalSurfaceCardClass } from "./eval-surface-chrome";
 
@@ -37,34 +34,6 @@ export type RunTrendPoint = {
 };
 
 const RUN_TREND_CHIP_LIMIT = 6;
-
-function RunAccuracySegmentBar({
-  passRate,
-  className,
-}: {
-  passRate: number;
-  className?: string;
-}) {
-  const filled = Math.min(10, Math.max(0, Math.round(passRate / 10)));
-  const fillClass = passRateSegmentColorClass(passRate);
-
-  return (
-    <div
-      className={cn("grid h-2 w-full grid-cols-10 gap-px", className)}
-      aria-hidden
-    >
-      {Array.from({ length: 10 }, (_, index) => (
-        <span
-          key={index}
-          className={cn(
-            "min-h-full rounded-[1px]",
-            index < filled ? fillClass : "bg-muted-foreground/15",
-          )}
-        />
-      ))}
-    </div>
-  );
-}
 
 function runAccuracyCardContextLabel(
   point: RunTrendPoint & { runIndexLabel: string },
@@ -88,47 +57,43 @@ function RunAccuracyRunCard({
   const canNavigate = Boolean(onSelectRun) && !isCurrent;
   const cardSummary = `Run ${point.runIdDisplay}, ${point.passRate}% accuracy, ${contextLabel}`;
 
+  /*
+   * Compact recent-run chip. Previously these were ~11rem-wide cards with
+   * an explicit segment bar and two-line meta — visually heavy for what is
+   * essentially "run id + accuracy + is-this-the-current-run." Color and
+   * the ring/dot now do the comparative lifting; full context is in the
+   * hover title + the row that this navigates into.
+   */
   const cardClassName = cn(
-    "flex min-w-[10rem] flex-1 basis-[10rem] flex-col gap-2 rounded-lg border border-border/80 bg-muted/30 p-3 shadow-sm transition-colors sm:min-w-[11rem] sm:basis-[11rem] sm:p-3.5",
+    "flex min-w-[5.5rem] flex-col gap-0.5 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 shadow-none transition-colors",
     isCurrent &&
-      "border-primary/50 bg-muted/45 ring-1 ring-inset ring-primary/35 shadow-sm",
-    canNavigate && "hover:border-border hover:bg-muted/45",
+      "border-primary/50 bg-primary/[0.07] ring-1 ring-inset ring-primary/30",
+    canNavigate && "hover:border-border hover:bg-muted/40",
   );
 
   const cardBody = (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p
-            className="truncate text-sm font-medium leading-tight text-foreground"
-            title={point.runId}
-          >
-            Run{" "}
-            <span className="font-mono font-normal tabular-nums">
-              {point.runIdDisplay}
-            </span>
-          </p>
-          <p
-            className={cn(
-              "mt-0.5 truncate text-[11px] leading-tight",
-              isCurrent
-                ? "font-medium text-primary"
-                : "text-muted-foreground",
-            )}
-          >
-            {contextLabel}
-          </p>
-        </div>
+      <div className="flex items-baseline justify-between gap-1">
         <span
-          className={cn(
-            "shrink-0 font-metric text-xl font-semibold tabular-nums leading-none tracking-tight",
-            passRateColorClass(point.passRate),
-          )}
+          className="truncate font-mono text-[10px] tabular-nums text-muted-foreground"
+          title={point.runId}
         >
-          {point.passRate}%
+          {point.runIdDisplay}
         </span>
+        {isCurrent ? (
+          <span className="shrink-0 rounded-sm bg-primary/15 px-1 text-[9px] font-semibold uppercase tracking-wide text-primary">
+            now
+          </span>
+        ) : null}
       </div>
-      <RunAccuracySegmentBar passRate={point.passRate} />
+      <span
+        className={cn(
+          "font-metric text-base font-semibold tabular-nums leading-tight tracking-tight",
+          passRateColorClass(point.passRate),
+        )}
+      >
+        {point.passRate}%
+      </span>
     </>
   );
 

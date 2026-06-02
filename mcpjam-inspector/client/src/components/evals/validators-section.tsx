@@ -14,6 +14,7 @@ import { Switch } from "@mcpjam/design-system/switch";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { OverrideBadge } from "./override-badge";
+import { cn } from "@/lib/utils";
 
 const ORDER_OPTIONS: Array<{
   value: Exclude<EvalMatchOptions["toolCallOrder"], undefined>;
@@ -367,37 +368,54 @@ export function ValidatorsSection({
               />
             ) : null}
           </div>
+          {/*
+            Extras editor: a single control surface that swaps between a
+            number input (capped extras) and an "Unlimited" pill, never
+            both. Showing a disabled empty number input next to an active
+            Unlimited toggle (the old layout) read as a broken form field.
+          */}
           <div className="flex items-center gap-2">
-            <Input
-              id={extrasFieldId}
-              type="number"
-              inputMode="numeric"
-              min={0}
-              step={1}
-              disabled={extrasUnlimited}
-              value={extrasUnlimited ? "" : String(extrasNumber)}
-              placeholder={extrasUnlimited ? "—" : "0"}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === "") {
-                  setExtrasCap(0);
-                  return;
-                }
-                const parsed = Number(raw);
-                if (
-                  !Number.isFinite(parsed) ||
-                  !Number.isInteger(parsed) ||
-                  parsed < 0
-                ) {
-                  // Ignore invalid keystrokes; the input itself constrains
-                  // type=number, but defensive guard for paste etc.
-                  return;
-                }
-                setExtrasCap(parsed);
-              }}
-              className={isCompact ? "h-8 w-16 text-sm" : "h-8 w-20 text-sm"}
-              aria-label="Maximum extra tool calls"
-            />
+            {extrasUnlimited ? (
+              <span
+                className={cn(
+                  "inline-flex h-8 items-center rounded-md border border-input bg-muted/30 px-2 text-sm tabular-nums text-muted-foreground",
+                  isCompact ? "min-w-[4rem]" : "min-w-[5rem]",
+                )}
+                aria-label="Extras cap is unlimited"
+              >
+                Unlimited
+              </span>
+            ) : (
+              <Input
+                id={extrasFieldId}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                value={String(extrasNumber)}
+                placeholder="0"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setExtrasCap(0);
+                    return;
+                  }
+                  const parsed = Number(raw);
+                  if (
+                    !Number.isFinite(parsed) ||
+                    !Number.isInteger(parsed) ||
+                    parsed < 0
+                  ) {
+                    // Ignore invalid keystrokes; the input itself constrains
+                    // type=number, but defensive guard for paste etc.
+                    return;
+                  }
+                  setExtrasCap(parsed);
+                }}
+                className={isCompact ? "h-8 w-16 text-sm" : "h-8 w-20 text-sm"}
+                aria-label="Maximum extra tool calls"
+              />
+            )}
             <Label
               htmlFor={extrasUnlimitedId}
               className="flex items-center gap-1.5 text-xs text-muted-foreground"
@@ -407,7 +425,6 @@ export function ValidatorsSection({
                 checked={extrasUnlimited}
                 onCheckedChange={(checked) => {
                   if (checked) {
-                    // Unlimited
                     setExtrasCap(null);
                   } else {
                     // Drop unlimited; default to 0 (strict, no extras) so
