@@ -36,7 +36,7 @@ import { type PromptTurn } from "@/shared/prompt-turns";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
-  resolveCasePredicates,
+  resolveCaseSuccessPredicates,
   casePredicatesSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
@@ -1048,43 +1048,25 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
-    // Thread the predicate gate into the runtime case so the runner evaluates
-    // it. Resolution mirrors the backend `resolvePredicates` precedence:
-    //   1. Legacy per-run flat list (`testCaseOverrides.successPredicates`)
-    //      — treated as a fully-resolved replacement (oldest contract).
-    //   2. Per-run envelope (`testCaseOverrides.predicates`) resolved against
-    //      suite defaults via `resolveCasePredicates`.
-    //   3. Persisted case envelope (`testCase.predicates`) resolved against
-    //      suite defaults — Phase 2 wire field, now actually consumed.
-    //   4. Legacy persisted flat field (`testCase.successPredicates`).
-    //   5. Suite defaults alone when no case-level signal is present.
-    successPredicates: (() => {
-      const runOverride = testCaseOverrides?.successPredicates as
+    // Thread the predicate gate into the runtime case so the runner
+    // evaluates it. See `resolveCaseSuccessPredicates` for the full
+    // precedence rules — kept as a shared helper so all three resolution
+    // sites (this function, `streamEvalTestCaseWithManager`, and the
+    // suite-run recorder) stay in lockstep.
+    successPredicates: resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      runOverride: testCaseOverrides?.successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined;
-      if (runOverride !== undefined) return runOverride;
-      const envelope = (testCaseOverrides?.predicates ??
+        | undefined,
+      envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
         | import("@/shared/eval-matching").CasePredicates
-        | undefined;
-      // Only consult `resolveCasePredicates` when the case actually has an
-      // envelope. Calling it with `undefined` would return suite defaults
-      // and silently replace any legacy `testCase.successPredicates` for
-      // un-migrated cases.
-      if (envelope !== undefined) {
-        const resolved = resolveCasePredicates(
-          suiteDefaultPredicates,
-          envelope,
-        );
-        if (resolved && resolved.length > 0) return resolved;
-      }
-      const legacy = (testCase as { successPredicates?: unknown })
+        | undefined,
+      legacyCase: (testCase as { successPredicates?: unknown })
         .successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined;
-      if (Array.isArray(legacy) && legacy.length > 0) return legacy;
-      return suiteDefaultPredicates;
-    })(),
+        | undefined,
+    }),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -1349,34 +1331,21 @@ export async function streamEvalTestCaseWithManager(
       matchOptionsOverride,
     ),
     // Thread the predicate gate into the runtime case so the runner evaluates
-    // it. See `runEvalTestCaseWithManager` above for the full precedence rules.
-    successPredicates: (() => {
-      const runOverride = testCaseOverrides?.successPredicates as
+    // it. See `resolveCaseSuccessPredicates` for the full precedence rules.
+    successPredicates: resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      runOverride: testCaseOverrides?.successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined;
-      if (runOverride !== undefined) return runOverride;
-      const envelope = (testCaseOverrides?.predicates ??
+        | undefined,
+      envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
         | import("@/shared/eval-matching").CasePredicates
-        | undefined;
-      // Only consult `resolveCasePredicates` when the case actually has an
-      // envelope. Calling it with `undefined` would return suite defaults
-      // and silently replace any legacy `testCase.successPredicates` for
-      // un-migrated cases.
-      if (envelope !== undefined) {
-        const resolved = resolveCasePredicates(
-          suiteDefaultPredicates,
-          envelope,
-        );
-        if (resolved && resolved.length > 0) return resolved;
-      }
-      const legacy = (testCase as { successPredicates?: unknown })
+        | undefined,
+      legacyCase: (testCase as { successPredicates?: unknown })
         .successPredicates as
         | import("@/shared/eval-matching").Predicate[]
-        | undefined;
-      if (Array.isArray(legacy) && legacy.length > 0) return legacy;
-      return suiteDefaultPredicates;
-    })(),
+        | undefined,
+    }),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };

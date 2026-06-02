@@ -244,3 +244,41 @@ export function resolveCasePredicates(
   }
   return resolved.length > 0 ? resolved : undefined;
 }
+
+/**
+ * Single source of truth for the per-case `successPredicates` resolution
+ * used by both single-case run paths (`runEvalTestCaseWithManager`,
+ * `streamEvalTestCaseWithManager`) and the suite-run recorder.
+ *
+ * Precedence — higher beats lower:
+ *
+ *   1. `runOverride` — legacy per-run flat list (oldest contract).
+ *   2. `envelope` — `{mode,list}` from per-run or persisted case. When
+ *      present this is AUTHORITATIVE, including the explicit opt-out
+ *      `{mode: "replace", list: []}`. `resolveCasePredicates` collapses
+ *      empty lists to `undefined`, so when the envelope says "no gate"
+ *      we return `undefined` and the runner sees no `successPredicates`
+ *      — which is the user's intent. Falling through to legacy/suite
+ *      defaults here would silently re-apply the very checks the user
+ *      opted out of.
+ *   3. `legacyCase` — pre-envelope persisted `testCase.successPredicates`.
+ *      Only consulted when the case has no envelope at all, so adding
+ *      a suite-level default doesn't replace existing gates on
+ *      un-migrated cases.
+ *   4. `suiteDefaults` — last resort when no case-level signal exists.
+ */
+export function resolveCaseSuccessPredicates(args: {
+  suiteDefaults: PredicateType[] | undefined;
+  runOverride?: PredicateType[] | undefined;
+  envelope?: CasePredicatesType | undefined;
+  legacyCase?: PredicateType[] | undefined;
+}): PredicateType[] | undefined {
+  if (args.runOverride !== undefined) return args.runOverride;
+  if (args.envelope !== undefined) {
+    return resolveCasePredicates(args.suiteDefaults, args.envelope);
+  }
+  if (Array.isArray(args.legacyCase) && args.legacyCase.length > 0) {
+    return args.legacyCase;
+  }
+  return args.suiteDefaults;
+}

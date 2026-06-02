@@ -3,6 +3,7 @@ import {
   argumentsMatch,
   matchToolCalls,
   resolveCasePredicates,
+  resolveCaseSuccessPredicates,
   resolveExtrasCap,
   type ToolCall,
   type Predicate,
@@ -288,6 +289,82 @@ describe("resolveCasePredicates", () => {
   it("collapses an empty effective list to undefined", () => {
     const override: CasePredicates = { mode: "replace", list: [] };
     expect(resolveCasePredicates(undefined, override)).toBeUndefined();
+  });
+});
+
+describe("resolveCaseSuccessPredicates", () => {
+  const suiteDefault: Predicate[] = [
+    { type: "noToolErrors" } as unknown as Predicate,
+  ];
+  const caseList: Predicate[] = [
+    { type: "toolCalledAtLeastOnce", toolName: "search" } as unknown as Predicate,
+  ];
+  const legacyList: Predicate[] = [
+    { type: "toolCalledAtLeastOnce", toolName: "legacy" } as unknown as Predicate,
+  ];
+  const runList: Predicate[] = [
+    { type: "toolCalledAtLeastOnce", toolName: "run" } as unknown as Predicate,
+  ];
+
+  it("returns run override when present, ignoring everything else", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        runOverride: runList,
+        envelope: { mode: "replace", list: caseList },
+        legacyCase: legacyList,
+      }),
+    ).toEqual(runList);
+  });
+
+  it("treats an empty replace envelope as an explicit opt-out — must NOT fall back to legacy or suite defaults", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        envelope: { mode: "replace", list: [] },
+        legacyCase: legacyList,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("treats an inherit envelope as authoritative (does not fall back to legacy)", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        envelope: { mode: "inherit", list: [] },
+        legacyCase: legacyList,
+      }),
+    ).toEqual(suiteDefault);
+  });
+
+  it("uses legacy case predicates only when no envelope is supplied", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        legacyCase: legacyList,
+      }),
+    ).toEqual(legacyList);
+  });
+
+  it("legacy predicates win over suite defaults when no envelope is supplied", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        legacyCase: legacyList,
+      }),
+    ).toEqual(legacyList);
+  });
+
+  it("falls through to suite defaults when no per-case signal at all", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+      }),
+    ).toEqual(suiteDefault);
+  });
+
+  it("returns undefined when nothing is set anywhere", () => {
+    expect(resolveCaseSuccessPredicates({ suiteDefaults: undefined })).toBeUndefined();
   });
 });
 

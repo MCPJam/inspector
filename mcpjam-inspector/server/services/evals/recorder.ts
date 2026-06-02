@@ -9,7 +9,7 @@ import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
-import { resolveCasePredicates } from "@/shared/eval-matching";
+import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -460,24 +460,16 @@ export const startSuiteRunWithRecorder = async ({
 
   const resolvePredicatesForCase = (
     tc: Record<string, any>,
-  ): import("@/shared/eval-matching").Predicate[] | undefined => {
-    const envelope = tc.predicates as
-      | import("@/shared/eval-matching").CasePredicates
-      | undefined;
-    // Precedence: when the case has no `{mode,list}` envelope, the legacy
-    // persisted `successPredicates` is the per-case gate and must win over
-    // suite defaults — otherwise adding a suite-level default check would
-    // silently replace existing legacy gates on un-migrated cases.
-    if (envelope !== undefined) {
-      const resolved = resolveCasePredicates(suiteDefaultPredicates, envelope);
-      if (resolved && resolved.length > 0) return resolved;
-    }
-    const legacy = tc.successPredicates;
-    if (Array.isArray(legacy) && legacy.length > 0) {
-      return legacy as import("@/shared/eval-matching").Predicate[];
-    }
-    return suiteDefaultPredicates;
-  };
+  ): import("@/shared/eval-matching").Predicate[] | undefined =>
+    resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      envelope: tc.predicates as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
+      legacyCase: tc.successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+    });
 
   // Build config from test cases for backward compatibility
   const config = {
