@@ -5,6 +5,13 @@ export function isExploreSuite(suite: { tags?: string[] | null }): boolean {
   return suite.tags?.includes(EXPLORE_SUITE_TAG) === true;
 }
 
+/** Tag on suites minted by the Excalidraw quickstart on the Evaluate empty state. */
+export const QUICKSTART_SUITE_TAG = "quickstart";
+
+export function isQuickstartSuite(suite: { tags?: string[] | null }): boolean {
+  return suite.tags?.includes(QUICKSTART_SUITE_TAG) === true;
+}
+
 // Run filters
 export const RUN_FILTER_ALL = "all";
 export const RUN_FILTER_LEGACY = "legacy";

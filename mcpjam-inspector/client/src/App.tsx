@@ -723,6 +723,7 @@ export function EvalsRoute() {
     convexProjectId,
     ensureServersReady,
     handleContinueEvalInChat,
+    handleConnect,
   } = useAppRouteContext();
 
   if (playgroundEnabled === false) {
@@ -744,6 +745,7 @@ export function EvalsRoute() {
       projectId={convexProjectId}
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
+      handleConnect={handleConnect}
     />
   );
 }

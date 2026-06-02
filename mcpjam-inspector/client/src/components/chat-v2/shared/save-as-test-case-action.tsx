@@ -1,5 +1,5 @@
-import { useAction, useQuery } from "convex/react";
-import { useMemo, useState } from "react";
+import { useAction, useConvexAuth, useQuery } from "convex/react";
+import { useEffect, useMemo, useState } from "react";
 import { FlaskConical, Loader2 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
@@ -28,6 +28,13 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
+import { useProjectServerAttachments } from "@/hooks/useViews";
+import { useHostList } from "@/hooks/useClients";
+import {
+  ClientAttachmentsEditor,
+  type HostAttachmentDraft,
+} from "@/components/evals/client-attachments-editor";
+import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -64,6 +71,8 @@ export function SaveAsTestCaseAction({
   projectId,
 }: SaveAsTestCaseActionProps) {
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const hostsFlagEnabled = useFeatureFlagEnabled("hosts-enabled");
+  const { isAuthenticated: convexAuthed } = useConvexAuth();
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [caseTitle, setCaseTitle] = useState(() =>
@@ -73,6 +82,27 @@ export function SaveAsTestCaseAction({
     useState<DestinationMode>("existing");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
   const [newSuiteName, setNewSuiteName] = useState<string>("");
+  // Picker state for the new-suite branch. Mirrors CreateSuiteDialog and
+  // ConvertChatSessionDialog. Gated on `attachmentPickersEnabled`.
+  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
+    null,
+  );
+  const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
+    [],
+  );
+
+  const attachmentPickersEnabled =
+    hostsFlagEnabled === true && convexAuthed && Boolean(projectId);
+
+  const { serverAttachments: projectServerAttachments } =
+    useProjectServerAttachments({
+      isAuthenticated: open && attachmentPickersEnabled,
+      projectId: open && attachmentPickersEnabled ? projectId : null,
+    });
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated: open && attachmentPickersEnabled,
+    projectId: open && attachmentPickersEnabled ? projectId : null,
+  });
 
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
@@ -83,18 +113,46 @@ export function SaveAsTestCaseAction({
     "testSuites:saveAsTestCaseFromChatMessage" as any,
   );
 
+  useEffect(() => {
+    if (!open || !attachmentPickersEnabled) return;
+    if (serverAttachmentId === null && projectServerAttachments.length > 0) {
+      setServerAttachmentId(projectServerAttachments[0]._id);
+    }
+  }, [
+    open,
+    attachmentPickersEnabled,
+    projectServerAttachments,
+    serverAttachmentId,
+  ]);
+
+  useEffect(() => {
+    if (!open || !attachmentPickersEnabled) return;
+    if (hostAttachments.length === 0 && projectHosts.length > 0) {
+      setHostAttachments([
+        {
+          namedHostId: projectHosts[0].hostId,
+          enabledOptionalServerIds: [],
+        },
+      ]);
+    }
+  }, [open, attachmentPickersEnabled, hostAttachments.length, projectHosts]);
+
   const availableSuites = useMemo(
     () =>
       (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
     [suitesOverview],
   );
 
+  const newSuiteRequirementsMet =
+    !attachmentPickersEnabled ||
+    (serverAttachmentId !== null && hostAttachments.length > 0);
+
   const canSubmit =
     !submitting &&
     caseTitle.trim().length > 0 &&
     (destinationMode === "existing"
       ? Boolean(selectedSuiteId)
-      : newSuiteName.trim().length > 0);
+      : newSuiteName.trim().length > 0 && newSuiteRequirementsMet);
 
   const handleOpenChange = (next: boolean) => {
     if (submitting) return;
@@ -104,6 +162,8 @@ export function SaveAsTestCaseAction({
       setSelectedSuiteId("");
       setNewSuiteName("");
       setDestinationMode("existing");
+      setServerAttachmentId(null);
+      setHostAttachments([]);
     }
   };
 
@@ -121,7 +181,15 @@ export function SaveAsTestCaseAction({
         updateSuiteEnvironment: true,
         ...(destinationMode === "existing"
           ? { destinationSuiteId: selectedSuiteId }
-          : { newSuiteName: newSuiteName.trim() }),
+          : {
+              newSuiteName: newSuiteName.trim(),
+              ...(attachmentPickersEnabled && serverAttachmentId
+                ? { newSuiteServerAttachmentId: serverAttachmentId }
+                : {}),
+              ...(attachmentPickersEnabled && hostAttachments.length > 0
+                ? { newSuiteHostAttachments: hostAttachments }
+                : {}),
+            }),
       });
       toast.success("Saved as test case");
       setOpen(false);
@@ -232,16 +300,57 @@ export function SaveAsTestCaseAction({
                 </Select>
               </div>
             ) : (
-              <div className="space-y-1.5">
-                <Label htmlFor="save-as-test-case-new-suite">
-                  New suite name
-                </Label>
-                <Input
-                  id="save-as-test-case-new-suite"
-                  value={newSuiteName}
-                  onChange={(e) => setNewSuiteName(e.target.value)}
-                  placeholder="e.g. github-issue-flow"
-                />
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="save-as-test-case-new-suite">
+                    New suite name
+                  </Label>
+                  <Input
+                    id="save-as-test-case-new-suite"
+                    value={newSuiteName}
+                    onChange={(e) => setNewSuiteName(e.target.value)}
+                    placeholder="e.g. github-issue-flow"
+                  />
+                </div>
+
+                {attachmentPickersEnabled && projectId ? (
+                  <div className="divide-y rounded-lg border bg-muted/20">
+                    <div className="flex items-start justify-between gap-4 p-3">
+                      <div className="min-w-0 space-y-0.5">
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Servers
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Server set all clients run against.
+                        </p>
+                      </div>
+                      <div className="shrink-0">
+                        <ServerAttachmentPicker
+                          projectId={projectId}
+                          value={serverAttachmentId}
+                          onChange={setServerAttachmentId}
+                          disabled={submitting}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2 p-3">
+                      <div className="space-y-0.5">
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Clients
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Each attached client fans out into its own run.
+                        </p>
+                      </div>
+                      <ClientAttachmentsEditor
+                        projectId={projectId}
+                        value={hostAttachments}
+                        onChange={setHostAttachments}
+                        disabled={submitting}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>

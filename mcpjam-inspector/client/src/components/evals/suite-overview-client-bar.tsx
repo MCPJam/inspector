@@ -151,13 +151,12 @@ export function SuiteOverviewClientBar({
         <span className="shrink-0">
           <button
             type="button"
-            className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background"
             aria-label="Compare attached hosts"
             disabled={!canCompare}
             onClick={handleOpenCompare}
           >
             <GitCompare className="h-3.5 w-3.5" />
-            <span>Compare</span>
           </button>
         </span>
       </TooltipTrigger>
@@ -234,15 +233,12 @@ export function SuiteOverviewClientBar({
     >
       <div
         className={cn(
-          "flex min-h-9 flex-wrap items-center gap-x-4 gap-y-2 px-1 sm:px-2",
+          "flex min-h-9 flex-wrap items-center gap-x-2 gap-y-2 px-1 sm:px-2",
           containerVariant === "inline" && "w-full min-w-0 max-w-full",
         )}
       >
         {showServersSection ? (
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              Servers
-            </span>
+          <div className="shrink-0">
             {editable && suite.projectId && onUpdateServerAttachment ? (
               <ServerAttachmentPicker
                 projectId={suite.projectId}
@@ -264,15 +260,10 @@ export function SuiteOverviewClientBar({
 
         <div
           className={cn(
-            "flex min-w-0 items-center gap-2",
+            "flex min-w-0 items-center",
             containerVariant === "inline" ? "min-w-0 flex-1" : "flex-1",
           )}
         >
-          {showServersSection ? (
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              Clients
-            </span>
-          ) : null}
           <div
             className={cn(
               "flex min-w-0 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
