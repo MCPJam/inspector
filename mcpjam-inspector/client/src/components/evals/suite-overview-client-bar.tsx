@@ -177,7 +177,7 @@ export function SuiteOverviewClientBar({
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",
             attachments.length === 0
-              ? "border-warning/50 bg-warning/50 hover:brightness-95"
+              ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             !editable && "cursor-not-allowed opacity-50",
           )}

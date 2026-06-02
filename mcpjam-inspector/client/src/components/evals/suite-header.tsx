@@ -20,8 +20,8 @@ import {
   Play,
   Plus,
   RotateCw,
+  Settings,
   Sparkles,
-  Settings2,
   X,
 } from "lucide-react";
 import {
@@ -762,7 +762,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   )
                 }
               >
-                <Settings2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <Settings className="h-3.5 w-3.5 shrink-0" aria-hidden />
               </Button>
             </TooltipTrigger>
             <TooltipContent

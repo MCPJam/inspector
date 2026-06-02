@@ -5,9 +5,9 @@ import {
   Play,
   Plus,
   Search,
+  Settings,
   SlidersHorizontal,
   Trash2,
-  Settings2,
 } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -291,6 +291,8 @@ function SuiteTableHeader({
       )
     : SUITE_ROW_GRID;
 
+  const showBatchBar = batchDeleteEnabled && selectedCount > 0;
+
   return (
     <div className="sticky top-0 z-[1] shrink-0 border-b border-border/40 bg-card/95 px-4 py-2 backdrop-blur-sm">
       <div className={gridClass}>
@@ -306,44 +308,45 @@ function SuiteTableHeader({
         <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
           Suite
         </span>
-        <span className="text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-          Score
-        </span>
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            Last run
-          </span>
-          {batchDeleteEnabled && selectedCount > 0 ? (
-            <div className="flex shrink-0 items-center gap-1.5">
-              <span className="text-[11px] tabular-nums text-muted-foreground">
-                {selectedCount} selected
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[11px] text-muted-foreground"
-                onClick={onClearSelection}
-                disabled={selectionBlocked}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className={cn(
-                  "h-6 px-2 text-[11px]",
-                  EVAL_DESTRUCTIVE_BUTTON_CLASS,
-                )}
-                onClick={onDeleteSelected}
-                disabled={selectionBlocked}
-              >
-                Delete
-              </Button>
-            </div>
-          ) : null}
-        </div>
-        <span className="sr-only">Actions</span>
+        {showBatchBar ? (
+          <div className="col-span-3 flex min-w-0 items-center justify-end gap-1.5">
+            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+              {selectedCount} selected
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 shrink-0 px-2 text-[11px] text-muted-foreground"
+              onClick={onClearSelection}
+              disabled={selectionBlocked}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className={cn(
+                "h-6 shrink-0 px-2 text-[11px]",
+                EVAL_DESTRUCTIVE_BUTTON_CLASS,
+              )}
+              onClick={onDeleteSelected}
+              disabled={selectionBlocked}
+            >
+              Delete
+            </Button>
+          </div>
+        ) : (
+          <>
+            <span className="text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+              Score
+            </span>
+            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+              Last run
+            </span>
+            <span className="sr-only">Actions</span>
+          </>
+        )}
       </div>
     </div>
   );
@@ -513,7 +516,7 @@ function SuiteOverviewRow({
                 onEditSuite(suite._id);
               }}
             >
-              <Settings2 className="h-3.5 w-3.5" aria-hidden />
+              <Settings className="h-3.5 w-3.5" aria-hidden />
             </Button>
           ) : null}
           <Button

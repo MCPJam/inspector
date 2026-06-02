@@ -35,7 +35,7 @@ function computeTrendDelta(
     return { value: null, label: "—", colorClass: "text-muted-foreground" };
   }
   if (data.length < 2) {
-    return { value: null, label: "First run", colorClass: "text-info" };
+    return { value: null, label: "First run", colorClass: "text-muted-foreground" };
   }
   const delta =
     data[data.length - 1].passRate - data[data.length - 2].passRate;

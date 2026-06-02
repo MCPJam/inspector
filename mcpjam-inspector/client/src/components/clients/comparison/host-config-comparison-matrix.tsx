@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { X } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Popover,
   PopoverContent,
@@ -224,10 +225,16 @@ function FieldRow({
         )}
       >
         {diverges && (
-          <span
+          <motion.span
             aria-hidden="true"
-            className="absolute left-0 top-0 bottom-0 w-[3px] bg-primary/70"
+            className="absolute left-0 top-0 bottom-0 w-[3px] bg-primary/70 origin-top"
             data-testid={`diverge-gutter-${field.id}`}
+            initial={{ scaleY: 0, opacity: 0 }}
+            animate={{ scaleY: 1, opacity: 1 }}
+            transition={{
+              duration: 0.45,
+              ease: [0.22, 1, 0.36, 1],
+            }}
           />
         )}
         <div className="text-[13px] font-medium text-foreground leading-tight">
@@ -413,20 +420,30 @@ function HostColumnHeader({
     subject.hostStyle,
     subject.config.chatUiOverride,
   );
+  const reduceMotion = useReducedMotion();
 
   return (
     <th className="sticky top-0 z-20 bg-card border-b border-l border-border px-4 py-4 text-left align-top">
-      <div className="flex items-start gap-2">
+      <motion.div
+        key={subject.hostId}
+        className="flex items-start gap-2"
+        initial={reduceMotion ? false : { opacity: 0, x: -6 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+      >
         {onRemove ? (
-          <button
+          <motion.button
             type="button"
             aria-label={`Remove ${subject.hostName} from comparison`}
             data-testid={`host-compare-remove-${subject.hostId}`}
-            className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             onClick={() => onRemove(subject.hostId)}
+            whileHover={reduceMotion ? undefined : { scale: 1.15 }}
+            whileTap={reduceMotion ? undefined : { scale: 0.85, rotate: 90 }}
+            transition={{ type: "spring", stiffness: 520, damping: 24 }}
           >
             <X className="size-3" />
-          </button>
+          </motion.button>
         ) : null}
         <img
           src={logoSrc}
@@ -436,7 +453,7 @@ function HostColumnHeader({
         <div className="min-w-0 font-medium text-[14px] truncate leading-tight" title={subject.hostName}>
           {subject.hostName}
         </div>
-      </div>
+      </motion.div>
     </th>
   );
 }

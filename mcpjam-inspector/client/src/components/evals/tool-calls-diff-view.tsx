@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ArrowRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { ChevronDown, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import type { TraceViewerEvalToolCall } from "./trace-viewer";
@@ -36,12 +36,7 @@ export function ToolCallsDiffView({
     [expected, actual, result],
   );
 
-  const mismatchRowIndices = rows
-    .map((r, i) => ({ r, i }))
-    .filter(({ r }) => r.status !== "match")
-    .map(({ i }) => i);
-  const mismatchCount = mismatchRowIndices.length;
-  const firstMismatchIndex = mismatchRowIndices[0] ?? null;
+  const mismatchCount = rows.filter((r) => r.status !== "match").length;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
@@ -52,7 +47,6 @@ export function ToolCallsDiffView({
             mismatchCount={mismatchCount}
             expectedCount={expected.length}
             actualCount={actual.length}
-            firstMismatchIndex={firstMismatchIndex}
             isLoading={isLoading}
           />
         </div>
@@ -82,12 +76,7 @@ export function ToolCallsDiffView({
           </div>
         ) : (
           rows.map((row, idx) => (
-            <DiffRow
-              key={`pair-${idx}`}
-              row={row}
-              index={idx}
-              anchorId={anchorIdFor(idx)}
-            />
+            <DiffRow key={`pair-${idx}`} row={row} index={idx} />
           ))
         )}
       </div>
@@ -102,14 +91,12 @@ function DiffBanner({
   mismatchCount,
   expectedCount,
   actualCount,
-  firstMismatchIndex,
   isLoading,
 }: {
   passed: boolean;
   mismatchCount: number;
   expectedCount: number;
   actualCount: number;
-  firstMismatchIndex: number | null;
   isLoading: boolean;
 }) {
   if (passed && mismatchCount === 0) {
@@ -140,38 +127,21 @@ function DiffBanner({
   return (
     <div
       className={cn(
-        "flex w-full flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs",
+        "flex w-full items-center gap-2 rounded-md border px-3 py-2 text-xs",
         "border-border/60 bg-muted/20 text-foreground",
       )}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <AlertCircle
-          className="size-3.5 shrink-0 text-muted-foreground"
-          aria-hidden
-        />
-        <span className="min-w-0">
-          <strong className="font-semibold">
-            {mismatchCount} mismatch{mismatchCount === 1 ? "" : "es"}
-          </strong>{" "}
-          across {expectedCount} expected / {actualCount} actual tool call
-          {actualCount === 1 ? "" : "s"}.
-        </span>
-      </div>
-      {firstMismatchIndex !== null ? (
-        <a
-          href={`#${anchorIdFor(firstMismatchIndex)}`}
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-border/50 bg-background/60 px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-background/90"
-          onClick={(event) => {
-            event.preventDefault();
-            const el = document.getElementById(
-              anchorIdFor(firstMismatchIndex),
-            );
-            if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-          }}
-        >
-          Jump to mismatch <ArrowRight className="size-3" aria-hidden />
-        </a>
-      ) : null}
+      <AlertCircle
+        className="size-3.5 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
+      <span className="min-w-0">
+        <strong className="font-semibold">
+          {mismatchCount} mismatch{mismatchCount === 1 ? "" : "es"}
+        </strong>{" "}
+        across {expectedCount} expected / {actualCount} actual tool call
+        {actualCount === 1 ? "" : "s"}.
+      </span>
     </div>
   );
 }
@@ -191,18 +161,14 @@ interface PairedRow {
 function DiffRow({
   row,
   index,
-  anchorId,
 }: {
   row: PairedRow;
   index: number;
-  anchorId: string;
 }) {
-  // Auto-expand mismatches; collapse matches.
-  const [expanded, setExpanded] = useState(row.status !== "match");
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <div
-      id={anchorId}
       className={cn(
         "rounded-md border bg-background/30",
         rowBorderClass(row.status),
@@ -367,10 +333,6 @@ function StatusPill({ status }: { status: RowStatus }) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function anchorIdFor(index: number) {
-  return `tool-diff-row-${index}`;
-}
 
 function statusLabel(status: RowStatus): string {
   switch (status) {

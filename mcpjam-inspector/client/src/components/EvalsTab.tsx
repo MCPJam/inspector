@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth, useMutation } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -23,6 +23,7 @@ import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { isQuickstartSuite } from "./evals/constants";
 import type { ServerFormData } from "@/shared/types.js";
 import { useProjectServers } from "@/hooks/useViews";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -133,6 +134,7 @@ function EvalsTabContent({
     useFeatureFlagEnabled("hosts-enabled") === true && isAuthenticated;
   const route = useEvalsRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
+  const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const {
     connectedServerNames,
     userMap,
@@ -149,6 +151,14 @@ function EvalsTabContent({
     projectId: projectId ?? null,
   });
   const mutations = useEvalMutations({ isDirectGuest });
+  const convex = useConvex();
+  const createServerAttachmentMutation = useMutation(
+    "serverAttachments:createServerAttachment" as any,
+  ) as unknown as (args: {
+    projectId: string;
+    name: string;
+    serverIds: string[];
+  }) => Promise<{ _id: string }>;
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -284,23 +294,29 @@ function EvalsTabContent({
     try {
       await runExcalidrawQuickstart({
         projectId,
+        convex,
         createTestSuite: mutations.createTestSuiteMutation,
         createTestCase: mutations.createTestCaseMutation,
+        createServerAttachment: createServerAttachmentMutation,
         handleConnect,
         isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
         existingQuickstartSuiteId,
+        previewedHostId,
       });
     } finally {
       setIsQuickstartRunning(false);
     }
   }, [
     projectId,
+    convex,
     handleConnect,
     isQuickstartRunning,
     mutations.createTestSuiteMutation,
     mutations.createTestCaseMutation,
+    createServerAttachmentMutation,
     connectedServerNames,
     existingQuickstartSuiteId,
+    previewedHostId,
   ]);
 
   const showQuickstart = Boolean(handleConnect);
