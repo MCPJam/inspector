@@ -142,6 +142,17 @@ export const RunEvalsRequestSchema = z.object({
    * so connecting new servers cannot silently contaminate existing suites.
    */
   refreshSnapshot: z.boolean().optional(),
+  /**
+   * Client-generated UUID set on every per-host POST when a multi-host
+   * eval launch fans out (N > 1). Threaded into Convex `startTestSuiteRun`
+   * so the resulting `testSuiteRun` rows share a group id, which the UI
+   * uses to collapse them into a single parent row. Absent on single-host
+   * launches and on legacy runs — those render ungrouped.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  runGroupId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -274,11 +285,28 @@ export function assertTestCaseRunWithinCap(
   }
 }
 
+// Optional attachment metadata threaded into the backend eval-generation
+// endpoint so the LLM can scope the cases by the suite's saved server
+// attachment (per-server tests + at least one explicit cross-server test
+// when the attachment spans ≥2 servers). `resolvedServerNames` carries
+// runtime server identifiers — NOT Convex serverAttachment document ids —
+// to avoid ambiguity at the wire boundary.
+export const ServerAttachmentInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().optional(),
+  resolvedServerNames: z.array(z.string().min(1)).min(1),
+});
+
+export type ServerAttachmentInput = z.infer<
+  typeof ServerAttachmentInputSchema
+>;
+
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
@@ -288,6 +316,7 @@ export const GenerateNegativeTestsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateNegativeTestsRequest = z.infer<
@@ -458,6 +487,7 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
     refreshSnapshot,
+    runGroupId,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -785,6 +815,7 @@ export async function runEvalsWithManager(
     iterationOverride,
     matchOptionsOverride,
     namedHostId,
+    runGroupId,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -1101,6 +1132,7 @@ export async function generateEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
   );
 
   return {
@@ -1143,6 +1175,7 @@ export async function generateNegativeEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
   );
 
   return {

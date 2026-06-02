@@ -154,6 +154,17 @@ export type HandleGenerateEvalTestsOptions = {
    * the per-row run control (including `ensureServersReady` and model prep).
    */
   runNewCasesAfterGenerate?: boolean;
+  /**
+   * Optional metadata about the suite's saved server attachment. When
+   * provided, threaded through to the backend so the LLM scopes generated
+   * cases to that attachment's servers (per-server tests + at least one
+   * explicit cross-server test when the attachment spans ≥2 servers).
+   */
+  serverAttachment?: {
+    id?: string;
+    name?: string;
+    resolvedServerNames: string[];
+  };
 };
 
 interface UseEvalHandlersProps {
@@ -590,6 +601,15 @@ export function useEvalHandlers({
               },
             ];
 
+      // Generate a shared group id ONLY when the rerun fans out to more
+      // than one host. The inspector route threads this through the Zod
+      // schema → recorder → Convex mutation; every sibling run carries
+      // the same id so the UI can collapse them into a single parent
+      // row. Single-host launches stay ungrouped so legacy + single-host
+      // rows render identically.
+      const runGroupId =
+        runPlans.length > 1 ? crypto.randomUUID() : undefined;
+
       // Show toast immediately when user clicks rerun
       toast.success(
         runPlans.length > 1
@@ -651,6 +671,7 @@ export function useEvalHandlers({
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,
               ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
+              ...(runGroupId ? { runGroupId } : {}),
             }),
           ),
         );
@@ -1381,6 +1402,9 @@ export function useEvalHandlers({
             convex.query("testSuites:listTestCases" as any, {
               suiteId,
             }) as Promise<Array<Record<string, unknown>>>,
+          ...(postOptions?.serverAttachment
+            ? { serverAttachment: postOptions.serverAttachment }
+            : {}),
         });
 
         if (outcome.apiReturnedTests === 0) {

@@ -4,14 +4,18 @@ import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 
 let balanceState:
   | {
-      paidPercentRemaining: number | null;
+      availableCredits: number;
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
       freeDailyResetAt: number;
+      freeDailyCreditsRemaining: number;
+      freeDailyCreditsTotal: number;
+      walletLocked: boolean;
     }
   | undefined;
 let isLoadingState = false;
 let hasWorkOsUserState = true;
+let creditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -21,18 +25,26 @@ vi.mock("@/hooks/useCreditBalance", () => ({
   }),
 }));
 
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditsFlagState,
+}));
+
 describe("SidebarCreditUsage", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
     balanceState = {
-      paidPercentRemaining: null,
+      availableCredits: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 12,
       freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 264,
+      freeDailyCreditsTotal: 300,
+      walletLocked: false,
     };
     isLoadingState = false;
     hasWorkOsUserState = true;
+    creditsFlagState = true;
   });
 
   afterEach(() => {
@@ -45,48 +57,59 @@ describe("SidebarCreditUsage", () => {
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(screen.getByLabelText("Credit usage")).toBeInTheDocument();
     expect(dailyRow).toHaveTextContent("Free daily credits");
-    expect(dailyRow).toHaveTextContent("12%");
+    expect(dailyRow).toHaveTextContent("36 / 300");
     expect(dailyRow).toHaveTextContent("resets in 3h");
-    expect(
-      screen.queryByText(/15× the credits/i)
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when the credits UI flag is off", () => {
+    creditsFlagState = false;
+
+    const { container } = render(<SidebarCreditUsage />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("keeps the sidebar strip focused on daily limits for paid users", () => {
     balanceState = {
-      paidPercentRemaining: 25,
+      availableCredits: 750,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 40,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 180,
+      freeDailyCreditsTotal: 300,
+      walletLocked: false,
     };
 
     render(<SidebarCreditUsage />);
 
     expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
-    expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent("40%");
+    expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
+      "120 / 300"
+    );
   });
 
   it("shows paid credits in the full account-menu variant", () => {
     balanceState = {
-      paidPercentRemaining: 25,
+      availableCredits: 750,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 40,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 180,
+      freeDailyCreditsTotal: 300,
+      walletLocked: false,
     };
 
     render(<SidebarCreditUsage variant="full" />);
 
-    expect(screen.getByText("Credit usage")).toBeInTheDocument();
     expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
-      "40% used"
+      "120 / 300"
     );
     const paidRow = screen.getByTestId("sidebar-usage-paid");
     expect(paidRow).toHaveTextContent("Paid credits");
-    expect(paidRow).toHaveTextContent("75% used");
+    expect(paidRow).toHaveTextContent("750");
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
-    expect(
-      screen.queryByText(/15× the credits/i)
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
   });
 
   it("does not render when there is no balance to show", () => {
@@ -101,10 +124,13 @@ describe("SidebarCreditUsage", () => {
 
   it("renders guest balance data with a sign-in upgrade hint", () => {
     balanceState = {
-      paidPercentRemaining: null,
+      availableCredits: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: Date.now() + 2 * 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 7,
+      freeDailyCreditsTotal: 20,
+      walletLocked: false,
     };
     hasWorkOsUserState = false;
 
@@ -112,11 +138,9 @@ describe("SidebarCreditUsage", () => {
 
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(screen.getByTestId("sidebar-credit-usage")).toBeInTheDocument();
-    expect(dailyRow).toHaveTextContent(
-      "Sign in for 15× the credits"
-    );
+    expect(dailyRow).toHaveTextContent("Sign in for 10× the credits");
     expect(dailyRow).toHaveTextContent("Free daily credits");
-    expect(dailyRow).toHaveTextContent("65%");
+    expect(dailyRow).toHaveTextContent("13 / 20");
     expect(dailyRow).toHaveTextContent("resets in 2h");
     expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
   });
@@ -140,14 +164,15 @@ describe("SidebarCreditUsage", () => {
     // wrapper is now a div with role=button, leaving the tooltip trigger as
     // the only real <button> in the row.
     balanceState = {
-      paidPercentRemaining: 40,
+      availableCredits: 600,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 10,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 270,
+      freeDailyCreditsTotal: 300,
+      walletLocked: false,
     };
-    render(
-      <SidebarCreditUsage variant="full" onClick={() => undefined} />,
-    );
+    render(<SidebarCreditUsage variant="full" onClick={() => undefined} />);
     const wrapper = screen.getByTestId("sidebar-credit-usage");
     // Wrapper is NOT a real <button>
     expect(wrapper.tagName).toBe("DIV");
@@ -166,10 +191,13 @@ describe("SidebarCreditUsage", () => {
     const { default: userEvent } = await import("@testing-library/user-event");
     const onWrapperClick = vi.fn();
     balanceState = {
-      paidPercentRemaining: 40,
+      availableCredits: 600,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 10,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+      freeDailyCreditsRemaining: 270,
+      freeDailyCreditsTotal: 300,
+      walletLocked: false,
     };
     render(<SidebarCreditUsage variant="full" onClick={onWrapperClick} />);
 

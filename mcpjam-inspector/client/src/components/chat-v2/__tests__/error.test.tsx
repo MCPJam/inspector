@@ -9,6 +9,7 @@ beforeEach(() => {
     hasPendingLimit: false,
     isOpen: false,
     intent: null,
+    organizationId: null,
     pendingInput: null,
   });
 });

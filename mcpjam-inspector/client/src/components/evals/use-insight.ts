@@ -31,37 +31,51 @@ export interface InsightHookResult<TResult> {
   failedGeneration: boolean;
   result: TResult | undefined;
   summary: string | null;
-  requestInsight: (force?: boolean) => void;
+  requestInsight: (
+    force?: boolean,
+    extraArgs?: Record<string, unknown>,
+  ) => void;
   cancelInsight: () => void;
+}
+
+/** Result freshness marker shared by every insight payload. */
+function resultGeneratedAt(result: unknown): number | undefined {
+  return (result as { generatedAt?: number } | undefined)?.generatedAt;
 }
 
 function classifyInsightError(err: unknown): {
   unavailable: boolean;
+  permanent: boolean;
   message: string;
 } {
   const raw = err instanceof Error ? err.message : String(err);
 
-  // Known structured rejections take precedence over the generic
-  // "Server Error" classification — Convex wraps mutation rejections with
-  // a "Server Error" prefix, so a spend-cap rejection would otherwise be
-  // misclassified as `unavailable: true` and the calling component hides
-  // the surface entirely (SuiteInsightsCollapsible returns null on
+  // Known structured rejections short-circuit ahead of the generic
+  // unavailable/permanent classification. Convex wraps mutation rejections
+  // with a "Server Error" prefix, so a spend-cap rejection would otherwise
+  // be misclassified as `unavailable: true` and the calling component
+  // hides the surface entirely (SuiteInsightsCollapsible returns null on
   // unavailable). These are *rejections*, not unavailability — the
   // feature works, the user is rate-limited / quota-bound.
   if (raw.includes("insights_daily_limit_reached")) {
     return {
       unavailable: false,
+      permanent: false,
       message:
         "Daily insights limit reached for your workspace. Try again tomorrow or upgrade.",
     };
   }
 
+  // "Feature missing" — the backend mutation isn't deployed at all. This is
+  // permanent for the session: a Convex function-lookup failure won't change
+  // between runs, so the panel should stay hidden without re-attempting.
+  const permanent =
+    raw.includes("Could not find") || raw.includes("is not a function");
   const unavailable =
-    raw.includes("Could not find") ||
-    raw.includes("not found") ||
-    raw.includes("is not a function") ||
+    permanent ||
+    raw.includes("not found") || // run-specific, e.g. "Suite run not found"
     raw.includes("Server Error");
-  return { unavailable, message: raw };
+  return { unavailable, permanent, message: raw };
 }
 
 export function useInsight<TResult extends { summary?: string }>(
@@ -75,12 +89,24 @@ export function useInsight<TResult extends { summary?: string }>(
   const [requested, setRequested] = useState(false);
   const hasAutoAttemptedRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
+  // True only when the backend feature itself is missing (mutation not
+  // deployed). Unlike a run-specific/transient failure, this is permanent for
+  // the hook's lifetime, so we keep `unavailable` sticky across run switches
+  // rather than re-attempting (and flashing the panel) on every navigation.
+  const featureMissingRef = useRef(false);
+  // The result `generatedAt` captured at request time. Lets us clear the
+  // optimistic `requested` flag the instant a NEW result lands — even when a
+  // reactive update skips an observable `pending` frame — so the controls
+  // never stay stuck disabled.
+  const latestResultStampRef = useRef<number | undefined>(undefined);
+  const requestedAtStampRef = useRef<number | undefined>(undefined);
 
   const requestMut = useMutation(config.requestMutation as any);
   const cancelMut = useMutation(config.cancelMutation as any);
 
   const status = run ? config.getStatus(run) : undefined;
   const result = run ? config.getResult(run) : undefined;
+  latestResultStampRef.current = resultGeneratedAt(result);
 
   const canRequest =
     run != null &&
@@ -89,17 +115,21 @@ export function useInsight<TResult extends { summary?: string }>(
     !unavailable;
 
   const requestInsight = useCallback(
-    (force?: boolean) => {
+    (force?: boolean, extraArgs?: Record<string, unknown>) => {
       if (!run || unavailable) {
         return;
       }
       setError(null);
+      requestedAtStampRef.current = latestResultStampRef.current;
       setRequested(true);
-      requestMut({ suiteRunId: run._id, force } as any).catch(
+      requestMut({ suiteRunId: run._id, force, ...extraArgs } as any).catch(
         (err: unknown) => {
           setRequested(false);
           const classified = classifyInsightError(err);
           if (classified.unavailable) {
+            if (classified.permanent) {
+              featureMissingRef.current = true;
+            }
             setUnavailable(true);
           } else {
             setError(classified.message);
@@ -124,16 +154,38 @@ export function useInsight<TResult extends { summary?: string }>(
       runIdRef.current = runKey;
       setError(null);
       setRequested(false);
+      // Re-assess availability per run for run-specific/transient failures
+      // (e.g. "Suite run not found") so one bad run doesn't hide the panel for
+      // every later run — but keep it sticky when the backend feature is
+      // genuinely missing, so an autoRequest consumer (serverQuality) doesn't
+      // re-fire a failing request and flash the panel on every navigation.
+      if (!featureMissingRef.current) {
+        setUnavailable(false);
+      }
       hasAutoAttemptedRef.current = false;
+      requestedAtStampRef.current = undefined;
     }
   }, [runKey]);
 
-  // Clear optimistic "requested" flag once the server status catches up.
+  // Clear the optimistic "requested" flag once the job has demonstrably
+  // progressed — but NOT in the click→`pending` gap where a stale terminal
+  // result still lingers (clearing there would re-enable a re-run/retry trigger
+  // and allow a duplicate request). Progress is either:
+  //   - status flips to `pending` (job started); or
+  //   - a fresh result lands — its `generatedAt` advances past the value
+  //     captured at request time.
+  // Both completion AND failure write a fresh `generatedAt` (the failed
+  // fallback in each *Action's catch stamps Date.now()), so a re-run that ends
+  // in failure clears here too; the request mutation's catch covers a request
+  // that errors before it ever starts.
   useEffect(() => {
-    if (status === "completed" || status === "failed") {
+    if (
+      status === "pending" ||
+      resultGeneratedAt(result) !== requestedAtStampRef.current
+    ) {
       setRequested(false);
     }
-  }, [status, run?._id]);
+  }, [status, result, run?._id]);
 
   // Auto-request on first view of a completed run with no insight.
   useEffect(() => {

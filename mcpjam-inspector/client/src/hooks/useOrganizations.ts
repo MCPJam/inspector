@@ -43,6 +43,23 @@ export function resolveOrganizationRole(
   return member.isOwner ? "owner" : "member";
 }
 
+/**
+ * Whether the current user may purchase shared credits for an org.
+ * Allowed for owners, admins, and the org creator. Mirrors the backend
+ * gate on `createCreditCheckoutSession` so the UI never offers a top-up
+ * the server would reject.
+ */
+export function canManageOrgCredits(
+  org: Pick<Organization, "myRole" | "isCreator"> | null | undefined,
+): boolean {
+  if (!org) return false;
+  return (
+    org.myRole === "owner" ||
+    org.myRole === "admin" ||
+    org.isCreator === true
+  );
+}
+
 export function useOrganizationQueries({
   isAuthenticated,
 }: {

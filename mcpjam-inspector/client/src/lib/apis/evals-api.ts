@@ -95,6 +95,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * silently contaminate existing suites.
    */
   refreshSnapshot?: boolean;
+  /**
+   * Client-generated UUID set on every per-host POST when a multi-host
+   * eval launch fans out (N > 1). Persisted on the resulting
+   * `testSuiteRun` rows so the UI can group sibling runs into a single
+   * parent row. Absent on single-host launches and legacy runs.
+   */
+  runGroupId?: string;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
@@ -148,8 +155,22 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   };
 };
 
+/**
+ * Optional attachment metadata threaded into the backend eval-generation
+ * endpoint. When the caller provides this, the LLM scopes the generated
+ * cases to the named server attachment and (for ≥2 servers) the prompt
+ * requires at least one explicit cross-server case. `resolvedServerNames`
+ * carries runtime server identifiers, not Convex doc ids.
+ */
+export type ServerAttachmentInput = {
+  id?: string;
+  name?: string;
+  resolvedServerNames: string[];
+};
+
 type GenerateTestsRequest = EvalRequestWithServers & {
   convexAuthToken?: string | null;
+  serverAttachment?: ServerAttachmentInput;
 };
 
 export type GeneratedEvalTestCase = {

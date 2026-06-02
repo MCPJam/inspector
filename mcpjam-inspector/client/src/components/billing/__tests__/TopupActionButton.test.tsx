@@ -4,7 +4,14 @@ import userEvent from "@testing-library/user-event";
 
 import { TopupActionButton } from "../TopupActionButton";
 
-let presetsState: Array<{ amountCents: number; amountUsd: string }> | undefined;
+let presetsState:
+  | Array<{
+      packageId: string;
+      priceCents: number;
+      displayPrice: string;
+      displayCredits: string;
+    }>
+  | undefined;
 
 vi.mock("@/hooks/useCreditTopup", () => ({
   useCreditTopupPresets: () => ({
@@ -16,15 +23,32 @@ vi.mock("@/hooks/useCreditTopup", () => ({
 describe("TopupActionButton", () => {
   beforeEach(() => {
     presetsState = [
-      { amountCents: 500, amountUsd: "$5" },
-      { amountCents: 1000, amountUsd: "$10" },
-      { amountCents: 2000, amountUsd: "$20" },
+      {
+        packageId: "credits_500",
+        priceCents: 500,
+        displayPrice: "$5",
+        displayCredits: "500 credits",
+      },
+      {
+        packageId: "credits_1000",
+        priceCents: 1000,
+        displayPrice: "$10",
+        displayCredits: "1,000 credits",
+      },
+      {
+        packageId: "credits_2000",
+        priceCents: 2000,
+        displayPrice: "$20",
+        displayCredits: "2,000 credits",
+      },
     ];
   });
 
-  it("renders the Top up button when presets are available", () => {
+  it("renders the Buy credits button when presets are available", () => {
     render(<TopupActionButton onClick={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Top up" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Buy credits" })
+    ).toBeInTheDocument();
   });
 
   it("renders nothing while presets are loading", () => {
@@ -43,7 +67,7 @@ describe("TopupActionButton", () => {
     const user = userEvent.setup();
     const onClick = vi.fn();
     render(<TopupActionButton onClick={onClick} />);
-    await user.click(screen.getByRole("button", { name: "Top up" }));
+    await user.click(screen.getByRole("button", { name: "Buy credits" }));
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 });

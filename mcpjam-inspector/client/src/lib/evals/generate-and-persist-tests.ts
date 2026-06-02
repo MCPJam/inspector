@@ -2,6 +2,7 @@ import type { ConvexReactClient } from "convex/react";
 import {
   generateEvalTests,
   type GeneratedEvalTestCase,
+  type ServerAttachmentInput,
 } from "@/lib/apis/evals-api";
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
@@ -113,6 +114,13 @@ export type GenerateAndPersistEvalTestsOptions = {
   listExistingCases?: () =>
     | Array<Record<string, unknown>>
     | Promise<Array<Record<string, unknown>>>;
+  /**
+   * Optional server-attachment metadata for the suite the cases are being
+   * generated against. When provided, the backend scopes the LLM prompt to
+   * the attachment's servers and (for ≥2 servers) requires explicit
+   * cross-server coverage.
+   */
+  serverAttachment?: ServerAttachmentInput;
 };
 
 function getCreatedTestCaseId(created: unknown): string | null {
@@ -151,6 +159,7 @@ export async function generateAndPersistEvalTests(
     skipIfExistingCases = false,
     isDirectGuest = false,
     listExistingCases,
+    serverAttachment,
   } = options;
 
   let existingList: Array<Record<string, unknown>> = [];
@@ -194,6 +203,7 @@ export async function generateAndPersistEvalTests(
     projectId: isDirectGuest ? null : projectId,
     serverIds,
     convexAuthToken: accessToken,
+    ...(serverAttachment ? { serverAttachment } : {}),
   });
 
   const tests = result.tests ?? [];

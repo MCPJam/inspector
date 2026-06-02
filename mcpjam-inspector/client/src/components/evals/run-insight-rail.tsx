@@ -462,12 +462,15 @@ export function RunDetailMetricsCharts({
 /** Right column: AI insights only. */
 export function RunInsightRail({
   triageCard,
+  goalCompletionCard,
   className,
 }: {
   triageCard: ReactNode;
+  /** Advisory LLM-as-judge panel rendered below the triage card. */
+  goalCompletionCard?: ReactNode;
   className?: string;
 }) {
-  if (!triageCard) return null;
+  if (!triageCard && !goalCompletionCard) return null;
 
   return (
     <aside
@@ -477,6 +480,7 @@ export function RunInsightRail({
       )}
     >
       {triageCard}
+      {goalCompletionCard}
     </aside>
   );
 }
