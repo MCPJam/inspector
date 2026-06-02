@@ -333,6 +333,77 @@ export function evalStatusMiniBarClasses(result: string): string {
   }
 }
 
+/**
+ * Surface fills for status — `/50` opacity per the pastel sweep. Apply to
+ * backgrounds, dots, and tinted surfaces (NOT text/icons — those use the
+ * full-token {@link evalStatusTextClasses}). Body text riding on these
+ * surfaces should use `text-foreground`.
+ */
+export function evalStatusBgClasses(result: string): string {
+  switch (result) {
+    case RESULT_STATUS.PASSED:
+      return "bg-success/50";
+    case RESULT_STATUS.FAILED:
+      return "bg-destructive/50";
+    case RESULT_STATUS.PENDING:
+    case "running":
+      return "bg-warning/50 animate-pulse";
+    case RESULT_STATUS.CANCELLED:
+      return "bg-muted-foreground/40";
+    case "mixed":
+      return "bg-warning/50";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
+/**
+ * Foreground text color for status indicators — full semantic token (no
+ * `/50`). Use for status-only labels that don't ride on a tinted surface.
+ */
+export function evalStatusTextClasses(result: string): string {
+  switch (result) {
+    case RESULT_STATUS.PASSED:
+      return "text-success";
+    case RESULT_STATUS.FAILED:
+      return "text-destructive";
+    case RESULT_STATUS.PENDING:
+    case "running":
+      return "text-warning";
+    case RESULT_STATUS.CANCELLED:
+      return "text-muted-foreground";
+    case "mixed":
+      return "text-warning";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+/**
+ * Icon color for status indicators — identical to {@link evalStatusTextClasses};
+ * kept as a separate export for grep-ability at icon call sites.
+ */
+export function evalStatusIconClasses(result: string): string {
+  return evalStatusTextClasses(result);
+}
+
+/**
+ * Foreground text color for delta / NEW / first-run pills — full token, no `/50`.
+ */
+export function evalDeltaTextClasses(
+  kind: "new" | "first-run" | "up" | "down",
+): string {
+  switch (kind) {
+    case "new":
+    case "first-run":
+      return "text-info";
+    case "up":
+      return "text-success";
+    case "down":
+      return "text-destructive";
+  }
+}
+
 /** Left `border-l-*` for a suite overview row from `latestRun`. */
 export function evalOverviewEntryLeftBorderClass(
   entry: EvalSuiteOverviewEntry,

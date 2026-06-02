@@ -18,10 +18,10 @@ export function suitePassCriteriaCompactBadgeClassNames(
 ) {
   const colorClass =
     outcome === "passed"
-      ? "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
+      ? "bg-success/50 text-foreground"
       : outcome === "failed"
         ? EVAL_FAILED_BADGE_CLASS
-        : "bg-amber-500/15 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300";
+        : "bg-warning/50 text-foreground";
 
   return cn(ITERATION_RESULT_BADGE_BASE, colorClass);
 }
@@ -39,7 +39,7 @@ export function getIterationResultDisplayLabel(iteration: EvalIteration) {
 export function getIterationResultBadgeClass(iteration: EvalIteration) {
   const result = computeIterationResult(iteration);
   if (result === "passed") {
-    return "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300";
+    return "bg-success/50 text-foreground";
   }
   if (result === "failed") {
     return EVAL_FAILED_BADGE_CLASS;
@@ -47,7 +47,7 @@ export function getIterationResultBadgeClass(iteration: EvalIteration) {
   if (result === "cancelled") {
     return "bg-muted text-muted-foreground";
   }
-  return "bg-amber-500/15 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300";
+  return "bg-warning/50 text-foreground";
 }
 
 export function iterationResultBadgeClassNames(iteration: EvalIteration) {
