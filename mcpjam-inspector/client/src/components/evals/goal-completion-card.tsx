@@ -69,8 +69,8 @@ function ScoreBadge({ passed }: { passed: boolean }) {
       className={cn(
         "rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide",
         passed
-          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-          : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+          ? "bg-success/50 text-foreground"
+          : "bg-warning/50 text-foreground",
       )}
     >
       {passed ? "meets goal" : "below threshold"}
@@ -327,8 +327,8 @@ export function GoalCompletionCard({
           </p>
 
           {hasMeaningfulOverride ? (
-            <div className="mx-3 mb-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[12px]">
-              <div className="font-medium text-amber-700 dark:text-amber-300">
+            <div className="mx-3 mb-3 rounded-md border border-warning/50 bg-warning/50 px-3 py-2 text-[12px]">
+              <div className="font-medium text-foreground">
                 ⚙ This run used an override
               </div>
               <div className="mt-0.5 text-muted-foreground">

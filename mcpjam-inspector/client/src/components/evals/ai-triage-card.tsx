@@ -275,7 +275,7 @@ export function AiTriageCard({
             <div className="px-3 py-4 text-sm text-muted-foreground">
               {serverQuality.summary?.trim() ||
                 "The analysis produced no per-tool or per-workflow insights."}
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              <p className="mt-1 text-xs text-warning">
                 No per-tool/workflow breakdown was produced — the analysis may
                 have been truncated. Re-run to retry.
               </p>

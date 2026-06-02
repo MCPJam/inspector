@@ -317,10 +317,10 @@ export function OverviewPanel({
       entry.latestRun.status === "running" ||
       entry.latestRun.status === "pending"
     ) {
-      return <Loader2 className="h-5 w-5 text-amber-500 animate-spin" />;
+      return <Loader2 className="h-5 w-5 text-warning animate-spin" />;
     }
     if (entry.latestRun.result === "passed") {
-      return <CheckCircle2 className="h-5 w-5 text-emerald-500" />;
+      return <CheckCircle2 className="h-5 w-5 text-success" />;
     }
     if (entry.latestRun.result === "failed") {
       return <XCircle className="h-5 w-5 text-destructive" />;
@@ -340,18 +340,18 @@ export function OverviewPanel({
 
   const bannerConfig = {
     failure: {
-      bg: "bg-destructive/10 border-destructive/30",
+      bg: "bg-destructive/50 border-destructive/50",
       icon: <AlertTriangle className="h-4 w-4 text-destructive" />,
       text: `${stats.failedCount} ${stats.failedCount === 1 ? "FAILURE" : "FAILURES"}`,
     },
     running: {
-      bg: "bg-amber-500/10 border-amber-500/30",
-      icon: <Loader2 className="h-4 w-4 text-amber-500 animate-spin" />,
+      bg: "bg-warning/50 border-warning/50",
+      icon: <Loader2 className="h-4 w-4 text-warning animate-spin" />,
       text: `${stats.runningCount} RUNNING`,
     },
     success: {
-      bg: "bg-emerald-500/10 border-emerald-500/30",
-      icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
+      bg: "bg-success/50 border-success/50",
+      icon: <CheckCircle2 className="h-4 w-4 text-success" />,
       text: "ALL PASSING",
     },
   }[bannerState];
@@ -424,12 +424,12 @@ export function OverviewPanel({
               const isActive = bucket.id === activeBucketId;
               const chipColor =
                 bucket.result === "failed"
-                  ? "bg-destructive"
+                  ? "bg-destructive/50"
                   : bucket.result === "running"
-                    ? "bg-amber-500"
+                    ? "bg-warning/50"
                     : bucket.result === "passed"
-                      ? "bg-emerald-500"
-                      : "bg-muted-foreground";
+                      ? "bg-success/50"
+                      : "bg-muted-foreground/50";
 
               const chipLabel = bucket.commitSha
                 ? bucket.commitSha.slice(0, 7)
@@ -548,8 +548,8 @@ export function OverviewPanel({
                                   className={cn(
                                     "h-full rounded-full transition-all",
                                     passRate! >= 75
-                                      ? "bg-amber-500"
-                                      : "bg-destructive",
+                                      ? "bg-warning/50"
+                                      : "bg-destructive/50",
                                   )}
                                   style={{ width: `${passRate}%` }}
                                 />
@@ -753,9 +753,9 @@ export function OverviewPanel({
                       passRate === "--"
                         ? "text-muted-foreground"
                         : parseInt(passRate) >= 95
-                          ? "text-emerald-500"
+                          ? "text-success"
                           : parseInt(passRate) >= 75
-                            ? "text-amber-500"
+                            ? "text-warning"
                             : "text-destructive",
                     )}
                   >
@@ -859,17 +859,17 @@ function InlineFailureTag({ tag }: { tag: FailureTag }) {
     regression: {
       label: "regression",
       className:
-        "text-destructive bg-destructive/10 border-destructive/30 dark:bg-destructive/20 dark:border-destructive/40",
+        "text-foreground bg-destructive/50 border-destructive/50",
     },
     flaky: {
       label: "flaky",
       className:
-        "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-800",
+        "text-foreground bg-warning/50 border-warning/50",
     },
     new: {
       label: "new",
       className:
-        "text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-950/50 dark:border-blue-800",
+        "text-foreground bg-info/50 border-info/50",
     },
   }[tag];
 

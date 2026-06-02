@@ -36,7 +36,7 @@ function computeTrendDelta(
     return { value: null, label: "—", colorClass: "text-muted-foreground" };
   }
   if (data.length < 2) {
-    return { value: null, label: "First run", colorClass: "text-blue-500" };
+    return { value: null, label: "First run", colorClass: "text-info" };
   }
   const delta =
     data[data.length - 1].passRate - data[data.length - 2].passRate;
@@ -46,7 +46,7 @@ function computeTrendDelta(
   return {
     value: delta,
     label: `${delta > 0 ? "+" : ""}${delta}% vs previous`,
-    colorClass: delta > 0 ? "text-emerald-500" : EVAL_LOW_PASS_RATE_TEXT_CLASS,
+    colorClass: delta > 0 ? "text-success" : EVAL_LOW_PASS_RATE_TEXT_CLASS,
   };
 }
 

@@ -60,7 +60,7 @@ export function CopyableCodeBlock({
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               {copied ? (
-                <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
+                <Check className="h-4 w-4 text-success" />
               ) : (
                 <Copy className="h-4 w-4" />
               )}
@@ -89,7 +89,7 @@ export function CopyableCodeBlock({
             className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             {copied ? (
-              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
+              <Check className="h-4 w-4 text-success" />
             ) : (
               <Copy className="h-4 w-4" />
             )}

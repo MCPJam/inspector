@@ -209,7 +209,7 @@ export function RunAccordionView({
                   )}
 
                   {run.replayedFromRunId && (
-                    <span className="shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-medium text-blue-600">
+                    <span className="shrink-0 rounded bg-info/50 px-1.5 py-0.5 text-[11px] font-medium text-foreground">
                       Replay
                     </span>
                   )}
@@ -219,7 +219,7 @@ export function RunAccordionView({
                   {total > 0 && (
                     <span className="flex items-center gap-2 shrink-0">
                       <span className="text-xs font-mono">
-                        <span className="text-emerald-600 dark:text-emerald-400">
+                        <span className="text-success">
                           {passed}
                         </span>
                         {failed > 0 && (
@@ -234,10 +234,10 @@ export function RunAccordionView({
                           className={cn(
                             "text-xs font-medium px-1.5 py-0.5 rounded",
                             passRate === 100
-                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              ? "bg-success/50 text-foreground"
                               : passRate >= 80
-                                ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                                : "bg-destructive/10 text-destructive",
+                                ? "bg-warning/50 text-foreground"
+                                : "bg-destructive/50 text-foreground",
                           )}
                         >
                           {passRate}%
@@ -247,7 +247,7 @@ export function RunAccordionView({
                   )}
 
                   {run.status === "running" && (
-                    <span className="text-xs text-amber-600 dark:text-amber-400 font-medium shrink-0">
+                    <span className="text-xs text-warning font-medium shrink-0">
                       Running...
                     </span>
                   )}

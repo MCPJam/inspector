@@ -298,31 +298,31 @@ function StatusBadge({
 }) {
   if (status === "passed") {
     return (
-      <Badge className="gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      <Badge className="gap-1.5 bg-success/50 text-foreground border-success/50 hover:brightness-95">
+        <span className="h-1.5 w-1.5 rounded-full bg-success/50" />
         Passed
       </Badge>
     );
   }
   if (status === "failed") {
     return (
-      <Badge className="gap-1.5 bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20 dark:bg-destructive/20 dark:border-destructive/40">
-        <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+      <Badge className="gap-1.5 bg-destructive/50 text-foreground border-destructive/50 hover:brightness-95">
+        <span className="h-1.5 w-1.5 rounded-full bg-destructive/50" />
         {failCount} Failed
       </Badge>
     );
   }
   if (status === "running") {
     return (
-      <Badge className="gap-1.5 bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+      <Badge className="gap-1.5 bg-warning/50 text-foreground border-warning/50 hover:brightness-95">
+        <span className="h-1.5 w-1.5 rounded-full bg-warning/50 animate-pulse" />
         Running
       </Badge>
     );
   }
   return (
-    <Badge className="gap-1.5 bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-400">
-      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+    <Badge className="gap-1.5 bg-warning/50 text-foreground border-warning/50 hover:brightness-95">
+      <span className="h-1.5 w-1.5 rounded-full bg-warning/50" />
       Mixed
     </Badge>
   );

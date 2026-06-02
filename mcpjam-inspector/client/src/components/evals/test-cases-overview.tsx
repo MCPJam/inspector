@@ -546,7 +546,7 @@ export function TestCasesOverview({
               const caseTitle = testCase.title || "Untitled test case";
               const passBadge = (
                 <span
-                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
+                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-success/50 text-foreground"
                   aria-label="Passed"
                 >
                   Passed

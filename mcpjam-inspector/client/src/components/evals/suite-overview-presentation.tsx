@@ -52,7 +52,7 @@ export function computeSuitePassRateDelta(
     return { value: null, label: "—", colorClass: "text-muted-foreground" };
   }
   if (trend.length < 2) {
-    return { value: null, label: "NEW", colorClass: "text-blue-500" };
+    return { value: null, label: "NEW", colorClass: "text-info" };
   }
   const delta = Math.round(
     (trend[trend.length - 1] - trend[trend.length - 2]) * 100,
@@ -63,7 +63,7 @@ export function computeSuitePassRateDelta(
   return {
     value: delta,
     label: `${delta > 0 ? "+" : ""}${delta}%`,
-    colorClass: delta > 0 ? "text-emerald-500" : EVAL_LOW_PASS_RATE_TEXT_CLASS,
+    colorClass: delta > 0 ? "text-success" : EVAL_LOW_PASS_RATE_TEXT_CLASS,
   };
 }
 
@@ -107,16 +107,16 @@ export function getSuitePassFailCounts(
 
 export function passRateColorClass(percent: number | null): string {
   if (percent === null) return "text-muted-foreground";
-  if (percent >= 95) return "text-emerald-500";
-  if (percent >= 75) return "text-amber-500";
+  if (percent >= 95) return "text-success";
+  if (percent >= 75) return "text-warning";
   return EVAL_LOW_PASS_RATE_TEXT_CLASS;
 }
 
 /** Segment fills for pass-rate bars — thresholds aligned with {@link passRateColorClass}. */
 export function passRateSegmentColorClass(percent: number | null): string {
   if (percent === null) return "bg-muted-foreground/15";
-  if (percent >= 95) return "bg-emerald-500";
-  if (percent >= 75) return "bg-amber-500";
+  if (percent >= 95) return "bg-success/50";
+  if (percent >= 75) return "bg-warning/50";
   return EVAL_FAIL_BAR_CLASS;
 }
 
@@ -164,7 +164,7 @@ export function SuiteOverviewStatusIcon({
   ) {
     return (
       <Loader2
-        className={cn(iconClass, "animate-spin text-amber-500")}
+        className={cn(iconClass, "animate-spin text-warning")}
         aria-label="Running"
       />
     );
@@ -172,7 +172,7 @@ export function SuiteOverviewStatusIcon({
   if (entry.latestRun.result === "passed") {
     return (
       <CheckCircle2
-        className={cn(iconClass, "text-emerald-500")}
+        className={cn(iconClass, "text-success")}
         aria-label="Passed"
       />
     );
@@ -249,10 +249,10 @@ export function SuitePassFailMiniBar({
           className={cn(
             "h-full rounded-full transition-all",
             pct >= 95
-              ? "bg-emerald-500"
+              ? "bg-success/50"
               : pct >= 75
-                ? "bg-amber-500"
-                : "bg-destructive",
+                ? "bg-warning/50"
+                : "bg-destructive/50",
           )}
           style={{ width: `${pct}%` }}
         />
