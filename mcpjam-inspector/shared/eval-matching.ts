@@ -166,3 +166,51 @@ export type {
   CasePredicates,
   PredicatePlaceholder,
 } from "@mcpjam/sdk/predicates";
+
+import type {
+  CasePredicates as CasePredicatesType,
+  Predicate as PredicateType,
+} from "@mcpjam/sdk/predicates";
+
+/**
+ * Resolve the effective predicate list for a single case from suite defaults
+ * plus the case's `predicates: { mode, list }` envelope.
+ *
+ * Mirrors the backend `convex/lib/matchOptions.ts#resolvePredicates`
+ * semantics — keep these in lockstep:
+ *
+ *   - no case envelope        → suite defaults (or empty)
+ *   - `mode: "inherit"`       → suite defaults (case `list` ignored)
+ *   - `mode: "replace"`       → case `list`
+ *   - `mode: "extend"`        → suite defaults followed by case `list`
+ *
+ * Returns `undefined` when the effective list is empty so the runner's
+ * existing `successPredicates?.length` checks keep treating "no gate" as
+ * the absence of the field.
+ */
+export function resolveCasePredicates(
+  suiteDefaults: PredicateType[] | undefined,
+  caseOverride: CasePredicatesType | undefined,
+): PredicateType[] | undefined {
+  const defaults = suiteDefaults ?? [];
+  const overrideList = (caseOverride?.list ?? []) as PredicateType[];
+  let resolved: PredicateType[];
+  if (!caseOverride) {
+    resolved = defaults;
+  } else {
+    switch (caseOverride.mode) {
+      case "inherit":
+        resolved = defaults;
+        break;
+      case "replace":
+        resolved = overrideList;
+        break;
+      case "extend":
+        resolved = [...defaults, ...overrideList];
+        break;
+      default:
+        resolved = defaults;
+    }
+  }
+  return resolved.length > 0 ? resolved : undefined;
+}

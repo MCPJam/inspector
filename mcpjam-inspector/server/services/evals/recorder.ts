@@ -9,6 +9,7 @@ import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
+import { resolveCasePredicates } from "@/shared/eval-matching";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -428,9 +429,51 @@ export const startSuiteRunWithRecorder = async ({
         .environment as SuiteRunEnvironmentSnapshot)
     : { servers: serverIds ?? [] };
 
+  // Resolve suite default predicates once so per-case envelopes can be
+  // collapsed to a flat list for the runner. Prefer the configSnapshot when
+  // present (mirrors how Convex freezes other suite defaults onto the run),
+  // fall back to a live suite query, then to undefined.
+  let suiteDefaultPredicates =
+    ((response?.configSnapshot as any)?.defaultPredicates as
+      | import("@/shared/eval-matching").Predicate[]
+      | undefined) ?? undefined;
+  if (!Array.isArray(suiteDefaultPredicates) || suiteDefaultPredicates.length === 0) {
+    try {
+      const suite = await convexClient.query(
+        "testSuites:getTestSuite" as any,
+        { suiteId },
+      );
+      const defaults = (suite as { defaultPredicates?: unknown } | undefined)
+        ?.defaultPredicates;
+      suiteDefaultPredicates = Array.isArray(defaults) && defaults.length > 0
+        ? (defaults as import("@/shared/eval-matching").Predicate[])
+        : undefined;
+    } catch {
+      suiteDefaultPredicates = undefined;
+    }
+  } else if (suiteDefaultPredicates.length === 0) {
+    suiteDefaultPredicates = undefined;
+  }
+
+  const resolvePredicatesForCase = (
+    tc: Record<string, any>,
+  ): import("@/shared/eval-matching").Predicate[] | undefined => {
+    const envelope = tc.predicates as
+      | import("@/shared/eval-matching").CasePredicates
+      | undefined;
+    const resolved = resolveCasePredicates(suiteDefaultPredicates, envelope);
+    if (resolved && resolved.length > 0) return resolved;
+    // Legacy flat field on the persisted case — fallback when no envelope.
+    const legacy = tc.successPredicates;
+    return Array.isArray(legacy) && legacy.length > 0
+      ? (legacy as import("@/shared/eval-matching").Predicate[])
+      : undefined;
+  };
+
   // Build config from test cases for backward compatibility
   const config = {
     tests: testCases.flatMap((tc: any) => {
+      const successPredicates = resolvePredicatesForCase(tc);
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => ({
           title: tc.title,
@@ -444,6 +487,7 @@ export const startSuiteRunWithRecorder = async ({
           promptTurns: tc.promptTurns,
           advancedConfig: tc.advancedConfig,
           matchOptions: tc.matchOptions,
+          successPredicates,
           testCaseId: tc._id,
         }));
       }
@@ -462,6 +506,7 @@ export const startSuiteRunWithRecorder = async ({
             promptTurns: tc.promptTurns,
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
+            successPredicates,
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];

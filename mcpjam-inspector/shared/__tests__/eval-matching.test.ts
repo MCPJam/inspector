@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   argumentsMatch,
   matchToolCalls,
+  resolveCasePredicates,
   type ToolCall,
+  type Predicate,
+  type CasePredicates,
 } from "../eval-matching.js";
 
 describe("argumentsMatch", () => {
@@ -244,5 +247,45 @@ describe("matchToolCalls", () => {
       const result = matchToolCalls(expected, actual);
       expect(result.passed).toBe(true);
     });
+  });
+});
+
+describe("resolveCasePredicates", () => {
+  const suiteDefault: Predicate[] = [
+    { type: "noToolErrors" } as Predicate,
+  ];
+  const caseList: Predicate[] = [
+    { type: "calledTool", toolName: "search" } as Predicate,
+  ];
+
+  it("returns undefined when both suite defaults and case envelope are absent", () => {
+    expect(resolveCasePredicates(undefined, undefined)).toBeUndefined();
+  });
+
+  it("returns suite defaults when no case envelope is supplied", () => {
+    expect(resolveCasePredicates(suiteDefault, undefined)).toEqual(suiteDefault);
+  });
+
+  it("returns suite defaults under inherit mode and ignores case list", () => {
+    const override: CasePredicates = { mode: "inherit", list: caseList };
+    expect(resolveCasePredicates(suiteDefault, override)).toEqual(suiteDefault);
+  });
+
+  it("returns the case list alone under replace mode", () => {
+    const override: CasePredicates = { mode: "replace", list: caseList };
+    expect(resolveCasePredicates(suiteDefault, override)).toEqual(caseList);
+  });
+
+  it("concatenates defaults followed by case list under extend mode", () => {
+    const override: CasePredicates = { mode: "extend", list: caseList };
+    expect(resolveCasePredicates(suiteDefault, override)).toEqual([
+      ...suiteDefault,
+      ...caseList,
+    ]);
+  });
+
+  it("collapses an empty effective list to undefined", () => {
+    const override: CasePredicates = { mode: "replace", list: [] };
+    expect(resolveCasePredicates(undefined, override)).toBeUndefined();
   });
 });
