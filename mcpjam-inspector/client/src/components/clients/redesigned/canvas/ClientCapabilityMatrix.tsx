@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+import vscodeLogo from "/vscode_logo.svg";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
 import mcpjamLogo from "/mcp_jam_2row.png";
@@ -30,6 +31,12 @@ function getClientLogo(
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam")) return mcpjamLogo;
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("cursor")) return cursorLogo;
+  if (
+    haystack.includes("vscode") ||
+    haystack.includes("vs code") ||
+    haystack.includes("visual studio code")
+  )
+    return vscodeLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
   if (haystack.includes("openai") || haystack.includes("chatgpt") || haystack.includes("gpt"))
