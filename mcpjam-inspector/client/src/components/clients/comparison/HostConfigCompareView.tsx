@@ -75,11 +75,20 @@ export function HostConfigCompareView({
   useEffect(() => {
     if (!urlConsumedRef.current) return;
     if (listLoading) return;
+    // Skip while the selection hasn't been resolved yet. The selection
+    // effect above sets `urlConsumedRef.current = true` synchronously and
+    // queues the parsed-from-URL selection, so this effect runs in the same
+    // commit with `selectedHostIds` still empty. Treating that as "default"
+    // would delete `?hosts=` before the queued state lands, clobbering the
+    // deep link. After resolve, `selectedHostIds` is always ≥ 1 (resolver
+    // falls back to all live hosts; `toggleHostCompareSelection` keeps
+    // `minSelected=1`), so an empty selection means "not yet resolved."
+    if (selectedHostIds.length === 0) return;
     const isDefault =
       selectedHostIds.length === liveHostIds.length &&
       selectedHostIds.every((id, i) => id === liveHostIds[i]);
     const current = searchParams.get(HOSTS_QUERY_PARAM);
-    if (isDefault || selectedHostIds.length === 0) {
+    if (isDefault) {
       if (current === null) return;
       const next = new URLSearchParams(searchParams);
       next.delete(HOSTS_QUERY_PARAM);
