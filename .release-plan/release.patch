@@ -1,82 +1,37 @@
 diff --git a/.changeset/eval-ui-polish.md b/.changeset/eval-ui-polish.md
 deleted file mode 100644
-index f422731e2..000000000
+index 4783a06be..000000000
 --- a/.changeset/eval-ui-polish.md
 +++ /dev/null
-@@ -1,11 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
--"@mcpjam/sdk": patch
 -"@mcpjam/inspector": patch
 ----
 -
--Inspector updates:
--
--- Polish the Evaluate surface: refreshed empty hero, suite list sidebar, suite header, dashboard, executions overview, run insights and metrics charts
--- Gate the Evaluate tab and flask buttons behind the `evaluate-ui` flag, and gate suite creation
--- Improve test generation, with safer empty server/client handling and a clearer tooltip on the create-suite dialog
--- New tool-calls diff view and the Excalidraw quickstart cases for the eval surface
+-Polish evals UI: refine run detail, suite list, cross-host matrix, trace viewer, goal completion card, and test template editor. Improves scroll behavior in trace viewer (stick-to-bottom) and tightens visuals across the evals tab.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 03fe84aee..6a8c437ad 100644
+index 6a8c437ad..6969edf83 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.9.0",
-+  "version": "2.9.1",
+-  "version": "2.9.1",
++  "version": "2.9.2",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -117,7 +117,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.10.0",
-+    "@mcpjam/sdk": "^1.10.1",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
-     "@ngrok/ngrok": "^1.6.0",
 diff --git a/package-lock.json b/package-lock.json
-index 89cfcadb8..d398429c1 100644
+index d398429c1..6d36a1152 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.9.0",
-+      "version": "2.9.1",
+-      "version": "2.9.1",
++      "version": "2.9.2",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",
-@@ -317,7 +317,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.10.0",
-+        "@mcpjam/sdk": "^1.10.1",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
-         "@ngrok/ngrok": "^1.6.0",
-@@ -36114,7 +36114,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "1.10.0",
-+      "version": "1.10.1",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/anthropic": "^2.0.17",
-diff --git a/sdk/package.json b/sdk/package.json
-index f5028a95a..a94f6879a 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "1.10.0",
-+  "version": "1.10.1",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",

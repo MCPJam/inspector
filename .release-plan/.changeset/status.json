@@ -3,43 +3,23 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Inspector updates:\n\n- Polish the Evaluate surface: refreshed empty hero, suite list sidebar, suite header, dashboard, executions overview, run insights and metrics charts\n- Gate the Evaluate tab and flask buttons behind the `evaluate-ui` flag, and gate suite creation\n- Improve test generation, with safer empty server/client handling and a clearer tooltip on the create-suite dialog\n- New tool-calls diff view and the Excalidraw quickstart cases for the eval surface",
+      "summary": "Polish evals UI: refine run detail, suite list, cross-host matrix, trace viewer, goal completion card, and test template editor. Improves scroll behavior in trace viewer (stick-to-bottom) and tightens visuals across the evals tab.",
       "id": "eval-ui-polish"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "patch",
-      "oldVersion": "1.10.0",
-      "changesets": [
-        "eval-ui-polish"
-      ],
-      "newVersion": "1.10.1"
-    },
-    {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.9.0",
+      "oldVersion": "2.9.1",
       "changesets": [
         "eval-ui-polish"
       ],
-      "newVersion": "2.9.1"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.9.2"
     }
   ]
 }
