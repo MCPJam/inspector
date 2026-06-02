@@ -298,7 +298,11 @@ export function ConvertChatSessionDialog({
       };
 
       const added = result.addedServers ?? [];
-      if (destinationMode === "existing" && added.length > 0) {
+      if (
+        destinationMode === "existing" &&
+        result.updatedSuiteEnvironment === true &&
+        added.length > 0
+      ) {
         toast.success(
           `Chat session promoted to a test case. Added ${added.join(", ")} to the suite.`,
         );

@@ -122,9 +122,15 @@ export function SaveAsTestCaseAction({
         ...(destinationMode === "existing"
           ? { destinationSuiteId: selectedSuiteId }
           : { newSuiteName: newSuiteName.trim() }),
-      })) as { addedServers?: string[] } | undefined;
+      })) as
+        | { addedServers?: string[]; updatedSuiteEnvironment?: boolean }
+        | undefined;
       const added = result?.addedServers ?? [];
-      if (destinationMode === "existing" && added.length > 0) {
+      if (
+        destinationMode === "existing" &&
+        result?.updatedSuiteEnvironment === true &&
+        added.length > 0
+      ) {
         toast.success(
           `Saved as test case. Added ${added.join(", ")} to the suite.`,
         );
