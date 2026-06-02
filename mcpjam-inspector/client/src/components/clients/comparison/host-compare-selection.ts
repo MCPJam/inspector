@@ -49,13 +49,28 @@ export function toggleHostCompareSelection(
   return [...selectedHostIds, hostId];
 }
 
+export function parseHostsParam(raw: string | null | undefined): string[] | null {
+  if (!raw) return null;
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return parts.length > 0 ? parts : null;
+}
+
 export function resolveInitialHostCompareSelection(args: {
   projectId: string;
   liveHostIds: ReadonlyArray<string>;
   previousSelection: ReadonlyArray<string>;
+  urlSelection?: ReadonlyArray<string> | null;
 }): string[] {
   const live = new Set(args.liveHostIds);
   if (live.size === 0) return [];
+
+  if (args.urlSelection && args.urlSelection.length > 0) {
+    const fromUrl = reconcileHostCompareSelection(args.urlSelection, live);
+    if (fromUrl.length > 0) return fromUrl;
+  }
 
   const stored = readHostCompareSelection(args.projectId);
   if (stored) {

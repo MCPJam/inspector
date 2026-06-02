@@ -6,10 +6,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { Globe, MoreHorizontal, Plus, X } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import { GitCompare, Globe, MoreHorizontal, Plus, X } from "lucide-react";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { type HostListItem } from "@/hooks/useClients";
-import { navigateApp, routePaths } from "@/lib/app-navigation";
+import {
+  buildHostComparePath,
+  navigateApp,
+  routePaths,
+} from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { EvalSuite } from "./types";
@@ -124,6 +133,37 @@ export function SuiteOverviewClientBar({
         (host) => !attachments.some((a) => a.namedHostId === host.hostId),
       ),
     [projectHosts, attachments],
+  );
+
+  const canCompare = attachments.length >= 2;
+  const handleOpenCompare = () => {
+    navigateApp(
+      buildHostComparePath(attachments.map((a) => a.namedHostId)),
+    );
+  };
+  const compareButton = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {/* Span wrapper lets the tooltip surface when the button is disabled. */}
+        <span className="shrink-0">
+          <button
+            type="button"
+            className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background"
+            aria-label="Compare attached hosts"
+            disabled={!canCompare}
+            onClick={handleOpenCompare}
+          >
+            <GitCompare className="h-3.5 w-3.5" />
+            <span>Compare</span>
+          </button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {canCompare
+          ? "Compare attached hosts side by side"
+          : "Attach 2+ hosts to compare"}
+      </TooltipContent>
+    </Tooltip>
   );
 
   const addHostMenu = (align: "start" | "end") => (
@@ -299,6 +339,7 @@ export function SuiteOverviewClientBar({
             })}
 
             {editable ? addHostMenu("end") : null}
+            {compareButton}
           </div>
         </div>
       </div>

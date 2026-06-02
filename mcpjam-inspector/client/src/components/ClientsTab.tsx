@@ -4,11 +4,11 @@ import { useNavigate } from "react-router";
 import { ClientBuilderView } from "./clients/ClientBuilderView";
 import { ClientsConnectAddServerSlotContext } from "./clients/ClientsConnectAddServerSlotContext";
 import { ClientsConnectViewPhaseContext } from "./clients/ClientsConnectViewPhaseContext";
+import { ConnectViewHeader } from "./clients/ConnectViewHeader";
 import { SNAPPY_RAIL } from "./clients/transition-tokens";
-import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList } from "@/hooks/useClients";
-import { routePaths } from "@/lib/app-navigation";
+import { buildHostComparePath, routePaths } from "@/lib/app-navigation";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -144,44 +144,30 @@ export function ClientsTab({
             className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground"
           >
             <ClientsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
-              <div
-                className="relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8"
-                data-testid="hosts-tab-header-chrome"
-              >
-                <div className="flex flex-col items-stretch gap-2 md:grid md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-3">
-                  <div className="hidden md:block" aria-hidden="true" />
-                  <div className="flex min-w-0 justify-center">
-                    <ViewModeSelector
-                      value="servers"
-                      ariaLabel="Connect view"
-                      onChange={(next) => {
-                        // `onSelectHost` is wired to `handleSelectHost` in
-                        // ClientsRoute, which itself calls `navigate(buildHostsPath(...))`
-                        // — calling `navigate` here too pushes a duplicate
-                        // history entry, breaking the browser Back button.
-                        if (next === "host" && previewedHostId) {
-                          onSelectHost(previewedHostId);
-                        } else if (next === "servers") {
-                          navigate(routePaths.servers);
-                        }
-                      }}
-                      options={[
-                        { value: "servers", label: "Servers" },
-                        {
-                          value: "host",
-                          label: "Client",
-                          disabled: !previewedHostId,
-                        },
-                      ]}
-                    />
-                  </div>
+              <ConnectViewHeader
+                value="servers"
+                previewedHostId={previewedHostId}
+                onChange={(next) => {
+                  // `onSelectHost` is wired to `handleSelectHost` in
+                  // ClientsRoute, which itself calls `navigate(buildHostsPath(...))`
+                  // — calling `navigate` here too pushes a duplicate
+                  // history entry, breaking the browser Back button.
+                  if (next === "host" && previewedHostId) {
+                    onSelectHost(previewedHostId);
+                  } else if (next === "servers") {
+                    navigate(routePaths.servers);
+                  } else if (next === "compare") {
+                    navigate(buildHostComparePath());
+                  }
+                }}
+                rightSlot={
                   <div
                     ref={setAddServerSlotEl}
                     className="flex min-w-0 flex-wrap items-center justify-center gap-3 md:justify-end"
                     data-testid="hosts-tab-add-server-slot"
                   />
-                </div>
-              </div>
+                }
+              />
               <div
                 className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
                 style={browseShellStyle}

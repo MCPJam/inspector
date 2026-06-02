@@ -49,6 +49,7 @@ import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
 import { HostConfigCompareView } from "./components/clients/comparison/HostConfigCompareView";
+import { ConnectViewHeader } from "./components/clients/ConnectViewHeader";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -629,12 +630,39 @@ export function ClientsRoute() {
 }
 
 export function HostCompareRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
-  return (
+  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
+    useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const navigate = useAppNavigate();
+
+  const compareView = (
     <HostConfigCompareView
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
     />
+  );
+
+  // Mirror the gating ClientsRoute uses: when the hosts hub is off, Compare
+  // has no peer Servers/Client tabs to switch to, so render bare.
+  if (!hostsHubFlagEnabled || !isAuthenticated) {
+    return compareView;
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <ConnectViewHeader
+        value="compare"
+        previewedHostId={previewedHostId}
+        onChange={(next) => {
+          if (next === "servers") {
+            navigate(routePaths.servers);
+          } else if (next === "host" && previewedHostId) {
+            navigate(buildClientsPath(previewedHostId));
+          }
+        }}
+      />
+      <div className="min-h-0 flex-1">{compareView}</div>
+    </div>
   );
 }
 

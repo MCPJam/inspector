@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  parseHostsParam,
   reconcileHostCompareSelection,
   resolveInitialHostCompareSelection,
   toggleHostCompareSelection,
@@ -48,5 +49,37 @@ describe("host-compare-selection", () => {
   it("readHostCompareSelection returns null for invalid storage", () => {
     sessionStorage.setItem("host-compare-selected:proj_1", "{not-json");
     expect(readHostCompareSelection("proj_1")).toBeNull();
+  });
+
+  it("parseHostsParam splits, trims, and ignores empty entries", () => {
+    expect(parseHostsParam("a,b,c")).toEqual(["a", "b", "c"]);
+    expect(parseHostsParam(" a , ,b ")).toEqual(["a", "b"]);
+    expect(parseHostsParam("")).toBeNull();
+    expect(parseHostsParam(null)).toBeNull();
+    expect(parseHostsParam(undefined)).toBeNull();
+  });
+
+  it("resolveInitialHostCompareSelection prefers urlSelection over storage", () => {
+    writeHostCompareSelection("proj_1", ["b"]);
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a", "b", "c"],
+        previousSelection: [],
+        urlSelection: ["c", "a"],
+      }),
+    ).toEqual(["c", "a"]);
+  });
+
+  it("resolveInitialHostCompareSelection falls through when urlSelection has no live hosts", () => {
+    writeHostCompareSelection("proj_1", ["b"]);
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a", "b", "c"],
+        previousSelection: [],
+        urlSelection: ["dead-host"],
+      }),
+    ).toEqual(["b"]);
   });
 });

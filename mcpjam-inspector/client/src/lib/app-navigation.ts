@@ -60,6 +60,17 @@ export function buildClientsPath(hostId?: string | null): string {
   return `${routePaths.clients}/${encodeURIComponent(hostId)}`;
 }
 
+/** Build a path that deep-links into Compare with a pre-selected set of hosts. */
+export function buildHostComparePath(
+  hostIds?: ReadonlyArray<string> | null,
+): string {
+  if (!hostIds || hostIds.length === 0) return routePaths.hostCompare;
+  const param = hostIds.map((id) => id.trim()).filter((id) => id.length > 0);
+  if (param.length === 0) return routePaths.hostCompare;
+  const search = new URLSearchParams({ hosts: param.join(",") });
+  return `${routePaths.hostCompare}?${search.toString()}`;
+}
+
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,
