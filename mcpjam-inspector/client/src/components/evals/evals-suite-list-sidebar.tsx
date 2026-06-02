@@ -306,44 +306,52 @@ function SuiteTableHeader({
         <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
           Suite
         </span>
-        <span className="text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-          Score
-        </span>
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            Last run
-          </span>
-          {batchDeleteEnabled && selectedCount > 0 ? (
-            <div className="flex shrink-0 items-center gap-1.5">
-              <span className="text-[11px] tabular-nums text-muted-foreground">
-                {selectedCount} selected
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[11px] text-muted-foreground"
-                onClick={onClearSelection}
-                disabled={selectionBlocked}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className={cn(
-                  "h-6 px-2 text-[11px]",
-                  EVAL_DESTRUCTIVE_BUTTON_CLASS,
-                )}
-                onClick={onDeleteSelected}
-                disabled={selectionBlocked}
-              >
-                Delete
-              </Button>
-            </div>
-          ) : null}
-        </div>
-        <span className="sr-only">Actions</span>
+        {batchDeleteEnabled && selectedCount > 0 ? (
+          // Selection mode: the Score/Last run labels would point at columns
+          // the user is no longer reading, so swap them for the bulk-action
+          // toolbar spanning Score→Actions. This gives Delete the room it was
+          // missing when crammed into the 5.5rem "Last run" cell.
+          <div
+            className="flex items-center justify-end gap-1.5"
+            style={{ gridColumn: "3 / -1" }}
+          >
+            <span className="text-[11px] tabular-nums text-muted-foreground">
+              {selectedCount} selected
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px] text-muted-foreground"
+              onClick={onClearSelection}
+              disabled={selectionBlocked}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className={cn(
+                "h-6 px-2 text-[11px]",
+                EVAL_DESTRUCTIVE_BUTTON_CLASS,
+              )}
+              onClick={onDeleteSelected}
+              disabled={selectionBlocked}
+            >
+              Delete
+            </Button>
+          </div>
+        ) : (
+          <>
+            <span className="text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+              Score
+            </span>
+            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+              Last run
+            </span>
+            <span className="sr-only">Actions</span>
+          </>
+        )}
       </div>
     </div>
   );
