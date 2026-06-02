@@ -446,8 +446,15 @@ export function SuiteIterationsView({
   // directly inside ChecksSection's onChange, which kicked off one
   // unsynchronized `updateSuite` per keystroke — out-of-order responses
   // could land in the wrong order and persist stale predicate text, and
-  // the toast spammed once per character. The token guard ensures only
-  // the latest debounced attempt produces user-visible feedback.
+  // the toast spammed once per character.
+  //
+  // The debounce alone is not enough: if a user pauses (timer fires →
+  // updateSuite A starts) and then keeps editing (timer fires again →
+  // updateSuite B starts before A resolves), Convex's "last write wins"
+  // means whichever request lands second persists, which can roll the
+  // draft back to A's stale snapshot. We serialize: the next save waits
+  // for any in-flight one to settle, then reads the latest draft and
+  // fires exactly one write.
   const persistedDefaultPredicatesKey = useMemo(
     () => JSON.stringify(suite.defaultPredicates ?? []),
     [suite.defaultPredicates],
@@ -456,35 +463,50 @@ export function SuiteIterationsView({
     () => JSON.stringify(draftDefaultPredicates),
     [draftDefaultPredicates],
   );
-  const defaultChecksSaveTokenRef = useRef(0);
+  const defaultChecksInFlightRef = useRef<Promise<unknown> | null>(null);
   useEffect(() => {
     if (draftDefaultPredicatesKey === persistedDefaultPredicatesKey) return;
     if (!areAllChecksValid(draftDefaultPredicates)) return;
-    const token = ++defaultChecksSaveTokenRef.current;
+    let cancelled = false;
     const timer = setTimeout(() => {
       void (async () => {
-        try {
-          await updateSuite({
-            suiteId: suite._id,
-            defaultPredicates:
-              draftDefaultPredicates.length === 0
-                ? null
-                : draftDefaultPredicates,
-          });
-          if (token === defaultChecksSaveTokenRef.current) {
-            toast.success("Default checks updated");
+        // Wait for any in-flight save to settle before starting the next
+        // one. The pending one captured an earlier draft; if we raced it
+        // and lost, Convex would persist the stale snapshot.
+        while (defaultChecksInFlightRef.current) {
+          try {
+            await defaultChecksInFlightRef.current;
+          } catch {
+            // Errors are surfaced by the call site that started the
+            // in-flight promise; we just need it to settle.
           }
+        }
+        if (cancelled) return;
+        const snapshot = draftDefaultPredicates;
+        const promise = updateSuite({
+          suiteId: suite._id,
+          defaultPredicates: snapshot.length === 0 ? null : snapshot,
+        });
+        defaultChecksInFlightRef.current = promise as Promise<unknown>;
+        try {
+          await promise;
+          toast.success("Default checks updated");
         } catch (error) {
-          if (token === defaultChecksSaveTokenRef.current) {
-            toast.error(
-              getBillingErrorMessage(error, "Failed to update suite"),
-            );
-            console.error("Failed to update default checks:", error);
+          toast.error(
+            getBillingErrorMessage(error, "Failed to update suite"),
+          );
+          console.error("Failed to update default checks:", error);
+        } finally {
+          if (defaultChecksInFlightRef.current === promise) {
+            defaultChecksInFlightRef.current = null;
           }
         }
       })();
     }, 400);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [
     draftDefaultPredicatesKey,
     persistedDefaultPredicatesKey,

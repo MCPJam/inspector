@@ -849,6 +849,19 @@ export function TestTemplateEditor({
       : form.promptTurns;
     const legacy = deriveLegacyPromptFields(normalizedPromptTurns);
 
+    // Normalize the predicate envelope before it crosses the wire. The
+    // in-memory editForm keeps a draft `list` in `inherit` mode so the
+    // user can flip back to `replace`/`extend` without losing their work,
+    // but the persisted envelope must carry an empty list there — the
+    // runner ignores it AND `casePredicatesSchema` still validates each
+    // row with `predicateSchema` regardless of mode, so a stale invalid
+    // row would be rejected downstream even though the case is "safe".
+    const normalizedPredicates = form.predicates
+      ? form.predicates.mode === "inherit"
+        ? { ...form.predicates, list: [] }
+        : form.predicates
+      : form.predicates;
+
     return {
       title: form.title,
       runs: form.runs,
@@ -860,7 +873,7 @@ export function TestTemplateEditor({
       isNegativeTest,
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
-      predicates: form.predicates,
+      predicates: normalizedPredicates,
     };
   };
 
