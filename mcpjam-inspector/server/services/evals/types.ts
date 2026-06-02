@@ -1,5 +1,6 @@
 import {
   evaluateToolCalls,
+  resolveExtrasCap,
   type EvalMatchOptions,
   type ToolCall,
   type ArgumentMismatch,
@@ -108,13 +109,7 @@ export const evaluateMultiTurnResults = (
         // calls on this turn — those calls are unexpected extras and must
         // fail. We can't route through `evaluateResults` for the empty-actual
         // case because the SDK matcher fails positive both-empty by design.
-        // LEGACY: drop the allowExtraToolCalls fallback after v<NEXT_MINOR>.
-        const extrasCap =
-          matchOptions?.maxExtraToolCalls !== undefined
-            ? matchOptions.maxExtraToolCalls
-            : matchOptions?.allowExtraToolCalls === false
-              ? 0
-              : null;
+        const extrasCap = resolveExtrasCap(matchOptions);
         if (
           extrasCap !== null &&
           actualToolCalls.length > extrasCap

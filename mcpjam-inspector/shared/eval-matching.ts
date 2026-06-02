@@ -173,6 +173,36 @@ import type {
 } from "@mcpjam/sdk/predicates";
 
 /**
+ * Collapse `matchOptions.maxExtraToolCalls` + the legacy
+ * `allowExtraToolCalls` field into a single nullable cap value:
+ *
+ *   - `null`            → unlimited extras
+ *   - a non-negative N  → at most N extras
+ *
+ * Precedence:
+ *   1. Explicit `maxExtraToolCalls` (any value, including 0 / null) wins.
+ *   2. Else, legacy `allowExtraToolCalls === false` translates to 0;
+ *      any other legacy state (true / undefined) → null.
+ *
+ * LEGACY: drop the `allowExtraToolCalls` fallback after v<NEXT_MINOR>.
+ */
+export function resolveExtrasCap(
+  matchOptions:
+    | {
+        maxExtraToolCalls?: number | null;
+        allowExtraToolCalls?: boolean;
+      }
+    | undefined
+    | null,
+): number | null {
+  if (!matchOptions) return null;
+  if (matchOptions.maxExtraToolCalls !== undefined) {
+    return matchOptions.maxExtraToolCalls;
+  }
+  return matchOptions.allowExtraToolCalls === false ? 0 : null;
+}
+
+/**
  * Resolve the effective predicate list for a single case from suite defaults
  * plus the case's `predicates: { mode, list }` envelope.
  *

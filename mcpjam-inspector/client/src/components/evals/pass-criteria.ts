@@ -1,4 +1,4 @@
-import { evaluateToolCalls } from "@/shared/eval-matching";
+import { evaluateToolCalls, resolveExtrasCap } from "@/shared/eval-matching";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 export type PassCriteriaType =
@@ -119,14 +119,8 @@ export function computeIterationPassed(
   // For positive tests with no expected calls but tools were called: pass
   // unless extras are bounded at this snapshot, in which case those calls
   // are unexpected extras and must fail when over the cap.
-  // LEGACY: drop the allowExtraToolCalls fallback after v<NEXT_MINOR>.
   if (expected.length === 0 && actual.length > 0) {
-    const cap =
-      snapshotMatchOptions?.maxExtraToolCalls !== undefined
-        ? snapshotMatchOptions.maxExtraToolCalls
-        : snapshotMatchOptions?.allowExtraToolCalls === false
-          ? 0
-          : null;
+    const cap = resolveExtrasCap(snapshotMatchOptions);
     return cap === null || actual.length <= cap;
   }
 
@@ -145,16 +139,10 @@ export function computeIterationPassed(
 
   // Snapshot may also fail on out-of-order or extras (when bounded).
   // Mirror the matcher's `passed` for those cases.
-  // LEGACY: drop the allowExtraToolCalls fallback after v<NEXT_MINOR>.
   if (matchResult.outOfOrder.length > 0) {
     return false;
   }
-  const cap =
-    snapshotMatchOptions?.maxExtraToolCalls !== undefined
-      ? snapshotMatchOptions.maxExtraToolCalls
-      : snapshotMatchOptions?.allowExtraToolCalls === false
-        ? 0
-        : null;
+  const cap = resolveExtrasCap(snapshotMatchOptions);
   if (cap !== null && matchResult.extra.length > cap) {
     return false;
   }

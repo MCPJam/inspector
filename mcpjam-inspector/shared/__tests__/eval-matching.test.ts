@@ -3,6 +3,7 @@ import {
   argumentsMatch,
   matchToolCalls,
   resolveCasePredicates,
+  resolveExtrasCap,
   type ToolCall,
   type Predicate,
   type CasePredicates,
@@ -252,10 +253,10 @@ describe("matchToolCalls", () => {
 
 describe("resolveCasePredicates", () => {
   const suiteDefault: Predicate[] = [
-    { type: "noToolErrors" } as Predicate,
+    { type: "noToolErrors" } as unknown as Predicate,
   ];
   const caseList: Predicate[] = [
-    { type: "calledTool", toolName: "search" } as Predicate,
+    { type: "toolCalledAtLeastOnce", toolName: "search" } as unknown as Predicate,
   ];
 
   it("returns undefined when both suite defaults and case envelope are absent", () => {
@@ -287,5 +288,33 @@ describe("resolveCasePredicates", () => {
   it("collapses an empty effective list to undefined", () => {
     const override: CasePredicates = { mode: "replace", list: [] };
     expect(resolveCasePredicates(undefined, override)).toBeUndefined();
+  });
+});
+
+describe("resolveExtrasCap", () => {
+  it("returns null when matchOptions is absent", () => {
+    expect(resolveExtrasCap(undefined)).toBeNull();
+    expect(resolveExtrasCap(null)).toBeNull();
+    expect(resolveExtrasCap({})).toBeNull();
+  });
+
+  it("returns the explicit maxExtraToolCalls when set (including 0 and null)", () => {
+    expect(resolveExtrasCap({ maxExtraToolCalls: 0 })).toBe(0);
+    expect(resolveExtrasCap({ maxExtraToolCalls: 3 })).toBe(3);
+    expect(resolveExtrasCap({ maxExtraToolCalls: null })).toBeNull();
+  });
+
+  it("translates the legacy allowExtraToolCalls field when new field absent", () => {
+    expect(resolveExtrasCap({ allowExtraToolCalls: false })).toBe(0);
+    expect(resolveExtrasCap({ allowExtraToolCalls: true })).toBeNull();
+  });
+
+  it("prefers the new field over the legacy field when both are set", () => {
+    expect(
+      resolveExtrasCap({ maxExtraToolCalls: 5, allowExtraToolCalls: false }),
+    ).toBe(5);
+    expect(
+      resolveExtrasCap({ maxExtraToolCalls: null, allowExtraToolCalls: false }),
+    ).toBeNull();
   });
 });
