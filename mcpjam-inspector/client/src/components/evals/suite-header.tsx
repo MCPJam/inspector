@@ -19,9 +19,11 @@ import {
   Play,
   Plus,
   RotateCw,
+  Settings2,
   Sparkles,
   X,
 } from "lucide-react";
+import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { formatRunId, getEffectiveSuiteServers } from "./helpers";
@@ -674,6 +676,49 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Button>
             ) : null}
           </div>
+        ) : null}
+
+        {/* Gear into the suite-edit page (description / pass-fail /
+            validators / judges). Rendered in its OWN block — NOT inside
+            `overviewHasSuiteNav` — because that predicate only fires when
+            the cases-sidebar toggle or Setup CI is shown. Without its own
+            block the gear was invisible on every standard suite-overview
+            (the case the goal-completion CTA explicitly points at).
+            The route + handler plumbing existed since the suite-edit view
+            shipped but no UI surface invoked it — existing suites were
+            only reachable via the URL bar. Hidden in edit mode (would be
+            a self-link) and when the suite is read-only. */}
+        {!readOnlyConfig && !isEditMode ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 w-8 p-0"
+                aria-label="Suite settings"
+                onClick={() =>
+                  navigateApp(
+                    buildEvalsPath({
+                      type: "suite-edit",
+                      suiteId: suite._id,
+                    }),
+                  )
+                }
+              >
+                <Settings2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent
+              variant="muted"
+              side="bottom"
+              align="end"
+              sideOffset={6}
+              className="px-2 py-1 text-[11px]"
+            >
+              Suite settings — description, validators, judges
+            </TooltipContent>
+          </Tooltip>
         ) : null}
 
         {overviewHasCaseTools ? (

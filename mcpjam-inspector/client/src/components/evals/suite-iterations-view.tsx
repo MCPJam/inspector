@@ -15,13 +15,17 @@ import { RunDiffView } from "./run-diff-view";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
+import { JudgesSection } from "./judges-section";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
-import { SuiteExecutionConfigEditor } from "./suite-execution-config-editor";
+// SuiteExecutionConfigEditor was previously rendered on the suite settings
+// page; hidden there in the judge-config rework (see comment at the
+// removed render site). Import kept dropped to avoid an unused-symbol
+// lint and to make the removal obvious if someone reaches for it later.
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -1019,11 +1023,12 @@ export function SuiteIterationsView({
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="p-6 max-w-5xl mx-auto space-y-8">
-            <SuiteExecutionConfigEditor
-              suite={suite}
-              availableModels={availableModels}
-              projectId={projectId}
-            />
+            {/* SuiteExecutionConfigEditor was rendered here; hidden in the
+                judge-config rework so suite settings stays focused on the
+                eval contract surfaces (description, pass-fail, validators,
+                judges). Execution config (model / system prompt /
+                temperature / host-style) is editable from its dedicated
+                surfaces elsewhere and was duplicating affordances here. */}
 
             {/* Suite Description Section */}
             <div className="space-y-3">
@@ -1127,6 +1132,32 @@ export function SuiteIterationsView({
                       "Failed to update default validators:",
                       error
                     );
+                  }
+                }}
+              />
+            </div>
+
+            {/* Judges Section — suite-level authoritative judge config. The
+                run-detail card reads run.configSnapshot.judgeConfig (pinned
+                at run start) and lets a single run override via the
+                "⚙ Override for this run" disclosure; this section is the
+                canonical home for what the suite calibrates against. */}
+            <div className="space-y-3">
+              <JudgesSection
+                value={suite.judgeConfig}
+                availableModels={availableModels}
+                onChange={async (next) => {
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      judgeConfig: next ?? null,
+                    });
+                    toast.success("Judges updated");
+                  } catch (error) {
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite")
+                    );
+                    console.error("Failed to update judges:", error);
                   }
                 }}
               />
