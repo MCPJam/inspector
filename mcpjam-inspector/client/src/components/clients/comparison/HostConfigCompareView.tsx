@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import { HostCompareSelector } from "./HostCompareSelector";
 import {
+  parseHostsParam,
   resolveInitialHostCompareSelection,
   toggleHostCompareSelection,
   writeHostCompareSelection,
 } from "./host-compare-selection";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
+
+const HOSTS_QUERY_PARAM = "hosts";
 
 interface HostConfigCompareViewProps {
   projectId: string | null;
@@ -34,6 +38,11 @@ export function HostConfigCompareView({
   >({});
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Tracks whether the initial URL-driven selection has been applied.
+  // After the first resolve, subsequent URL changes are ignored — Compare
+  // becomes the source of truth and mirrors back into the URL.
+  const urlConsumedRef = useRef(false);
 
   const liveHostIds = useMemo(
     () => hosts.map((host) => host.hostId),
@@ -42,19 +51,47 @@ export function HostConfigCompareView({
 
   useEffect(() => {
     if (listLoading) return;
+    const urlSelection = urlConsumedRef.current
+      ? null
+      : parseHostsParam(searchParams.get(HOSTS_QUERY_PARAM));
+    urlConsumedRef.current = true;
     setSelectedHostIds((previous) =>
       resolveInitialHostCompareSelection({
         projectId: projectId ?? "",
         liveHostIds,
         previousSelection: previous,
+        urlSelection,
       }),
     );
-  }, [listLoading, liveHostIds, projectId]);
+  }, [listLoading, liveHostIds, projectId, searchParams]);
 
   useEffect(() => {
     if (!projectId || selectedHostIds.length === 0) return;
     writeHostCompareSelection(projectId, selectedHostIds);
   }, [projectId, selectedHostIds]);
+
+  // Mirror selection → ?hosts=. Suppress when the selection is the default
+  // "all live hosts" (in original order) so shared links stay clean.
+  useEffect(() => {
+    if (!urlConsumedRef.current) return;
+    if (listLoading) return;
+    const isDefault =
+      selectedHostIds.length === liveHostIds.length &&
+      selectedHostIds.every((id, i) => id === liveHostIds[i]);
+    const current = searchParams.get(HOSTS_QUERY_PARAM);
+    if (isDefault || selectedHostIds.length === 0) {
+      if (current === null) return;
+      const next = new URLSearchParams(searchParams);
+      next.delete(HOSTS_QUERY_PARAM);
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    const desired = selectedHostIds.join(",");
+    if (current === desired) return;
+    const next = new URLSearchParams(searchParams);
+    next.set(HOSTS_QUERY_PARAM, desired);
+    setSearchParams(next, { replace: true });
+  }, [selectedHostIds, liveHostIds, listLoading, searchParams, setSearchParams]);
 
   const reportSubject = useCallback(
     (hostId: string, subject: HostComparisonSubject) => {

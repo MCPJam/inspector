@@ -17,7 +17,6 @@ import {
   Box,
   LayoutGrid,
   GitBranch,
-  GitCompare,
   Puzzle,
   UserPlus,
   ShieldCheck,
@@ -188,15 +187,7 @@ const navigationSections: NavSection[] = [
         url: "/servers",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
-        matchTabs: ["clients"],
-      },
-      {
-        title: "Compare",
-        url: "/host-compare",
-        icon: GitCompare,
-        // Gated by the same flag as Connect — there's no useful Compare
-        // surface for users who don't have the hosts hub turned on.
-        featureFlag: "hosts-enabled",
+        matchTabs: ["clients", "host-compare"],
       },
       {
         title: "Servers",
