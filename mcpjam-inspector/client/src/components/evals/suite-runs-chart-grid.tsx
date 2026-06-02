@@ -9,7 +9,6 @@ import {
 import { cn } from "@/lib/utils";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from "recharts";
 import type { DotProps } from "recharts";
-import { passRateColorClass } from "./suite-overview-presentation";
 import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import {
   evalSurfaceCardClass,

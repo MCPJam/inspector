@@ -242,14 +242,8 @@ describe("EvalsTab", () => {
     render(<EvalsTab projectId="ws-1" />);
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
-    expect(screen.getByRole("tab", { name: "Suites" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: "Executions" })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
+    expect(screen.getByRole("button", { name: "Suites" })).toBeInTheDocument();
+    expect(screen.getByTitle("Suite suite-a")).toBeInTheDocument();
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       suite: expect.objectContaining({ _id: "suite-a" }),
@@ -268,17 +262,16 @@ describe("EvalsTab", () => {
     expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
   });
 
-  it("navigates to the eval list when the Suites tab is activated while a suite is open", async () => {
+  it("navigates to the eval list when the Suites breadcrumb is clicked while a suite is open", async () => {
     const user = userEvent.setup();
     render(<EvalsTab projectId="ws-1" />);
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("tab", { name: "Suites" }));
+    await user.click(screen.getByRole("button", { name: "Suites" }));
 
-    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
-      { type: "list" },
-      { replace: true },
-    );
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "list",
+    });
   });
 
   it("redirects invalid suite routes back to the eval list", async () => {
