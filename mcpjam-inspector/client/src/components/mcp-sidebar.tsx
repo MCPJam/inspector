@@ -751,8 +751,28 @@ export function MCPSidebar({
         </SidebarHeader>
         <SidebarContent>
           {visibleNavigationSections.map((section, sectionIndex) => {
-            const evalsEntry = section.items.find((item) => item.evalsSubnav);
-            const flatItems = section.items.filter((item) => !item.evalsSubnav);
+            const rawEvalsEntry = section.items.find((item) => item.evalsSubnav);
+            // Only render Evaluate through the SidebarEvalsNavGroup wrapper
+            // (which adds its own SidebarGroup padding) when there's actually
+            // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
+            // so it sits flush with Views and matches sibling spacing.
+            const useEvalsSubnavWrapper =
+              !!rawEvalsEntry && evaluateRunsEnabled === true;
+            const evalsEntry = useEvalsSubnavWrapper ? rawEvalsEntry : undefined;
+            const flatItems = section.items
+              .map((item) => {
+                if (!item.evalsSubnav) return item;
+                if (useEvalsSubnavWrapper) return null;
+                const locked = playgroundEnabled !== true;
+                return {
+                  ...item,
+                  disabled: locked || item.disabled,
+                  disabledTooltip: locked
+                    ? "Coming soon. Playground is in beta."
+                    : item.disabledTooltip,
+                };
+              })
+              .filter((item): item is NavItem => item !== null);
 
             return (
               <React.Fragment key={section.id}>
