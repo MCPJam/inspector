@@ -61,10 +61,9 @@ export function ServerAttachmentPicker({
   );
   const [isCreating, setIsCreating] = useState(false);
   // Optimistic record for the row we just created — the live
-  // `serverAttachments` query takes a beat to refetch, and without
-  // this fallback the trigger keeps the amber "pick one" styling
-  // even though `value` already points at the new id, which makes
-  // users think the save failed.
+  // `serverAttachments` query takes a beat to refetch, so without
+  // this fallback the trigger would briefly show the "pick one"
+  // label even though `value` already points at the new id.
   const [justCreated, setJustCreated] = useState<EvalServerAttachment | null>(
     null,
   );
@@ -227,7 +226,7 @@ export function ServerAttachmentPicker({
           className={cn(
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",
-            !selectedAttachment
+            !value && !justCreated
               ? "border-warning/50 bg-warning/50 hover:brightness-95"
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             disabled && "cursor-not-allowed opacity-50"

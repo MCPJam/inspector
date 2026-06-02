@@ -177,6 +177,76 @@ function TrendDeltaBadge({ delta }: { delta: TrendDelta }) {
   );
 }
 
+const PLACEHOLDER_TREND_DATA = [42, 55, 60, 71, 78, 85, 91].map(
+  (passRate, index) => ({
+    runId: `placeholder-${index + 1}`,
+    runIdDisplay: String(index + 1),
+    passRate,
+    label: `Sample run ${index + 1}`,
+  }),
+);
+
+function SuiteAccuracyPlaceholder({ metricLabel }: { metricLabel: string }) {
+  return (
+    <div
+      aria-hidden
+      className="flex items-stretch gap-5 sm:gap-8"
+      data-testid="suite-accuracy-placeholder"
+    >
+      <div className="flex shrink-0 flex-col justify-center">
+        <span className="text-3xl font-semibold tabular-nums tracking-tight text-muted-foreground/60">
+          —%
+        </span>
+        <span className="mt-0.5 text-xs text-muted-foreground">
+          Latest {metricLabel.toLowerCase()}
+        </span>
+        <span className="mt-2 text-xs text-muted-foreground">
+          Run the suite to see your trend
+        </span>
+      </div>
+
+      <div className="relative flex min-w-0 flex-1 flex-col justify-end">
+        <span className="mb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+          Preview
+        </span>
+        <ChartContainer
+          config={{
+            passRate: {
+              label: metricLabel,
+              color: "hsl(var(--muted-foreground))",
+            },
+          }}
+          className="aspect-auto h-24 w-full opacity-50"
+        >
+          <AreaChart
+            data={PLACEHOLDER_TREND_DATA}
+            margin={{ top: 20, right: 6, left: 6, bottom: 2 }}
+          >
+            <XAxis
+              dataKey="runIdDisplay"
+              hide
+              padding={{ left: 8, right: 8 }}
+            />
+            <YAxis hide domain={[0, 100]} />
+            <Area
+              type="monotone"
+              dataKey="passRate"
+              stroke="var(--color-passRate)"
+              fill="var(--color-passRate)"
+              fillOpacity={0.1}
+              strokeWidth={2}
+              strokeDasharray="4 3"
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+          </AreaChart>
+        </ChartContainer>
+      </div>
+    </div>
+  );
+}
+
 export interface SuiteRunsChartGridProps {
   suiteSource?: "ui" | "sdk";
   runTrendData: Array<{
@@ -231,58 +301,48 @@ export function SuiteRunsChartGrid({
         <div
           className={cn(
             evalSurfaceHeaderClass,
-            "rounded-t-2xl px-4 py-2.5",
+            "rounded-t-2xl px-3 py-1.5",
           )}
         >
           <div className="text-xs font-semibold tracking-tight text-foreground">
             {isSdk ? "Pass rate" : "Suite accuracy"}
           </div>
         </div>
-        <div className="px-4 pb-4">
+        <div className="px-3 pb-3 pt-2">
           {runsLoading ? (
-            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-14 w-full" />
           ) : !latest ? (
-            <p className="text-xs text-muted-foreground">
-              No completed runs yet.
-            </p>
+            <SuiteAccuracyPlaceholder metricLabel={metricLabel} />
           ) : (
-            <div className="flex items-stretch gap-5 sm:gap-8">
-              <div className="flex shrink-0 flex-col justify-center">
-                <span
-                  className={cn(
-                    "font-metric text-4xl font-bold tabular-nums tracking-tight",
-                    passRateColorClass(latest.passRate),
-                  )}
-                >
-                  {latest.passRate}%
-                </span>
-                <span className="mt-0.5 text-xs text-muted-foreground">
-                  Latest {metricLabel.toLowerCase()}
-                </span>
-                <div className="mt-2">
+            <div className="flex items-center gap-4 sm:gap-6">
+              <div className="flex shrink-0 flex-col">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-semibold tabular-nums leading-none tracking-tight text-foreground">
+                    {latest.passRate}%
+                  </span>
                   <TrendDeltaBadge delta={delta} />
                 </div>
                 {latestPassFailLabel ? (
-                  <span className="mt-1.5 text-xs tabular-nums text-muted-foreground">
+                  <span className="mt-1 text-xs tabular-nums text-muted-foreground">
                     {latestPassFailLabel}
                   </span>
                 ) : null}
               </div>
 
-              <div className="flex min-w-0 flex-1 flex-col justify-end">
-                <span className="mb-1.5 text-[10px] text-muted-foreground">
-                  Last {runTrendData.length}{" "}
-                  {runTrendData.length === 1 ? "run" : "runs"}
-                </span>
-                <ChartContainer
-                  config={{
-                    passRate: {
-                      label: metricLabel,
-                      color: "var(--chart-1)",
-                    },
-                  }}
-                  className="aspect-auto h-24 w-full"
-                >
+              {runTrendData.length > 1 ? (
+                <div className="flex min-w-0 flex-1 flex-col justify-end">
+                  <span className="mb-1 text-[10px] text-muted-foreground">
+                    Last {runTrendData.length} runs
+                  </span>
+                  <ChartContainer
+                    config={{
+                      passRate: {
+                        label: metricLabel,
+                        color: "var(--chart-1)",
+                      },
+                    }}
+                    className="aspect-auto h-16 w-full"
+                  >
                   <AreaChart
                     data={runTrendData}
                     margin={{ top: 20, right: 6, left: 6, bottom: 2 }}
@@ -356,7 +416,8 @@ export function SuiteRunsChartGrid({
                     </Area>
                   </AreaChart>
                 </ChartContainer>
-              </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>

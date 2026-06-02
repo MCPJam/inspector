@@ -57,30 +57,30 @@ function RotatedTestNameTick(props: {
 const durationChartConfig = {
   p50Seconds: {
     label: "p50",
-    color: "var(--chart-1)",
+    color: "color-mix(in oklch, var(--chart-1) 55%, transparent)",
   },
   p95TailSeconds: {
     label: "p95 tail",
-    color: "color-mix(in oklch, var(--chart-1) 45%, transparent)",
+    color: "color-mix(in oklch, var(--chart-1) 25%, transparent)",
   },
 } as const;
 
 const tokensChartConfig = {
   inputP50: {
     label: "Input p50",
-    color: "var(--chart-2)",
+    color: "color-mix(in oklch, var(--chart-2) 55%, transparent)",
   },
   outputP50: {
     label: "Output p50",
-    color: "var(--chart-3)",
+    color: "color-mix(in oklch, var(--chart-3) 55%, transparent)",
   },
   inputP95Tail: {
     label: "Input p95 tail",
-    color: "color-mix(in oklch, var(--chart-2) 45%, transparent)",
+    color: "color-mix(in oklch, var(--chart-2) 25%, transparent)",
   },
   outputP95Tail: {
     label: "Output p95 tail",
-    color: "color-mix(in oklch, var(--chart-3) 45%, transparent)",
+    color: "color-mix(in oklch, var(--chart-3) 25%, transparent)",
   },
 } as const;
 

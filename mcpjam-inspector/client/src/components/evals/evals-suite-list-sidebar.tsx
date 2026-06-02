@@ -7,6 +7,7 @@ import {
   Search,
   SlidersHorizontal,
   Trash2,
+  Settings2,
 } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -41,11 +42,9 @@ import {
   getEffectiveSuiteServers,
 } from "./helpers";
 import {
-  SuiteOverviewStatusIcon,
   SuiteSourceBadge,
   collectSuiteTags,
   formatOverviewRelativeTime,
-  formatServerChipSummary,
   getSuitePassFailCounts,
   sortSuiteOverviewEntries,
   stripTimestampSuffix,
@@ -82,13 +81,25 @@ type EvalsSuiteListSidebarProps = {
    * instead of only navigating into the suite.
    */
   onRunAll?: (suite: EvalSuite) => void | Promise<void>;
+  /** Opens suite settings / edit for the row's suite. */
+  onEditSuite?: (suiteId: string) => void;
   rerunningSuiteId?: string | null;
   replayingRunId?: string | null;
   runningTestCaseId?: string | null;
 };
 
 const SUITE_ROW_GRID =
-  "grid w-full min-w-0 items-center gap-x-3 [grid-template-columns:minmax(0,1fr)_3.5rem_minmax(0,0.85fr)_2rem]";
+  "grid w-full min-w-0 items-center gap-x-3 [grid-template-columns:minmax(0,1fr)_4rem_5.5rem_4.25rem]";
+
+const METRIC_CELL_CLASS =
+  "flex h-8 w-full cursor-pointer items-center self-center p-0 leading-none focus:outline-none";
+
+const METRIC_EMPTY_CLASS =
+  "text-xs leading-none tabular-nums text-muted-foreground";
+
+function MetricPlaceholder() {
+  return <span className={METRIC_EMPTY_CLASS}>—</span>;
+}
 
 function suiteRowStatusLabel(entry: EvalSuiteOverviewEntry): string {
   const latestRun = entry.latestRun;
@@ -276,7 +287,7 @@ function SuiteTableHeader({
   const gridClass = batchDeleteEnabled
     ? cn(
         SUITE_ROW_GRID,
-        "[grid-template-columns:1.25rem_minmax(0,1fr)_3.5rem_minmax(0,0.85fr)_2rem]",
+        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]",
       )
     : SUITE_ROW_GRID;
 
@@ -295,7 +306,7 @@ function SuiteTableHeader({
         <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
           Suite
         </span>
-        <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+        <span className="text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
           Score
         </span>
         <div className="flex min-w-0 items-center justify-between gap-2">
@@ -347,6 +358,7 @@ function SuiteOverviewRow({
   selectionBlocked,
   onSelectSuite,
   onRunAll,
+  onEditSuite,
   runAllBlocked,
   isThisSuiteRerunning,
 }: {
@@ -358,6 +370,7 @@ function SuiteOverviewRow({
   selectionBlocked: boolean;
   onSelectSuite: (suiteId: string) => void;
   onRunAll?: (suite: EvalSuite) => void | Promise<void>;
+  onEditSuite?: (suiteId: string) => void;
   runAllBlocked: boolean;
   isThisSuiteRerunning: boolean;
 }) {
@@ -365,14 +378,12 @@ function SuiteOverviewRow({
   const suiteTitle =
     stripTimestampSuffix(suite.name || "") || "Untitled suite";
   const servers = getEffectiveSuiteServers(suite);
-  const serverSummary = formatServerChipSummary(servers);
   const rowTitle = evalOverviewEntryOutcomeTitle(entry);
   const statusLabel = suiteRowStatusLabel(entry);
   const latestRun = entry.latestRun;
   const lastRunTimestamp = latestRun
     ? (latestRun.completedAt ?? latestRun.createdAt)
     : undefined;
-  const runCount = entry.totals.runs;
   const statusStripeClass = evalOverviewEntryMiniBarClass(entry);
 
   // Display split: timestamp gets prominence (it's what users scan for to
@@ -381,20 +392,11 @@ function SuiteOverviewRow({
   const lastRunTimestampLabel = lastRunTimestamp
     ? formatOverviewRelativeTime(lastRunTimestamp)
     : null;
-  const lastRunContextParts: string[] = [];
-  if (servers.length > 0) {
-    lastRunContextParts.push(serverSummary);
-  }
-  if (runCount > 0) {
-    lastRunContextParts.push(
-      `${runCount} run${runCount === 1 ? "" : "s"}`,
-    );
-  }
 
   const gridClass = batchDeleteEnabled
     ? cn(
         SUITE_ROW_GRID,
-        "[grid-template-columns:1.25rem_minmax(0,1fr)_3.5rem_minmax(0,0.85fr)_2rem]",
+        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]",
       )
     : SUITE_ROW_GRID;
 
@@ -416,7 +418,7 @@ function SuiteOverviewRow({
         aria-hidden
       />
 
-      <div className={cn(gridClass, "px-3 py-2")}>
+      <div className={cn(gridClass, "px-4 py-2")}>
         {batchDeleteEnabled ? (
           <Checkbox
             checked={isChecked}
@@ -424,7 +426,7 @@ function SuiteOverviewRow({
             onClick={(e) => e.stopPropagation()}
             aria-label={`Select suite ${suiteTitle}`}
             disabled={selectionBlocked}
-            className="justify-self-start"
+            className="self-center justify-self-start"
           />
         ) : null}
 
@@ -432,10 +434,9 @@ function SuiteOverviewRow({
           type="button"
           aria-label={`Select suite: ${suiteTitle}`}
           title={`${rowTitle}\n${servers.length > 0 ? servers.join(", ") : "No servers configured"}`}
-          className="flex min-w-0 cursor-pointer items-center gap-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1"
+          className="flex min-h-8 min-w-0 cursor-pointer items-center gap-2 self-center text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1"
           onClick={() => onSelectSuite(suite._id)}
         >
-          <SuiteOverviewStatusIcon entry={entry} className="h-3.5 w-3.5" />
           <span className="min-w-0 truncate text-sm font-medium text-foreground">
             {suiteTitle}
           </span>
@@ -446,7 +447,12 @@ function SuiteOverviewRow({
           type="button"
           aria-hidden
           tabIndex={-1}
-          className="flex cursor-pointer flex-col items-end gap-0.5 text-right focus:outline-none"
+          className={cn(
+            METRIC_CELL_CLASS,
+            entry.passRateTrend && entry.passRateTrend.length >= 3
+              ? "min-h-8 flex-col items-end justify-center gap-0.5 text-right"
+              : "justify-end text-right",
+          )}
           onClick={() => onSelectSuite(suite._id)}
         >
           {/*
@@ -463,71 +469,88 @@ function SuiteOverviewRow({
               compactSummary
             />
           ) : null}
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">
-            {statusLabel}
-          </span>
+          {statusLabel === "—" ? (
+            <MetricPlaceholder />
+          ) : (
+            <span
+              className={cn(
+                METRIC_EMPTY_CLASS,
+                "font-mono",
+              )}
+            >
+              {statusLabel}
+            </span>
+          )}
         </button>
 
         <button
           type="button"
           aria-hidden
           tabIndex={-1}
-          className="flex min-w-0 cursor-pointer flex-col items-start gap-0.5 text-left focus:outline-none"
+          className={cn(METRIC_CELL_CLASS, "justify-start text-left")}
           onClick={() => onSelectSuite(suite._id)}
         >
           {lastRunTimestampLabel ? (
-            <span className="text-xs font-medium text-foreground/85 tabular-nums">
+            <span className="truncate text-xs font-medium leading-none text-foreground/85 tabular-nums">
               {lastRunTimestampLabel}
             </span>
           ) : (
-            <span className="text-[11px] text-muted-foreground">
-              {servers.length === 0 ? "No servers" : "—"}
-            </span>
+            <MetricPlaceholder />
           )}
-          {lastRunContextParts.length > 0 ? (
-            <span
-              className="min-w-0 max-w-full truncate text-[10px] text-muted-foreground"
-              title={lastRunContextParts.join(" · ")}
-            >
-              {lastRunContextParts.join(" · ")}
-            </span>
-          ) : null}
         </button>
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 w-7 shrink-0 p-0 opacity-70 transition group-hover/row:opacity-100"
-          aria-label={
-            onRunAll
-              ? `Run all cases in ${suiteTitle}`
-              : `Open suite: ${suiteTitle}`
-          }
-          aria-busy={onRunAll ? isThisSuiteRerunning : undefined}
-          disabled={onRunAll ? runAllBlocked : false}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (onRunAll) {
-              posthog.capture("run_all_cases_button_clicked", {
-                location: "suite_list_sidebar",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-                suite_id: suite._id,
-              });
-              void onRunAll(suite);
-            } else {
-              onSelectSuite(suite._id);
+        <div className="flex items-center justify-end gap-0.5 self-center justify-self-end">
+          {onEditSuite ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 shrink-0 p-0 opacity-70 transition group-hover/row:opacity-100"
+              aria-label={`Edit suite: ${suiteTitle}`}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onEditSuite(suite._id);
+              }}
+            >
+              <Settings2 className="h-3.5 w-3.5" aria-hidden />
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 shrink-0 p-0 opacity-70 transition group-hover/row:opacity-100"
+            aria-label={
+              onRunAll
+                ? `Run all cases in ${suiteTitle}`
+                : `Open suite: ${suiteTitle}`
             }
-          }}
-        >
-          {onRunAll && isThisSuiteRerunning ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <Play className="h-3.5 w-3.5" />
-          )}
-        </Button>
+            aria-busy={onRunAll ? isThisSuiteRerunning : undefined}
+            disabled={onRunAll ? runAllBlocked : false}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (onRunAll) {
+                posthog.capture("run_all_cases_button_clicked", {
+                  location: "suite_list_sidebar",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                  suite_id: suite._id,
+                });
+                void onRunAll(suite);
+              } else {
+                onSelectSuite(suite._id);
+              }
+            }}
+          >
+            {onRunAll && isThisSuiteRerunning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -543,6 +566,7 @@ export function EvalsSuiteListSidebar({
   onDeleteSuitesBatch,
   deleteInProgress = false,
   onRunAll,
+  onEditSuite,
   rerunningSuiteId = null,
   replayingRunId = null,
   runningTestCaseId = null,
@@ -710,7 +734,7 @@ export function EvalsSuiteListSidebar({
               onDeleteSelected={() => setShowBatchDeleteModal(true)}
             />
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
               {visibleSuites.length === 0 ? (
                 <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
                   <p className="text-sm font-medium text-foreground">
@@ -739,6 +763,7 @@ export function EvalsSuiteListSidebar({
                         selectionBlocked={selectionBlocked}
                         onSelectSuite={onSelectSuite}
                         onRunAll={onRunAll}
+                        onEditSuite={onEditSuite}
                         runAllBlocked={runAllBlocked}
                         isThisSuiteRerunning={isThisSuiteRerunning}
                       />

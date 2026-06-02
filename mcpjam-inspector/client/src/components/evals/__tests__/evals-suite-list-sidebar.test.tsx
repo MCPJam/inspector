@@ -77,10 +77,46 @@ describe("EvalsSuiteListSidebar", () => {
     );
 
     expect(screen.getByText("Alpha suite")).toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("suite-row-s1")).getAllByText("—"),
+    ).toHaveLength(2);
     expect(
       screen.queryByRole("checkbox", { name: "Select all suites" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens suite edit from the row edit control", async () => {
+    const user = userEvent.setup();
+    const onEditSuite = vi.fn();
+    render(
+      <EvalsSuiteListSidebar
+        suites={[
+          makeEntry({
+            suite: {
+              _id: "s1",
+              createdBy: "u",
+              name: "Alpha suite",
+              description: "",
+              configRevision: "r",
+              environment: { servers: ["srv"] },
+              createdAt: 1,
+              updatedAt: 1,
+              source: "ui",
+              tags: [],
+            },
+          }),
+        ]}
+        selectedSuiteId={null}
+        onSelectSuite={vi.fn()}
+        onCreateSuite={vi.fn()}
+        onEditSuite={onEditSuite}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Edit suite: Alpha suite" }),
+    );
+    expect(onEditSuite).toHaveBeenCalledWith("s1");
   });
 
   it("shows batch selection when batch delete is enabled", () => {

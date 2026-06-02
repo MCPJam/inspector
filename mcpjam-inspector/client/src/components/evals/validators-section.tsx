@@ -14,7 +14,6 @@ import { Switch } from "@mcpjam/design-system/switch";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { OverrideBadge } from "./override-badge";
-import { cn } from "@/lib/utils";
 
 const ORDER_OPTIONS: Array<{
   value: Exclude<EvalMatchOptions["toolCallOrder"], undefined>;
@@ -69,6 +68,14 @@ interface ValidatorsSectionProps {
    * input is disabled to reinforce that the case isn't pinning it).
    */
   showBadges?: boolean;
+  /**
+   * When true, suppress the "Inherited" chip on inheriting rows but still
+   * render the "overriding · suite: X" chip on overridden rows. Used by the
+   * suite-header Run-overrides popover, where the popover's intro copy
+   * already establishes that every field inherits by default — labeling
+   * each row "Inherited" is then pure noise.
+   */
+  hideInheritedBadge?: boolean;
 }
 
 function pruneUndefined(
@@ -163,6 +170,7 @@ export function ValidatorsSection({
   description,
   density = "default",
   showBadges = false,
+  hideInheritedBadge = false,
 }: ValidatorsSectionProps) {
   const inherited = inheritedFrom ?? MATCH_OPTIONS_DEFAULTS;
   const isCompact = density === "compact";
@@ -304,30 +312,33 @@ export function ValidatorsSection({
     </div>
   );
 
+  const showHeader = Boolean(title) || Boolean(description);
   return (
     <div className={isCompact ? "space-y-2" : "space-y-3"}>
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h4 className="text-sm font-medium">{title}</h4>
-          {description && !isCompact ? (
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {description}
-            </p>
+      {showHeader || hasAnyOverride ? (
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            {title ? <h4 className="text-sm font-medium">{title}</h4> : null}
+            {description && !isCompact ? (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {description}
+              </p>
+            ) : null}
+          </div>
+          {hasAnyOverride ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 -mr-1 px-2 text-xs text-muted-foreground"
+              onClick={() => onChange(undefined)}
+              title="Discard overrides at this layer"
+            >
+              Reset
+            </Button>
           ) : null}
         </div>
-        {hasAnyOverride ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 -mr-1 px-2 text-xs text-muted-foreground"
-            onClick={() => onChange(undefined)}
-            title="Discard overrides at this layer"
-          >
-            Reset
-          </Button>
-        ) : null}
-      </div>
+      ) : null}
       <div className={isCompact ? "space-y-1.5" : "space-y-2"}>
         {renderRow(
           orderLabel,
@@ -339,7 +350,7 @@ export function ValidatorsSection({
               v as "ignore" | "strict" | "superset",
             ),
           ORDER_OPTIONS as Array<{ value: string; label: string }>,
-          showBadges ? (
+          showBadges && !(hideInheritedBadge && orderInheriting) ? (
             <OverrideBadge
               isInheriting={orderInheriting}
               suiteDefaultLabel={orderLabelFor(inheritedOrderForLabel)}
@@ -360,7 +371,7 @@ export function ValidatorsSection({
             <Label htmlFor={extrasFieldId} className="text-sm">
               {extrasLabel}
             </Label>
-            {showBadges ? (
+            {showBadges && !(hideInheritedBadge && extrasInheriting) ? (
               <OverrideBadge
                 isInheriting={extrasInheriting}
                 suiteDefaultLabel={extrasLabelFor(inheritedExtrasForLabel)}
@@ -375,17 +386,7 @@ export function ValidatorsSection({
             Unlimited toggle (the old layout) read as a broken form field.
           */}
           <div className="flex items-center gap-2">
-            {extrasUnlimited ? (
-              <span
-                className={cn(
-                  "inline-flex h-8 items-center rounded-md border border-input bg-muted/30 px-2 text-sm tabular-nums text-muted-foreground",
-                  isCompact ? "min-w-[4rem]" : "min-w-[5rem]",
-                )}
-                aria-label="Extras cap is unlimited"
-              >
-                Unlimited
-              </span>
-            ) : (
+            {extrasUnlimited ? null : (
               <Input
                 id={extrasFieldId}
                 type="number"
@@ -448,7 +449,7 @@ export function ValidatorsSection({
               v as "partial" | "exact" | "ignore",
             ),
           ARGS_OPTIONS as Array<{ value: string; label: string }>,
-          showBadges ? (
+          showBadges && !(hideInheritedBadge && argsInheriting) ? (
             <OverrideBadge
               isInheriting={argsInheriting}
               suiteDefaultLabel={argsLabelFor(inheritedArgsForLabel)}

@@ -2894,11 +2894,14 @@ export default function App() {
             setHostsTabSelectedHostId(hostId);
             navigateApp(buildClientsPath(hostId));
           },
-          // Only present while the host canvas is open — re-targets it on
-          // dropdown change so the diagram tracks the selected host instead
-          // of stuck on whatever was first opened via Edit.
+          // Active whenever the clients tab is mounted — the URL is the
+          // source of truth for which host the canvas renders, so every
+          // dropdown/cycle change must push `/clients/<hostId>`. Without
+          // this, bare `/clients` (no `:hostId`) renders the cached
+          // `previewedHostId` and clicking a different host only updates
+          // the preview store, leaving the canvas stuck on the original.
           onCanvasReplaceHost:
-            activeTab === "clients" && hostsTabSelectedHostId
+            activeTab === "clients"
               ? (hostId: string) => {
                   setHostsTabSelectedHostId(hostId);
                   navigateApp(buildClientsPath(hostId), { replace: true });

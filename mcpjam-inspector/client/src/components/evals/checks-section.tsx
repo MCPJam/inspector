@@ -75,7 +75,7 @@ const KIND_ORDER: Kind[] = [
 ];
 
 /** Build a fresh, valid-by-default predicate skeleton for a newly-added row. */
-function blankPredicate(kind: Kind): Predicate {
+export function blankPredicate(kind: Predicate["type"]): Predicate {
   switch (kind) {
     case "toolCalledWith":
       return { type: "toolCalledWith", toolName: "", args: { args: {} } };
@@ -121,7 +121,9 @@ export function ChecksSection({
   title = "Default checks",
   description,
   readOnly = false,
-}: ChecksSectionProps) {
+  hideAddButton = false,
+  hideEmptyState = false,
+}: ChecksSectionProps & { hideAddButton?: boolean; hideEmptyState?: boolean }) {
   const updateAt = (index: number, next: Predicate) => {
     const copy = value.slice();
     copy[index] = next;
@@ -136,20 +138,27 @@ export function ChecksSection({
     onChange([...value, blankPredicate(kind)]);
   };
 
+  const showHeader = Boolean(title) || Boolean(description);
   return (
     <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        {description ? (
-          <p className="text-xs text-muted-foreground mt-1">{description}</p>
-        ) : null}
-      </div>
+      {showHeader ? (
+        <div>
+          {title ? (
+            <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          ) : null}
+          {description ? (
+            <p className="text-xs text-muted-foreground mt-1">{description}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {value.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-4 text-xs text-muted-foreground">
-          No checks yet.
-          {!readOnly ? " Use Add check below to author one." : ""}
-        </div>
+        hideEmptyState ? null : (
+          <p className="text-xs italic text-muted-foreground/70">
+            No checks set
+            {!readOnly ? " — every case passes the gate by default." : "."}
+          </p>
+        )
       ) : (
         <ul className="space-y-2">
           {value.map((predicate, i) => (
@@ -166,12 +175,16 @@ export function ChecksSection({
         </ul>
       )}
 
-      {!readOnly ? <AddCheckMenu onAdd={addOfKind} /> : null}
+      {!readOnly && !hideAddButton ? <AddCheckMenu onAdd={addOfKind} /> : null}
     </div>
   );
 }
 
-function AddCheckMenu({ onAdd }: { onAdd: (kind: Kind) => void }) {
+export function AddCheckMenu({
+  onAdd,
+}: {
+  onAdd: (kind: Predicate["type"]) => void;
+}) {
   // A controlled Select where picking a value fires `onAdd` and resets to
   // the placeholder — simpler than a popover menu and reuses design-system
   // primitives that already render correctly inside dialogs/sheets.
@@ -1003,6 +1016,17 @@ export interface CaseChecksSectionProps {
   /** Suite defaults to show in inherit summary and prepend in extend mode. */
   suiteDefaults: Predicate[];
   availableTools?: string[];
+  /**
+   * When true, render without the outer card chrome (border/background/padding)
+   * and without the section header (h3 + description). Used when this section
+   * is hosted inside a larger "Pass criteria" disclosure that already owns the
+   * outer surface — duplicating the heading reads as a nested card.
+   *
+   * When embedded, the inherited "ungated" notice also demotes to muted inline
+   * text rather than the warning palette: in the embedded surface, the suite-
+   * has-no-checks-and-case-inherits state is the boring default, not an alarm.
+   */
+  embedded?: boolean;
 }
 
 /**
@@ -1020,9 +1044,70 @@ export function CaseChecksSection({
   onChange,
   suiteDefaults,
   availableTools,
+  embedded = false,
 }: CaseChecksSectionProps) {
   const resolved = resolveCaseChecks(value);
   const mode = resolved.mode;
+
+  // Embedded path is the new extend-always model: the case list always
+  // layers on top of suite defaults. An empty list = pure inherit; the
+  // moment a check is added the persisted shape becomes
+  // `{ mode: "extend", list }`. There's no UI to choose "replace" — see
+  // [[case-pass-criteria-disclosure]]. Existing rows persisted with
+  // `mode: "replace"` will be re-interpreted as extend on first edit.
+  if (embedded) {
+    const setEmbeddedList = (list: Predicate[]) => {
+      if (list.length === 0) {
+        onChange(undefined);
+      } else {
+        onChange({ mode: "extend", list });
+      }
+    };
+    const caseList = resolved.list;
+    const hasOwnChecks = caseList.length > 0;
+    const inheritedCount = suiteDefaults.length;
+    return (
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <h4 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+            Checks
+          </h4>
+          <AddCheckMenu
+            onAdd={(kind) =>
+              setEmbeddedList([...caseList, blankPredicate(kind)])
+            }
+          />
+        </div>
+        {inheritedCount > 0 ? (
+          <p className="text-[11px] text-muted-foreground">
+            Inherits {inheritedCount} suite default check
+            {inheritedCount === 1 ? "" : "s"}. Add case-specific checks below
+            to extend them.
+          </p>
+        ) : !hasOwnChecks ? (
+          <p className="text-[11px] italic text-muted-foreground">
+            No checks gating this case yet. Add one above, or set suite
+            defaults in Suite settings.
+          </p>
+        ) : null}
+        {hasOwnChecks ? (
+          <ChecksSection
+            title=""
+            hideAddButton
+            hideEmptyState
+            value={caseList}
+            onChange={setEmbeddedList}
+            availableTools={availableTools}
+          />
+        ) : null}
+      </section>
+    );
+  }
+
+  // ─── Non-embedded (legacy) path: 3-mode radio kept for the standalone
+  //     case-edit usage. The embedded path inside Pass criteria is the
+  //     surface in active use; this path remains for any caller that
+  //     still wants the full inherit/replace/extend control.
 
   // When the user toggles modes, preserve a populated list so they can
   // flip back to replace/extend without losing work (Phase 2 deliverable D).
@@ -1040,10 +1125,6 @@ export function CaseChecksSection({
     onChange({ mode, list });
   };
 
-  // Badge label: suite default in this surface is always "Inherit suite
-  // defaults". When the case is on `replace` or `extend`, the chip surfaces
-  // which override kind is in effect; reset writes `undefined` so the case
-  // falls back to inherit.
   const suiteDefaultLabel =
     suiteDefaults.length === 0
       ? "no default checks"
@@ -1101,9 +1182,6 @@ export function CaseChecksSection({
 
       {mode === "inherit" ? (
         suiteDefaults.length === 0 ? (
-          // "Will be ungated" is a warning, not a neutral status — promote
-          // to the warning palette so the user notices before saving a
-          // case that no checks gate.
           <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-xs text-foreground">
             <span aria-hidden className="mt-0.5 text-warning">⚠</span>
             <span>

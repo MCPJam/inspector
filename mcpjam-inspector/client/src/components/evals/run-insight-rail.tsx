@@ -19,8 +19,6 @@ import {
   runDetailSupportingClass,
 } from "./run-detail-typography";
 import type { EvalIteration, EvalSuiteRun } from "./types";
-import { passRateColorClass } from "./suite-overview-presentation";
-import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import { evalSurfaceCardClass } from "./eval-surface-chrome";
 
 export type RunTrendPoint = {
@@ -86,12 +84,7 @@ function RunAccuracyRunCard({
           </span>
         ) : null}
       </div>
-      <span
-        className={cn(
-          "font-metric text-base font-semibold tabular-nums leading-tight tracking-tight",
-          passRateColorClass(point.passRate),
-        )}
-      >
+      <span className="text-base font-semibold tabular-nums leading-tight tracking-tight text-foreground">
         {point.passRate}%
       </span>
     </>
@@ -275,18 +268,18 @@ export function RunAccuracyHeroBand({
       )}
     >
       <p className={runDetailSectionLabelClass}>{metricLabel}</p>
-      <p className={cn(runDetailHeroStatClass, passRateColorClass(passRatePercent))}>
+      <p className={runDetailHeroStatClass}>
         {passRatePercent}
-        <span className="text-2xl font-medium text-muted-foreground sm:text-3xl">
+        <span className="text-xl font-medium text-muted-foreground sm:text-2xl">
           %
         </span>
       </p>
       {deltaPp !== null && compareBaseRun ? (
         <p
           className={cn(
-            "font-metric text-sm font-medium tabular-nums",
+            "text-sm font-medium tabular-nums",
             deltaPp > 0 && "text-success",
-            deltaPp < 0 && EVAL_LOW_PASS_RATE_TEXT_CLASS,
+            deltaPp < 0 && "text-muted-foreground",
             deltaPp === 0 && "text-muted-foreground",
           )}
         >

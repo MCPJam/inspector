@@ -30,4 +30,4 @@ export const runDetailRowLabelClass = "text-sm text-foreground";
 
 /** Hero accuracy on the run detail summary band (page-level headline) */
 export const runDetailHeroStatClass =
-  "font-metric text-4xl font-semibold tabular-nums leading-none tracking-tight text-foreground sm:text-5xl";
+  "text-3xl font-semibold tabular-nums leading-none tracking-tight text-foreground sm:text-4xl";

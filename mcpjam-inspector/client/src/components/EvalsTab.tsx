@@ -670,6 +670,7 @@ function EvalsTabContent({
           onDeleteSuitesBatch={handleDeleteSuitesBatch}
           deleteInProgress={Boolean(handlers.deletingSuiteId)}
           onRunAll={handlers.handleRerun}
+          onEditSuite={playgroundNavigation.toSuiteEdit}
           rerunningSuiteId={handlers.rerunningSuiteId}
           replayingRunId={handlers.replayingRunId}
           runningTestCaseId={handlers.runningTestCaseId}
