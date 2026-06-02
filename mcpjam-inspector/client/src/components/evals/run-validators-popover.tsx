@@ -76,6 +76,7 @@ export function RunValidatorsPopover({
           value={runOverride}
           inheritedFrom={persisted}
           onChange={onChange}
+          showBadges
         />
       </PopoverContent>
     </Popover>

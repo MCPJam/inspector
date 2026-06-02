@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -12,6 +13,7 @@ import {
 import { Switch } from "@mcpjam/design-system/switch";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
+import { OverrideBadge } from "./override-badge";
 
 const ORDER_OPTIONS: Array<{
   value: Exclude<EvalMatchOptions["toolCallOrder"], undefined>;
@@ -55,6 +57,17 @@ interface ValidatorsSectionProps {
   title?: string;
   description?: string;
   density?: "default" | "compact";
+  /**
+   * When true, render per-control "(suite default · X)" or
+   * "(overriding · suite: X)" chips next to each field label, with a
+   * per-control reset affordance. Used at the case-edit and run-popover
+   * layers; the suite-edit page leaves this off because it IS the source.
+   *
+   * When true, inheriting controls are also visually greyed (the dropdown
+   * still shows the resolved value so the user sees what'll apply, but the
+   * input is disabled to reinforce that the case isn't pinning it).
+   */
+  showBadges?: boolean;
 }
 
 function pruneUndefined(
@@ -108,6 +121,39 @@ const LABELS_COMPACT = {
   args: "Args",
 } as const;
 
+// ─── Pretty-printers for badge labels ─────────────────────────────────────
+//
+// Keep these inline (rather than importing the SDK enum maps) so the chip
+// text stays consistent with the dropdown option labels above, even if the
+// SDK reshapes its internal vocabulary.
+
+function orderLabelFor(value: "ignore" | "strict" | "superset"): string {
+  return ORDER_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
+
+function argsLabelFor(value: "exact" | "partial" | "ignore"): string {
+  return ARGS_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
+
+function extrasLabelFor(cap: number | null): string {
+  if (cap === null) return "Unlimited";
+  if (cap === 0) return "0 (strict)";
+  return `${cap}`;
+}
+
+/**
+ * True iff this layer pins `maxExtraToolCalls` (directly or via the
+ * legacy `allowExtraToolCalls` shim). Used by the badge logic to
+ * distinguish inheriting from explicit.
+ */
+function isExtrasPinned(value: EvalMatchOptions | undefined): boolean {
+  if (!value) return false;
+  return (
+    value.maxExtraToolCalls !== undefined ||
+    value.allowExtraToolCalls !== undefined
+  );
+}
+
 export function ValidatorsSection({
   value,
   inheritedFrom,
@@ -115,6 +161,7 @@ export function ValidatorsSection({
   title = "Validators",
   description,
   density = "default",
+  showBadges = false,
 }: ValidatorsSectionProps) {
   const inherited = inheritedFrom ?? MATCH_OPTIONS_DEFAULTS;
   const isCompact = density === "compact";
@@ -124,6 +171,20 @@ export function ValidatorsSection({
 
   const extrasFieldId = useId();
   const extrasUnlimitedId = useId();
+
+  // Per-field inheritance state. `value?.field === undefined` is the
+  // canonical "inheriting" marker (per Phase 1 layered resolver semantics);
+  // `null` on `maxExtraToolCalls` is an explicit "unlimited" override and
+  // counts as overriding.
+  const orderInheriting = value?.toolCallOrder === undefined;
+  const extrasInheriting = !isExtrasPinned(value);
+  const argsInheriting = value?.argumentMatching === undefined;
+
+  // Inherited cap for badge labels — reuses the legacy shim so old rows
+  // surface a sensible chip.
+  const inheritedExtrasForLabel = inheritedExtrasCap(inheritedFrom);
+  const inheritedOrderForLabel = inherited.toolCallOrder;
+  const inheritedArgsForLabel = inherited.argumentMatching;
 
   const setField = <K extends keyof EvalMatchOptions>(
     field: K,
@@ -175,18 +236,52 @@ export function ValidatorsSection({
       value.allowExtraToolCalls !== undefined ||
       value.argumentMatching !== undefined);
 
+  /**
+   * Reset a single field at this layer back to inherit. Writes `undefined`
+   * (NOT the resolved default) so future suite-default changes continue to
+   * propagate through the resolver.
+   */
+  const resetField = (field: keyof EvalMatchOptions) => {
+    if (!value) return;
+    const merged: EvalMatchOptions = { ...value };
+    delete merged[field];
+    // When resetting maxExtraToolCalls, also clear any legacy field so
+    // we don't accidentally leave an old shim value behind.
+    if (field === "maxExtraToolCalls") {
+      delete merged.allowExtraToolCalls;
+    }
+    onChange(pruneUndefined(merged));
+  };
+
+  const resetExtras = () => {
+    if (!value) return;
+    const merged: EvalMatchOptions = { ...value };
+    delete merged.maxExtraToolCalls;
+    delete merged.allowExtraToolCalls;
+    onChange(pruneUndefined(merged));
+  };
+
   const renderRow = (
     label: string,
     selectId: string,
     selectedValue: string,
     onValueChange: (v: string) => void,
     options: Array<{ value: string; label: string }>,
+    badge?: ReactNode,
+    disabled?: boolean,
   ) => (
     <div className="flex items-center justify-between gap-3">
-      <Label htmlFor={selectId} className="text-sm">
-        {label}
-      </Label>
-      <Select value={selectedValue} onValueChange={onValueChange}>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        <Label htmlFor={selectId} className="text-sm">
+          {label}
+        </Label>
+        {badge}
+      </div>
+      <Select
+        value={selectedValue}
+        onValueChange={onValueChange}
+        disabled={disabled}
+      >
         <SelectTrigger
           id={selectId}
           className={
@@ -243,13 +338,32 @@ export function ValidatorsSection({
               v as "ignore" | "strict" | "superset",
             ),
           ORDER_OPTIONS as Array<{ value: string; label: string }>,
+          showBadges ? (
+            <OverrideBadge
+              isInheriting={orderInheriting}
+              suiteDefaultLabel={orderLabelFor(inheritedOrderForLabel)}
+              onReset={
+                orderInheriting ? undefined : () => resetField("toolCallOrder")
+              }
+            />
+          ) : undefined,
+          showBadges && orderInheriting,
         )}
         {/* Extras row: number input + Unlimited toggle. Unlimited persists
             null; toggling off persists the current number. */}
         <div className="flex items-center justify-between gap-3">
-          <Label htmlFor={extrasFieldId} className="text-sm">
-            {extrasLabel}
-          </Label>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <Label htmlFor={extrasFieldId} className="text-sm">
+              {extrasLabel}
+            </Label>
+            {showBadges ? (
+              <OverrideBadge
+                isInheriting={extrasInheriting}
+                suiteDefaultLabel={extrasLabelFor(inheritedExtrasForLabel)}
+                onReset={extrasInheriting ? undefined : resetExtras}
+              />
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
             <Input
               id={extrasFieldId}
@@ -257,7 +371,7 @@ export function ValidatorsSection({
               inputMode="numeric"
               min={0}
               step={1}
-              disabled={extrasUnlimited}
+              disabled={extrasUnlimited || (showBadges && extrasInheriting)}
               value={extrasUnlimited ? "" : String(extrasNumber)}
               placeholder={extrasUnlimited ? "—" : "0"}
               onChange={(e) => {
@@ -298,6 +412,7 @@ export function ValidatorsSection({
                     setExtrasCap(0);
                   }
                 }}
+                disabled={showBadges && extrasInheriting}
                 aria-label="Allow unlimited extra tool calls"
               />
               <span>Unlimited</span>
@@ -314,6 +429,18 @@ export function ValidatorsSection({
               v as "partial" | "exact" | "ignore",
             ),
           ARGS_OPTIONS as Array<{ value: string; label: string }>,
+          showBadges ? (
+            <OverrideBadge
+              isInheriting={argsInheriting}
+              suiteDefaultLabel={argsLabelFor(inheritedArgsForLabel)}
+              onReset={
+                argsInheriting
+                  ? undefined
+                  : () => resetField("argumentMatching")
+              }
+            />
+          ) : undefined,
+          showBadges && argsInheriting,
         )}
       </div>
     </div>

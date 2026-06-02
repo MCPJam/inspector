@@ -2092,6 +2092,16 @@ export function TestTemplateEditor({
                   removePromptTurn={removePromptTurn}
                   movePromptTurn={movePromptTurn}
                   togglePromptTurnExpanded={togglePromptTurnExpanded}
+                  // Phase 3: thread the effective argumentMatching mode
+                  // (suite default merged with case override) so the
+                  // per-leaf placeholder picker offers the right options
+                  // and disables itself in `ignore` mode.
+                  argumentMatching={
+                    resolveMatchOptions(
+                      suite?.defaultMatchOptions,
+                      editForm.matchOptions,
+                    ).argumentMatching
+                  }
                 />
               ) : null}
             </div>
@@ -2110,6 +2120,7 @@ export function TestTemplateEditor({
                       current ? { ...current, matchOptions: next } : current
                     )
                   }
+                  showBadges
                 />
               </div>
             ) : null}
