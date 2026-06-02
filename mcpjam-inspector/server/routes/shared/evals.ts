@@ -316,6 +316,7 @@ export const GenerateTestsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  projectId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
@@ -326,6 +327,7 @@ export const GenerateNegativeTestsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
+  projectId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
@@ -1197,6 +1199,7 @@ export async function generateEvalTestsWithManager(
     convexHttpUrl,
     request.convexAuthToken,
     request.serverAttachment,
+    request.projectId,
   );
 
   return {
@@ -1240,6 +1243,7 @@ export async function generateNegativeEvalTestsWithManager(
     convexHttpUrl,
     request.convexAuthToken,
     request.serverAttachment,
+    request.projectId,
   );
 
   return {

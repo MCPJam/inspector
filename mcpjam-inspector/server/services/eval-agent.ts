@@ -96,6 +96,7 @@ export async function generateTestCases(
   convexHttpUrl: string,
   convexAuthToken: string,
   serverAttachment?: ServerAttachmentInput,
+  projectId?: string,
 ): Promise<GeneratedTestCase[]> {
   const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
@@ -106,6 +107,7 @@ export async function generateTestCases(
     body: JSON.stringify({
       mode: "normal",
       toolSnapshot,
+      ...(projectId ? { projectId } : {}),
       ...(serverAttachment ? { serverAttachment } : {}),
     }),
   });

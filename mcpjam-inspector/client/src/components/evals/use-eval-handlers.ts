@@ -1357,36 +1357,36 @@ export function useEvalHandlers({
         return;
       }
 
-      const disconnected = suiteServers.filter(
-        (name) => !connectedServerNames?.has(name),
-      );
-      if (disconnected.length > 0) {
-        if (ensureServersReady != null) {
-          const readiness = await ensureServersReady(suiteServers);
-          if (hasUnavailableServers(readiness)) {
-            toast.error(
-              formatEnsureServersReadyError(
-                readiness,
-                "generate test cases",
-                projectServers,
-              ),
-            );
-            return;
-          }
-        } else {
-          toast.error(
-            formatMcpConnectServerPrompt(disconnected, {
-              remoteServers: projectServers,
-              kind: "suite",
-            }),
-          );
-          return;
-        }
-      }
-
       setIsGeneratingTests(true);
 
       try {
+        const disconnected = suiteServers.filter(
+          (name) => !connectedServerNames?.has(name),
+        );
+        if (disconnected.length > 0) {
+          if (ensureServersReady != null) {
+            const readiness = await ensureServersReady(suiteServers);
+            if (hasUnavailableServers(readiness)) {
+              toast.error(
+                formatEnsureServersReadyError(
+                  readiness,
+                  "generate test cases",
+                  projectServers,
+                ),
+              );
+              return;
+            }
+          } else {
+            toast.error(
+              formatMcpConnectServerPrompt(disconnected, {
+                remoteServers: projectServers,
+                kind: "suite",
+              }),
+            );
+            return;
+          }
+        }
+
         const outcome = await generateAndPersistEvalTests({
           convex,
           getAccessToken,
