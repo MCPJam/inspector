@@ -13,6 +13,11 @@ let balanceState:
       freeDailyCreditsTotal: number;
       freeDailyResetAt: number;
       walletLocked: boolean;
+      billingModel?: "daily" | "monthly_per_seat";
+      monthlyAllowanceTotal?: number;
+      monthlyAllowanceRemaining?: number;
+      monthlyResetAt?: number | null;
+      paidCreditsRemaining?: number;
     }
   | undefined = undefined;
 let isLoadingState = false;
@@ -230,5 +235,53 @@ describe("CreditBalanceCard", () => {
         /Shared credits are available to everyone in this organization/
       )
     ).toBeInTheDocument();
+  });
+
+  describe("team monthly model", () => {
+    beforeEach(() => {
+      balanceState = {
+        availableCredits: 19_500,
+        hasPurchaseHistory: true,
+        freeDailyPercentUsed: 0,
+        freeDailyCreditsRemaining: 0,
+        freeDailyCreditsTotal: 0,
+        freeDailyResetAt: 0,
+        walletLocked: false,
+        billingModel: "monthly_per_seat",
+        monthlyAllowanceTotal: 18_000,
+        monthlyAllowanceRemaining: 13_950,
+        monthlyResetAt: Date.now() + 12 * 24 * 60 * 60 * 1000,
+        paidCreditsRemaining: 1_500,
+      };
+    });
+
+    it("renders the monthly allowance row instead of the daily row", () => {
+      render(<CreditBalanceCard />);
+      const row = screen.getByTestId("usage-monthly");
+      expect(within(row).getByText(/Monthly team credits/)).toBeInTheDocument();
+      // spent / total, where spent = total - remaining = 4,050.
+      expect(within(row).getByText(/4,050 \/ 18,000/)).toBeInTheDocument();
+      expect(within(row).getByText(/resets in 12 days/)).toBeInTheDocument();
+      expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
+    });
+
+    it("shows paid top-ups separately from the allowance", () => {
+      render(<CreditBalanceCard />);
+      const paid = screen.getByTestId("usage-paid");
+      expect(within(paid).getByText(/1,500 credits/)).toBeInTheDocument();
+    });
+
+    it("surfaces an exhausted notice when allowance and paid are both spent", () => {
+      balanceState = {
+        ...balanceState!,
+        monthlyAllowanceRemaining: 0,
+        paidCreditsRemaining: 0,
+        hasPurchaseHistory: false,
+      };
+      render(<CreditBalanceCard canManageCredits />);
+      expect(
+        screen.getByTestId("usage-monthly-exhausted")
+      ).toHaveTextContent(/Monthly credits used/);
+    });
   });
 });

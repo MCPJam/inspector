@@ -15,3 +15,23 @@ export const formatCreditResetText = (resetAt: number): string => {
   }
   return "resets tomorrow";
 };
+
+/**
+ * Reset copy for the monthly team allowance. The daily formatter caps at
+ * "resets tomorrow" for anything over a day, which is useless across a ~30-day
+ * cycle — this one counts in days and appends the absolute reset date so the
+ * use-it-or-lose-it refresh is unambiguous ("resets in 12 days (Jun 30)").
+ */
+export const formatMonthlyResetText = (
+  resetAt: number | null | undefined
+): string => {
+  if (resetAt == null || !Number.isFinite(resetAt)) return "resets monthly";
+  const diffMs = resetAt - Date.now();
+  if (diffMs <= 0) return "resets shortly";
+  const date = new Date(resetAt).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  const days = Math.ceil(diffMs / MS_PER_DAY);
+  return `resets in ${days} day${days === 1 ? "" : "s"} (${date})`;
+};

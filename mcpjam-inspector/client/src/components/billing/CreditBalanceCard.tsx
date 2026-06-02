@@ -14,7 +14,10 @@ import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTop
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
-import { formatCreditResetText } from "@/lib/credit-usage";
+import {
+  formatCreditResetText,
+  formatMonthlyResetText,
+} from "@/lib/credit-usage";
 import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
@@ -95,6 +98,19 @@ export function CreditBalanceCard({
 
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
 
+  // Team-plan orgs bill against a monthly per-seat allowance instead of the
+  // daily free bucket. Paid top-ups are shown separately and spent only after
+  // the allowance runs out.
+  const isMonthly = balance?.billingModel === "monthly_per_seat";
+  const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
+  const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const monthlySpent = Math.max(0, monthlyTotal - monthlyRemaining);
+  const paidRemaining = isMonthly
+    ? (balance?.paidCreditsRemaining ?? 0)
+    : (balance?.availableCredits ?? 0);
+  const monthlyExhausted =
+    isMonthly && monthlyRemaining <= 0 && paidRemaining <= 0;
+
   if (!creditsUiEnabled) return null;
 
   return (
@@ -132,33 +148,67 @@ export function CreditBalanceCard({
           </ErrorBoundary>
         ) : null}
 
-        <UsageRow
-          label="Free daily credits"
-          rightText={
-            isLoading || !balance
-              ? null
-              : `${(
-                  balance.freeDailyCreditsTotal -
-                  balance.freeDailyCreditsRemaining
-                ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()} · ${formatCreditResetText(
-                  balance.freeDailyResetAt
-                )}`
-          }
-          // "spent / total": count and bar both grow as credits are used —
-          // 0/300 empty when fresh, 300/300 full when drained. Matches the
-          // sidebar usage strip.
-          fillPercent={
-            isLoading || !balance || balance.freeDailyCreditsTotal <= 0
-              ? 0
-              : ((balance.freeDailyCreditsTotal -
-                  balance.freeDailyCreditsRemaining) /
-                  balance.freeDailyCreditsTotal) *
-                100
-          }
-          isLoading={isLoading}
-          showCoin
-          testId="usage-daily"
-        />
+        {isMonthly ? (
+          <UsageRow
+            label="Monthly team credits"
+            tooltip="Refreshes each billing cycle. Unused credits don't roll over."
+            rightText={
+              isLoading || !balance
+                ? null
+                : `${monthlySpent.toLocaleString()} / ${monthlyTotal.toLocaleString()} · ${formatMonthlyResetText(
+                    balance.monthlyResetAt
+                  )}`
+            }
+            fillPercent={
+              isLoading || monthlyTotal <= 0
+                ? 0
+                : (monthlySpent / monthlyTotal) * 100
+            }
+            ariaValueText={`${monthlySpent.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits used`}
+            isLoading={isLoading}
+            showCoin
+            testId="usage-monthly"
+          />
+        ) : (
+          <UsageRow
+            label="Free daily credits"
+            rightText={
+              isLoading || !balance
+                ? null
+                : `${(
+                    balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining
+                  ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()} · ${formatCreditResetText(
+                    balance.freeDailyResetAt
+                  )}`
+            }
+            // "spent / total": count and bar both grow as credits are used —
+            // 0/300 empty when fresh, 300/300 full when drained. Matches the
+            // sidebar usage strip.
+            fillPercent={
+              isLoading || !balance || balance.freeDailyCreditsTotal <= 0
+                ? 0
+                : ((balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining) /
+                    balance.freeDailyCreditsTotal) *
+                  100
+            }
+            isLoading={isLoading}
+            showCoin
+            testId="usage-daily"
+          />
+        )}
+
+        {monthlyExhausted ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="usage-monthly-exhausted"
+          >
+            Monthly credits used.{" "}
+            {formatMonthlyResetText(balance?.monthlyResetAt)}
+            {canManageCredits ? " — or top up to keep going." : "."}
+          </p>
+        ) : null}
 
         {!isLoading && hasPaidHistory && balance && (
           <div
@@ -168,7 +218,7 @@ export function CreditBalanceCard({
             <span className="text-xs font-medium">Shared paid credits</span>
             <span className="flex items-center gap-1 text-xs font-medium">
               <CoinStackIcon aria-hidden="true" className="size-3" />
-              {balance.availableCredits.toLocaleString()} credits
+              {paidRemaining.toLocaleString()} credits
             </span>
           </div>
         )}
@@ -211,6 +261,8 @@ interface UsageRowProps {
   showCoin?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
+  /** Human-readable progress value for screen readers (e.g. "X of Y used"). */
+  ariaValueText?: string;
 }
 
 function UsageRow({
@@ -221,6 +273,7 @@ function UsageRow({
   testId,
   showCoin = false,
   tooltip,
+  ariaValueText,
 }: UsageRowProps) {
   return (
     <div className="flex flex-col gap-2" data-testid={testId}>
@@ -262,7 +315,11 @@ function UsageRow({
       {isLoading ? (
         <Skeleton className="h-2 w-full rounded-full" />
       ) : (
-        <Progress value={fillPercent} />
+        <Progress
+          value={fillPercent}
+          aria-label={`${label} used`}
+          aria-valuetext={ariaValueText}
+        />
       )}
     </div>
   );
