@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
@@ -618,6 +619,8 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
+  const ciEnabled = useFeatureFlagEnabled("evaluate-ci") === true;
+
   const handleOpenSuiteExport = useCallback(() => {
     setExportState({
       scope: "suite",
@@ -722,7 +725,7 @@ export function SuiteIterationsView({
             aggregate={aggregate}
             testCases={cases}
             onSetupCi={onSetupCi}
-            onOpenExportSuite={handleOpenSuiteExport}
+            onOpenExportSuite={ciEnabled ? handleOpenSuiteExport : undefined}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
@@ -769,7 +772,7 @@ export function SuiteIterationsView({
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
-                  onExportDraft={handleOpenDraftExport}
+                  onExportDraft={ciEnabled ? handleOpenDraftExport : undefined}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }

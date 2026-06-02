@@ -1161,7 +1161,7 @@ export default function App() {
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
