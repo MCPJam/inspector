@@ -536,3 +536,27 @@ export type {
   EvalToolCall,
   EvalToolCallMatchResult,
 } from "./matchers.js";
+
+// HostConfig v2 portable core (also exported from `@mcpjam/sdk/host-config`).
+// SOURCE OF TRUTH for the host-config shape + canonicalizer + hash; the Convex
+// backend hand-mirrors it under a golden-vector parity test. Browser-safe.
+// `McpProtocolVersion` is intentionally omitted here — already exported above.
+export {
+  HOST_CONFIG_SCHEMA_VERSION_V2,
+  SEP_1865_PERMISSION_FEATURES,
+  canonicalizeHostConfigV2,
+  computeHostConfigHashV2,
+  sha256Hex,
+} from "./host-config/index.js";
+export type {
+  HostConfigInputV2,
+  CanonicalHostConfigV2,
+  HostConfigConnectionDefaults,
+  HostConfigMcpProfileV1,
+  HostConfigStyle,
+  HostStyleId,
+  ServerId,
+  CspDomainSet,
+  OpenAiAppsCapabilities,
+  McpAppsCapabilities,
+} from "./host-config/index.js";

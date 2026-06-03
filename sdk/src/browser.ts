@@ -190,3 +190,26 @@ export {
   isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
+
+// HostConfig v2 portable core (also exported from `@mcpjam/sdk/host-config`).
+// Browser-safe: pure shape + canonicalizer + Web Crypto hash, no Node deps.
+// `McpProtocolVersion` is omitted here — already exported just above.
+export {
+  HOST_CONFIG_SCHEMA_VERSION_V2,
+  SEP_1865_PERMISSION_FEATURES,
+  canonicalizeHostConfigV2,
+  computeHostConfigHashV2,
+  sha256Hex,
+} from "./host-config/index.js";
+export type {
+  HostConfigInputV2,
+  CanonicalHostConfigV2,
+  HostConfigConnectionDefaults,
+  HostConfigMcpProfileV1,
+  HostConfigStyle,
+  HostStyleId,
+  ServerId,
+  CspDomainSet,
+  OpenAiAppsCapabilities,
+  McpAppsCapabilities,
+} from "./host-config/index.js";
