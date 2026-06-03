@@ -28,7 +28,13 @@ export type { McpProtocolVersion };
  */
 export type HostConfigStyle = string;
 
-/** Alias used by the inspector client; identical to {@link HostConfigStyle}. */
+/**
+ * Public alias of {@link HostConfigStyle}. **Intentionally `string`**, not a
+ * closed union — the host registry is extensible (users can register custom
+ * host styles via the client's `lib/host-styles` registry without an SDK or
+ * backend deploy). Don't "tighten" this to `'mcpjam' | 'claude' | 'chatgpt'`;
+ * it would break BYO hosts.
+ */
 export type HostStyleId = HostConfigStyle;
 
 /**

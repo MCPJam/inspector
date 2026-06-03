@@ -251,25 +251,37 @@ export class Host {
     return this;
   }
 
-  /** The host's MCP settings (`protocolVersion`, `initialize`, `apps`). */
+  /**
+   * Set the host's MCP settings (`protocolVersion`, `initialize`, `apps`).
+   * **Replaces** the previous MCP block in full — calling `setMcp({ apps })`
+   * after `setMcp({ protocolVersion })` drops the protocolVersion. Pass a
+   * fully-formed `HostMcp` each time.
+   */
   setMcp(mcp: HostMcp): this {
     this.input.mcpProfile = hostMcpToProfile(structuredClone(mcp));
     return this;
   }
 
-  /** Add a required server. */
+  /**
+   * Add a required server. Appends to the list — duplicates are kept as-is
+   * (the canonicalizer sorts but does not currently dedupe, so adding the
+   * same id twice produces a distinct content hash).
+   */
   addServer(id: ServerId): this {
     (this.input.serverIds ??= []).push(id);
     return this;
   }
 
-  /** Add an optional (auto-connect-if-available) server. */
+  /** Add an optional (auto-connect-if-available) server. Same append + duplicate semantics as {@link addServer}. */
   addOptionalServer(id: ServerId): this {
     (this.input.optionalServerIds ??= []).push(id);
     return this;
   }
 
-  /** Merge connection defaults (headers and/or request timeout). */
+  /**
+   * **Merges** into existing connection defaults: only the fields you pass
+   * are updated, the others are preserved. To wipe headers, pass `{ headers: {} }`.
+   */
   setConnectionDefaults(defaults: Partial<HostConnectionDefaults>): this {
     if (defaults.headers !== undefined) {
       this.input.connectionDefaults.headers = structuredClone(defaults.headers);
@@ -280,22 +292,29 @@ export class Host {
     return this;
   }
 
+  /** **Replaces** the client-capabilities blob in full. */
   setClientCapabilities(capabilities: Record<string, unknown>): this {
     this.input.clientCapabilities = structuredClone(capabilities);
     return this;
   }
 
+  /** **Replaces** the host-context blob in full. */
   setHostContext(context: Record<string, unknown>): this {
     this.input.hostContext = structuredClone(context);
     return this;
   }
 
-  /** Override the MCP-Apps `hostCapabilities` blob. `{}` = advertise nothing. */
+  /**
+   * **Replaces** the MCP-Apps `hostCapabilities` blob in full. `{}` =
+   * advertise nothing (distinct from omitting the override, which means
+   * "use the host's default capabilities").
+   */
   setHostCapabilitiesOverride(override: Record<string, unknown>): this {
     this.input.hostCapabilitiesOverride = structuredClone(override);
     return this;
   }
 
+  /** **Replaces** the chat-UI override blob (logo, fonts, ...) in full. */
   setChatUiOverride(override: Record<string, unknown>): this {
     this.input.chatUiOverride = structuredClone(override);
     return this;
