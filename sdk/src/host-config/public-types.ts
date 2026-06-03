@@ -13,7 +13,6 @@
  */
 
 import type {
-  CanonicalHostConfigV2,
   CspDomainSet,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
@@ -52,15 +51,34 @@ export type HostMcp = Omit<
 };
 
 /**
- * Normalized, content-addressable host JSON returned by `Host.toJSON()`.
+ * The normalized host configuration returned by `Host.toJSON()`.
  *
- * NOTE: this is the *serialized* shape that gets hashed and stored, so it
- * keeps the on-disk field name `mcpProfile` (not `mcp`) for backend
- * compatibility — see the option-(b) note above. Use the `Host` fluent API
- * (`host.mcp` / `setMcp`) for authoring; use `toJSON()` only when you need the
- * exact wire form.
+ * Pure public vocabulary — no implementation names leak here: `mcp` (not
+ * `mcpProfile`), `style`/`model`/`servers`, and no `schemaVersion`/
+ * `profileVersion` markers. It is normalized (sorted, deduped, derived) and
+ * round-trips: `new Host(host.toJSON())` reproduces an equivalent host with
+ * the same `hash()`. The internal content-addressed wire form (which the
+ * fingerprint is computed over and which the backend stores) is deliberately
+ * not exposed.
  */
-export type HostJson = CanonicalHostConfigV2;
+export interface HostJson {
+  style: HostStyleId;
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+  requireToolApproval: boolean;
+  progressiveToolDiscovery?: boolean;
+  respectToolVisibility?: boolean;
+  servers: ServerId[];
+  optionalServers: ServerId[];
+  connectionDefaults: HostConnectionDefaults;
+  clientCapabilities: Record<string, unknown>;
+  hostContext: Record<string, unknown>;
+  hostCapabilitiesOverride?: Record<string, unknown>;
+  chatUiOverride?: Record<string, unknown>;
+  mcp?: HostMcp;
+  serverOverrides?: Record<string, HostServerOverride>;
+}
 
 /** Per-server connection override (host-facing field names). */
 export interface HostServerOverride {
