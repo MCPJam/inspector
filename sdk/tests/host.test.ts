@@ -191,7 +191,9 @@ describe("Host — deterministic under post-construction input mutation", () => 
     const caps = { a: { b: 1 } };
     const host = new Host().setClientCapabilities(caps);
     const hashBefore = await host.hash();
+    const jsonBefore = JSON.stringify(host.toJSON());
     (caps.a as { b: number }).b = 2;
     expect(await host.hash()).toBe(hashBefore);
+    expect(JSON.stringify(host.toJSON())).toBe(jsonBefore);
   });
 });
