@@ -7,30 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Inspector updates:\n\n- Align the generate-tests snapshot with attachment display names so generated suites reference the same names the user sees\n- Stop misclassifying upstream 502s as inspector errors in the web error route",
-      "id": "evals-generate-tests-snapshot-and-502"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Inspector updates:\n\n- Add PostHog instrumentation to Evaluate covering the activation funnel and run lifecycle: `evaluate_tab_viewed`, `suite_viewed`, `eval_suite_run_completed` (with pass/fail counts and duration), `eval_generate_tests_completed` (with success flag and count), `eval_run_insights_opened`, `eval_suite_server_changed`, `eval_test_case_deleted`, and `eval_test_case_edited`",
-      "id": "evaluate-posthog-events"
+      "summary": "Evals: allow guests to create suites and rerun runs. Removes the auth-gated branch in the Evals tab and on the server route so guest users can create suites and re-execute existing runs without signing in.",
+      "id": "evals-guest-create-rerun"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.9.2",
+      "oldVersion": "2.9.3",
       "changesets": [
-        "evals-generate-tests-snapshot-and-502",
-        "evaluate-posthog-events"
+        "evals-guest-create-rerun"
       ],
-      "newVersion": "2.9.3"
+      "newVersion": "2.9.4"
     }
   ]
 }

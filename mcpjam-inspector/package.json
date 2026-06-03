@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.9.3",
+  "version": "2.9.4",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
