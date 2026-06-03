@@ -88,16 +88,21 @@ export interface HostServerOverride {
 
 /**
  * Optional initial configuration for `new Host(init?)`. Every field is
- * type-optional so the setter pattern works
- * (`new Host().setStyle(...).setModel(...)`), but `style` and `model` are
- * **required at use** — `toJSON()` throws if either is missing. The SDK
- * deliberately ships no default `style` (so an external author isn't silently
- * opted into MCPJam product chrome) and no default `model`. Equivalent
- * settings are available as fluent setters (`setStyle`, `setModel`, `setMcp`,
- * `addServer`, …).
+ * type-optional so the imperative pattern works (`new Host(); host.style =
+ * "..."; host.model = "..."`), but `style` and `model` are **required at
+ * use** — `toJSON()` throws if either is missing. The SDK deliberately ships
+ * no default `style` (so an external author isn't silently opted into MCPJam
+ * product chrome) and no default `model`. After construction every field is
+ * also accessible as a mutable property on the `Host` instance (e.g.
+ * `host.mcp.protocolVersion = "..."`, `host.servers.push(...)`).
  */
 export interface HostInit {
-  /** Host style id (e.g. "mcpjam", "claude", "chatgpt"). Required at `toJSON()`; no SDK default. */
+  /**
+   * Host style id (e.g. "mcpjam", "claude", "chatgpt"). Required at
+   * `toJSON()`; no SDK default. **Product knob, not SEP-1865** — selects
+   * which host-style preset (chrome, capability defaults, compat-runtime
+   * shims) the inspector applies.
+   */
   style?: HostStyleId;
   /** LLM model id (e.g. "anthropic/claude-sonnet-4-6"). Required at `toJSON()`; no SDK default. */
   model?: string;
@@ -116,7 +121,14 @@ export interface HostInit {
   connectionDefaults?: Partial<HostConnectionDefaults>;
   clientCapabilities?: Record<string, unknown>;
   hostContext?: Record<string, unknown>;
-  /** Override the MCP-Apps `hostCapabilities` blob. {} = advertise nothing. */
+  /**
+   * Override the SEP-1865 MCP-Apps `hostCapabilities` blob advertised in
+   * `ui/initialize`. `undefined` = use the host-style preset; `{}` =
+   * advertise nothing (hashes distinctly from `undefined`). Used to *cap*
+   * what a host advertises (e.g. drop `serverTools` to block widget→server
+   * tool proxying), never to grant capabilities the preset doesn't already
+   * support.
+   */
   hostCapabilitiesOverride?: Record<string, unknown>;
   /** Override the chat-UI surface (logo, fonts, …). */
   chatUiOverride?: Record<string, unknown>;
