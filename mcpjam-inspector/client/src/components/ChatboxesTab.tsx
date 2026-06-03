@@ -12,7 +12,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
-import { ChatboxServersSection } from "@/components/chatboxes/ChatboxServersSection";
+import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
 import { useChatboxByHostId } from "@/hooks/useChatboxes";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -253,8 +253,8 @@ export function ChatboxesTab({
         {tab === "publish" ? (
           <div className="h-full overflow-y-auto px-6 py-6">
             <div className="mx-auto flex max-w-3xl flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
                   <h2 className="text-lg font-semibold">{chatbox.name}</h2>
                   <p className="text-xs text-muted-foreground">
                     Publishing the {host?.name ?? "host"} chatbox — share
@@ -272,10 +272,11 @@ export function ChatboxesTab({
                   </Button>
                 ) : null}
               </div>
-              <ChatboxServersSection
+              <ChatboxPublishClientBar
                 chatboxId={chatbox.chatboxId}
                 projectId={chatbox.projectId}
                 hostId={chatbox.namedHostId}
+                hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
                 isAuthenticated={effectiveAuth}
                 currentServerIds={chatbox.servers.map((s) => s.serverId)}
               />
