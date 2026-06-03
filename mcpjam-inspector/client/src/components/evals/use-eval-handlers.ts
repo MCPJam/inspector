@@ -1552,6 +1552,10 @@ export function useEvalHandlers({
         }
       } catch (error) {
         console.error("Failed to generate tests:", error);
+        // Cap the raw message at 200 chars so PostHog event cardinality stays
+        // bounded when backend errors include user input or random ids.
+        const rawMessage =
+          error instanceof Error ? error.message : String(error);
         posthog.capture("eval_generate_tests_completed", {
           location: "evals_tab",
           platform: detectPlatform(),
@@ -1559,8 +1563,8 @@ export function useEvalHandlers({
           suite_id: suiteId,
           generated_count: 0,
           success: false,
-          error_message:
-            error instanceof Error ? error.message : String(error),
+          error_name: error instanceof Error ? error.name : typeof error,
+          error_message: rawMessage.slice(0, 200),
         });
         toast.error(
           getBillingErrorMessage(error, "Failed to generate test cases")

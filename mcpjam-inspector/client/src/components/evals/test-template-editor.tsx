@@ -973,7 +973,7 @@ export function TestTemplateEditor({
         environment: detectEnvironment(),
         suite_id: suiteId ?? null,
         test_case_id: currentTestCase._id,
-        num_models: selectedModelValues.length,
+        num_models: currentTestCase.models?.length ?? 0,
         num_prompt_turns: editForm.promptTurns?.length ?? 0,
         has_match_options: savePayload.matchOptions != null,
         has_predicates: savePayload.predicates != null,

@@ -271,16 +271,22 @@ function EvalsTabContent({
     }
   }, [overviewQueries.isOverviewLoading, route.type, selectedSuiteEntry, selectedSuiteId]);
 
+  // Wait for auth to settle before firing view events. The parent
+  // ErrorBoundary keys on (projectId, isAuthenticated), so projectId
+  // resolving null→"x" remounts this component and would otherwise
+  // double-fire (once on the null mount, once on the resolved mount).
   useEffect(() => {
+    if (isLoading) return;
     posthog.capture("evaluate_tab_viewed", {
       location: "evals_tab",
       platform: detectPlatform(),
       environment: detectEnvironment(),
       project_id: projectId ?? null,
     });
-  }, [projectId]);
+  }, [isLoading, projectId]);
 
   useEffect(() => {
+    if (isLoading) return;
     if (!selectedSuiteId) return;
     posthog.capture("suite_viewed", {
       location: "evals_tab",
@@ -290,7 +296,7 @@ function EvalsTabContent({
       suite_id: selectedSuiteId,
       route_type: route.type,
     });
-  }, [selectedSuiteId, route.type, projectId]);
+  }, [isLoading, selectedSuiteId, route.type, projectId]);
 
   const handleOpenCreateSuite = useCallback(() => {
     navigatePlaygroundEvalsRoute({ type: "create" });
