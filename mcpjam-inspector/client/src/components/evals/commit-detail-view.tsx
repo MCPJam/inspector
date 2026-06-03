@@ -18,6 +18,7 @@ import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { useRunDetailData } from "./use-suite-data";
 import { RunDetailView } from "./run-detail-view";
+import { shouldShowRunAccuracyHero } from "./run-insight-rail";
 
 interface CommitDetailViewProps {
   commitGroup: CommitGroup;
@@ -219,7 +220,7 @@ function CommitSuiteRunDetail({
     [suiteDetails],
   );
 
-  const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
+  const { caseGroupsForSelectedRun } = useRunDetailData(
     run._id,
     allIterations,
     runDetailSortBy,
@@ -238,31 +239,47 @@ function CommitSuiteRunDetail({
 
   const metricLabel = run.source === "sdk" ? "Pass Rate" : "Accuracy";
 
+  const consolidateRunHeaderInHero = shouldShowRunAccuracyHero({
+    run,
+    iterations: caseGroupsForSelectedRun,
+    runTrendData: [],
+  });
+
   return (
     <>
-      <div className="flex shrink-0 flex-col gap-1 px-4 pt-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Run {formatRunId(run._id)}
-          </h2>
-          <PassCriteriaBadge
-            run={run}
-            variant="compact"
-            metricLabel={metricLabel}
-          />
+      {!consolidateRunHeaderInHero ? (
+        <div className="flex shrink-0 flex-col gap-1 px-4 pt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold tracking-tight">
+              Run {formatRunId(run._id)}
+            </h2>
+            <PassCriteriaBadge
+              run={run}
+              variant="compact"
+              metricLabel={metricLabel}
+            />
+          </div>
+          <RunHeaderCompactStats run={run} />
         </div>
-        <RunHeaderCompactStats run={run} />
-      </div>
+      ) : null}
       <RunDetailView
         selectedRunDetails={run}
         caseGroupsForSelectedRun={caseGroupsForSelectedRun}
         source={run.source as "ui" | "sdk" | undefined}
-        selectedRunChartData={selectedRunChartData}
         runDetailSortBy={runDetailSortBy}
         onSortChange={onSortChange}
         serverNames={run.configSnapshot?.environment?.servers ?? []}
         selectedIterationId={selectedIterationId}
         onSelectIteration={onSelectIteration}
+        onSelectRun={(runId) =>
+          navigateApp(
+            buildCiEvalsPath({
+              type: "run-detail",
+              suiteId: run.suiteId,
+              runId,
+            }),
+          )
+        }
         hideCiMetadata
       />
     </>
@@ -280,15 +297,15 @@ function StatusBadge({
 }) {
   if (status === "passed") {
     return (
-      <Badge className="gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      <Badge className="gap-1.5 bg-success/50 text-foreground border-success/50 hover:brightness-95">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" />
         Passed
       </Badge>
     );
   }
   if (status === "failed") {
     return (
-      <Badge className="gap-1.5 bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20 dark:bg-destructive/20 dark:border-destructive/40">
+      <Badge className="gap-1.5 bg-destructive/50 text-foreground border-destructive/50 hover:brightness-95">
         <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
         {failCount} Failed
       </Badge>
@@ -296,15 +313,15 @@ function StatusBadge({
   }
   if (status === "running") {
     return (
-      <Badge className="gap-1.5 bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+      <Badge className="gap-1.5 bg-warning/50 text-foreground border-warning/50 hover:brightness-95">
+        <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
         Running
       </Badge>
     );
   }
   return (
-    <Badge className="gap-1.5 bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-400">
-      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+    <Badge className="gap-1.5 bg-warning/50 text-foreground border-warning/50 hover:brightness-95">
+      <span className="h-1.5 w-1.5 rounded-full bg-warning" />
       Mixed
     </Badge>
   );

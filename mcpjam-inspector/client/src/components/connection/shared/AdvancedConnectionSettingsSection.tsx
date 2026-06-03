@@ -52,6 +52,10 @@ interface AdvancedConnectionSettingsSectionProps {
     field: "key" | "value",
     value: string
   ) => void;
+  hasStoredHeaders?: boolean;
+  isRevealingHeaders?: boolean;
+  headersRevealError?: string | null;
+  onRevealHeaders?: () => void;
   clientCapabilitiesOverrideEnabled?: boolean;
   onClientCapabilitiesOverrideEnabledChange?: (enabled: boolean) => void;
   clientCapabilitiesOverrideText?: string;
@@ -98,6 +102,10 @@ export function AdvancedConnectionSettingsSection({
   onAddHeader,
   onRemoveHeader,
   onUpdateHeader,
+  hasStoredHeaders = false,
+  isRevealingHeaders = false,
+  headersRevealError,
+  onRevealHeaders,
   clientCapabilitiesOverrideEnabled = false,
   onClientCapabilitiesOverrideEnabledChange,
   clientCapabilitiesOverrideText = "{}",
@@ -114,6 +122,7 @@ export function AdvancedConnectionSettingsSection({
     onAddHeader !== undefined &&
     onRemoveHeader !== undefined &&
     onUpdateHeader !== undefined;
+  const headersHidden = hasStoredHeaders && (customHeaders?.length ?? 0) === 0;
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
@@ -183,12 +192,35 @@ export function AdvancedConnectionSettingsSection({
                 <button
                   type="button"
                   onClick={onAddHeader}
+                  disabled={headersHidden}
                   className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                 >
                   <Plus className="h-3 w-3" />
                   Add
                 </button>
               </div>
+              {headersHidden && (
+                <div className="flex items-center justify-between gap-3 rounded border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-xs font-medium text-foreground">
+                      Hidden — Reveal to view
+                    </p>
+                    {headersRevealError && (
+                      <p role="alert" className="mt-1 text-xs text-destructive">
+                        {headersRevealError}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isRevealingHeaders || !onRevealHeaders}
+                    onClick={onRevealHeaders}
+                    className="rounded border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isRevealingHeaders ? "Revealing..." : "Reveal"}
+                  </button>
+                </div>
+              )}
               {customHeaders.length > 0 && (
                 <div className="space-y-1">
                   {customHeaders.map((header, index) => (

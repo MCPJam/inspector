@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   argumentsMatch,
   matchToolCalls,
+  resolveCasePredicates,
+  resolveCaseSuccessPredicates,
+  resolveExtrasCap,
   type ToolCall,
+  type Predicate,
+  type CasePredicates,
 } from "../eval-matching.js";
 
 describe("argumentsMatch", () => {
@@ -244,5 +249,149 @@ describe("matchToolCalls", () => {
       const result = matchToolCalls(expected, actual);
       expect(result.passed).toBe(true);
     });
+  });
+});
+
+describe("resolveCasePredicates", () => {
+  const suiteDefault: Predicate[] = [
+    { type: "noToolErrors" } as unknown as Predicate,
+  ];
+  const caseList: Predicate[] = [
+    { type: "toolCalledAtLeastOnce", toolName: "search" } as unknown as Predicate,
+  ];
+
+  it("returns undefined when both suite defaults and case envelope are absent", () => {
+    expect(resolveCasePredicates(undefined, undefined)).toBeUndefined();
+  });
+
+  it("returns suite defaults when no case envelope is supplied", () => {
+    expect(resolveCasePredicates(suiteDefault, undefined)).toEqual(suiteDefault);
+  });
+
+  it("returns suite defaults under inherit mode and ignores case list", () => {
+    const override: CasePredicates = { mode: "inherit", list: caseList };
+    expect(resolveCasePredicates(suiteDefault, override)).toEqual(suiteDefault);
+  });
+
+  it("returns the case list alone under replace mode", () => {
+    const override: CasePredicates = { mode: "replace", list: caseList };
+    expect(resolveCasePredicates(suiteDefault, override)).toEqual(caseList);
+  });
+
+  it("concatenates defaults followed by case list under extend mode", () => {
+    const override: CasePredicates = { mode: "extend", list: caseList };
+    expect(resolveCasePredicates(suiteDefault, override)).toEqual([
+      ...suiteDefault,
+      ...caseList,
+    ]);
+  });
+
+  it("collapses an empty effective list to undefined", () => {
+    const override: CasePredicates = { mode: "replace", list: [] };
+    expect(resolveCasePredicates(undefined, override)).toBeUndefined();
+  });
+});
+
+describe("resolveCaseSuccessPredicates", () => {
+  const suiteDefault: Predicate[] = [
+    { type: "noToolErrors" } as unknown as Predicate,
+  ];
+  const caseList: Predicate[] = [
+    { type: "toolCalledAtLeastOnce", toolName: "search" } as unknown as Predicate,
+  ];
+  const legacyList: Predicate[] = [
+    { type: "toolCalledAtLeastOnce", toolName: "legacy" } as unknown as Predicate,
+  ];
+  const runList: Predicate[] = [
+    { type: "toolCalledAtLeastOnce", toolName: "run" } as unknown as Predicate,
+  ];
+
+  it("returns run override when present, ignoring everything else", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        runOverride: runList,
+        envelope: { mode: "replace", list: caseList },
+        legacyCase: legacyList,
+      }),
+    ).toEqual(runList);
+  });
+
+  it("treats an empty replace envelope as an explicit opt-out — must NOT fall back to legacy or suite defaults", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        envelope: { mode: "replace", list: [] },
+        legacyCase: legacyList,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("treats an inherit envelope as authoritative (does not fall back to legacy)", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        envelope: { mode: "inherit", list: [] },
+        legacyCase: legacyList,
+      }),
+    ).toEqual(suiteDefault);
+  });
+
+  it("uses legacy case predicates only when no envelope is supplied", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        legacyCase: legacyList,
+      }),
+    ).toEqual(legacyList);
+  });
+
+  it("legacy predicates win over suite defaults when no envelope is supplied", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+        legacyCase: legacyList,
+      }),
+    ).toEqual(legacyList);
+  });
+
+  it("falls through to suite defaults when no per-case signal at all", () => {
+    expect(
+      resolveCaseSuccessPredicates({
+        suiteDefaults: suiteDefault,
+      }),
+    ).toEqual(suiteDefault);
+  });
+
+  it("returns undefined when nothing is set anywhere", () => {
+    expect(resolveCaseSuccessPredicates({ suiteDefaults: undefined })).toBeUndefined();
+  });
+});
+
+describe("resolveExtrasCap", () => {
+  it("returns null when matchOptions is absent", () => {
+    expect(resolveExtrasCap(undefined)).toBeNull();
+    expect(resolveExtrasCap(null)).toBeNull();
+    expect(resolveExtrasCap({})).toBeNull();
+  });
+
+  it("returns the explicit maxExtraToolCalls when set (including 0 and null)", () => {
+    expect(resolveExtrasCap({ maxExtraToolCalls: 0 })).toBe(0);
+    expect(resolveExtrasCap({ maxExtraToolCalls: 3 })).toBe(3);
+    expect(resolveExtrasCap({ maxExtraToolCalls: null })).toBeNull();
+  });
+
+  it("translates the legacy allowExtraToolCalls field when new field absent", () => {
+    expect(resolveExtrasCap({ allowExtraToolCalls: false })).toBe(0);
+    expect(resolveExtrasCap({ allowExtraToolCalls: true })).toBeNull();
+  });
+
+  it("prefers the new field over the legacy field when both are set", () => {
+    expect(
+      resolveExtrasCap({ maxExtraToolCalls: 5, allowExtraToolCalls: false }),
+    ).toBe(5);
+    expect(
+      resolveExtrasCap({ maxExtraToolCalls: null, allowExtraToolCalls: false }),
+    ).toBeNull();
   });
 });

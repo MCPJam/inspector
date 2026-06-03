@@ -39,6 +39,7 @@ import { useConvexAuth } from "convex/react";
 import type { Project } from "@/state/app-types";
 import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
+import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface SidebarContextSwitcherProps {
@@ -237,7 +238,7 @@ export function SidebarContextSwitcher({
         fallback={initial}
         size={8}
       />
-      <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden min-w-0">
+      <div className="grid flex-1 text-left text-xs leading-tight group-data-[collapsible=icon]:hidden min-w-0">
         <span className="truncate font-semibold">{projectName}</span>
         {activeOrg ? (
           <span className="truncate text-xs text-muted-foreground">
@@ -300,7 +301,7 @@ export function SidebarContextSwitcher({
                   </Tooltip>
                 </div>
                 <div
-                  className="flex items-center gap-1 rounded-lg hover:bg-accent transition-colors"
+                  className="group/orgchip flex items-center gap-1 rounded-lg hover:bg-accent transition-colors"
                   // Hover-to-open is desktop-only. On touch devices iOS fires a
                   // synthetic mouseleave right after tap, which would schedule the
                   // popover to close ~120ms after it opens. Tap-to-toggle (the
@@ -349,7 +350,7 @@ export function SidebarContextSwitcher({
                         <Building2 className="size-3.5" />
                       </div>
                     )}
-                    <span className="flex-1 min-w-0 text-[13px] font-semibold truncate">
+                    <span className="flex-1 min-w-0 text-[13px] font-medium truncate">
                       {showSignInChip
                         ? "Sign in"
                         : (activeOrg?.name ?? "No organization")}
@@ -365,6 +366,24 @@ export function SidebarContextSwitcher({
                       />
                     ) : null}
                   </button>
+                  {/* Settings gear on hover — mirrors the per-project row's
+                      gear so the current org has the same affordance. */}
+                  {!showSignInChip && activeOrg && onSwitchOrganization ? (
+                    <button
+                      type="button"
+                      aria-label={`Open ${activeOrg.name} settings`}
+                      title={`Open ${activeOrg.name} settings`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSwitchOrganization(activeOrg._id, "overview");
+                        setChipPopoverOpen(false);
+                        setMenuOpen(false);
+                      }}
+                      className="mr-1 p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/orgchip:opacity-100 group-focus-within/orgchip:opacity-100"
+                    >
+                      <Settings className="size-3.5" />
+                    </button>
+                  ) : null}
                 </div>
                 {chipPopoverOpen && !showSignInChip ? (
                   <div
@@ -451,6 +470,26 @@ export function SidebarContextSwitcher({
                         );
                       })
                     )}
+                  </div>
+                ) : null}
+
+                {/* Active org's shared credit usage, shown right below the
+                    org so it's always visible (not hidden behind a hover). */}
+                {!showSignInChip && activeOrganizationId ? (
+                  <div className="px-0.5 pt-1">
+                    <SidebarCreditUsage
+                      variant="full"
+                      organizationId={activeOrganizationId}
+                      onClick={
+                        activeOrg && onSwitchOrganization
+                          ? () => {
+                              onSwitchOrganization(activeOrg._id, "billing");
+                              setChipPopoverOpen(false);
+                              setMenuOpen(false);
+                            }
+                          : undefined
+                      }
+                    />
                   </div>
                 ) : null}
               </div>
@@ -706,9 +745,11 @@ function ProjectIconBadge({
   const iconSize = size === 8 ? "h-4 w-4" : "h-3.5 w-3.5";
   return (
     <div
-      className={`flex items-center justify-center ${sizeClass} bg-primary/10 text-primary text-${
-        size === 8 ? "sm" : "xs"
-      } font-semibold shrink-0`}
+      className={cn(
+        "flex items-center justify-center bg-primary/10 text-primary font-semibold shrink-0",
+        sizeClass,
+        size === 8 ? "text-sm" : "text-[11px]"
+      )}
     >
       {IconComponent ? (
         <IconComponent className={iconSize} strokeWidth={1.5} />

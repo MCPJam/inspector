@@ -2,12 +2,21 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
 
-export type PaymentHistoryStatus = "succeeded" | "pending" | "failed";
+export type PaymentHistoryStatus =
+  | "succeeded"
+  | "pending"
+  | "failed"
+  | "refunded"
+  | "partially_refunded"
+  | "disputed";
 
 export interface PaymentHistoryEntry {
   id: string;
   sessionId: string;
-  paidAmountCents: number;
+  pricePaidCents: number;
+  displayCredits: string;
+  /** Paid cents handed back when refunded/charged back. Reversed rows only. */
+  reversedPaidCents?: number;
   status: PaymentHistoryStatus;
   occurredAt: number;
   receiptUrl?: string;
@@ -16,26 +25,33 @@ export interface PaymentHistoryEntry {
 interface RawEntry {
   id?: unknown;
   sessionId?: unknown;
-  paidAmountCents?: unknown;
+  pricePaidCents?: unknown;
+  displayCredits?: unknown;
+  reversedPaidCents?: unknown;
   status?: unknown;
   occurredAt?: unknown;
   receiptUrl?: unknown;
 }
 
+const VALID_STATUSES = new Set<PaymentHistoryStatus>([
+  "succeeded",
+  "pending",
+  "failed",
+  "refunded",
+  "partially_refunded",
+  "disputed",
+]);
+
 const isValidStatus = (value: unknown): value is PaymentHistoryStatus =>
-  value === "succeeded" || value === "pending" || value === "failed";
+  typeof value === "string" &&
+  VALID_STATUSES.has(value as PaymentHistoryStatus);
 
 const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
   // Accept either a bare array or `{ items: [...] }`. Loose-shape parsing
   // matches the rest of the billing hooks so the backend can evolve without
   // forcing a coordinated inspector PR.
   let items: unknown = raw;
-  if (
-    raw &&
-    typeof raw === "object" &&
-    !Array.isArray(raw) &&
-    "items" in raw
-  ) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && "items" in raw) {
     items = (raw as { items?: unknown }).items;
   }
   if (!Array.isArray(items)) return undefined;
@@ -45,7 +61,8 @@ const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
     if (
       typeof item?.id !== "string" ||
       typeof item.sessionId !== "string" ||
-      typeof item.paidAmountCents !== "number" ||
+      typeof item.pricePaidCents !== "number" ||
+      typeof item.displayCredits !== "string" ||
       !isValidStatus(item.status) ||
       typeof item.occurredAt !== "number"
     ) {
@@ -54,9 +71,13 @@ const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
     out.push({
       id: item.id,
       sessionId: item.sessionId,
-      paidAmountCents: item.paidAmountCents,
+      pricePaidCents: item.pricePaidCents,
+      displayCredits: item.displayCredits,
       status: item.status,
       occurredAt: item.occurredAt,
+      ...(typeof item.reversedPaidCents === "number"
+        ? { reversedPaidCents: item.reversedPaidCents }
+        : {}),
       ...(typeof item.receiptUrl === "string" && item.receiptUrl.length > 0
         ? { receiptUrl: item.receiptUrl }
         : {}),
@@ -71,19 +92,20 @@ export interface UsePaymentsHistoryResult {
   isAuthenticated: boolean;
 }
 
-export function usePaymentsHistory(): UsePaymentsHistoryResult {
-  const {
-    isAuthenticated: hasConvexIdentity,
-    isLoading: isConvexAuthLoading,
-  } = useConvexAuth();
+export function usePaymentsHistory(
+  organizationId?: string | null
+): UsePaymentsHistoryResult {
+  const { isAuthenticated: hasConvexIdentity, isLoading: isConvexAuthLoading } =
+    useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const hasWorkOsUser = !!user;
   const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
-  const shouldFetch = !isAuthLoading && hasConvexIdentity && hasWorkOsUser;
+  const shouldFetch =
+    !isAuthLoading && hasConvexIdentity && hasWorkOsUser && !!organizationId;
 
   const raw = useQuery(
-    "billing/creditHistory:listTopupHistoryForCurrentUser" as any,
-    shouldFetch ? ({} as any) : "skip",
+    "billing/creditHistory:listTopupHistoryForOrganization" as any,
+    shouldFetch ? ({ organizationId } as any) : "skip"
   ) as unknown | undefined;
 
   // Stable reference: Convex returns the same object when nothing has

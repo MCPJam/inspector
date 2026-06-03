@@ -17,7 +17,6 @@ import {
   Box,
   LayoutGrid,
   GitBranch,
-  Puzzle,
   UserPlus,
   ShieldCheck,
   Loader2,
@@ -187,7 +186,7 @@ const navigationSections: NavSection[] = [
         url: "/servers",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
-        matchTabs: ["clients"],
+        matchTabs: ["clients", "host-compare"],
       },
       {
         title: "Servers",
@@ -206,6 +205,7 @@ const navigationSections: NavSection[] = [
         url: "/chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
       },
       {
         title: "Playground",
@@ -232,6 +232,7 @@ const navigationSections: NavSection[] = [
         title: "Evaluate",
         url: "/evals",
         icon: FlaskConical,
+        featureFlag: "evaluate-ui",
         billingFeature: "evals",
         evalsSubnav: true,
       },
@@ -390,9 +391,9 @@ function navigateToEvalsRunsList() {
 }
 
 type EvalsSubnavItem = {
-  title: "Playground" | "Runs";
+  title: "Runs";
   href: string;
-  icon: typeof Puzzle | typeof GitBranch;
+  icon: typeof GitBranch;
   isActive: (activeTab?: string) => boolean;
   onClick: () => void;
 };
@@ -400,27 +401,16 @@ type EvalsSubnavItem = {
 export function getEvalsSubnavItems(options: {
   evaluateRunsEnabled: boolean;
 }): EvalsSubnavItem[] {
-  const items: EvalsSubnavItem[] = [
+  if (!options.evaluateRunsEnabled) return [];
+  return [
     {
-      title: "Playground",
-      href: buildEvalsPath({ type: "list" }),
-      icon: Puzzle,
-      isActive: (activeTab) => activeTab === "evals",
-      onClick: navigateToEvalsExploreList,
-    },
-  ];
-
-  if (options.evaluateRunsEnabled) {
-    items.push({
       title: "Runs",
       href: "/ci-evals",
       icon: GitBranch,
       isActive: (activeTab) => activeTab === "ci-evals",
       onClick: navigateToEvalsRunsList,
-    });
-  }
-
-  return items;
+    },
+  ];
 }
 
 export function SidebarEvalsNavGroup({
@@ -445,6 +435,7 @@ export function SidebarEvalsNavGroup({
   const subnavItems = getEvalsSubnavItems({
     evaluateRunsEnabled: showRuns,
   });
+  const hasSubnav = subnavItems.length > 0;
 
   const parentButton = (
     <SidebarMenuButton
@@ -490,55 +481,47 @@ export function SidebarEvalsNavGroup({
                   </TooltipContent>
                 ) : null}
               </Tooltip>
+            ) : isPlaygroundLocked && !hasSubnav ? (
+              <Tooltip>
+                <TooltipTrigger asChild>{parentButton}</TooltipTrigger>
+                <TooltipContent side="right" sideOffset={6}>
+                  Coming soon. Playground is in beta.
+                </TooltipContent>
+              </Tooltip>
             ) : (
               parentButton
             )}
-            <SidebarMenuSub>
-              {subnavItems.map((item) => {
-                const ItemIcon = item.icon;
-                const isItemPlaygroundLocked =
-                  item.title === "Playground" && isPlaygroundLocked;
-                const isItemDisabled = disabled || isItemPlaygroundLocked;
+            {hasSubnav ? (
+              <SidebarMenuSub>
+                {subnavItems.map((item) => {
+                  const ItemIcon = item.icon;
+                  const isItemDisabled = disabled || isPlaygroundLocked;
 
-                const subnavButton = (
-                  <SidebarMenuSubButton
-                    isActive={!isItemDisabled && item.isActive(activeTab)}
-                    href={item.href}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (isItemDisabled) return;
-                      item.onClick();
-                    }}
-                    aria-disabled={isItemDisabled || undefined}
-                    className={cn(
-                      isItemDisabled &&
-                        "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
-                      isItemPlaygroundLocked &&
-                        "aria-disabled:pointer-events-auto",
-                      disabled && "pointer-events-none"
-                    )}
-                  >
-                    <ItemIcon className="h-4 w-4" />
-                    <span className="min-w-0 truncate">{item.title}</span>
-                  </SidebarMenuSubButton>
-                );
-
-                return (
-                  <SidebarMenuSubItem key={item.title}>
-                    {isItemPlaygroundLocked ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>{subnavButton}</TooltipTrigger>
-                        <TooltipContent side="right" sideOffset={6}>
-                          Coming soon. Playground is in beta.
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      subnavButton
-                    )}
-                  </SidebarMenuSubItem>
-                );
-              })}
-            </SidebarMenuSub>
+                  return (
+                    <SidebarMenuSubItem key={item.title}>
+                      <SidebarMenuSubButton
+                        isActive={!isItemDisabled && item.isActive(activeTab)}
+                        href={item.href}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (isItemDisabled) return;
+                          item.onClick();
+                        }}
+                        aria-disabled={isItemDisabled || undefined}
+                        className={cn(
+                          isItemDisabled &&
+                            "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
+                          disabled && "pointer-events-none"
+                        )}
+                      >
+                        <ItemIcon className="h-4 w-4" />
+                        <span className="min-w-0 truncate">{item.title}</span>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  );
+                })}
+              </SidebarMenuSub>
+            ) : null}
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroupContent>
@@ -572,7 +555,8 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
@@ -643,6 +627,7 @@ export function MCPSidebar({
       "mcpjam-conformance": conformanceEnabled === true,
       "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
       "home-page-enabled": homePageEnabled === true && isAuthenticated,
+      "evaluate-ui": evaluateUiEnabled === true,
       xaa: xaaEnabled === true,
     }),
     [
@@ -652,6 +637,7 @@ export function MCPSidebar({
       conformanceEnabled,
       hostsEnabled,
       homePageEnabled,
+      evaluateUiEnabled,
       xaaEnabled,
       isAuthenticated,
     ]
@@ -769,8 +755,28 @@ export function MCPSidebar({
         </SidebarHeader>
         <SidebarContent>
           {visibleNavigationSections.map((section, sectionIndex) => {
-            const evalsEntry = section.items.find((item) => item.evalsSubnav);
-            const flatItems = section.items.filter((item) => !item.evalsSubnav);
+            const rawEvalsEntry = section.items.find((item) => item.evalsSubnav);
+            // Only render Evaluate through the SidebarEvalsNavGroup wrapper
+            // (which adds its own SidebarGroup padding) when there's actually
+            // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
+            // so it sits flush with Views and matches sibling spacing.
+            const useEvalsSubnavWrapper =
+              !!rawEvalsEntry && evaluateRunsEnabled === true;
+            const evalsEntry = useEvalsSubnavWrapper ? rawEvalsEntry : undefined;
+            const flatItems = section.items
+              .map((item) => {
+                if (!item.evalsSubnav) return item;
+                if (useEvalsSubnavWrapper) return null;
+                const locked = playgroundEnabled !== true;
+                return {
+                  ...item,
+                  disabled: locked || item.disabled,
+                  disabledTooltip: locked
+                    ? "Coming soon. Playground is in beta."
+                    : item.disabledTooltip,
+                };
+              })
+              .filter((item): item is NavItem => item !== null);
 
             return (
               <React.Fragment key={section.id}>
@@ -838,10 +844,7 @@ export function MCPSidebar({
             />
           ) : null}
           {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
-          <SidebarUser
-            activeOrganizationId={activeOrganizationId}
-            onBeforeSignOut={onBeforeSignOut}
-          />
+          <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

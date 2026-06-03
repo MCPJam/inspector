@@ -9,6 +9,10 @@ interface EnvVarsSectionProps {
   onAdd: () => void;
   onRemove: (index: number) => void;
   onUpdate: (index: number, field: "key" | "value", value: string) => void;
+  hasStoredEnv?: boolean;
+  isRevealing?: boolean;
+  revealError?: string | null;
+  onReveal?: () => void;
 }
 
 export function EnvVarsSection({
@@ -18,15 +22,21 @@ export function EnvVarsSection({
   onAdd,
   onRemove,
   onUpdate,
+  hasStoredEnv = false,
+  isRevealing = false,
+  revealError,
+  onReveal,
 }: EnvVarsSectionProps) {
+  const isHidden = hasStoredEnv && envVars.length === 0;
+
   return (
     <div className="border border-border rounded-lg overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-      >
-        <div className="flex items-center gap-2">
+      <div className="flex w-full items-center justify-between p-3 transition-colors hover:bg-muted/50">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex flex-1 items-center gap-2 text-left"
+        >
           {showEnvVars ? (
             <ChevronDown className="h-4 w-4 text-muted-foreground" />
           ) : (
@@ -40,11 +50,12 @@ export function EnvVarsSection({
               ({envVars.length})
             </span>
           )}
-        </div>
+        </button>
         <Button
           type="button"
           variant="outline"
           size="sm"
+          disabled={isHidden}
           onClick={(e) => {
             e.stopPropagation();
             onAdd();
@@ -53,7 +64,34 @@ export function EnvVarsSection({
         >
           Add Variable
         </Button>
-      </button>
+      </div>
+
+      {showEnvVars && isHidden && (
+        <div className="border-t border-border bg-muted/30 p-4">
+          <div className="flex items-center justify-between gap-3 rounded border border-border bg-background px-3 py-2">
+            <div>
+              <p className="text-xs font-medium text-foreground">
+                Hidden — Reveal to view
+              </p>
+              {revealError && (
+                <p role="alert" className="mt-1 text-xs text-destructive">
+                  {revealError}
+                </p>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isRevealing || !onReveal}
+              onClick={onReveal}
+              className="text-xs"
+            >
+              {isRevealing ? "Revealing..." : "Reveal"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {showEnvVars && envVars.length > 0 && (
         <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">

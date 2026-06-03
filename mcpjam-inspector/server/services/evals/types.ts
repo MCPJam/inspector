@@ -1,5 +1,6 @@
 import {
   evaluateToolCalls,
+  resolveExtrasCap,
   type EvalMatchOptions,
   type ToolCall,
   type ArgumentMismatch,
@@ -103,14 +104,15 @@ export const evaluateMultiTurnResults = (
 
       if (turn.expectedToolCalls.length === 0) {
         // A turn with no expectations should normally pass. The one exception
-        // is strict extras (`allowExtraToolCalls === false`) when the model
-        // *did* make calls on this turn — those calls are unexpected extras
-        // and must fail. We can't route through `evaluateResults` for the
-        // empty-actual case because the SDK matcher fails positive
-        // both-empty by design.
+        // is bounded extras (`maxExtraToolCalls === 0`, including the legacy
+        // `allowExtraToolCalls === false` shim) when the model *did* make
+        // calls on this turn — those calls are unexpected extras and must
+        // fail. We can't route through `evaluateResults` for the empty-actual
+        // case because the SDK matcher fails positive both-empty by design.
+        const extrasCap = resolveExtrasCap(matchOptions);
         if (
-          matchOptions?.allowExtraToolCalls === false &&
-          actualToolCalls.length > 0
+          extrasCap !== null &&
+          actualToolCalls.length > extrasCap
         ) {
           return {
             promptIndex,

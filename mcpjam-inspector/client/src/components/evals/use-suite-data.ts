@@ -6,10 +6,7 @@ import {
   computeIterationSummary,
   getTemplateKey,
 } from "./helpers";
-import {
-  computeIterationResult,
-  computeIterationPassed,
-} from "./pass-criteria";
+import { computeIterationResult } from "./pass-criteria";
 import {
   EvalCase,
   EvalIteration,
@@ -110,11 +107,23 @@ export function useSuiteData(
           return null;
         }
 
+        const passed =
+          realTimeTotal > 0
+            ? realTimePassed
+            : (run.summary?.passed ?? 0);
+        const total =
+          realTimeTotal > 0
+            ? realTimeTotal
+            : (run.summary?.total ?? 0);
+
         return {
           runId: run._id,
           runIdDisplay: formatRunId(run._id),
           passRate,
+          passed,
+          total,
           label: formatTime(run.completedAt ?? run.createdAt),
+          runNumber: run.runNumber,
         };
       })
       .filter(
@@ -124,7 +133,10 @@ export function useSuiteData(
           runId: string;
           runIdDisplay: string;
           passRate: number;
+          passed: number;
+          total: number;
           label: string;
+          runNumber: number;
         } => item !== null,
       );
     return data;
@@ -459,177 +471,8 @@ export function useRunDetailData(
     return sorted.map((item) => item.iteration);
   }, [selectedRunId, iterationsForSelectedRun, runDetailSortBy]);
 
-  // Data for run detail charts
-  const selectedRunChartData = useMemo(() => {
-    if (!selectedRunId || caseGroupsForSelectedRun.length === 0) {
-      return { donutData: [], durationData: [], tokensData: [], modelData: [] };
-    }
-
-    let totalPassed = 0;
-    let totalFailed = 0;
-    let totalPending = 0;
-    let totalCancelled = 0;
-
-    const modelMap = new Map<
-      string,
-      { passed: number; failed: number; total: number; modelName: string }
-    >();
-
-    iterationsForSelectedRun.forEach((iteration) => {
-      const model = iteration.testCaseSnapshot?.model || "Unknown";
-      const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
-
-      // Only count completed iterations - exclude pending/cancelled
-      const result = computeIterationResult(iteration);
-      if (result !== "passed" && result !== "failed") {
-        return; // Skip pending/cancelled iterations
-      }
-
-      if (!modelMap.has(model)) {
-        modelMap.set(model, { passed: 0, failed: 0, total: 0, modelName });
-      }
-
-      const stats = modelMap.get(model)!;
-      stats.total += 1;
-
-      if (result === "passed") {
-        stats.passed += 1;
-      } else {
-        stats.failed += 1;
-      }
-    });
-
-    // Sort alphabetically by model name for consistent, fixed ordering
-    const modelData = Array.from(modelMap.entries())
-      .map(([_model, stats]) => ({
-        model: stats.modelName,
-        passRate:
-          stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
-        passed: stats.passed,
-        failed: stats.failed,
-        total: stats.total,
-      }))
-      .sort((a, b) => a.model.localeCompare(b.model));
-
-    const testMap = new Map<
-      string,
-      {
-        title: string;
-        durations: number[];
-        tokens: number[];
-        passed: number;
-        failed: number;
-        pending: number;
-        cancelled: number;
-      }
-    >();
-
-    caseGroupsForSelectedRun.forEach((iteration) => {
-      const testKey = iteration.testCaseSnapshot?.title || "Unknown";
-
-      if (!testMap.has(testKey)) {
-        testMap.set(testKey, {
-          title: testKey,
-          durations: [],
-          tokens: [],
-          passed: 0,
-          failed: 0,
-          pending: 0,
-          cancelled: 0,
-        });
-      }
-
-      const test = testMap.get(testKey)!;
-
-      // Use computeIterationPassed for accurate pass/fail with negative test support
-      if (iteration.result === "pending") test.pending++;
-      else if (iteration.result === "cancelled") test.cancelled++;
-      else if (computeIterationPassed(iteration)) test.passed++;
-      else test.failed++;
-
-      const startedAt = iteration.startedAt ?? iteration.createdAt;
-      const completedAt = iteration.updatedAt ?? iteration.createdAt;
-      if (startedAt && completedAt && iteration.result !== "pending") {
-        test.durations.push(Math.max(completedAt - startedAt, 0));
-      }
-
-      // Track tokens used
-      if (iteration.result !== "pending" && iteration.tokensUsed) {
-        test.tokens.push(iteration.tokensUsed);
-      }
-    });
-
-    testMap.forEach((test) => {
-      totalPassed += test.passed;
-      totalFailed += test.failed;
-      totalPending += test.pending;
-      totalCancelled += test.cancelled;
-    });
-
-    const durationData = Array.from(testMap.values()).map((test) => {
-      const avgDuration =
-        test.durations.length > 0
-          ? test.durations.reduce((sum, d) => sum + d, 0) /
-            test.durations.length
-          : 0;
-
-      return {
-        name: test.title,
-        duration: avgDuration,
-        durationSeconds: avgDuration / 1000,
-      };
-    });
-
-    const tokensData = Array.from(testMap.values())
-      .map((test) => {
-        const avgTokens =
-          test.tokens.length > 0
-            ? test.tokens.reduce((sum, t) => sum + t, 0) / test.tokens.length
-            : 0;
-
-        return {
-          name: test.title,
-          tokens: avgTokens,
-        };
-      })
-      .filter((entry) => entry.tokens > 0);
-
-    const donutData = [];
-    if (totalPassed > 0) {
-      donutData.push({
-        name: "Passed",
-        value: totalPassed,
-        fill: "hsl(142.1 76.2% 36.3%)",
-      });
-    }
-    if (totalFailed > 0) {
-      donutData.push({
-        name: "Failed",
-        value: totalFailed,
-        fill: "hsl(0 84.2% 60.2%)",
-      });
-    }
-    if (totalPending > 0) {
-      donutData.push({
-        name: "Pending",
-        value: totalPending,
-        fill: "hsl(45.4 93.4% 47.5%)",
-      });
-    }
-    if (totalCancelled > 0) {
-      donutData.push({
-        name: "Cancelled",
-        value: totalCancelled,
-        fill: "hsl(240 3.7% 15.9%)",
-      });
-    }
-
-    return { donutData, durationData, tokensData, modelData };
-  }, [selectedRunId, caseGroupsForSelectedRun, iterationsForSelectedRun]);
-
   return {
     iterationsForSelectedRun,
     caseGroupsForSelectedRun,
-    selectedRunChartData,
   };
 }

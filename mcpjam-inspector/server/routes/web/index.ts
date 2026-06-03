@@ -11,6 +11,7 @@ import chatboxes from "./chatboxes.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import oauthWeb from "./oauth.js";
+import serverSecretsWeb from "./server-secrets.js";
 import xaaWeb from "./xaa.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
@@ -30,10 +31,11 @@ web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
-  guestRateLimitMiddleware,
+  guestRateLimitMiddleware
 );
 
 web.route("/servers", servers);
@@ -46,6 +48,7 @@ web.route("/export", exporter);
 web.route("/chat-v2", chatV2);
 web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
+web.route("/server", serverSecretsWeb);
 web.route("/xaa", xaaWeb);
 web.route("/guest-session", guestSession);
 web.route("/chat-history", chatHistory);

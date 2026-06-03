@@ -7,75 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Use a CodeMirror edit surface for shared JSON editing to keep wrapped typing and cursor placement aligned.",
-      "id": "calm-json-views"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        }
-      ],
-      "summary": "Drop App Builder references from `tools` command rendering and tests; Playground is the only post-connect surface.",
-      "id": "cli-app-builder-removal"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "- Remove `/chat-v2` tab and retire the `playground-tab-enabled` flag; Playground replaces App Builder as the only post-connect destination.\n- Org-scoped home dashboard at `/home`.\n- Model picker: separate tabs for Free models and Your providers.\n- Agent tab respects the per-tool visibility toggle.\n- Apps: preview `window.openai` methods when injection is off; widgets open inline by default instead of being forced fullscreen; `window.openai.setOpenInAppUrl` implemented; App Builder app-tool execution routed through AppBridge.\n- Per-server protocol-version override is always visible and functional.\n- Fix hosted mixed-protocol tools.",
-      "id": "inspector-playground-and-fixes"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "- Align stateless RC preview behavior with the draft client contract.\n- Replace `DRAFT-2026-v1` with the `2026-07-28` wire literal across the SDK.\n- `getToolsForAiSdk` filters SEP-1865 app-only tools by default.\n- Implement `window.openai.setOpenInAppUrl` plumbing.",
-      "id": "sdk-stateless-rc-and-wire"
+      "summary": "Polish evals UI: refine run detail, suite list, cross-host matrix, trace viewer, goal completion card, and test template editor. Improves scroll behavior in trace viewer (stick-to-bottom) and tightens visuals across the evals tab.",
+      "id": "eval-ui-polish"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.6.1",
-      "changesets": [
-        "calm-json-views",
-        "inspector-playground-and-fixes"
-      ],
-      "newVersion": "2.7.0"
-    },
-    {
-      "name": "@mcpjam/cli",
       "type": "patch",
-      "oldVersion": "3.3.4",
+      "oldVersion": "2.9.1",
       "changesets": [
-        "cli-app-builder-removal"
+        "eval-ui-polish"
       ],
-      "newVersion": "3.3.5"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.8.0",
-      "changesets": [
-        "sdk-stateless-rc-and-wire"
-      ],
-      "newVersion": "1.9.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.9.2"
     }
   ]
 }

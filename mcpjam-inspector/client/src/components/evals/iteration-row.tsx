@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { EvalIteration, EvalCase } from "./types";
 import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
+import { parseIterationPredicates } from "./predicates-list";
 
 interface IterationRowProps {
   iteration: EvalIteration;
@@ -34,6 +35,20 @@ export function CompactIterationRow({
   const isPending = iteration.result === "pending";
 
   const actualToolCalls = iteration.actualToolCalls || [];
+
+  // X/Y checks passed badge — read from the same parsed predicate verdicts
+  // PredicatesList renders. User-facing wording is "checks"; the internal
+  // data is `metadata.predicates` (the SDK-defined PredicateResult[] shape).
+  const predicates = parseIterationPredicates(iteration.metadata);
+  const checksBadge =
+    predicates && predicates.length > 0
+      ? {
+          total: predicates.length,
+          passed: predicates.filter((p) => p.passed).length,
+        }
+      : null;
+  const allChecksPassed =
+    checksBadge !== null && checksBadge.passed === checksBadge.total;
 
   return (
     <div
@@ -72,6 +87,19 @@ export function CompactIterationRow({
           <span className="text-xs text-muted-foreground font-mono min-w-[70px] max-w-[70px] text-right">
             {durationMs !== null ? formatDuration(durationMs) : "—"}
           </span>
+          {checksBadge ? (
+            <span
+              className={cn(
+                "text-[10px] font-semibold rounded px-1.5 py-0.5 min-w-[100px] max-w-[110px] text-center",
+                allChecksPassed
+                  ? "bg-green-500/15 text-green-700 dark:text-green-300"
+                  : "bg-red-500/15 text-red-700 dark:text-red-300",
+              )}
+              title={`${checksBadge.passed} of ${checksBadge.total} deterministic checks passed`}
+            >
+              {checksBadge.passed} / {checksBadge.total} checks
+            </span>
+          ) : null}
           {isPending && (
             <div className="flex items-center min-w-[40px]">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />

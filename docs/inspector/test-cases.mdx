@@ -1,176 +1,123 @@
 ---
-title: "Test Cases"
-description: "Create test cases manually or generate them with AI, run them against your MCP servers, and analyze results"
+title: "Evaluate"
+description: "Author test cases for your MCP server, run them across models, and gate pass/fail on deterministic checks plus optional LLM-as-judge."
 icon: "flask-conical"
 ---
 
-Test Cases provide a comprehensive testing environment for evaluating your MCP server's tool performance across different LLMs. Create test cases, generate tests automatically with AI, run evaluations, and analyze results with detailed metrics and visualizations.
+A benchmark score doesn't tell you whether your server holds up in production. Evaluate lets you pin down the behaviors you care about — which tools fire, with what arguments, what the final answer looks like — and run them across the models your users actually use.
 
-## Key Features
+## How it's organized
 
-The Test Cases feature provides everything you need to evaluate MCP server reliability:
+<Steps>
+  <Step title="Project">
+    Holds your servers and your suites. Everything below lives in one project.
+  </Step>
+  <Step title="Suite">
+    A group of cases plus the defaults they share: attached servers, models to run against, default checks, judge config, and argument-matching mode.
+  </Step>
+  <Step title="Case">
+    One scenario you want to verify — a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the checks that decide pass/fail.
+  </Step>
+  <Step title="Run">
+    One execution of a suite. Produces **iterations** — one per case × model. Each iteration has its own transcript, tool calls, tokens, duration, and verdict.
+  </Step>
+</Steps>
 
-- **AI-Powered Test Generation** - Automatically generate comprehensive test cases from your tool definitions
-- **Negative Test Cases** - Test edge cases where tools should NOT be triggered
-- **Multi-Model Evaluation** - Run tests across different LLM providers and models
-- **Accuracy Metrics** - View test statistics, see how results change across runs, and compare performance between different LLMs
-- **Detailed Run Analysis** - View test duration, token consumption, and model performance breakdowns
-- **Batch Operations** - Run entire test cases or individual tests with a single click
+## Authoring a case
 
-## Getting Started
+Each case has four moving parts:
 
-To start testing your MCP server:
-
-1. **Connect your MCP server** - Use the Servers tab to connect to your MCP server
-2. **Navigate to Test Cases** - Click the Test Cases tab in MCPJam Inspector
-3. **Create tests** - Either:
-   - Click the plus icon to manually create a test case and configure the scenario, user prompt, expected tools, and expected output
-   - Click the magic wand icon to auto-generate tests from your tools
-4. **Configure models** - Click Results & Runs in the sidebar, then use the Models dropdown to select which models to test against
-5. **Run Tests** - Click Run to execute all test cases, or run individual tests from the test case view
-
-<Info>
-  When using auto-generate, Claude Haiku creates realistic test scenarios from your tool definitions, including both positive cases (tools that should be called) and negative cases (tools that should NOT be called).
-</Info>
-
-## Test Case Structure
-
-Each test case contains:
-
-- **Scenario** - A description of the use case to test
-- **User Prompt** - The exact prompt or interaction to begin the test
-- **Tool Triggered** - Which tools should be called
-- **Expected Output** - The output or experience we should expect to receive back from the MCP server
-
-### Positive vs Negative Tests
-
-**Positive Tests** verify that your tools are correctly triggered when they should be.
-
-Examples include:
-
-- Single tool usage ("Get me the weather in Tokyo")
-- Multiple tools in one request ("Find flights to Paris and check the weather there")
-
-**Negative Tests** verify that tools are NOT called when they shouldn't be.
-
-Examples include:
-
-- Meta questions about tools ("What parameters does search accept?")
-- Similar keywords without action intent ("I was reading about file systems")
-- Ambiguous or conversational prompts
-
-Negative tests are marked with a "NEG" badge in the sidebar for easy identification.
-
-## Managing Test Cases
-
-Use the sidebar to manage your test cases:
-
-- **Create new tests** - Click the plus icon to add a test case manually
-- **Generate tests with AI** - Click the magic wand to auto-generate tests from your tools
-- **Duplicate tests** - Use the dropdown menu on any test to create a copy
-- **Delete tests** - Remove tests you no longer need
-
-## Running Tests
-
-You can run tests in two ways:
-
-- **Run a single test** - Choose which of your configured models to use and click Run
-- **Run all tests** - Click Results & Runs, configure your models, then click the Run button
+- **Scenario** — short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
+- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
+- **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
+- **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
 
 <Note>
-  Running tests requires connected MCP servers. If the Run button is disabled, check that your servers are connected in the Servers tab.
+  A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
 </Note>
 
-## Analyzing Results
+## Checks — the deterministic gate
 
-### Results & Runs View
+Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
 
-Click Results & Runs in the sidebar to see overall analytics:
+Set defaults on the suite; override per case with **inherit** (use suite defaults), **replace** (use only the case's list), or **extend** (suite defaults, then the case's list).
 
-- **Accuracy Donut** - Overall accuracy percentage
-- **Accuracy Chart** - Shows pass rates across runs (line connects multiple runs)
-- **Performance by Model** - Bar chart comparing models
+| Check | Passes when |
+| --- | --- |
+| **Tool was called with…** | The named tool was called with arguments matching your spec (per the suite's `argumentMatching` mode). |
+| **Tool was called at least once** | The named tool fired at least once across the turn. |
+| **Tool was never called** | The named tool did not fire. The core of negative cases. |
+| **First tool called was…** | The first tool call in the turn matched the named tool. |
+| **Response contains…** | The final assistant message contains a substring. |
+| **Response matches regex…** | The final assistant message matches a regex. |
+| **No tool errors** | No tool call returned an error. |
+| **Final message non-empty** | The model produced a final assistant message. |
+| **Token budget under N** | Total token usage stayed below the cap. |
 
-<iframe
-  className="w-full aspect-video rounded-xl"
-  src="https://www.youtube.com/embed/iglDMsuTwf4"
-  title="Test Cases demo"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-  allowFullScreen
-></iframe>
+### Argument matching
 
-Use the dropdown to switch between "Runs" and "Test Cases" views:
+Tool-call argument comparison runs in one of three modes, configured at the suite:
 
-**Runs view:**
-- **Run History** - Shows all your runs with their metrics (Run ID, Start time, Duration, Passed, Failed, Accuracy, Tokens)
+- **partial** *(default)* — every expected key must be present and match; extra keys in the actual call are ignored. Best for "I care about `query` and `limit`, not what else the model put in."
+- **exact** — actual args must equal expected args, key-for-key.
+- **ignore** — only the tool name is checked.
 
-**Test Cases view:**
-- **Test Cases Table** - List of all tests with Test Case Name, Iterations, Avg Accuracy, Avg Duration
+Type placeholders (`"string"`, `"number"`, `"boolean"`) match any value of that type, which lets you assert shape without locking in a literal.
 
-### Run Detail View
+## LLM as judge
 
-When you click on a run:
+For cases where "did the right tools fire" isn't enough — anything graded on the quality of the final answer — the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
 
-- **Metrics Summary** - Accuracy, Passed, Failed, Total, Duration
-- **All Iterations Table** - List of all test executions with:
-  - Test name
-  - Model used
-  - Tools called
-  - Tokens consumed
-  - Duration
-- **Run Summary Sidebar** - Click "View run summary" to see:
-  - Duration per Test (averaged across models)
-  - Tokens per Test (averaged across models)
-  - Performance by Model
+- **On by default** at the suite level. The cost is gated by an explicit **Run judge** click on the run-detail page — it won't run for every iteration unless you turn auto-run on.
+- **Calibrate per suite.** Judge scores aren't comparable across domains; a 0.7 on one suite isn't a 0.7 on another.
+- When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
 
-### Test Case Detail View
+## Running
 
-When you click on a test case:
+A run needs three things, all picked from the suite header:
 
-- **Performance Across Runs** - Line chart showing how this test performs over time
-- **Performance by Model** - Bar chart comparing pass rates across models
-- **Iterations List** - All executions of this test with:
-  - Pass/fail status
-  - Model used
-  - Tool calls, tokens, duration
-  - Run ID
-- **Expanded Details** - Click an iteration to see:
-  - Expected vs Actual tool calls
-  - Full trace showing the conversation, model reasoning, and tool execution details
-
-## Debugging Tests
-
-Use the visual status indicators to quickly identify issues:
-
-- **Green border** - Test passed (expected tools were called)
-- **Red border** - Test failed (tools were not called as expected)
-- **Yellow border** - Test pending
-- **Gray border** - Test cancelled
-
-For failed tests, expand the iteration to view:
-
-- Expected vs Actual tool calls (see what's missing or unexpected)
-- Full conversation trace (understand why the model made different decisions)
+1. **Servers** — one or more attached to the suite. Cases can attach their own subsets if they only need part of the surface.
+2. **Models** — the multi-model picker is the whole point. Each model produces its own iteration per case, so you can see where Claude passes and ChatGPT trips.
+3. **Run all** — kicks off every case × every model. **Run one** from a case row runs just that case.
 
 <Tip>
-  If tests are consistently failing, check that your expected tool calls match your tool definitions. The LLM may be calling tools with slightly different argument formats.
+  If **Run all** is disabled, a connected server is missing or no models are selected. The header pickers will tell you which.
 </Tip>
 
-## Best Practices
+## Reading results
 
-### Writing Effective Test Cases
+### Suite view
 
-- **Be specific** - Include concrete values (dates, IDs, names) in prompts
-- **Test realistic scenarios** - Write prompts as real users would
-- **Cover edge cases** - Include negative tests for boundary conditions
-- **Review the trace** - When tests fail, view the full conversation to understand LLM reasoning
-- **Iterate before submission** - Ensure your test cases pass locally before submitting to app stores
+- **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
+- **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
+- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown.
+- **Cases tab** — every case with its latest verdict and a quick replay button.
 
-### For ChatGPT App Submission
+### Run view
 
-If you're building a ChatGPT app, OpenAI requires **5 positive test cases and 3 negative test cases**. Use the AI generation feature to quickly create these, then customize as needed.
+- **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened.
+- **Expected vs actual** tool calls side-by-side when an iteration fails.
+- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here.
+- **Per-model breakdown** to compare how the same case behaves across models.
 
-<Tip>
-  App store approval cycles can be lengthy. A single test case failure can cost you days of waiting - test thoroughly before submitting.
-</Tip>
+### Case view
 
+- **Pass rate across runs** — is this case stable, flaky, or trending down?
+- **Pass rate by model** — does this case only work on one model?
+- Every past iteration with its trace, so you can A/B a regression against a working run.
+
+## Generating cases from your tools
+
+The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
+
+## What to author first
+
+If you're new to the surface, the shortest useful loop is:
+
+1. Attach the server you're shipping.
+2. **Generate** a starting set of cases.
+3. Delete the ones that don't match real usage; tighten checks on the rest.
+4. Add the two or three models your users will hit.
+5. **Run all**, open the failures, and decide whether the bug is in your server, your prompt, or the model.
+
+That last step is the one that benefits most from spending time in the trace view.

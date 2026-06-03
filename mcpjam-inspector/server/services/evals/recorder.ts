@@ -8,6 +8,8 @@ import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
+import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -60,7 +62,10 @@ export type SuiteRunRecorder = {
     error?: string;
     errorDetails?: string;
     resultSource?: "reported" | "derived";
-    metadata?: Record<string, string | number | boolean>;
+    // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
+    // nested `predicates: PredicateResult[]` rows. Persisted to
+    // `testIteration.metadata`; the Convex validator accepts nested values.
+    metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
     status: "completed" | "failed" | "cancelled";
@@ -249,7 +254,13 @@ export const createSuiteRunRecorder = ({
           error,
           errorDetails,
           resultSource,
-          metadata,
+          // Merge user-provided metadata with token usage breakdown, then
+          // sanitize: metadata can carry nested predicate rows whose authored
+          // args may contain $-prefixed keys Convex rejects at the boundary.
+          metadata: sanitizeForConvexTransport({
+            ...(metadata ?? {}),
+            ...buildIterationUsageMetadata(usage),
+          }),
         });
       } catch (error) {
         const errorMessage =
@@ -322,6 +333,7 @@ export const startSuiteRunWithRecorder = async ({
   iterationOverride,
   matchOptionsOverride,
   namedHostId,
+  runGroupId,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -360,6 +372,13 @@ export const startSuiteRunWithRecorder = async ({
    * just receives the host's servers like any other run.
    */
   namedHostId?: string;
+  /**
+   * Client-generated UUID shared by every per-host run when a multi-host
+   * eval launch fans out. Persisted on `testSuiteRun.runGroupId` so the
+   * UI can collapse sibling rows into a single group. Absent on
+   * single-host launches.
+   */
+  runGroupId?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -375,6 +394,7 @@ export const startSuiteRunWithRecorder = async ({
       iterationOverride,
       matchOptionsOverride,
       ...(namedHostId ? { namedHostId } : {}),
+      ...(runGroupId ? { runGroupId } : {}),
     },
   );
 
@@ -409,9 +429,52 @@ export const startSuiteRunWithRecorder = async ({
         .environment as SuiteRunEnvironmentSnapshot)
     : { servers: serverIds ?? [] };
 
+  // Resolve suite default predicates once so per-case envelopes can be
+  // collapsed to a flat list for the runner. Prefer the configSnapshot when
+  // present (mirrors how Convex freezes other suite defaults onto the run);
+  // an intentionally empty snapshot (`[]`) means "this run was frozen with
+  // no suite defaults" and must NOT fall back to the live suite, otherwise
+  // suite defaults added after run-precreate retroactively gate frozen
+  // cases. Only the absent-or-non-array case falls back to a live query.
+  const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
+  let suiteDefaultPredicates: import("@/shared/eval-matching").Predicate[] | undefined;
+  if (Array.isArray(snapshotDefaults)) {
+    suiteDefaultPredicates = snapshotDefaults.length > 0
+      ? (snapshotDefaults as import("@/shared/eval-matching").Predicate[])
+      : undefined;
+  } else {
+    try {
+      const suite = await convexClient.query(
+        "testSuites:getTestSuite" as any,
+        { suiteId },
+      );
+      const defaults = (suite as { defaultPredicates?: unknown } | undefined)
+        ?.defaultPredicates;
+      suiteDefaultPredicates = Array.isArray(defaults) && defaults.length > 0
+        ? (defaults as import("@/shared/eval-matching").Predicate[])
+        : undefined;
+    } catch {
+      suiteDefaultPredicates = undefined;
+    }
+  }
+
+  const resolvePredicatesForCase = (
+    tc: Record<string, any>,
+  ): import("@/shared/eval-matching").Predicate[] | undefined =>
+    resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      envelope: tc.predicates as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
+      legacyCase: tc.successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+    });
+
   // Build config from test cases for backward compatibility
   const config = {
     tests: testCases.flatMap((tc: any) => {
+      const successPredicates = resolvePredicatesForCase(tc);
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => ({
           title: tc.title,
@@ -425,6 +488,7 @@ export const startSuiteRunWithRecorder = async ({
           promptTurns: tc.promptTurns,
           advancedConfig: tc.advancedConfig,
           matchOptions: tc.matchOptions,
+          successPredicates,
           testCaseId: tc._id,
         }));
       }
@@ -443,6 +507,7 @@ export const startSuiteRunWithRecorder = async ({
             promptTurns: tc.promptTurns,
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
+            successPredicates,
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];

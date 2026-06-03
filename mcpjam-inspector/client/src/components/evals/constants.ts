@@ -5,6 +5,13 @@ export function isExploreSuite(suite: { tags?: string[] | null }): boolean {
   return suite.tags?.includes(EXPLORE_SUITE_TAG) === true;
 }
 
+/** Tag on suites minted by the Excalidraw quickstart on the Evaluate empty state. */
+export const QUICKSTART_SUITE_TAG = "quickstart";
+
+export function isQuickstartSuite(suite: { tags?: string[] | null }): boolean {
+  return suite.tags?.includes(QUICKSTART_SUITE_TAG) === true;
+}
+
 // Run filters
 export const RUN_FILTER_ALL = "all";
 export const RUN_FILTER_LEGACY = "legacy";
@@ -64,6 +71,27 @@ export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
   failed: "text-destructive",
 } as const;
 
+/** Foreground text color for low pass rates, negative deltas, and fail counts in dense eval UI. */
+export const EVAL_LOW_PASS_RATE_TEXT_CLASS = "text-destructive";
+
+/**
+ * Filled delete/destructive actions — pastel surface `/50`, neutral text.
+ *
+ * `hover:bg-destructive/50` is an explicit override: without it, the design-system
+ * `Button` default variant's `hover:bg-primary/90` wins under twMerge and the
+ * button would flash brand-orange on hover. Pinning hover-bg to the same `/50`
+ * destructive token lets `hover:brightness-95` do the affordance work.
+ */
+export const EVAL_DESTRUCTIVE_BUTTON_CLASS =
+  "border-transparent bg-destructive/50 text-foreground shadow-xs hover:bg-destructive/50 hover:brightness-95 focus-visible:ring-destructive/35";
+
+/** Pastel fail fill for stacked iteration bars. */
+export const EVAL_FAIL_BAR_CLASS = "bg-destructive/50";
+
+/** Compact failed-outcome badges — pastel surface `/50`, neutral foreground. */
+export const EVAL_FAILED_BADGE_CLASS =
+  "bg-destructive/50 text-foreground";
+
 // UI configuration
 export const UI_CONFIG = {
   MAX_TITLE_LENGTH: 100,
@@ -76,7 +104,7 @@ export const UI_CONFIG = {
     PASSED: "var(--color-success)",
     FAILED: "var(--color-destructive)",
     PENDING: "var(--color-warning)",
-    CANCELLED: "hsl(240 3.7% 15.9%)",
+    CANCELLED: "var(--color-muted-foreground)",
   },
 } as const;
 
@@ -88,14 +116,16 @@ export const BORDER_COLORS = {
   [RESULT_STATUS.PENDING]: "bg-warning/50",
 } as const;
 
-// Status dot colors
+// Status dot colors — pastel `/50` surfaces per the sweep. If a 6px dot
+// loses legibility against `bg-muted` neighbours, follow up in PR-2 with
+// either a full-token fallback or `ring-1 ring-<token>/60`.
 export const STATUS_DOT_COLORS = {
-  [RESULT_STATUS.PASSED]: "bg-success",
-  [RESULT_STATUS.FAILED]: "bg-destructive",
-  [RESULT_STATUS.CANCELLED]: "bg-muted-foreground",
-  [RESULT_STATUS.PENDING]: "bg-warning",
-  RUNNING: "bg-warning",
-  DEFAULT: "bg-muted-foreground",
+  [RESULT_STATUS.PASSED]: "bg-success/50",
+  [RESULT_STATUS.FAILED]: "bg-destructive/50",
+  [RESULT_STATUS.CANCELLED]: "bg-muted-foreground/50",
+  [RESULT_STATUS.PENDING]: "bg-warning/50",
+  RUNNING: "bg-warning/50",
+  DEFAULT: "bg-muted-foreground/50",
 } as const;
 
 // Wizard steps

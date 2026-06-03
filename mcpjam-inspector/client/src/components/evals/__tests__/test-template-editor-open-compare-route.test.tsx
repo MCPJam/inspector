@@ -258,30 +258,16 @@ describe("TestTemplateEditor run view from route", () => {
       .length;
   }
 
-  // Adds the given models to the compare selection via the chat-v2
-  // ModelSelector popover that replaced the old "Add model to compare"
-  // dropdown. Assumes the lead (pre-selected) model is GPT-4, which the
-  // shared `caseDoc` fixture seeds via `models: [{ provider: "openai",
-  // model: "gpt-4" }]`.
-  async function addCompareModels(
-    user: ReturnType<typeof userEvent.setup>,
-    modelNames: string[],
-  ): Promise<void> {
-    await user.click(
-      screen.getByRole("button", { name: /^openai logo/i }),
-    );
-    await user.click(
-      await screen.findByRole("switch", { name: /multiple models/i }),
-    );
-    for (const name of modelNames) {
-      await user.click(
-        await screen.findByRole("option", {
-          name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
-        }),
-      );
-    }
-    await user.keyboard("{Escape}");
-  }
+  const threeModelCompareCase = {
+    ...caseDoc,
+    models: [
+      { provider: "openai", model: "gpt-4" },
+      { provider: "anthropic", model: "claude-4.5-sonnet" },
+      { provider: "google", model: "gemini-2.5-pro" },
+    ],
+  };
+
+  let activeCaseDoc = caseDoc;
 
   function getLatestTraceViewerProps() {
     const lastCall = mockTraceViewer.mock.calls.at(-1)?.[0];
@@ -295,6 +281,7 @@ describe("TestTemplateEditor run view from route", () => {
   }
 
   beforeEach(() => {
+    activeCaseDoc = caseDoc;
     vi.clearAllMocks();
     mockTraceViewer.mockReset();
     useMutationMock.mockImplementation((name: string) => {
@@ -306,7 +293,7 @@ describe("TestTemplateEditor run view from route", () => {
     getGuestBearerTokenMock.mockResolvedValue("guest-token");
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (name === "testSuites:listTestCases") {
-        return [caseDoc];
+        return [activeCaseDoc];
       }
       if (name === "testSuites:getTestSuite") {
         return {
@@ -319,9 +306,6 @@ describe("TestTemplateEditor run view from route", () => {
         // baseline from `emptyHostConfigInputV2(...)`; `undefined` means
         // "still loading" and would suppress the header row entirely.
         return null;
-      }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
       }
       if (
         name === "testSuites:getTestIteration" &&
@@ -375,6 +359,7 @@ describe("TestTemplateEditor run view from route", () => {
   it("opens compare run mode when the route requests run view", async () => {
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -394,16 +379,16 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.queryByText("No compare run yet")).not.toBeInTheDocument();
     });
 
-    expect(useQueryMock).toHaveBeenCalledWith("testSuites:listTestIterations", {
-      testCaseId: "case-1",
-      limit: 200,
-    });
     expect(
       screen.getByRole("button", { name: /retry all/i })
     ).toBeInTheDocument();
   });
 
   it("shows a loading spinner instead of config UI while route-open compare data is unresolved", async () => {
+    // Iterations are now a prop, not a query — the remaining loading gates
+    // are `testCases === undefined`, the init ref mismatch, and the route
+    // anchor iteration. Withholding `testSuites:listTestCases` drives the
+    // spinner here; once that query resolves the route can settle.
     let queriesReady = false;
     useQueryMock.mockImplementation((name: string, args: unknown) => {
       if (!queriesReady) {
@@ -420,7 +405,7 @@ describe("TestTemplateEditor run view from route", () => {
       }
 
       if (name === "testSuites:listTestCases") {
-        return [caseDoc];
+        return [activeCaseDoc];
       }
       if (name === "testSuites:getTestSuite") {
         return {
@@ -430,9 +415,6 @@ describe("TestTemplateEditor run view from route", () => {
       }
       if (name === "hostConfigsV2:getSuiteConfig") {
         return null;
-      }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
       }
       if (
         name === "testSuites:getTestIteration" &&
@@ -447,6 +429,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     const view = renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -469,6 +452,7 @@ describe("TestTemplateEditor run view from route", () => {
     view.rerender(
       <PreferencesStoreProvider themeMode="light" themePreset="default">
         <TestTemplateEditor
+        suiteIterations={[baseIteration]}
           suiteId="suite-1"
           selectedTestCaseId="case-1"
           connectedServerNames={new Set(["srv"])}
@@ -521,9 +505,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "hostConfigsV2:getSuiteConfig") {
         return null;
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [newerQuickIteration, clickedIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -539,6 +520,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[newerQuickIteration, clickedIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -562,9 +544,10 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("renders flat User prompt / Tool triggered for a single-turn case", async () => {
+  it("renders flat User prompt / Expected tool calls for a single-turn case", async () => {
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -584,15 +567,18 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByText("User prompt")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Tool triggered")).toBeInTheDocument();
+    expect(screen.getByText("Expected tool calls")).toBeInTheDocument();
     expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
   });
 
-  it("autosaves compare models on run and reuses the compare session id for per-model retry", async () => {
+  it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {
     const user = userEvent.setup();
+
+    activeCaseDoc = threeModelCompareCase;
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -624,24 +610,16 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
     await waitFor(() => {
-      expect(updateTestCaseMutationMock).toHaveBeenCalledWith({
-        testCaseId: "case-1",
-        models: [
-          { provider: "openai", model: "gpt-4" },
-          { provider: "anthropic", model: "claude-4.5-sonnet" },
-          { provider: "google", model: "gemini-2.5-pro" },
-        ],
-      });
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(3);
     });
+
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
 
     const initialCompareRunIds = streamEvalTestCaseMock.mock.calls.map(
       ([request]) => (request as { compareRunId?: string }).compareRunId
@@ -664,7 +642,6 @@ describe("TestTemplateEditor run view from route", () => {
     expect(retryRequest.compareRunId).toBe(initialCompareRunIds[0]);
     expect(retryRequest.provider).toBe("openai");
     expect(retryRequest.model).toBe("gpt-4");
-    expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
   });
 
   it("persists unsaved test case draft fields before starting a compare run", async () => {
@@ -679,19 +656,17 @@ describe("TestTemplateEditor run view from route", () => {
       lastMessageRun: undefined,
     };
 
-    useQueryMock.mockImplementation((name: string, args: unknown) => {
+    useQueryMock.mockImplementation((name: string) => {
       if (name === "testSuites:listTestCases") return [draftCase];
       if (name === "testSuites:getTestSuite") {
         return { _id: "suite-1", environment: { servers: ["srv"] } };
-      }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [];
       }
       return undefined;
     });
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -757,6 +732,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -817,9 +793,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "testSuites:getTestSuite") {
         return { _id: "suite-1", environment: { servers: ["srv"] } };
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -838,6 +811,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -909,6 +883,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -955,118 +930,6 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("renders the host-style control below models and before the scenario form", async () => {
-    renderWithProviders(
-      <TestTemplateEditor
-        suiteId="suite-1"
-        selectedTestCaseId="case-1"
-        connectedServerNames={new Set(["srv"])}
-        projectId={null}
-        availableModels={[
-          {
-            provider: "openai",
-            id: "gpt-4",
-            model: "gpt-4",
-            name: "GPT-4",
-            label: "GPT-4",
-          } as any,
-        ]}
-      />,
-      { hostStyle: "claude" },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
-    });
-
-    const modelBar = screen.getByTestId("test-template-model-bar");
-    const hostHeaderRow = screen.getByTestId("test-template-host-header-row");
-    const scenarioHeading = screen.getByText("Test scenario");
-
-    expect(
-      modelBar.compareDocumentPosition(hostHeaderRow) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
-    expect(
-      hostHeaderRow.compareDocumentPosition(scenarioHeading) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
-    // The new TestCaseClientHeader sources its baseline from suite
-    // hostConfigsV2 — the mock returns null → seeded empty input →
-    // `DEFAULT_HOST_STYLE_V2` ("mcpjam"). The `renderWithProviders`
-    // `hostStyle: "claude"` only seeds the GLOBAL preferences store,
-    // which the new header intentionally no longer reads (per-case
-    // tweaks must not leak across views).
-    expect(
-      within(hostHeaderRow).getByTestId("test-case-host-style-mcpjam"),
-    ).toHaveAttribute("data-selected", "true");
-  });
-
-  it("treats host-style pill clicks as per-case tweaks that don't leak to other surfaces", async () => {
-    // Replaces the prior "carries it across compare columns" test. The
-    // old test locked in cross-view leak behavior: clicking a host pill
-    // in the test case editor mutated `usePreferencesStore.hostStyle`,
-    // which downstream surfaces (CompareResultColumn, playground, chat
-    // UI) all read. The new TestCaseClientHeader writes to a per-case
-    // local override; the global preference store is untouched. A
-    // follow-up will plumb the override into the iteration snapshot so
-    // result cards can read it from there.
-    const user = userEvent.setup();
-
-    streamEvalTestCaseMock.mockImplementation(
-      async () => new Promise<void>(() => {}),
-    );
-
-    renderWithProviders(
-      <TestTemplateEditor
-        suiteId="suite-1"
-        selectedTestCaseId="case-1"
-        connectedServerNames={new Set(["srv"])}
-        projectId={null}
-        availableModels={[
-          {
-            provider: "openai",
-            id: "gpt-4",
-            model: "gpt-4",
-            name: "GPT-4",
-            label: "GPT-4",
-          } as any,
-        ]}
-      />,
-      { hostStyle: "claude" },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
-    });
-
-    const hostHeaderRow = screen.getByTestId("test-template-host-header-row");
-
-    // Baseline starts on the v2 default ("mcpjam") — the suite hostConfig
-    // mock returns null, so emptyHostConfigInputV2 wins. No "Tweaked"
-    // badge until the user makes a tweak.
-    expect(
-      within(hostHeaderRow).getByTestId("test-case-host-style-mcpjam"),
-    ).toHaveAttribute("data-selected", "true");
-    expect(
-      screen.queryByTestId("test-case-host-tweaked-badge"),
-    ).not.toBeInTheDocument();
-
-    await user.click(
-      within(hostHeaderRow).getByTestId("test-case-host-style-chatgpt"),
-    );
-
-    // The tweak applies locally and surfaces the Tweaked badge.
-    await waitFor(() => {
-      expect(
-        within(hostHeaderRow).getByTestId("test-case-host-style-chatgpt"),
-      ).toHaveAttribute("data-selected", "true");
-    });
-    expect(
-      screen.getByTestId("test-case-host-tweaked-badge"),
-    ).toBeInTheDocument();
-  });
-
   it("defaults to Results tab when expected tool calls are on a non-first prompt turn (multi-turn case)", async () => {
     const user = userEvent.setup();
     // Multi-turn case: turn 1 has no expected tool calls, turn 2 has one.
@@ -1101,9 +964,6 @@ describe("TestTemplateEditor run view from route", () => {
       if (name === "hostConfigsV2:getSuiteConfig") {
         return null;
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -1120,6 +980,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1158,7 +1019,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("removes the pre-run host-style selector and only applies the host shell on Chat", async () => {
+  it("only applies the host shell on Chat in the result column", async () => {
     const user = userEvent.setup();
     const caseWithExpectedToolCalls = {
       ...caseDoc,
@@ -1203,9 +1064,6 @@ describe("TestTemplateEditor run view from route", () => {
           hostContext: {},
         };
       }
-      if (name === "testSuites:listTestIterations" && args !== "skip") {
-        return [baseIteration];
-      }
       if (
         name === "testSuites:getTestIteration" &&
         typeof args === "object" &&
@@ -1222,6 +1080,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     const view = renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1243,22 +1102,14 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    expect(
-      screen.getByTestId("test-template-host-header-row"),
-    ).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: /run$/i }));
 
     await waitFor(() => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
     });
 
-    // The header lives in the config view only; flipping to the run /
-    // compare view removes it. No `[data-selected]` host-style markers
-    // should remain in the result tree.
-    expect(
-      screen.queryByTestId("test-template-host-header-row"),
-    ).not.toBeInTheDocument();
+    // No `[data-selected]` host-style markers should appear in the
+    // result tree — host-style chrome only renders inside the Chat tab.
     expect(
       view.container.querySelector('[data-testid^="test-case-host-style-"]'),
     ).toBeNull();
@@ -1351,8 +1202,11 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1384,10 +1238,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1473,8 +1325,11 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1506,10 +1361,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1598,8 +1451,11 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1631,10 +1487,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1729,8 +1583,11 @@ describe("TestTemplateEditor run view from route", () => {
       }
     );
 
+    activeCaseDoc = threeModelCompareCase;
+
     renderWithProviders(
       <TestTemplateEditor
+        suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
         connectedServerNames={new Set(["srv"])}
@@ -1762,10 +1619,8 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /run compare/i })).toBeInTheDocument();
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 

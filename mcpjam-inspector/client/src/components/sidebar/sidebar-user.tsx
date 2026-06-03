@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +9,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -29,34 +32,20 @@ import {
 } from "lucide-react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { HOSTED_MODE } from "@/lib/config";
-import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import { useAppNavigate } from "@/lib/app-navigation";
 
 interface SidebarUserProps {
-  activeOrganizationId?: string;
   onBeforeSignOut?: () => void | Promise<void>;
 }
 
-export function SidebarUser({
-  activeOrganizationId,
-  onBeforeSignOut,
-}: SidebarUserProps = {}) {
+export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated: _isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
   const [menuOpen, setMenuOpen] = useState(false);
-  const billingUiEnabled =
-    useFeatureFlagEnabled("billing-entitlements-ui") === true;
-  const canNavigateToBilling =
-    billingUiEnabled && Boolean(activeOrganizationId);
   const appNavigate = useAppNavigate();
-
-  const handleCreditUsageClick = () => {
-    setMenuOpen(false);
-    appNavigate(`/organizations/${activeOrganizationId}/billing`);
-  };
 
   const workOsName = user
     ? [user.firstName, user.lastName].filter(Boolean).join(" ")
@@ -190,20 +179,13 @@ export function SidebarUser({
                   </AvatarFallback>
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">
-                    {displayName}
-                  </span>
+                  <span className="truncate font-semibold">{displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     {email}
                   </span>
                 </div>
               </div>
             </DropdownMenuLabel>
-            <SidebarCreditUsage
-              className="px-1 pb-1"
-              variant="full"
-              onClick={canNavigateToBilling ? handleCreditUsageClick : undefined}
-            />
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => appNavigate("/profile")}

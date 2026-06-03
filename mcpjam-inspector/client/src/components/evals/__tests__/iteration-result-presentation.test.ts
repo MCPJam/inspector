@@ -51,7 +51,7 @@ describe("getIterationResultDisplayLabel", () => {
 });
 
 describe("getIterationResultBadgeClass", () => {
-  it("uses rose styling for failed", () => {
+  it("uses pastel destructive surface for failed", () => {
     expect(
       getIterationResultBadgeClass(
         baseIteration({
@@ -60,24 +60,23 @@ describe("getIterationResultBadgeClass", () => {
           status: "completed",
         }),
       ),
-    ).toContain("rose");
+    ).toContain("bg-destructive/50");
   });
 });
 
 describe("suitePassCriteriaCompactBadgeClassNames", () => {
-  it("uses high-contrast destructive styling for failed suite outcome", () => {
+  it("uses pastel destructive surface for failed suite outcome", () => {
     const classes = suitePassCriteriaCompactBadgeClassNames("failed");
-    expect(classes).toContain("text-destructive");
-    expect(classes).toContain("border-destructive");
+    expect(classes).toContain("bg-destructive/50");
     expect(classes).toContain("text-[10px]");
   });
 
-  it("uses emerald for passed and amber for passed_with_failures", () => {
+  it("uses pastel success for passed and pastel warning for passed_with_failures", () => {
     expect(suitePassCriteriaCompactBadgeClassNames("passed")).toContain(
-      "emerald",
+      "bg-success/50",
     );
     expect(
       suitePassCriteriaCompactBadgeClassNames("passed_with_failures"),
-    ).toContain("amber");
+    ).toContain("bg-warning/50");
   });
 });

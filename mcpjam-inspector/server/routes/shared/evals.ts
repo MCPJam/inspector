@@ -16,6 +16,10 @@ import {
   resolveOpenAiCompatForHostConfig,
 } from "../../services/evals/compat-runtime";
 import {
+  applyVisibilityPolicyAndCountSignals,
+  extractHostExecutionPolicy,
+} from "../../services/evals/host-execution-policy.js";
+import {
   runEvalSuiteWithAiSdk,
   streamTestCase,
 } from "../../services/evals-runner";
@@ -26,12 +30,17 @@ import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config";
-import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
+import {
+  flattenServerToolSnapshotTools,
+  type ServerToolSnapshot,
+} from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import { type PromptTurn } from "@/shared/prompt-turns";
 import {
   matchOptionsSchema,
   resolveMatchOptions,
+  resolveCaseSuccessPredicates,
+  casePredicatesSchema,
   type MatchOptionsDTO,
 } from "@/shared/eval-matching";
 
@@ -86,6 +95,10 @@ export const RunEvalsRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      // Case-level predicate gate override; threaded through every Zod
+      // boundary on the wire so it doesn't get silently stripped
+      // (feedback_zod_strips_unthreaded_fields).
+      predicates: casePredicatesSchema.optional(),
     }),
   ),
   serverIds: z
@@ -138,6 +151,17 @@ export const RunEvalsRequestSchema = z.object({
    * so connecting new servers cannot silently contaminate existing suites.
    */
   refreshSnapshot: z.boolean().optional(),
+  /**
+   * Client-generated UUID set on every per-host POST when a multi-host
+   * eval launch fans out (N > 1). Threaded into Convex `startTestSuiteRun`
+   * so the resulting `testSuiteRun` rows share a group id, which the UI
+   * uses to collapse them into a single parent row. Absent on single-host
+   * launches and on legacy runs — those render ungrouped.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  runGroupId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -175,6 +199,17 @@ export const RunTestCaseRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      // State-based predicate gate (see shared/predicates). Accepted as a
+      // per-run override so SDK / corpus cases can gate on predicates without
+      // the deferred Convex `testCase` schema change. Loosely typed like
+      // `expectedToolCalls` above; predicate shape is validated by the corpus
+      // validator at authoring time and evaluated deterministically by the
+      // runner (unknown types fail closed).
+      successPredicates: z.array(z.any()).optional(),
+      // Case-level predicate override envelope ({ mode, list }). Threaded
+      // through every Zod boundary; the runner resolves it against the
+      // suite's `defaultPredicates` per the case mode.
+      predicates: casePredicatesSchema.optional(),
     })
     .optional(),
   /**
@@ -263,11 +298,38 @@ export function assertTestCaseRunWithinCap(
   }
 }
 
+// Optional attachment metadata threaded into the backend eval-generation
+// endpoint so the LLM can scope the cases by the suite's saved server
+// attachment (per-server tests + at least one explicit cross-server test
+// when the attachment spans ≥2 servers). `resolvedServerNames` carries
+// runtime server identifiers — NOT Convex serverAttachment document ids —
+// to avoid ambiguity at the wire boundary.
+export const ServerAttachmentInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().optional(),
+  resolvedServerNames: z.array(z.string().min(1)).min(1),
+});
+
+export type ServerAttachmentInput = z.infer<
+  typeof ServerAttachmentInputSchema
+>;
+
+// `serverNames` is the optional parallel array that pairs each `serverIds[i]`
+// (the manager key — Convex Id in hosted mode, display name in standalone)
+// with its runtime display name. The backend snapshot/attachment check is
+// keyed by display name (see `applyAttachmentScope` in
+// `convex/evalGeneration/routes.ts`), so generators must rewrite the snapshot's
+// `serverId` to the display name before forwarding. Without the parallel
+// array the rewrite is a no-op and standalone callers (where manager key ==
+// display name) continue to work unchanged.
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  serverNames: z.array(z.string()).optional(),
   convexAuthToken: z.string(),
+  projectId: z.string().min(1).optional(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
@@ -276,7 +338,10 @@ export const GenerateNegativeTestsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  serverNames: z.array(z.string()).optional(),
   convexAuthToken: z.string(),
+  projectId: z.string().min(1).optional(),
+  serverAttachment: ServerAttachmentInputSchema.optional(),
 });
 
 export type GenerateNegativeTestsRequest = z.infer<
@@ -300,6 +365,33 @@ async function loadSuiteDefaultMatchOptions(
     });
     return (suite?.defaultMatchOptions as MatchOptionsDTO | undefined) ??
       undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Best-effort fetch of a suite's `defaultPredicates` so single-case runs
+ * resolve the same suite → case predicate precedence chain that the suite
+ * run path applies via `precreateIterationsForRun` once the backend ships
+ * the resolved field. Returns undefined on any error; runner treats that
+ * as no suite default.
+ */
+async function loadSuiteDefaultPredicates(
+  convexClient: ConvexHttpClient,
+  suiteId?: string,
+): Promise<
+  import("@/shared/eval-matching").Predicate[] | undefined
+> {
+  if (!suiteId) return undefined;
+  try {
+    const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+      suiteId,
+    });
+    const defaults = (suite as { defaultPredicates?: unknown } | undefined)
+      ?.defaultPredicates;
+    if (!Array.isArray(defaults) || defaults.length === 0) return undefined;
+    return defaults as import("@/shared/eval-matching").Predicate[];
   } catch {
     return undefined;
   }
@@ -447,6 +539,7 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
     refreshSnapshot,
+    runGroupId,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -488,6 +581,12 @@ export async function runEvalsWithManager(
 
   let resolvedSuiteId = suiteId ?? null;
 
+  // Per-case upsert outcomes. We don't rollback on partial failure; the point
+  // is visibility — surface which cases were committed vs. which failed so
+  // the UI can show a partial-state banner instead of just a generic error.
+  const committedCases: Array<{ id?: string; name: string }> = [];
+  const failedCases: Array<{ id?: string; name: string; error: string }> = [];
+
   const testCaseMap = new Map<
     string,
     {
@@ -503,6 +602,7 @@ export async function runEvalsWithManager(
       judgeRequirement?: string;
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+      predicates?: import("@/shared/eval-matching").CasePredicates;
     }
   >();
 
@@ -521,6 +621,7 @@ export async function runEvalsWithManager(
         promptTurns: test.promptTurns,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
+        predicates: test.predicates,
       });
     }
     testCaseMap.get(key)!.models.push({
@@ -564,6 +665,7 @@ export async function runEvalsWithManager(
           tc.title === testCaseData.title && tc.query === testCaseData.query,
       );
 
+      try {
       if (existingTestCase) {
         const normalize = (val: any) =>
           val === undefined || val === null ? null : val;
@@ -611,6 +713,11 @@ export async function runEvalsWithManager(
             normalizeForComparison(existingTestCase.matchOptions),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.matchOptions));
+        const predicatesChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.predicates),
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.predicates));
 
         const hasChanges =
           modelsChanged ||
@@ -622,7 +729,8 @@ export async function runEvalsWithManager(
           promptTurnsChanged ||
           judgeRequirementChanged ||
           advancedConfigChanged ||
-          matchOptionsChanged;
+          matchOptionsChanged ||
+          predicatesChanged;
 
         if (hasChanges) {
           await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -640,8 +748,13 @@ export async function runEvalsWithManager(
               testCaseData.advancedConfig,
             ),
             matchOptions: testCaseData.matchOptions,
+            predicates: testCaseData.predicates,
           });
         }
+        committedCases.push({
+          id: String(existingTestCase._id),
+          name: testCaseData.title,
+        });
       } else {
         await convexClient.mutation("testSuites:createTestCase" as any, {
           suiteId: resolvedSuiteId,
@@ -661,6 +774,20 @@ export async function runEvalsWithManager(
             testCaseData.advancedConfig,
           ),
           matchOptions: testCaseData.matchOptions,
+          predicates: testCaseData.predicates,
+        });
+        committedCases.push({ name: testCaseData.title });
+      }
+      } catch (error) {
+        failedCases.push({
+          id: existingTestCase ? String(existingTestCase._id) : undefined,
+          name: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        logger.warn("[evals] Failed to upsert test case", {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     }
@@ -684,23 +811,54 @@ export async function runEvalsWithManager(
     resolvedSuiteId = createdSuite._id as string;
 
     for (const [, testCaseData] of testCaseMap.entries()) {
-      await convexClient.mutation("testSuites:createTestCase" as any, {
-        suiteId: resolvedSuiteId,
-        title: testCaseData.title,
-        query: testCaseData.query,
-        models: testCaseData.models,
-        runs: testCaseData.runs,
-        expectedToolCalls: sanitizeForConvexTransport(
-          testCaseData.expectedToolCalls,
-        ),
-        isNegativeTest: testCaseData.isNegativeTest,
-        scenario: testCaseData.scenario,
-        expectedOutput: testCaseData.expectedOutput,
-        promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
-        judgeRequirement: testCaseData.judgeRequirement,
-        advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
-        matchOptions: testCaseData.matchOptions,
-      });
+      try {
+        await convexClient.mutation("testSuites:createTestCase" as any, {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          query: testCaseData.query,
+          models: testCaseData.models,
+          runs: testCaseData.runs,
+          expectedToolCalls: sanitizeForConvexTransport(
+            testCaseData.expectedToolCalls,
+          ),
+          isNegativeTest: testCaseData.isNegativeTest,
+          scenario: testCaseData.scenario,
+          expectedOutput: testCaseData.expectedOutput,
+          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
+          judgeRequirement: testCaseData.judgeRequirement,
+          advancedConfig: sanitizeForConvexTransport(
+            testCaseData.advancedConfig,
+          ),
+          matchOptions: testCaseData.matchOptions,
+          predicates: testCaseData.predicates,
+        });
+        committedCases.push({ name: testCaseData.title });
+      } catch (error) {
+        failedCases.push({
+          name: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        logger.warn("[evals] Failed to create test case", {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // New-suite path only: if every case create failed, the freshly-made
+    // suite has zero cases. Fall through and `startSuiteRunWithRecorder`
+    // would snapshot nothing, then `runEvalSuiteWithAiSdk` would throw a
+    // generic "No tests supplied for eval run" — masking the structured
+    // failure breakdown we just collected. Short-circuit with an
+    // actionable message instead.
+    if (committedCases.length === 0 && failedCases.length > 0) {
+      const firstError = failedCases[0]?.error ?? "unknown error";
+      throw new Error(
+        `Failed to save any of ${failedCases.length} test case(s) to the new suite. ` +
+          `First failure: ${firstError}. ` +
+          `Run aborted because the suite would have zero cases to execute.`,
+      );
     }
   }
 
@@ -720,12 +878,14 @@ export async function runEvalsWithManager(
     iterationOverride,
     matchOptionsOverride,
     namedHostId,
+    runGroupId,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
   const suiteInjectOpenAiCompat =
     resolveOpenAiCompatForHostConfig(suiteHostConfig);
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig, namedHostId);
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
@@ -805,6 +965,7 @@ export async function runEvalsWithManager(
     mcpClientManager: clientManager,
     recorder,
     suiteInjectOpenAiCompat,
+    hostExecutionPolicy: suiteHostPolicy,
   });
 
   return {
@@ -812,6 +973,10 @@ export async function runEvalsWithManager(
     suiteId: resolvedSuiteId,
     runId,
     message: "Evals completed successfully. Check the Evals tab for results.",
+    caseUpsert: {
+      committed: committedCases,
+      failed: failedCases,
+    },
   };
 }
 
@@ -861,6 +1026,10 @@ export async function runEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
+  const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
   const suiteHostConfig = await loadSuiteHostConfig(
     convexClient,
     testCase.evalTestSuiteId,
@@ -869,6 +1038,7 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined,
   );
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -893,6 +1063,25 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate into the runtime case so the runner
+    // evaluates it. See `resolveCaseSuccessPredicates` for the full
+    // precedence rules — kept as a shared helper so all three resolution
+    // sites (this function, `streamEvalTestCaseWithManager`, and the
+    // suite-run recorder) stay in lockstep.
+    successPredicates: resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      runOverride: testCaseOverrides?.successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+      envelope: (testCaseOverrides?.predicates ??
+        (testCase as { predicates?: unknown }).predicates) as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
+      legacyCase: (testCase as { successPredicates?: unknown })
+        .successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+    }),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -949,6 +1138,7 @@ export async function runEvalTestCaseWithManager(
     testCaseId,
     compareRunId,
     suiteInjectOpenAiCompat,
+    hostExecutionPolicy: suiteHostPolicy,
   });
 
   const expectedIterationId =
@@ -987,6 +1177,54 @@ export async function runEvalTestCaseWithManager(
   };
 }
 
+// Map each manager key back to the runtime display name the inspector client
+// sent in `serverNames`. The map drives the snapshot rewrite below so the
+// Convex `applyAttachmentScope` set-comparison lines up with
+// `serverAttachment.resolvedServerNames` (display names) instead of the
+// manager keys (Convex Ids in hosted mode).
+export function buildManagerKeyToDisplayNameMap(
+  clientManager: MCPClientManager,
+  requestServerIds: string[],
+  requestServerNames: string[] | undefined,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (
+    !requestServerNames ||
+    requestServerNames.length !== requestServerIds.length
+  ) {
+    return map;
+  }
+  const available = clientManager.listServers();
+  for (let i = 0; i < requestServerIds.length; i++) {
+    const requestedId = requestServerIds[i];
+    const displayName = requestServerNames[i];
+    if (!displayName || displayName === requestedId) continue;
+    const match =
+      available.find((id) => id === requestedId) ??
+      available.find((id) => id.toLowerCase() === requestedId.toLowerCase());
+    if (!match) continue;
+    if (!map.has(match)) {
+      map.set(match, displayName);
+    }
+  }
+  return map;
+}
+
+export function remapSnapshotServerIdsForAttachment(
+  snapshot: ServerToolSnapshot,
+  managerKeyToDisplayName: Map<string, string>,
+): ServerToolSnapshot {
+  if (managerKeyToDisplayName.size === 0) return snapshot;
+  let mutated = false;
+  const servers = snapshot.servers.map((server) => {
+    const displayName = managerKeyToDisplayName.get(server.serverId);
+    if (!displayName || displayName === server.serverId) return server;
+    mutated = true;
+    return { ...server, serverId: displayName };
+  });
+  return mutated ? { ...snapshot, servers } : snapshot;
+}
+
 export async function generateEvalTestsWithManager(
   clientManager: MCPClientManager,
   request: GenerateTestsRequest,
@@ -995,12 +1233,20 @@ export async function generateEvalTestsWithManager(
     request.serverIds,
     clientManager,
   );
-  const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+  const { toolSnapshot: rawSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
     {
       logPrefix: "evals.generate-tests",
     },
+  );
+  const toolSnapshot = remapSnapshotServerIdsForAttachment(
+    rawSnapshot,
+    buildManagerKeyToDisplayNameMap(
+      clientManager,
+      request.serverIds,
+      request.serverNames,
+    ),
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
@@ -1021,6 +1267,8 @@ export async function generateEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
+    request.projectId,
   );
 
   return {
@@ -1037,12 +1285,20 @@ export async function generateNegativeEvalTestsWithManager(
     request.serverIds,
     clientManager,
   );
-  const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+  const { toolSnapshot: rawSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
     {
       logPrefix: "evals.generate-negative-tests",
     },
+  );
+  const toolSnapshot = remapSnapshotServerIdsForAttachment(
+    rawSnapshot,
+    buildManagerKeyToDisplayNameMap(
+      clientManager,
+      request.serverIds,
+      request.serverNames,
+    ),
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
@@ -1063,6 +1319,8 @@ export async function generateNegativeEvalTestsWithManager(
     toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
+    request.serverAttachment,
+    request.projectId,
   );
 
   return {
@@ -1116,6 +1374,10 @@ export async function streamEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
+  const suiteDefaultPredicates = await loadSuiteDefaultPredicates(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
   const suiteHostConfig = await loadSuiteHostConfig(
     convexClient,
     testCase.evalTestSuiteId,
@@ -1124,6 +1386,7 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined,
   );
+  const suiteHostPolicy = extractHostExecutionPolicy(suiteHostConfig);
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -1148,6 +1411,22 @@ export async function streamEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    // Thread the predicate gate into the runtime case so the runner evaluates
+    // it. See `resolveCaseSuccessPredicates` for the full precedence rules.
+    successPredicates: resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      runOverride: testCaseOverrides?.successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+      envelope: (testCaseOverrides?.predicates ??
+        (testCase as { predicates?: unknown }).predicates) as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
+      legacyCase: (testCase as { successPredicates?: unknown })
+        .successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+    }),
     hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
@@ -1191,9 +1470,25 @@ export async function streamEvalTestCaseWithManager(
     }
   }
 
-  const tools = (await clientManager.getToolsForAiSdk(
-    resolvedServerIds,
-  )) as Record<string, any>;
+  // Mirror runEvalSuiteWithAiSdk: when a host policy is present, fetch the
+  // full tool set (including app-only) so the policy can both filter and
+  // count drops honestly. Without this, app-only tools are pre-stripped by
+  // getToolsForAiSdk and host visibility signals are blank.
+  const tools = (suiteHostPolicy
+    ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
+        includeAppOnly: true,
+      })
+    : await clientManager.getToolsForAiSdk(resolvedServerIds)) as Record<
+    string,
+    any
+  >;
+  const streamToolSignals = suiteHostPolicy
+    ? applyVisibilityPolicyAndCountSignals(
+        tools as Record<string, unknown>,
+        clientManager,
+        suiteHostPolicy,
+      )
+    : undefined;
   const encoder = new TextEncoder();
 
   const sseEncode = (event: EvalStreamEvent): Uint8Array =>
@@ -1218,6 +1513,8 @@ export async function streamEvalTestCaseWithManager(
           runId: null,
           compareRunId,
           injectOpenAiCompat: suiteInjectOpenAiCompat,
+          hostPolicy: suiteHostPolicy,
+          toolSignals: streamToolSignals,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));

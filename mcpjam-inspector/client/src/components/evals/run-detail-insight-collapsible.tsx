@@ -7,17 +7,28 @@ import {
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
+import {
+  insightHighlightAccentClass,
+  insightHighlightBodyClass,
+  insightHighlightHeaderRowClass,
+  insightHighlightSectionClass,
+  insightHighlightSubtitleClass,
+  insightHighlightTitleClass,
+  insightHighlightTriggerClass,
+} from "./insight-highlight-chrome";
 
 /**
  * Same interaction pattern as {@link SuiteInsightsCollapsible} for run-level AI narratives.
  */
 export function RunDetailInsightCollapsible({
   title,
+  subtitle,
   defaultOpen = true,
   className,
   children,
 }: {
   title: string;
+  subtitle?: string;
   defaultOpen?: boolean;
   className?: string;
   children: ReactNode;
@@ -29,42 +40,45 @@ export function RunDetailInsightCollapsible({
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      className={cn(
-        "rounded-lg border border-border bg-card text-card-foreground",
-        className,
-      )}
+      className={cn(insightHighlightSectionClass, className)}
     >
-      <CollapsibleTrigger asChild>
-        <motion.button
-          type="button"
-          className="flex w-full min-w-0 items-center gap-2 rounded-t-lg px-3 py-2.5 text-left outline-none hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring"
-          whileTap={
-            shouldReduceMotion
-              ? undefined
-              : { scale: 0.992, transition: { duration: 0.08 } }
-          }
-          transition={{ type: "spring", stiffness: 520, damping: 32 }}
-        >
-          <motion.span
-            className="inline-flex shrink-0 text-muted-foreground"
-            aria-hidden
-            initial={false}
-            animate={{ rotate: open ? 0 : -90 }}
-            transition={
+      <div className={insightHighlightAccentClass} aria-hidden />
+      <div className={insightHighlightHeaderRowClass}>
+        <CollapsibleTrigger asChild>
+          <motion.button
+            type="button"
+            className={cn(insightHighlightTriggerClass, "w-full")}
+            whileTap={
               shouldReduceMotion
-                ? { duration: 0 }
-                : { type: "spring", stiffness: 420, damping: 28 }
+                ? undefined
+                : { scale: 0.992, transition: { duration: 0.08 } }
             }
+            transition={{ type: "spring", stiffness: 520, damping: 32 }}
           >
-            <ChevronDown className="h-4 w-4" />
-          </motion.span>
-          <span className="text-xs font-semibold text-muted-foreground">
-            {title}
-          </span>
-        </motion.button>
-      </CollapsibleTrigger>
+            <motion.span
+              className="inline-flex shrink-0 text-muted-foreground"
+              aria-hidden
+              initial={false}
+              animate={{ rotate: open ? 0 : -90 }}
+              transition={
+                shouldReduceMotion
+                  ? { duration: 0 }
+                  : { type: "spring", stiffness: 420, damping: 28 }
+              }
+            >
+              <ChevronDown className="h-4 w-4" />
+            </motion.span>
+            <div className="min-w-0 flex-1">
+              <span className={insightHighlightTitleClass}>{title}</span>
+              {subtitle ? (
+                <p className={insightHighlightSubtitleClass}>{subtitle}</p>
+              ) : null}
+            </div>
+          </motion.button>
+        </CollapsibleTrigger>
+      </div>
       <CollapsibleContent>
-        <div className="border-t border-border/50 px-3 pb-3 pt-2">{children}</div>
+        <div className={insightHighlightBodyClass}>{children}</div>
       </CollapsibleContent>
     </Collapsible>
   );

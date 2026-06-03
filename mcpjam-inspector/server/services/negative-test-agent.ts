@@ -1,139 +1,50 @@
-import type { ModelMessage } from "ai";
-import { logger } from "../utils/logger";
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
-import { renderServerToolSnapshotSection } from "../utils/export-helpers.js";
+import type { ServerAttachmentInput } from "./eval-agent";
+
+/**
+ * Inspector-side adapter for backend negative eval test-case generation.
+ * Wraps `/eval-generation/generate` with `mode: "negative"`. Prompt and
+ * normalization live in the backend.
+ */
 
 export interface GeneratedNegativeTestCase {
   title: string;
-  scenario: string; // Description of when app should NOT trigger
-  query: string; // User prompt that should NOT trigger tools
+  scenario: string;
+  query: string;
   runs: number;
 }
 
-const NEGATIVE_TEST_CASE_COUNT = 3;
+interface BackendGeneratedTestCase {
+  title: string;
+  query: string;
+  runs: number;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }>;
+  scenario: string;
+  expectedOutput: string;
+  isNegativeTest: boolean;
+}
 
-export const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating negative test cases for MCP (Model Context Protocol) servers.
-
-**About MCP:**
-The Model Context Protocol enables AI assistants to securely access external data and tools. MCP servers expose tools, resources, and prompts that AI models can use to accomplish user tasks.
-
-**Your Task:**
-Generate negative test cases - scenarios where the AI assistant should NOT use any tools. These test cases help ensure the AI doesn't incorrectly trigger tools when they're not needed.
-
-**What are Negative Test Cases?**
-Negative test cases are prompts that might seem similar to tool-triggering prompts but should NOT result in any tool being called. Examples:
-- Questions about the tools themselves (meta-questions)
-- Requests that use similar keywords but are unrelated
-- Incomplete or ambiguous requests
-- General conversation that doesn't require tool usage
-- Requests that can be answered from the AI's general knowledge
-
-**Guidelines:**
-1. **Edge Cases**: Create prompts that test the boundary between triggering and not triggering tools
-2. **Similar Keywords**: Use words that appear in tool descriptions but in non-actionable contexts
-3. **Meta Questions**: Ask about capabilities, documentation, or how tools work
-4. **Ambiguous Requests**: Create vague or unclear requests that shouldn't trigger tools
-5. **Conversational**: Include casual conversation that mentions tool-related topics
-6. **Descriptive Scenarios**: Provide clear descriptions of why each case should NOT trigger tools
-7. **Inventory is context only**: The tool list is authoring context only. Every generated case must still expect no tools.
-8. **Keep cases attributable**: Prefer short, clearly non-actionable prompts over long synthetic workflows involving invented entities, ids, places, or blocked project actions
-9. **No fake-fixture negatives**: Do not make a case negative merely because it depends on fake project entities; make it negative because the request itself should not trigger tools
-
-**Test Case Distribution:**
-Generate 3 negative test cases covering different categories:
-- 1 Meta/documentation question (asking about tools, not using them)
-- 1 Similar keywords in non-actionable context
-- 1 Ambiguous or conversational prompt
-
-**Output Format (CRITICAL):**
-Respond with ONLY a valid JSON array. No explanations, no markdown code blocks, just the raw JSON array.
-
-Each test case must include:
-- title: Clear, descriptive title (e.g., "Meta question about file operations")
-- scenario: Description of why this should NOT trigger tools (e.g., "User is asking about capabilities, not requesting an action")
-- query: The user prompt that should NOT trigger any tools
-- runs: Number of times to run (usually 1)
-
-Example:
-[
-  {
-    "title": "Documentation inquiry about search",
-    "scenario": "User is asking about how the search feature works, not performing a search",
-    "query": "Can you explain what parameters the search tool accepts?",
-    "runs": 1
-  },
-  {
-    "title": "Casual mention of files",
-    "scenario": "User is having a general conversation that mentions files but doesn't request file operations",
-    "query": "I was reading about file systems yesterday. They're quite interesting!",
-    "runs": 1
-  },
-  {
-    "title": "Ambiguous request without clear action",
-    "scenario": "User's request is too vague to determine a specific tool action",
-    "query": "I might need something with that later",
-    "runs": 1
-  }
-]`;
-
-/**
- * Generates negative test cases using the backend LLM
- * Negative test cases are scenarios where NO tools should be triggered
- */
 export async function generateNegativeTestCases(
   toolSnapshot: ServerToolSnapshot,
   convexHttpUrl: string,
   convexAuthToken: string,
+  serverAttachment?: ServerAttachmentInput,
+  projectId?: string,
 ): Promise<GeneratedNegativeTestCase[]> {
-  const serverCount = toolSnapshot.servers.length;
-  const totalTools = toolSnapshot.servers.reduce(
-    (sum, server) => sum + server.tools.length,
-    0,
-  );
-  const toolsContext =
-    renderServerToolSnapshotSection(toolSnapshot).promptSection ??
-    "# Available MCP Tools\nNo tools captured.";
-
-  const userPrompt = `Generate ${NEGATIVE_TEST_CASE_COUNT} negative test cases for the following MCP server tools.
-
-These are the tools that SHOULD NOT be triggered by your test prompts:
-
-${toolsContext}
-
-**Available Resources:**
-- ${serverCount} MCP server(s)
-- ${totalTools} total tools
-
-**Remember:**
-1. Create exactly ${NEGATIVE_TEST_CASE_COUNT} negative tests covering:
-   - 1 Meta/documentation question
-   - 1 Similar keywords in non-actionable context
-   - 1 Ambiguous or conversational prompt
-2. Each prompt should NOT trigger ANY of the tools listed above
-3. The tool inventory is context only; the generated eval cases must still expect no tools
-4. Provide clear scenarios explaining why tools should not be triggered
-5. Use keywords from tool descriptions but in non-actionable ways
-6. Prefer short prompts that stay clearly non-actionable without relying on fake project fixtures
-7. Respond with ONLY a JSON array - no other text or markdown`;
-
-  const messageHistory: ModelMessage[] = [
-    { role: "system", content: AGENT_SYSTEM_PROMPT },
-    { role: "user", content: userPrompt },
-  ];
-
-  // Call the backend LLM API
-  const response = await fetch(`${convexHttpUrl}/stream`, {
+  const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${convexAuthToken}`,
     },
     body: JSON.stringify({
-      mode: "step",
-      model: "anthropic/claude-haiku-4.5",
-      tools: [],
-      messages: JSON.stringify(messageHistory),
-      maxOutputTokens: 12288,
+      mode: "negative",
+      toolSnapshot,
+      ...(projectId ? { projectId } : {}),
+      ...(serverAttachment ? { serverAttachment } : {}),
     }),
   });
 
@@ -142,78 +53,30 @@ ${toolsContext}
     throw new Error(`Failed to generate negative test cases: ${errorText}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as {
+    ok?: boolean;
+    tests?: BackendGeneratedTestCase[];
+    error?: string;
+  };
 
-  if (!data.ok || !Array.isArray(data.messages)) {
-    throw new Error("Invalid response from backend LLM");
-  }
-
-  // Extract the assistant's response
-  let assistantResponse = "";
-  for (const msg of data.messages) {
-    if (msg.role === "assistant") {
-      const content = msg.content;
-      if (typeof content === "string") {
-        assistantResponse += content;
-      } else if (Array.isArray(content)) {
-        for (const item of content) {
-          if (item.type === "text" && item.text) {
-            assistantResponse += item.text;
-          }
-        }
-      }
-    }
-  }
-
-  // Parse JSON response
-  try {
-    // Try to extract JSON from markdown code blocks if present
-    const jsonMatch = assistantResponse.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const jsonText = jsonMatch ? jsonMatch[1].trim() : assistantResponse.trim();
-
-    const testCases = JSON.parse(jsonText);
-
-    if (!Array.isArray(testCases)) {
-      throw new Error("Response is not an array");
-    }
-
-    // Validate structure
-    const validatedTests: GeneratedNegativeTestCase[] = testCases.map(
-      (tc: any) => ({
-        title: tc.title || "Untitled Negative Test",
-        scenario: tc.scenario || "No scenario provided",
-        query: tc.query || "",
-        runs: typeof tc.runs === "number" ? tc.runs : 1,
-      }),
-    );
-
-    if (validatedTests.length > NEGATIVE_TEST_CASE_COUNT) {
-      return validatedTests.slice(0, NEGATIVE_TEST_CASE_COUNT);
-    }
-
-    if (validatedTests.length < NEGATIVE_TEST_CASE_COUNT) {
-      logger.warn(
-        "[negative-test-agent] LLM returned fewer negative tests than requested",
-        {
-          requestedCount: NEGATIVE_TEST_CASE_COUNT,
-          returnedCount: validatedTests.length,
-        },
-      );
-    }
-
-    return validatedTests;
-  } catch (parseError) {
-    logger.error("Failed to parse LLM response:", parseError, {
-      assistantResponse,
-    });
+  if (!data.ok || !Array.isArray(data.tests)) {
     throw new Error(
-      `Failed to parse negative test cases from LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
+      `Invalid response from backend eval generation: ${data.error ?? "unknown error"}`,
     );
   }
+
+  return data.tests.map((tc) => ({
+    title: tc.title,
+    scenario: tc.scenario,
+    query: tc.query,
+    runs: tc.runs,
+  }));
 }
 
 /**
- * Converts generated negative test cases to the format expected by the eval system
+ * Converts generated negative test cases to the legacy eval-system shape.
+ * Kept for `shared/evals.ts:generateNegativeEvalTestsWithManager`, which
+ * still returns both the raw negative shape and an eval-shaped variant.
  */
 export function convertToEvalTestCases(
   negativeTestCases: GeneratedNegativeTestCase[],

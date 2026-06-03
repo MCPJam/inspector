@@ -668,4 +668,65 @@ describe("ChatInput", () => {
       expect(screen.queryByTestId("context-trigger")).not.toBeInTheDocument();
     });
   });
+
+  describe("servers popover (connectivity is the source of truth)", () => {
+    const serverConfigs = {
+      connectedSrv: {
+        name: "connectedSrv",
+        config: { url: "http://localhost/connected" },
+        connectionStatus: "connected",
+      },
+      downSrv: {
+        name: "downSrv",
+        config: { url: "http://localhost/down" },
+        connectionStatus: "disconnected",
+      },
+    } as any;
+
+    it("toggling a connected server OFF disconnects it", () => {
+      const onDisconnectServer = vi.fn();
+      const onServerToggle = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          allServerConfigs={serverConfigs}
+          selectedServers={["connectedSrv"]}
+          onDisconnectServer={onDisconnectServer}
+          onReconnectServer={vi.fn()}
+          onServerToggle={onServerToggle}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+      // The connected server renders an "on" Switch; flipping it disconnects.
+      const toggles = screen.getAllByRole("switch");
+      fireEvent.click(toggles[0]);
+
+      expect(onDisconnectServer).toHaveBeenCalledWith("connectedSrv");
+      // Selection is derived from connectivity now — no manual toggle write.
+      expect(onServerToggle).not.toHaveBeenCalled();
+    });
+
+    it("clicking Connect on a disconnected server reconnects it without writing selection", () => {
+      const onReconnectServer = vi.fn().mockResolvedValue(undefined);
+      const onServerToggle = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          allServerConfigs={serverConfigs}
+          selectedServers={["connectedSrv"]}
+          onDisconnectServer={vi.fn()}
+          onReconnectServer={onReconnectServer}
+          onServerToggle={onServerToggle}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+      fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+      expect(onReconnectServer).toHaveBeenCalledWith("downSrv");
+      expect(onServerToggle).not.toHaveBeenCalled();
+    });
+  });
 });

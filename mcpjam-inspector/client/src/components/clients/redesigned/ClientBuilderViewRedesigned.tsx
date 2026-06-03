@@ -430,11 +430,14 @@ export function ClientBuilderViewRedesigned({
                   // The URL→state sync in ClientsRoute will clear the
                   // selected host when /servers takes over.
                   navigate("/servers");
+                } else if (next === "compare") {
+                  navigate("/host-compare");
                 }
               }}
               options={[
                 { value: "servers", label: "Servers" },
                 { value: "host", label: "Client" },
+                { value: "compare", label: "Compare" },
               ]}
             />
           </div>

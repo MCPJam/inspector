@@ -85,12 +85,23 @@ function extractRequestHeaders(
   requestInit: RequestInit | undefined
 ): Record<string, string> | undefined {
   const headers = requestInit?.headers;
-  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+  if (!headers || typeof headers !== "object") {
     return undefined;
   }
 
   if (typeof Headers !== "undefined" && headers instanceof Headers) {
     return Object.fromEntries(headers.entries());
+  }
+
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(
+      headers.filter(
+        (entry): entry is [string, string] =>
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          typeof entry[1] === "string"
+      )
+    );
   }
 
   return Object.fromEntries(
@@ -183,8 +194,18 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (formData.oauthScopes && formData.oauthScopes.length > 0) {
     oauthConfig.scopes = formData.oauthScopes;
   }
-  if (formData.headers && Object.keys(formData.headers).length > 0) {
-    oauthConfig.customHeaders = formData.headers;
+  const hasExplicitHeaderPatch = Object.prototype.hasOwnProperty.call(
+    formData.secretPatch ?? {},
+    "headers"
+  );
+  const customHeaders = hasExplicitHeaderPatch
+    ? formData.secretPatch?.headers ?? {}
+    : {
+        ...(existingOAuthConfig.customHeaders ?? {}),
+        ...(formData.headers ?? {}),
+      };
+  if (Object.keys(customHeaders).length > 0) {
+    oauthConfig.customHeaders = customHeaders;
   }
   if (formData.registryServerId) {
     oauthConfig.registryServerId = formData.registryServerId;
@@ -751,6 +772,31 @@ export function useServerState({
       ),
     [effectiveServers]
   );
+
+  // What chat-input's "Servers" popover (and any other "show me everything
+  // we can talk to" surface) should iterate: the project catalog PLUS any
+  // runtime-connected/connecting servers that aren't in it yet. The catalog
+  // (effectiveServers) is the Convex `project_servers` query in hosted mode
+  // and can lag mcpjam-backend's `MCPClientManager` — a server is genuinely
+  // connected (Tools pane and tool calls work against it) but its catalog
+  // row hasn't synced, so the popover used to hide it. We only merge
+  // runtime entries that are currently connected/connecting; disconnected
+  // runtime leftovers from a previous session/project never surface here.
+  const displayServerConfigs = useMemo(() => {
+    const result: Record<string, ServerWithName> = { ...effectiveServers };
+    for (const [name, runtime] of Object.entries(appState.servers)) {
+      if (result[name]) continue;
+      if (
+        runtime.connectionStatus !== "connected" &&
+        runtime.connectionStatus !== "connecting"
+      ) {
+        continue;
+      }
+      result[name] = runtime;
+    }
+    return result;
+  }, [effectiveServers, appState.servers]);
+
   const latestEffectiveServersRef = useRef(effectiveServers);
 
   useEffect(() => {
@@ -1099,7 +1145,12 @@ export function useServerState({
     async (
       serverName: string,
       serverEntry: ServerWithName,
-      secretOptions?: { clientSecret?: string; clearClientSecret?: boolean }
+      secretOptions?: {
+        clientSecret?: string;
+        clearClientSecret?: boolean;
+        env?: Record<string, string>;
+        headers?: Record<string, string>;
+      }
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
@@ -1118,12 +1169,29 @@ export function useServerState({
 
       const clientSecret = secretOptions?.clientSecret?.trim();
       const clearClientSecret = secretOptions?.clearClientSecret === true;
+      const config = serverEntry.config as any;
+      const headers = extractRequestHeaders(config?.requestInit);
+      const hasEnvSecretPatch = Object.prototype.hasOwnProperty.call(
+        secretOptions ?? {},
+        "env"
+      );
+      const hasHeadersSecretPatch = Object.prototype.hasOwnProperty.call(
+        secretOptions ?? {},
+        "headers"
+      );
       if (clientSecret && clearClientSecret) {
         throw new Error(
           "Cannot replace and clear the OAuth client secret in the same save."
         );
       }
-      const hasSecretOperation = Boolean(clientSecret || clearClientSecret);
+      const hasSecretOperation = Boolean(
+        clientSecret ||
+          clearClientSecret ||
+          hasEnvSecretPatch ||
+          hasHeadersSecretPatch ||
+          (!secretOptions && config?.env !== undefined) ||
+          (!secretOptions && headers !== undefined)
+      );
 
       // Resolve "does a server with this name already exist?" from the local
       // snapshot when possible, then fall back to a one-shot Convex query
@@ -1155,11 +1223,19 @@ export function useServerState({
 
       const existingServer = await resolveExistingServer(flatSnapshot);
 
-      const config = serverEntry.config as any;
       const transportType = config?.command ? "stdio" : "http";
       const url =
         config?.url instanceof URL ? config.url.href : config?.url || undefined;
-      const headers = config?.requestInit?.headers || undefined;
+      const envForPayload = secretOptions
+        ? hasEnvSecretPatch
+          ? secretOptions.env
+          : undefined
+        : config?.env;
+      const headersForPayload = secretOptions
+        ? hasHeadersSecretPatch
+          ? secretOptions.headers
+          : undefined
+        : headers;
       const storedOAuthConfig = readStoredOAuthConfig(serverName);
 
       const payload = {
@@ -1168,9 +1244,11 @@ export function useServerState({
         transportType,
         command: config?.command,
         args: config?.args,
-        env: config?.env,
+        ...(envForPayload !== undefined ? { env: envForPayload } : {}),
         url,
-        headers,
+        ...(headersForPayload !== undefined
+          ? { headers: headersForPayload }
+          : {}),
         timeout: config?.timeout,
         clientCapabilities: config?.clientCapabilities,
         useOAuth: serverEntry.useOAuth,
@@ -1204,7 +1282,7 @@ export function useServerState({
           ...payload,
           ...(clientSecret ? { clientSecret } : {}),
         };
-        const newId = clientSecret
+        const newId = hasSecretOperation
           ? await convexCreateServerWithClientSecret(createPayload)
           : await convexCreateServerIfMissing(createPayload);
         return newId as string | undefined;
@@ -1222,7 +1300,7 @@ export function useServerState({
               ...payload,
               ...(clientSecret ? { clientSecret } : {}),
             };
-            const newId = clientSecret
+            const newId = hasSecretOperation
               ? await convexCreateServerWithClientSecret(createPayload)
               : await convexCreateServerIfMissing(createPayload);
             return newId as string | undefined;
@@ -1251,7 +1329,7 @@ export function useServerState({
             ...payload,
             ...(clientSecret ? { clientSecret } : {}),
           };
-          const newId = clientSecret
+          const newId = hasSecretOperation
             ? await convexCreateServerWithClientSecret(createPayload)
             : await convexCreateServerIfMissing(createPayload);
           return newId as string | undefined;
@@ -2201,6 +2279,12 @@ export function useServerState({
           ? { clientSecret: formData.clientSecret }
           : {}),
         ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+        ...(formData.secretPatch?.env !== undefined
+          ? { env: formData.secretPatch.env }
+          : {}),
+        ...(formData.secretPatch?.headers !== undefined
+          ? { headers: formData.secretPatch.headers }
+          : {}),
       };
 
       const serverEntryForSave: ServerWithName = {
@@ -2213,6 +2297,14 @@ export function useServerState({
         useOAuth: formData.useOAuth ?? false,
         oauthFlowProfile: formOAuthProfile,
         hasClientSecret: nextHasClientSecret,
+        hasEnv:
+          formData.secretPatch?.env !== undefined
+            ? Object.keys(formData.secretPatch.env).length > 0
+            : existingServerForSave?.hasEnv,
+        hasHeaders:
+          formData.secretPatch?.headers !== undefined
+            ? Object.keys(formData.secretPatch.headers).length > 0
+            : existingServerForSave?.hasHeaders,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2563,6 +2655,14 @@ export function useServerState({
         oauthFlowProfile: nextOAuthProfile,
         useOAuth: formData.useOAuth ?? false,
         hasClientSecret: nextHasClientSecret,
+        hasEnv:
+          formData.secretPatch?.env !== undefined
+            ? Object.keys(formData.secretPatch.env).length > 0
+            : existingServer?.hasEnv,
+        hasHeaders:
+          formData.secretPatch?.headers !== undefined
+            ? Object.keys(formData.secretPatch.headers).length > 0
+            : existingServer?.hasHeaders,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -2592,6 +2692,12 @@ export function useServerState({
               ? { clientSecret: formData.clientSecret }
               : {}),
             ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+            ...(formData.secretPatch?.env !== undefined
+              ? { env: formData.secretPatch.env }
+              : {}),
+            ...(formData.secretPatch?.headers !== undefined
+              ? { headers: formData.secretPatch.headers }
+              : {}),
           });
         } catch (error) {
           logger.error("Failed to sync server to Convex", {
@@ -2854,14 +2960,20 @@ export function useServerState({
       fallbackName = "CLI Server"
     ): ServerFormData => ({
       name: server.name || fallbackName,
-      type: (server.type === "sse"
-        ? "http"
-        : server.type || "stdio") as "stdio" | "http",
+      type: (server.type === "sse" ? "http" : server.type || "stdio") as
+        | "stdio"
+        | "http",
       command: server.command,
       args: server.args || [],
       url: server.url,
       env: server.env || {},
       headers: server.headers,
+      secretPatch: {
+        ...(server.env !== undefined ? { env: server.env || {} } : {}),
+        ...(server.headers !== undefined
+          ? { headers: server.headers || {} }
+          : {}),
+      },
       useOAuth: server.useOAuth ?? false,
     });
 
@@ -2871,7 +2983,9 @@ export function useServerState({
       }
       cliConfigSignInRequestedRef.current = true;
       writeCliSignInReturnPath(
-        `${window.location.pathname || routePaths.root}${window.location.search || ""}`
+        `${window.location.pathname || routePaths.root}${
+          window.location.search || ""
+        }`
       );
       void requestSignIn?.();
     };
@@ -3651,6 +3765,29 @@ export function useServerState({
     [reconnectServerInternal]
   );
 
+  // Force a re-handshake of an ALREADY-connected server under the current
+  // client identity. Unlike `ensureServersReady` (which skips servers that are
+  // already connected), this always reconnects — the backend
+  // `/api/mcp/servers/reconnect` endpoint closes the live transport and reopens
+  // it with the active host's `clientInfo`. Non-interactive and non-selecting:
+  // used by the client-switch recycle, where popping an OAuth window per server
+  // or thrashing the single-select pointer would be wrong. Per-server error
+  // toasts are suppressed here; the caller aggregates failures for logging and
+  // one user-facing toast.
+  const reconnectServerForClientSwitch = useCallback(
+    async (serverName: string): Promise<void> => {
+      const result = await reconnectServerInternal(serverName, {
+        allowInteractiveOAuthFlow: false,
+        select: false,
+        suppressErrors: true,
+      });
+      if (result.status !== "connected") {
+        throw new Error(result.error || `Failed to reconnect ${serverName}`);
+      }
+    },
+    [reconnectServerInternal]
+  );
+
   const ensureServersReady = useCallback(
     async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
@@ -4018,6 +4155,7 @@ export function useServerState({
     activeProject,
     effectiveServers,
     projectServers: effectiveServers,
+    displayServerConfigs,
     connectedOrConnectingServerConfigs,
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
@@ -4038,6 +4176,7 @@ export function useServerState({
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,
     handleUpdate,

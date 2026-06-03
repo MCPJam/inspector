@@ -45,6 +45,8 @@ export interface RemoteServer {
   oauthScopes?: string[];
   clientId?: string;
   hasClientSecret?: boolean;
+  hasEnv?: boolean;
+  hasHeaders?: boolean;
   oauthResourceUrl?: string;
   createdAt: number;
   updatedAt: number;
@@ -91,7 +93,7 @@ export function shouldQueryProjectId(projectId: string | null | undefined) {
   return Boolean(
     !INVALID_PROJECT_ID_SENTINELS.has(lower) &&
       !UUID_PROJECT_ID_PATTERN.test(normalized) &&
-      !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix)),
+      !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix))
   );
 }
 
@@ -252,15 +254,15 @@ export function useProjectMutations() {
 export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);
   const createServerIfMissing = useMutation(
-    "servers:createServerIfMissing" as any,
+    "servers:createServerIfMissing" as any
   );
   const updateServer = useMutation("servers:updateServer" as any);
   const deleteServer = useMutation("servers:deleteServer" as any);
   const createServerWithClientSecret = useAction(
-    "servers:createServerWithClientSecret" as any,
+    "servers:createServerWithClientSecret" as any
   );
   const updateServerWithClientSecret = useAction(
-    "servers:updateServerWithClientSecret" as any,
+    "servers:updateServerWithClientSecret" as any
   );
 
   return {

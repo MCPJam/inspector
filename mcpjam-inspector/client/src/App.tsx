@@ -48,6 +48,10 @@ import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
+import { HostConfigCompareView } from "./components/clients/comparison/HostConfigCompareView";
+import { ConnectViewHeader } from "./components/clients/ConnectViewHeader";
+import { motion } from "framer-motion";
+import { SNAPPY_RAIL } from "./components/clients/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -440,6 +444,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <TracingRoute />;
     case "clients":
       return <ClientsRoute />;
+    case "host-compare":
+      return <HostCompareRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "playground":
@@ -626,6 +632,49 @@ export function ClientsRoute() {
   );
 }
 
+export function HostCompareRoute() {
+  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
+    useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const navigate = useAppNavigate();
+
+  const compareView = (
+    <HostConfigCompareView
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+    />
+  );
+
+  // Mirror the gating ClientsRoute uses: when the hosts hub is off, Compare
+  // has no peer Servers/Client tabs to switch to, so render bare.
+  if (!hostsHubFlagEnabled || !isAuthenticated) {
+    return compareView;
+  }
+
+  return (
+    <motion.div
+      key="host-compare"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
+      <ConnectViewHeader
+        value="compare"
+        previewedHostId={previewedHostId}
+        onChange={(next) => {
+          if (next === "servers") {
+            navigate(routePaths.servers);
+          } else if (next === "host" && previewedHostId) {
+            navigate(buildClientsPath(previewedHostId));
+          }
+        }}
+      />
+      <div className="min-h-0 flex-1">{compareView}</div>
+    </motion.div>
+  );
+}
+
 export function RegistryRoute() {
   const {
     registryEnabled,
@@ -676,21 +725,22 @@ export function ToolsRoute() {
 
 export function EvalsRoute() {
   const {
-    playgroundEnabled,
+    evaluateUiEnabled,
     billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
     ensureServersReady,
     handleContinueEvalInChat,
+    handleConnect,
   } = useAppRouteContext();
 
-  if (playgroundEnabled === false) {
+  if (evaluateUiEnabled !== true) {
     return (
       <EmptyState
         icon={Construction}
-        title="Playground Coming Soon"
-        description="The Playground is under construction. Stay tuned!"
+        title="Evaluate Coming Soon"
+        description="The Evaluate suite is under construction. Stay tuned!"
       />
     );
   }
@@ -704,6 +754,7 @@ export function EvalsRoute() {
       projectId={convexProjectId}
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
+      handleConnect={handleConnect}
     />
   );
 }
@@ -768,7 +819,18 @@ export function ConformanceRoute() {
 // a host, manage its chatbox here. There is no chatbox list; the host
 // list lives in Connect.
 export function ChatboxesRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
   return (
     <ChatboxesTab
       projectId={convexProjectId}
@@ -1110,7 +1172,8 @@ export default function App() {
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
@@ -1466,6 +1529,7 @@ export default function App() {
     isLoadingRemoteProjects,
     areServersHydrated,
     projectServers,
+    displayServerConfigs,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     selectedServerEntry,
@@ -1474,6 +1538,7 @@ export default function App() {
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,
     handleUpdate,
@@ -2432,7 +2497,11 @@ export default function App() {
       }
     }
 
-    if (activeTabBillingLocked && activeTabBillingFeature) {
+    if (
+      activeTabBillingLocked &&
+      activeTabBillingFeature &&
+      activeTab !== "chatboxes"
+    ) {
       toast.error(
         `${formatBillingFeatureName(
           activeTabBillingFeature
@@ -2665,7 +2734,7 @@ export default function App() {
     | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
-      serverConfigs: projectServers,
+      serverConfigs: displayServerConfigs,
       selectedServer: appState.selectedServer,
       selectedMultipleServers: appState.selectedMultipleServers,
       // Playground supports multi-server selection — the user can toggle
@@ -2677,12 +2746,13 @@ export default function App() {
       onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
+      onDisconnect: handleDisconnect,
       showOnlyOAuthServers: false,
       showOnlyServersWithViews: false,
     };
   }, [
     activeTab,
-    projectServers,
+    displayServerConfigs,
     appState.selectedServer,
     appState.selectedMultipleServers,
     setSelectedServer,
@@ -2690,6 +2760,7 @@ export default function App() {
     setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
+    handleDisconnect,
   ]);
 
   if (isDebugCallback) {
@@ -2807,6 +2878,10 @@ export default function App() {
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
+          // Stays on projectServers (NOT displayServerConfigs): the header
+          // picker also drives the OAuth Debugger / XAA tabs, and tests
+          // explicitly guard against surfacing runtime-only entries there
+          // (cross-project / cross-org leak prevention).
           serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
@@ -2827,19 +2902,23 @@ export default function App() {
         }
       : undefined;
 
+  const isEvalsTab = activeTab === "evals" || activeTab === "ci-evals";
   const globalHostBarProps =
-    hostsHubFlagEnabled && isAuthenticated && convexProjectId
+    hostsHubFlagEnabled && isAuthenticated && convexProjectId && !isEvalsTab
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
             setHostsTabSelectedHostId(hostId);
             navigateApp(buildClientsPath(hostId));
           },
-          // Only present while the host canvas is open — re-targets it on
-          // dropdown change so the diagram tracks the selected host instead
-          // of stuck on whatever was first opened via Edit.
+          // Active whenever the clients tab is mounted — the URL is the
+          // source of truth for which host the canvas renders, so every
+          // dropdown/cycle change must push `/clients/<hostId>`. Without
+          // this, bare `/clients` (no `:hostId`) renders the cached
+          // `previewedHostId` and clicking a different host only updates
+          // the preview store, leaving the canvas stuck on the original.
           onCanvasReplaceHost:
-            activeTab === "clients" && hostsTabSelectedHostId
+            activeTab === "clients"
               ? (hostId: string) => {
                   setHostsTabSelectedHostId(hostId);
                   navigateApp(buildClientsPath(hostId), { replace: true });
@@ -2866,6 +2945,7 @@ export default function App() {
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
     consumeCheckoutIntent,
+    displayServerConfigs,
     convexProjectId,
     defaultHubRoute,
     ensureServersReady,
@@ -2883,6 +2963,7 @@ export default function App() {
     handleOrganizationDeleted,
     handleProjectShared,
     handleReconnect,
+    handleRuntimeDisconnect,
     handleRefreshTokensFromOAuthFlow,
     handleRemoveServer,
     handleUpdate,
@@ -2901,6 +2982,7 @@ export default function App() {
     navigateToTarget,
     pendingDashboardOAuth,
     playgroundEnabled,
+    evaluateUiEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,
@@ -3047,6 +3129,7 @@ export default function App() {
         actions={{
           ensureServersReady,
           runtimeDisconnectServer: handleRuntimeDisconnect,
+          reconnectServer: reconnectServerForClientSwitch,
           setSelectedServerNames: setSelectedMCPConfigs,
         }}
       >

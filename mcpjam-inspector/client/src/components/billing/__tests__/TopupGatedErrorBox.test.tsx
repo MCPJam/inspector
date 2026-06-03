@@ -3,9 +3,17 @@ import { render, screen } from "@testing-library/react";
 
 import { TopupGatedErrorBox } from "../TopupGatedErrorBox";
 
-let presetsState: Array<{ amountCents: number; amountUsd: string }> | undefined;
+let presetsState:
+  | Array<{
+      packageId: string;
+      priceCents: number;
+      displayPrice: string;
+      displayCredits: string;
+    }>
+  | undefined;
 let presetsLoadingState: boolean;
 let presetQueryShouldThrow = false;
+let creditsFlagState = true;
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -22,11 +30,15 @@ vi.mock("@/hooks/useCreditTopup", () => ({
     }
     if (presetQueryShouldThrow) {
       throw new Error(
-        "Could not find public function for 'billing:getCreditTopupPresets'",
+        "Could not find public function for 'billing:getCreditTopupPresets'"
       );
     }
     return { presets: presetsState, isLoading: presetsLoadingState };
   },
+}));
+
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditsFlagState,
 }));
 
 // Note: rate-limit errors (`user_rate_limit` / `mcpjam_rate_limit`) are now
@@ -44,66 +56,121 @@ const RATE_LIMIT_PROPS = {
 describe("TopupGatedErrorBox", () => {
   beforeEach(() => {
     presetsState = [
-      { amountCents: 500, amountUsd: "$5" },
-      { amountCents: 1000, amountUsd: "$10" },
-      { amountCents: 2000, amountUsd: "$20" },
+      {
+        packageId: "credits_500",
+        priceCents: 500,
+        displayPrice: "$5",
+        displayCredits: "500 credits",
+      },
+      {
+        packageId: "credits_1000",
+        priceCents: 1000,
+        displayPrice: "$10",
+        displayCredits: "1,000 credits",
+      },
+      {
+        packageId: "credits_2000",
+        priceCents: 2000,
+        displayPrice: "$20",
+        displayCredits: "2,000 credits",
+      },
     ];
     presetsLoadingState = false;
     presetQueryShouldThrow = false;
+    creditsFlagState = true;
   });
 
-  it("does not render the Top up CTA when canTopUp is false", () => {
+  it("does not render the Buy credits CTA when canTopUp is false", () => {
     render(
       <TopupGatedErrorBox
         {...RATE_LIMIT_PROPS}
         canTopUp={false}
         onTopUp={vi.fn()}
-      />,
+      />
     );
     expect(
-      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
+      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
     ).not.toBeInTheDocument();
   });
 
-  it("renders the Top up CTA when canTopUp is true and presets are available", () => {
+  it("renders the Buy credits CTA when canTopUp is true and presets are available", () => {
     render(
       <TopupGatedErrorBox
         {...RATE_LIMIT_PROPS}
         canTopUp
+        canManageCredits
         onTopUp={vi.fn()}
-      />,
+      />
     );
     expect(
-      screen.getByRole("button", { name: /Top up to keep chatting/ }),
+      screen.getByRole("button", { name: /Buy credits to keep chatting/ })
     ).toBeInTheDocument();
   });
 
-  it("hides the Top up CTA when canTopUp is true but presets are empty", () => {
+  it("hides credit-specific CTA/copy when the credits UI flag is off", () => {
+    creditsFlagState = false;
+    render(
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        canManageCredits={false}
+        onTopUp={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Ask org admin to top up credits/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the ask-admin hint instead of the Buy credits CTA when the user cannot manage credits", () => {
+    render(
+      <TopupGatedErrorBox
+        {...RATE_LIMIT_PROPS}
+        canTopUp
+        canManageCredits={false}
+        onTopUp={vi.fn()}
+      />
+    );
+    expect(
+      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Ask org admin to top up credits/)
+    ).toBeInTheDocument();
+  });
+
+  it("hides the Buy credits CTA when canTopUp is true but presets are empty", () => {
     presetsState = [];
     render(
       <TopupGatedErrorBox
         {...RATE_LIMIT_PROPS}
         canTopUp
+        canManageCredits
         onTopUp={vi.fn()}
-      />,
+      />
     );
     expect(
-      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
+      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
     ).not.toBeInTheDocument();
   });
 
-  it("hides the Top up CTA while presets are still loading", () => {
+  it("hides the Buy credits CTA while presets are still loading", () => {
     presetsState = undefined;
     presetsLoadingState = true;
     render(
       <TopupGatedErrorBox
         {...RATE_LIMIT_PROPS}
         canTopUp
+        canManageCredits
         onTopUp={vi.fn()}
-      />,
+      />
     );
     expect(
-      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
+      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
     ).not.toBeInTheDocument();
   });
 
@@ -115,16 +182,17 @@ describe("TopupGatedErrorBox", () => {
       <TopupGatedErrorBox
         {...RATE_LIMIT_PROPS}
         canTopUp
+        canManageCredits
         onTopUp={vi.fn()}
-      />,
+      />
     );
     expect(
-      screen.queryByRole("button", { name: /Top up to keep chatting/ }),
+      screen.queryByRole("button", { name: /Buy credits to keep chatting/ })
     ).not.toBeInTheDocument();
     // The error copy is still rendered so the user understands what
     // happened, just without the gated Top-up CTA.
     expect(
-      screen.getAllByText(/Provider unavailable/).length,
+      screen.getAllByText(/Provider unavailable/).length
     ).toBeGreaterThanOrEqual(1);
     errorSpy.mockRestore();
   });

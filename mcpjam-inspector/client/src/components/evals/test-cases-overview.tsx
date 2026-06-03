@@ -21,14 +21,22 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
+import {
+  EVAL_DESTRUCTIVE_BUTTON_CLASS,
+  EVAL_FAILED_BADGE_CLASS,
+  EVAL_LOW_PASS_RATE_TEXT_CLASS,
+} from "./constants";
+import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
-import type { EvalCase, EvalIteration } from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import {
   caseListCardClassName,
   CaseListColumnHeaders,
 } from "./case-list-shared";
+import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 
 function iterationRecencyTs(iter: EvalIteration): number {
   return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
@@ -39,11 +47,19 @@ interface TestCasesOverviewProps {
     _id: string;
     name: string;
     environment?: { servers?: string[] };
+    /** Host attachments drive the "By host" matrix; absent on minimal callers. */
+    hostAttachments?: EvalSuite["hostAttachments"];
   };
   cases: EvalCase[];
   allIterations: EvalIteration[];
-  runsViewMode: "runs" | "test-cases";
-  onViewModeChange: (value: "runs" | "test-cases") => void;
+  /**
+   * Suite runs, required to build the cross-host matrix. Optional because
+   * minimal callers don't need it; the matrix only renders when host
+   * attachments exist, which implies runs.
+   */
+  runs?: EvalSuiteRun[];
+  runsViewMode: SuiteOverviewView;
+  onViewModeChange: (value: SuiteOverviewView) => void;
   onTestCaseClick: (testCaseId: string) => void;
   clickHint?: string;
   runTrendData: Array<{
@@ -85,6 +101,7 @@ interface TestCasesOverviewProps {
 export function TestCasesOverview({
   suite,
   cases,
+  runs,
   allIterations,
   runsViewMode,
   onViewModeChange,
@@ -100,6 +117,11 @@ export function TestCasesOverview({
   isDirectGuest = false,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
+  // A one-host matrix is pointless, so the cross-host view is only offered when
+  // the suite has >=2 host attachments. Same source useCrossHostData reads.
+  const hostAttachmentCount = suite.hostAttachments?.length ?? 0;
+  const canShowByHost = hostAttachmentCount >= 2;
+  const isByHostView = canShowByHost && runsViewMode === "runs";
   const liveCases = useQuery(
     "testSuites:listTestCases" as any,
     { suiteId: suite._id } as any
@@ -324,18 +346,26 @@ export function TestCasesOverview({
     <>
       {/* Cases List */}
       <div
-        className={cn(caseListCardClassName, "max-h-[600px]")}
+        className={cn(
+          caseListCardClassName,
+          isByHostView
+            ? "min-h-[min(70vh,720px)] flex-1"
+            : "max-h-[600px]",
+        )}
       >
-        {batchDelete &&
+        {!isByHostView &&
+        batchDelete &&
         (showPersistentBatchHeader || selectedCaseIds.size > 0) ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
-              <Checkbox
-                checked={selectedCaseIds.size === testCaseStats.length}
-                onCheckedChange={toggleAllCases}
-                aria-label="Select all cases"
-                disabled={testCaseStats.length === 0}
-              />
+              {!isByHostView ? (
+                <Checkbox
+                  checked={selectedCaseIds.size === testCaseStats.length}
+                  onCheckedChange={toggleAllCases}
+                  aria-label="Select all cases"
+                  disabled={testCaseStats.length === 0}
+                />
+              ) : null}
               <span className="text-xs font-medium truncate">Test Cases</span>
             </div>
             {selectedCaseIds.size > 0 ? (
@@ -355,9 +385,8 @@ export function TestCasesOverview({
                 </Button>
                 <Button
                   type="button"
-                  variant="destructive"
                   size="sm"
-                  className="h-8"
+                  className={cn("h-8", EVAL_DESTRUCTIVE_BUTTON_CLASS)}
                   onClick={() => setShowBatchDeleteModal(true)}
                   disabled={isBatchDeleting}
                 >
@@ -366,39 +395,90 @@ export function TestCasesOverview({
               </div>
             ) : null}
           </div>
-        ) : !showDisconnectedPlaygroundEmptyState ? (
-          <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">{clickHint}</p>
+        ) : !showDisconnectedPlaygroundEmptyState &&
+          !(
+            !isByHostView &&
+            hideViewModeSelect &&
+            testCaseStats.length === 0
+          ) ? (
+          <div
+            className={cn(
+              "shrink-0 flex items-center justify-between gap-3 border-b",
+              isByHostView
+                ? "bg-muted/60 px-4 py-2.5"
+                : "px-4 py-2",
+            )}
+          >
+            <div className="min-w-0">
+              {isByHostView ? (
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <h2 className="truncate text-base font-semibold leading-tight text-foreground sm:text-lg">
+                    Test cases
+                    <span className="ml-1.5 font-mono text-sm font-normal tabular-nums text-muted-foreground">
+                      · {effectiveCases.length}
+                    </span>
+                  </h2>
+                  <p className="text-[11px] text-muted-foreground">
+                    Pass rate, latency, and tokens per attached host
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{clickHint}</p>
+              )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {!hideViewModeSelect ? (
-                <select
-                  value={runsViewMode}
-                  onChange={(e) =>
-                    onViewModeChange(e.target.value as "runs" | "test-cases")
-                  }
-                  className="text-xs border rounded px-2 py-1 bg-background"
-                >
-                  <option value="runs">Runs</option>
-                  <option value="test-cases">Cases</option>
-                </select>
+                <div className="flex items-center rounded-md border bg-muted/40 p-0.5 gap-0.5">
+                  {(
+                    [
+                      { value: "runs", label: "Runs" },
+                      { value: "test-cases", label: "Cases" },
+                    ] as { value: SuiteOverviewView; label: string }[]
+                  ).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => onViewModeChange(value)}
+                      className={cn(
+                        "px-2 py-0.5 text-xs rounded transition-colors",
+                        runsViewMode === value
+                          ? "bg-background text-foreground shadow-sm font-medium"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               ) : null}
             </div>
           </div>
         ) : null}
 
-        {/* Column Headers */}
-        {testCaseStats.length > 0 && (
-          <CaseListColumnHeaders
-            firstColumnLabel="Case name"
-            secondColumnLabel="Last run"
-            leadingGutter={batchDelete}
-            trailingGutter={showRunColumn}
-          />
-        )}
+        {isByHostView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto bg-background">
+            <CrossHostDashboard
+              suite={suite as EvalSuite}
+              cases={effectiveCases}
+              runs={runs ?? []}
+              allIterations={allIterations}
+              expanded
+              onTestCaseClick={onTestCaseClick}
+            />
+          </div>
+        ) : (
+          <>
+            {/* Column Headers */}
+            {testCaseStats.length > 0 && (
+              <CaseListColumnHeaders
+                firstColumnLabel="Case name"
+                secondColumnLabel="Last run"
+                leadingGutter={batchDelete}
+                trailingGutter={showRunColumn}
+              />
+            )}
 
-        <div className="divide-y overflow-y-auto">
+            <div className="divide-y overflow-y-auto">
           {testCaseStats.length === 0 ? (
             showDisconnectedPlaygroundEmptyState ? (
               <EmptyState
@@ -408,12 +488,13 @@ export function TestCasesOverview({
                 className="h-auto min-h-[240px]"
               />
             ) : hideViewModeSelect ? (
-              <EmptyState
-                icon={Puzzle}
-                title="No test cases yet"
-                description="Click Generate to create a starter set from your tools, or New case to add one manually."
-                className="h-auto min-h-[240px]"
-              />
+              <div className="flex min-h-[200px] items-center justify-center px-4 py-12">
+                <p className="text-sm text-muted-foreground">
+                  No test cases yet — click{" "}
+                  <span className="text-foreground">Generate</span> or{" "}
+                  <span className="text-foreground">New case</span>.
+                </p>
+              </div>
             ) : (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No cases found.
@@ -471,7 +552,7 @@ export function TestCasesOverview({
               const caseTitle = testCase.title || "Untitled test case";
               const passBadge = (
                 <span
-                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
+                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-success/50 text-foreground"
                   aria-label="Passed"
                 >
                   Passed
@@ -479,7 +560,11 @@ export function TestCasesOverview({
               );
               const failBadge = (
                 <span
-                  className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+                  className={cn(
+                    ITERATION_RESULT_BADGE_BASE,
+                    "tracking-wider",
+                    EVAL_FAILED_BADGE_CLASS,
+                  )}
                   aria-label="Failed"
                 >
                   Failed
@@ -667,7 +752,9 @@ export function TestCasesOverview({
               );
             })
           )}
-        </div>
+            </div>
+          </>
+        )}
       </div>
 
       <Dialog
@@ -679,7 +766,9 @@ export function TestCasesOverview({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-destructive" />
+              <Trash2
+                className={cn("h-5 w-5", EVAL_LOW_PASS_RATE_TEXT_CLASS)}
+              />
               Delete {selectedCaseIds.size} test case
               {selectedCaseIds.size !== 1 ? "s" : ""}
             </DialogTitle>
@@ -697,7 +786,7 @@ export function TestCasesOverview({
               Cancel
             </Button>
             <Button
-              variant="destructive"
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
               onClick={() => void confirmBatchDeleteTestCases()}
               disabled={isBatchDeleting}
             >

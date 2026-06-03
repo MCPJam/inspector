@@ -14,12 +14,21 @@ import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 /**
- * Union of the suite's flat `environment.servers` and every attached
- * host's resolved server names. This is what "what servers can this suite
- * see?" means in a host-aware world — generate, rerun-eligibility, and
- * any other "does this suite have any servers?" gates should consult this
- * instead of `environment.servers` alone, otherwise host-only suites
- * (created via `hostAttachments` with no flat list) read as empty.
+ * What servers can this suite see at run-time? Mirrors the precedence
+ * `startTestSuiteRun` applies server-side (testSuites.ts ~4584):
+ *
+ *   1. `suite.serverAttachment` (standalone) — overrides EVERYTHING for
+ *      ALL hosts. Per-host picks and the legacy flat `environment.servers`
+ *      list are inert when this is set.
+ *   2. Per-host `hostAttachments[].resolvedServerNames` ∪ legacy
+ *      `environment.servers`.
+ *
+ * Without the standalone short-circuit, a suite that had a per-host
+ * attachment carrying old servers (e.g. seeded at suite-create time)
+ * and later got a narrower standalone picked still gates "Run all" /
+ * per-case Run on the shadowed per-host set — including any OAuth
+ * servers in there, which surfaces as a spurious "Re-authenticate with
+ * <staging>" toast even though the active attachment doesn't use them.
  */
 export function getEffectiveSuiteServers(
   // Accept a structurally narrower suite than the full `EvalSuite`: some
@@ -31,15 +40,25 @@ export function getEffectiveSuiteServers(
   suite: {
     environment?: { servers?: string[] } | undefined;
     hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
   },
 ): string[] {
+  if (suite.serverAttachment) {
+    return Array.from(
+      new Set(suite.serverAttachment.resolvedServerNames ?? []),
+    );
+  }
   const flatServers = suite.environment?.servers ?? [];
-  const attachmentServers =
+  const hostAttachmentServers =
     suite.hostAttachments?.flatMap(
       (attachment) => attachment.resolvedServerNames ?? [],
     ) ?? [];
-  if (attachmentServers.length === 0) return flatServers;
-  return Array.from(new Set([...flatServers, ...attachmentServers]));
+  if (hostAttachmentServers.length === 0) {
+    return flatServers;
+  }
+  return Array.from(
+    new Set([...flatServers, ...hostAttachmentServers]),
+  );
 }
 
 export function formatTime(ts?: number) {
@@ -312,11 +331,11 @@ export function evalStatusMiniBarClasses(result: string): string {
     case "running":
       return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
-      return "bg-muted-foreground/40";
+      return "bg-muted-foreground/50";
     case "mixed":
       return "bg-warning/50";
     default:
-      return "bg-muted-foreground/40";
+      return "bg-muted-foreground/50";
   }
 }
 
@@ -350,7 +369,7 @@ export function evalOverviewEntryMiniBarClass(
     return "bg-success/50";
   }
   if (r.result === "failed") return "bg-destructive/50";
-  return "bg-muted-foreground/40";
+  return "bg-muted-foreground/50";
 }
 
 /**
@@ -413,7 +432,7 @@ export function evalOverviewEntryLastRunStatusClass(
   const r = entry.latestRun;
   if (!r) return "text-muted-foreground";
   if (r.status === "running" || r.status === "pending") {
-    return "text-amber-600 dark:text-amber-400";
+    return "text-warning";
   }
   if (r.result === "passed") return "text-success";
   if (r.result === "failed" || r.status === "failed") {
@@ -763,6 +782,14 @@ export function iterationTokensP95(items: EvalIteration[]): number | null {
     .map((it) => it.tokensUsed)
     .filter((v): v is number => typeof v === "number");
   return percentile(vals, 0.95);
+}
+
+/** Total ordering on runs: `runNumber` primary, `createdAt` as tiebreaker. */
+export function compareRunsBySequence(
+  a: EvalSuiteRun,
+  b: EvalSuiteRun,
+): number {
+  return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */

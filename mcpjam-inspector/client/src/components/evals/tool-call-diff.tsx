@@ -42,8 +42,8 @@ export function ToolCallDiff({
         <div
           className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
             result.passed
-              ? "bg-green-500/15 text-green-700 dark:text-green-300"
-              : "bg-red-500/15 text-red-700 dark:text-red-300"
+              ? "bg-success/50 text-foreground"
+              : "bg-destructive/50 text-foreground"
           }`}
         >
           {result.passed ? "PASS" : "FAIL"}
@@ -111,7 +111,7 @@ export function ToolCallDiff({
           {argumentMismatches.map((m, i) => (
             <div
               key={`arg-${i}`}
-              className="rounded border border-amber-500/30 bg-amber-500/5 p-1.5 text-xs"
+              className="rounded border border-warning/50 bg-warning/50 p-1.5 text-xs"
             >
               <div className="font-mono font-medium">{m.toolName}</div>
               <div className="mt-1 grid grid-cols-2 gap-2 text-[11px]">
@@ -213,26 +213,26 @@ function ArgsBlock({
 function toneClass(tone: Tone): string {
   switch (tone) {
     case "missing":
-      return "bg-red-500/15 text-red-700 dark:text-red-300";
+      return "bg-destructive/50 text-foreground";
     case "extra":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-300";
+      return "bg-info/50 text-foreground";
     case "order":
-      return "bg-purple-500/15 text-purple-700 dark:text-purple-300";
+      return "bg-warning/50 text-foreground";
     case "arg":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
+      return "bg-warning/50 text-foreground";
   }
 }
 
 function toneBorderClass(tone: Tone): string {
   switch (tone) {
     case "missing":
-      return "border-red-500/30";
+      return "border-destructive/50";
     case "extra":
-      return "border-blue-500/30";
+      return "border-info/50";
     case "order":
-      return "border-purple-500/30";
+      return "border-warning/50 border-dashed";
     case "arg":
-      return "border-amber-500/30";
+      return "border-warning/50";
   }
 }
 

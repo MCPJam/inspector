@@ -161,7 +161,7 @@ export function CommitListSidebar({
                             {suiteName}
                           </span>
                           {isRunning ? (
-                            <div className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                            <div className="mt-0.5 text-[10px] text-warning">
                               in progress
                             </div>
                           ) : null}

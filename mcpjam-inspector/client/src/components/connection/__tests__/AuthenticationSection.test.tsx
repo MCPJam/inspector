@@ -38,6 +38,42 @@ describe("AuthenticationSection", () => {
     expect(screen.getByRole("button", { name: /advanced settings/i })).toBeInTheDocument();
   });
 
+  it("masks the bearer token but allows revealing it", () => {
+    render(
+      <AuthenticationSection
+        serverUrl="https://example.com/mcp"
+        authType="bearer"
+        onAuthTypeChange={vi.fn()}
+        showAuthSettings={true}
+        bearerToken="super-secret-token"
+        onBearerTokenChange={vi.fn()}
+        oauthScopesInput=""
+        onOauthScopesChange={vi.fn()}
+        oauthProtocolMode="2025-11-25"
+        onOauthProtocolModeChange={vi.fn()}
+        oauthRegistrationMode="auto"
+        onOauthRegistrationModeChange={vi.fn()}
+        useCustomClientId={false}
+        onUseCustomClientIdChange={vi.fn()}
+        clientId=""
+        onClientIdChange={vi.fn()}
+        clientSecret=""
+        onClientSecretChange={vi.fn()}
+        clientIdError={null}
+        clientSecretError={null}
+      />,
+    );
+
+    const input = screen.getByPlaceholderText("Enter your bearer token");
+    expect(input).toHaveAttribute("type", "password");
+
+    fireEvent.click(screen.getByRole("button", { name: /show bearer token/i }));
+    expect(input).toHaveAttribute("type", "text");
+
+    fireEvent.click(screen.getByRole("button", { name: /hide bearer token/i }));
+    expect(input).toHaveAttribute("type", "password");
+  });
+
   it("does not show the preregistered client ID banner; marks Client ID as required", () => {
     render(
       <AuthenticationSection

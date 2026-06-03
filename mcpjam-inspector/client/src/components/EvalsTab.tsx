@@ -1,17 +1,33 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvex, useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth, useMutation } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import posthog from "posthog-js";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@mcpjam/design-system/breadcrumb";
+import { EvalsEmptyHero } from "./evals/evals-empty-hero";
+import {
+  runExcalidrawQuickstart,
+  EXCALIDRAW_QUICKSTART_SUITE_NAME,
+} from "@/lib/evals/excalidraw-quickstart";
+import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
+import { isQuickstartSuite } from "./evals/constants";
+import type { ServerFormData } from "@/shared/types.js";
 import { useProjectServers } from "@/hooks/useViews";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
-import { aggregateSuite, getEffectiveSuiteServers } from "./evals/helpers";
+import { aggregateSuite, formatRunId, getEffectiveSuiteServers } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
   createPlaygroundSuiteNavigation,
@@ -24,28 +40,10 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { EvalsSuiteListSidebar } from "./evals/evals-suite-list-sidebar";
-import {
-  PlaygroundSuitesExecutionsTabs,
-  type PlaygroundProjectBrowse,
-} from "./evals/playground-suites-executions-tabs";
 import { CreateSuiteDialog, type CreateSuitePayload } from "./evals/create-suite-dialog";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { SuiteExecutionsOverview } from "./evals/suite-executions-overview";
-import { usePlaygroundProjectExecutions } from "./evals/use-playground-project-executions";
-import type { EvalIteration } from "./evals/types";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
-import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
-import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-
-const FIRST_SUITE_EMPTY_DESCRIPTION =
-  "A suite groups eval cases with the MCP servers they use. Create one, then generate cases or import a chat transcript.";
-
-// Module-scoped so an in-flight explore-suite create still blocks duplicate
-// creates if the EvalsTab unmounts and remounts before the create finishes.
-// Keyed by `${projectId}::${serverName}` so different projects don't share.
-const explorePrefetchInFlight = new Set<string>();
 
 interface EvalsTabProps {
   projectId?: string | null;
@@ -53,12 +51,14 @@ interface EvalsTabProps {
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
+  handleConnect?: (config: ServerFormData) => void;
 }
 
 export function EvalsTab({
   projectId,
   onContinueInChat,
   ensureServersReady,
+  handleConnect,
 }: EvalsTabProps) {
   const { isAuthenticated } = useConvexAuth();
 
@@ -73,6 +73,7 @@ export function EvalsTab({
         projectId={projectId}
         onContinueInChat={onContinueInChat}
         ensureServersReady={ensureServersReady}
+        handleConnect={handleConnect}
       />
     </ErrorBoundary>
   );
@@ -125,16 +126,15 @@ function EvalsTabContent({
   projectId,
   onContinueInChat,
   ensureServersReady,
+  handleConnect,
 }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const convex = useConvex();
-  const { user, getAccessToken } = useAuth();
+  const { user } = useAuth();
   const hostsEnabled =
     useFeatureFlagEnabled("hosts-enabled") === true && isAuthenticated;
   const route = useEvalsRouteFromUrl();
-  const [projectBrowse, setProjectBrowse] =
-    useState<PlaygroundProjectBrowse>("suites");
   const isDirectGuest = useIsDirectGuest({ projectId });
+  const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const {
     connectedServerNames,
     userMap,
@@ -151,6 +151,14 @@ function EvalsTabContent({
     projectId: projectId ?? null,
   });
   const mutations = useEvalMutations({ isDirectGuest });
+  const convex = useConvex();
+  const createServerAttachmentMutation = useMutation(
+    "serverAttachments:createServerAttachment" as any,
+  ) as unknown as (args: {
+    projectId: string;
+    name: string;
+    serverIds: string[];
+  }) => Promise<{ _id: string }>;
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -164,18 +172,6 @@ function EvalsTabContent({
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-
-  useLayoutEffect(() => {
-    if (
-      route.type === "suite-overview" ||
-      route.type === "run-detail" ||
-      route.type === "test-detail" ||
-      route.type === "test-edit" ||
-      route.type === "suite-edit"
-    ) {
-      setProjectBrowse("suites");
-    }
-  }, [route]);
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(projectId),
@@ -258,53 +254,6 @@ function EvalsTabContent({
     []
   );
 
-  const playgroundProjectSuiteIds = useMemo(
-    () => visibleSuites.map((entry) => entry.suite._id),
-    [visibleSuites],
-  );
-
-  const projectExecutions = usePlaygroundProjectExecutions({
-    enabled:
-      isAuthenticated &&
-      Boolean(projectId) &&
-      !overviewQueries.isOverviewLoading &&
-      visibleSuites.length > 0 &&
-      projectBrowse === "executions" &&
-      selectedSuiteId === null,
-    suiteIds: playgroundProjectSuiteIds,
-  });
-
-  const handleProjectExecutionOpen = useCallback(
-    (iteration: EvalIteration) => {
-      const suiteId =
-        projectExecutions.iterationToSuiteId.get(iteration._id) ??
-        (iteration.testCaseId
-          ? projectExecutions.cases.find((c) => c._id === iteration.testCaseId)
-              ?.testSuiteId
-          : undefined);
-      if (!suiteId) {
-        return;
-      }
-      if (iteration.testCaseId) {
-        playgroundNavigation.toTestEdit(suiteId, iteration.testCaseId, {
-          openCompare: true,
-          iteration: iteration._id,
-        });
-      } else if (iteration.suiteRunId) {
-        playgroundNavigation.toRunDetail(
-          suiteId,
-          iteration.suiteRunId,
-          iteration._id,
-        );
-      }
-    },
-    [
-      playgroundNavigation,
-      projectExecutions.cases,
-      projectExecutions.iterationToSuiteId,
-    ],
-  );
-
   useEffect(() => {
     if (route.type === "list" || route.type === "create") {
       return;
@@ -320,104 +269,57 @@ function EvalsTabContent({
     }
   }, [overviewQueries.isOverviewLoading, route.type, selectedSuiteEntry, selectedSuiteId]);
 
-  // ---------------------------------------------------------------------------
-  // Auto-create an explore suite for each connected server that doesn't have one
-  // ---------------------------------------------------------------------------
-  const createTestSuiteMutation = mutations.createTestSuiteMutation;
-  const createTestCaseMutation = mutations.createTestCaseMutation;
-
-  useEffect(() => {
-    if (
-      !isAuthenticated ||
-      !projectId ||
-      overviewQueries.isOverviewLoading ||
-      connectedServerNames.size === 0
-    ) {
-      return;
-    }
-
-    // Find connected servers that don't already have an explore suite
-    const serversWithExploreSuite = new Set(
-      visibleSuites
-        .filter((entry) => isExploreSuite(entry.suite))
-        .flatMap((entry) => entry.suite.environment?.servers ?? []),
-    );
-
-    const inFlightKeyFor = (serverName: string) =>
-      `${projectId}::${serverName}`;
-
-    const serversNeedingSuite = [...connectedServerNames].filter(
-      (name) =>
-        !serversWithExploreSuite.has(name) &&
-        !explorePrefetchInFlight.has(inFlightKeyFor(name)),
-    );
-
-    if (serversNeedingSuite.length === 0) {
-      return;
-    }
-
-    for (const serverName of serversNeedingSuite) {
-      const inFlightKey = inFlightKeyFor(serverName);
-      explorePrefetchInFlight.add(inFlightKey);
-
-      void (async () => {
-        try {
-          // Pass tags atomically in the initial create. A second mutation to
-          // tag would risk an orphan untagged suite if it failed, which would
-          // bypass `isExploreSuite` and let the next pass create a duplicate.
-          const createdSuite = await createTestSuiteMutation({
-            projectId,
-            name: serverName,
-            description: `Explore cases for ${serverName}`,
-            environment: { servers: [serverName] },
-            tags: [EXPLORE_SUITE_TAG],
-          });
-
-          if (!createdSuite?._id) return;
-
-          const outcome = await generateAndPersistEvalTests({
-            convex,
-            getAccessToken,
-            projectId,
-            suiteId: createdSuite._id,
-            serverIds: [serverName],
-            createTestCase: createTestCaseMutation,
-            skipIfExistingCases: true,
-          });
-
-          if (outcome.createdCount > 0) {
-            posthog.capture("eval_explore_cases_prefetched_on_connect", {
-              location: "playground_tab",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
-              project_id: projectId,
-              server_name: serverName,
-              suite_id: createdSuite._id,
-              generated_count: outcome.createdCount,
-            });
-          }
-        } catch (error) {
-          console.error("Explore suite auto-create failed:", error);
-        } finally {
-          explorePrefetchInFlight.delete(inFlightKey);
-        }
-      })();
-    }
-  }, [
-    isAuthenticated,
-    projectId,
-    connectedServerNames,
-    visibleSuites,
-    overviewQueries.isOverviewLoading,
-    convex,
-    getAccessToken,
-    createTestSuiteMutation,
-    createTestCaseMutation,
-  ]);
-
   const handleOpenCreateSuite = useCallback(() => {
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
+
+  const [isQuickstartRunning, setIsQuickstartRunning] = useState(false);
+
+  const existingQuickstartSuiteId = useMemo(() => {
+    const match = visibleSuites.find(
+      (entry) =>
+        isQuickstartSuite(entry.suite) ||
+        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME,
+    );
+    return match?.suite._id ?? null;
+  }, [visibleSuites]);
+
+  const handleExcalidrawQuickstart = useCallback(async () => {
+    if (!handleConnect || isQuickstartRunning) return;
+    if (!projectId) {
+      toast.error("Select or create a project before running the quickstart.");
+      return;
+    }
+    setIsQuickstartRunning(true);
+    try {
+      await runExcalidrawQuickstart({
+        projectId,
+        convex,
+        createTestSuite: mutations.createTestSuiteMutation,
+        createTestCase: mutations.createTestCaseMutation,
+        createServerAttachment: createServerAttachmentMutation,
+        handleConnect,
+        isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
+        existingQuickstartSuiteId,
+        previewedHostId,
+      });
+    } finally {
+      setIsQuickstartRunning(false);
+    }
+  }, [
+    projectId,
+    convex,
+    handleConnect,
+    isQuickstartRunning,
+    mutations.createTestSuiteMutation,
+    mutations.createTestCaseMutation,
+    createServerAttachmentMutation,
+    connectedServerNames,
+    existingQuickstartSuiteId,
+    previewedHostId,
+  ]);
+
+  const showQuickstart = Boolean(handleConnect);
 
   const handleCreateDialogChange = useCallback(
     (open: boolean) => {
@@ -438,7 +340,6 @@ function EvalsTabContent({
         const createdSuite = await mutations.createTestSuiteMutation({
           projectId,
           name: payload.name,
-          description: payload.description,
           // environment.servers is left empty: hosts own server selection
           // now, and the runner derives the per-run server set from each
           // attachment's snapshot. Suites with zero attachments are valid
@@ -446,6 +347,9 @@ function EvalsTabContent({
           environment: { servers: [] },
           ...(payload.hostAttachments && payload.hostAttachments.length > 0
             ? { hostAttachments: payload.hostAttachments }
+            : {}),
+          ...(payload.serverAttachmentId
+            ? { serverAttachmentId: payload.serverAttachmentId }
             : {}),
         });
 
@@ -466,21 +370,8 @@ function EvalsTabContent({
     [mutations.createTestSuiteMutation, projectId],
   );
 
-  const handleProjectBrowseChange = useCallback(
-    (value: PlaygroundProjectBrowse) => {
-      if (
-        selectedSuiteId &&
-        (value === "executions" || value === "suites")
-      ) {
-        navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
-      }
-      setProjectBrowse(value);
-    },
-    [selectedSuiteId],
-  );
 
   const handleSelectSuite = useCallback((suiteId: string) => {
-    setProjectBrowse("suites");
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);
 
@@ -488,7 +379,22 @@ function EvalsTabContent({
     if (!selectedSuite) return;
     const suiteServers = getEffectiveSuiteServers(selectedSuite);
     if (suiteServers.length === 0) return;
-    await handlers.handleGenerateTests(selectedSuite._id, suiteServers);
+    // Scope generation by the suite's saved server attachment when present.
+    // Backend uses this to (a) require per-server cases AND at least one
+    // cross-server case when the attachment spans ≥2 servers, and (b) put
+    // the attachment name on each generated case so failures are
+    // attributable to a specific suite scope rather than "any server".
+    const suiteAttachment = selectedSuite.serverAttachment;
+    const serverAttachment = suiteAttachment
+      ? {
+          id: suiteAttachment._id,
+          name: suiteAttachment.name,
+          resolvedServerNames: suiteAttachment.resolvedServerNames,
+        }
+      : undefined;
+    await handlers.handleGenerateTests(selectedSuite._id, suiteServers, {
+      ...(serverAttachment ? { serverAttachment } : {}),
+    });
   }, [handlers, selectedSuite]);
 
   const generateState = useMemo(() => {
@@ -617,6 +523,105 @@ function EvalsTabContent({
     [mutations.deleteSuiteMutation, selectedSuiteId],
   );
 
+  const hasDetailRoute =
+    selectedSuiteId &&
+    (route.type === "suite-overview" ||
+      route.type === "run-detail" ||
+      route.type === "test-detail" ||
+      route.type === "test-edit" ||
+      route.type === "suite-edit");
+
+  const selectedTestCase = useMemo(() => {
+    if (!selectedTestId) return null;
+    return (
+      suiteDetails?.testCases.find((tc) => tc._id === selectedTestId) ?? null
+    );
+  }, [selectedTestId, suiteDetails]);
+
+  const renderPlaygroundBreadcrumb = () => {
+    if (!hasDetailRoute || !selectedSuite) return null;
+    const suiteCrumbAsLink = route.type !== "suite-overview";
+    return (
+      <Breadcrumb className="min-w-0 flex-1">
+        <BreadcrumbList className="min-w-0 flex-nowrap">
+          <BreadcrumbItem>
+            <BreadcrumbLink asChild>
+              <button
+                type="button"
+                onClick={() =>
+                  navigatePlaygroundEvalsRoute({ type: "list" })
+                }
+                className="inline-flex border-0 bg-transparent p-0 font-medium"
+              >
+                Suites
+              </button>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+            {suiteCrumbAsLink ? (
+              <BreadcrumbLink asChild>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigatePlaygroundEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: selectedSuite._id,
+                    })
+                  }
+                  title={selectedSuite.name}
+                  className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                >
+                  {selectedSuite.name}
+                </button>
+              </BreadcrumbLink>
+            ) : (
+              <BreadcrumbPage
+                className="truncate font-medium"
+                title={selectedSuite.name}
+              >
+                {selectedSuite.name}
+              </BreadcrumbPage>
+            )}
+          </BreadcrumbItem>
+          {route.type === "run-detail" ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="truncate font-medium">
+                  Run {formatRunId(route.runId)}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
+          {route.type === "test-detail" || route.type === "test-edit" ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem className="max-w-[min(220px,32vw)] min-w-0">
+                <BreadcrumbPage
+                  className="truncate font-medium"
+                  title={selectedTestCase?.title ?? "Case"}
+                >
+                  {selectedTestCase?.title ?? "Case"}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
+          {route.type === "suite-edit" ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="truncate font-medium">
+                  Settings
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
+        </BreadcrumbList>
+      </Breadcrumb>
+    );
+  };
+
   const renderSuitesBrowsePanel = () => {
     if (overviewQueries.isOverviewLoading) {
       return (
@@ -633,45 +638,40 @@ function EvalsTabContent({
 
     if (visibleSuites.length === 0) {
       return (
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-          <div className="max-w-md text-center">
-            <EmptyState
-              icon={FlaskConical}
-              title="Create your first suite"
-              description={FIRST_SUITE_EMPTY_DESCRIPTION}
-              className="h-auto"
-            >
-              <Button type="button" onClick={handleOpenCreateSuite}>
-                Create suite
-              </Button>
-            </EmptyState>
-          </div>
-        </div>
+        <EvalsEmptyHero
+          onCreateSuite={handleOpenCreateSuite}
+          onQuickstart={() => void handleExcalidrawQuickstart()}
+          isQuickstartRunning={isQuickstartRunning}
+          showQuickstart={showQuickstart}
+        />
       );
     }
 
-    if (
-      selectedSuiteId &&
-      (route.type === "suite-overview" ||
-        route.type === "run-detail" ||
-        route.type === "test-detail" ||
-        route.type === "test-edit" ||
-        route.type === "suite-edit")
-    ) {
-      if (queries.isSuiteDetailsLoading) {
-        return (
-          <div className="flex min-h-0 flex-1 items-center justify-center">
-            <div className="text-center">
-              <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-              <p className="mt-4 text-sm text-muted-foreground">
-                Loading suite data...
-              </p>
+    if (hasDetailRoute) {
+      const breadcrumb = renderPlaygroundBreadcrumb();
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          {breadcrumb ? (
+            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                {breadcrumb}
+              </div>
             </div>
-          </div>
-        );
-      }
-
-      return renderSuiteIterationsDetail();
+          ) : null}
+          {queries.isSuiteDetailsLoading ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center">
+              <div className="text-center">
+                <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                <p className="mt-4 text-sm text-muted-foreground">
+                  Loading suite data...
+                </p>
+              </div>
+            </div>
+          ) : (
+            renderSuiteIterationsDetail()
+          )}
+        </div>
+      );
     }
 
     return (
@@ -686,6 +686,7 @@ function EvalsTabContent({
           onDeleteSuitesBatch={handleDeleteSuitesBatch}
           deleteInProgress={Boolean(handlers.deletingSuiteId)}
           onRunAll={handlers.handleRerun}
+          onEditSuite={playgroundNavigation.toSuiteEdit}
           rerunningSuiteId={handlers.rerunningSuiteId}
           replayingRunId={handlers.replayingRunId}
           runningTestCaseId={handlers.runningTestCaseId}
@@ -777,106 +778,7 @@ function EvalsTabContent({
     );
   };
 
-  const renderExecutionsBrowsePanel = () => {
-    if (overviewQueries.isOverviewLoading) {
-      return (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <div className="text-center">
-            <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-            <p className="mt-4 text-sm text-muted-foreground">
-              Loading suites...
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    if (visibleSuites.length === 0) {
-      return (
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-          <div className="max-w-md text-center">
-            <EmptyState
-              icon={FlaskConical}
-              title="Create your first suite"
-              description={FIRST_SUITE_EMPTY_DESCRIPTION}
-              className="h-auto"
-            >
-              <Button type="button" onClick={handleOpenCreateSuite}>
-                Create suite
-              </Button>
-            </EmptyState>
-          </div>
-        </div>
-      );
-    }
-
-    if (!selectedSuiteId) {
-      if (
-        projectExecutions.status === "loading" ||
-        projectExecutions.status === "idle"
-      ) {
-        return (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col px-5 pb-5 pt-3">
-            <div className="flex flex-1 items-center justify-center">
-              <div className="text-center">
-                <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-                <p className="mt-4 text-sm text-muted-foreground">
-                  Loading executions...
-                </p>
-              </div>
-            </div>
-          </div>
-        );
-      }
-
-      if (projectExecutions.status === "error") {
-        return (
-          <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-            <p className="text-center text-sm text-muted-foreground">
-              Could not load executions. Try again in a moment.
-            </p>
-          </div>
-        );
-      }
-
-      return (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-3">
-          <SuiteExecutionsOverview
-            cases={projectExecutions.cases}
-            allIterations={projectExecutions.iterations}
-            onOpenIteration={handleProjectExecutionOpen}
-            className="min-h-0 flex-1 max-h-none"
-            listClassName="min-h-0 flex-1"
-          />
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const showProjectBrowseTabs =
-    !overviewQueries.isOverviewLoading && visibleSuites.length > 0;
-
-  const renderPlaygroundBody = () => {
-    if (!showProjectBrowseTabs) {
-      return renderSuitesBrowsePanel();
-    }
-
-    return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <PlaygroundSuitesExecutionsTabs
-          value={projectBrowse}
-          onChange={handleProjectBrowseChange}
-        />
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {projectBrowse === "suites"
-            ? renderSuitesBrowsePanel()
-            : renderExecutionsBrowsePanel()}
-        </div>
-      </div>
-    );
-  };
+  const renderPlaygroundBody = () => renderSuitesBrowsePanel();
 
   return (
     <EvalTabGate

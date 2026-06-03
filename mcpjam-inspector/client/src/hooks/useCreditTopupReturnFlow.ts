@@ -99,10 +99,17 @@ export function useCreditTopupReturnFlow({
  * belongs to the chat surface and a billing-initiated round trip has no
  * queued message to resend.
  */
-export function useCreditTopupReturnFlowBilling(): void {
+interface UseCreditTopupReturnFlowBillingOptions {
+  enabled?: boolean;
+}
+
+export function useCreditTopupReturnFlowBilling({
+  enabled = true,
+}: UseCreditTopupReturnFlowBillingOptions = {}): void {
   const posthog = usePostHog();
 
   useEffect(() => {
+    if (!enabled) return;
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const topupParam = params.get("topup");
@@ -123,5 +130,5 @@ export function useCreditTopupReturnFlowBilling(): void {
     toast.success("Credits added.");
     posthog?.capture("credit_topup_return_success");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enabled]);
 }

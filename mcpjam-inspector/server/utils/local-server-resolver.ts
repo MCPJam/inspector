@@ -1,9 +1,6 @@
 import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
-import {
-  isKnownProtocolVersion,
-  type McpProtocolVersion,
-} from "@mcpjam/sdk";
+import { isKnownProtocolVersion, type McpProtocolVersion } from "@mcpjam/sdk";
 import {
   ErrorCode,
   WebRouteError,
@@ -14,11 +11,15 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import { exportSingleServerForInspection } from "./export-helpers.js";
+import { ConvexHttpClient } from "convex/browser";
+import { getInspectorClientRuntimeConfig } from "../env.js";
 import { setRequestLogContext } from "./request-logger.js";
 import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
+import { fetchRuntimeServerSecrets } from "./server-secrets.js";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 
 type LocalAuthorizeServerConfig =
@@ -26,6 +27,7 @@ type LocalAuthorizeServerConfig =
       transportType: "http";
       url: string;
       headers: Record<string, string>;
+      hasHeaders?: boolean;
       timeout?: number;
       clientCapabilities?: unknown;
       useOAuth?: boolean;
@@ -38,6 +40,7 @@ type LocalAuthorizeServerConfig =
       command: string;
       args: string[];
       env: Record<string, string>;
+      hasEnv?: boolean;
       timeout?: number;
       clientCapabilities?: unknown;
     };
@@ -83,6 +86,17 @@ export function readLocalApiBearer(c: Context): string | null {
   return token.length > 0 ? token : null;
 }
 
+function hasNonEmptyStringRecord(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.entries(value as Record<string, unknown>).some(
+      ([, recordValue]) => typeof recordValue === "string"
+    )
+  );
+}
+
 /**
  * Call Convex `/web/authorize-batch-local` with the user's bearer.
  * Returns the full server config for each requested serverId, including
@@ -112,7 +126,7 @@ export async function authorizeBatchLocal(
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
-    AUTHORIZE_BATCH_LOCAL_TIMEOUT_MS,
+    AUTHORIZE_BATCH_LOCAL_TIMEOUT_MS
   );
 
   let response: Response;
@@ -129,7 +143,8 @@ export async function authorizeBatchLocal(
   } catch (error) {
     const isAbort =
       error instanceof Error &&
-      (error.name === "AbortError" || (error as { code?: string }).code === "ABORT_ERR");
+      (error.name === "AbortError" ||
+        (error as { code?: string }).code === "ABORT_ERR");
     throw new WebRouteError(
       isAbort ? 504 : 502,
       ErrorCode.SERVER_UNREACHABLE,
@@ -249,7 +264,9 @@ export function parseConnectionDefaults(
 
   if (input.headers && typeof input.headers === "object") {
     const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries(input.headers as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(
+      input.headers as Record<string, unknown>
+    )) {
       if (typeof v === "string") headers[k] = v;
     }
     if (Object.keys(headers).length > 0) out.headers = headers;
@@ -263,7 +280,10 @@ export function parseConnectionDefaults(
     input.clientCapabilities &&
     typeof input.clientCapabilities === "object"
   ) {
-    out.clientCapabilities = input.clientCapabilities as Record<string, unknown>;
+    out.clientCapabilities = input.clientCapabilities as Record<
+      string,
+      unknown
+    >;
   }
 
   // Accept clientInfo as a plain object (not null/array/scalar). Drop on
@@ -429,7 +449,7 @@ export function toMCPServerConfig(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `Server config has an invalid URL: ${serverConfig.url}`,
+      `Server config has an invalid URL: ${serverConfig.url}`
     );
   }
 
@@ -453,17 +473,14 @@ export function toMCPServerConfig(
   // Outbound wire mode — only forwarded for HTTP configs (the SDK
   // factory rejects stateless on stdio at construction time). Undefined
   // = SDK default (legacy upstream Client + initialize).
-  if (options?.mcpProtocolVersion) http.mcpProtocolVersion = options.mcpProtocolVersion;
+  if (options?.mcpProtocolVersion)
+    http.mcpProtocolVersion = options.mcpProtocolVersion;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
   // supplied refresh context. Header-only HTTP servers can't be refreshed
   // server-side, so the hook would be a no-op there.
-  if (
-    oauthToken &&
-    serverConfig.useOAuth === true &&
-    options?.refreshContext
-  ) {
+  if (oauthToken && serverConfig.useOAuth === true && options?.refreshContext) {
     http.onUnauthorized = buildHostedOAuthUnauthorizedHandler({
       bearerToken: options.refreshContext.bearerToken,
       projectId: options.refreshContext.projectId,
@@ -499,8 +516,11 @@ export async function resolveLocalServerForConnect(
      */
     defaults?: ConnectionDefaults;
   }
-): Promise<{ config: MCPServerConfig; authorizeResult: LocalAuthorizeBatchSuccess }> {
-  const result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
+): Promise<{
+  config: MCPServerConfig;
+  authorizeResult: LocalAuthorizeBatchSuccess;
+}> {
+  let result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
 
   const useOAuth =
     result.serverConfig.transportType === "http" &&
@@ -523,14 +543,14 @@ export async function resolveLocalServerForConnect(
         bearerToken,
         projectId,
         serverId,
-        { serverName: displayName },
+        { serverName: displayName }
       );
     } catch (error) {
       const refreshTokenInvalid =
         error instanceof WebRouteError &&
         Boolean(
           (error.details as { refreshTokenInvalid?: boolean } | undefined)
-            ?.refreshTokenInvalid,
+            ?.refreshTokenInvalid
         );
       if (!refreshTokenInvalid) {
         // Transient (rate limit, network, backend 5xx). Bubble up so the
@@ -553,6 +573,37 @@ export async function resolveLocalServerForConnect(
         }
       );
     }
+  }
+
+  const needsRuntimeSecrets =
+    (result.serverConfig.transportType === "stdio" &&
+      result.serverConfig.hasEnv === true &&
+      !hasNonEmptyStringRecord(result.serverConfig.env)) ||
+    (result.serverConfig.transportType === "http" &&
+      result.serverConfig.hasHeaders === true &&
+      !hasNonEmptyStringRecord(result.serverConfig.headers));
+  if (needsRuntimeSecrets) {
+    const secrets = await fetchRuntimeServerSecrets({
+      bearerToken,
+      projectId,
+      serverId,
+    });
+    result = {
+      ...result,
+      serverConfig:
+        result.serverConfig.transportType === "stdio"
+          ? {
+              ...result.serverConfig,
+              env: secrets.env ?? result.serverConfig.env ?? {},
+            }
+          : {
+              ...result.serverConfig,
+              headers: {
+                ...(result.serverConfig.headers ?? {}),
+                ...(secrets.headers ?? {}),
+              },
+            },
+    };
   }
 
   const config = toMCPServerConfig(result, {
@@ -618,21 +669,20 @@ export interface LocalConnectRequestParams {
  */
 export function parseLocalConnectRequestBody(
   c: Context,
-  body: unknown,
+  body: unknown
 ):
   | { ok: true; params: LocalConnectRequestParams }
   | { ok: false; error: WebRouteError } {
   const raw = (body ?? {}) as Record<string, unknown>;
 
-  const serverId =
-    typeof raw.serverId === "string" ? raw.serverId.trim() : "";
+  const serverId = typeof raw.serverId === "string" ? raw.serverId.trim() : "";
   if (!serverId) {
     return {
       ok: false,
       error: new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "serverId is required",
+        "serverId is required"
       ),
     };
   }
@@ -645,7 +695,7 @@ export function parseLocalConnectRequestBody(
       error: new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "projectId is required",
+        "projectId is required"
       ),
     };
   }
@@ -658,7 +708,7 @@ export function parseLocalConnectRequestBody(
       error: new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "serverName is required with projectId",
+        "serverName is required with projectId"
       ),
     };
   }
@@ -670,13 +720,14 @@ export function parseLocalConnectRequestBody(
       error: new WebRouteError(
         401,
         ErrorCode.UNAUTHORIZED,
-        "Authorization bearer token is required",
+        "Authorization bearer token is required"
       ),
     };
   }
 
   const clientCapabilities =
-    typeof raw.clientCapabilities === "object" && raw.clientCapabilities !== null
+    typeof raw.clientCapabilities === "object" &&
+    raw.clientCapabilities !== null
       ? (raw.clientCapabilities as Record<string, unknown>)
       : undefined;
 
@@ -714,7 +765,7 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
       error: error.message,
       ...(error.details ?? {}),
     },
-    error.status as any,
+    error.status as any
   );
 }
 
@@ -731,7 +782,7 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
  */
 export function buildConnectSuccessEnvelope(
   manager: Pick<MCPClientManager, "getInitializationInfo">,
-  managerKey: string,
+  managerKey: string
 ): { success: true; status: "connected"; initInfo: unknown } {
   return {
     success: true,
@@ -755,7 +806,7 @@ export function buildConnectSuccessEnvelope(
 export async function executeLocalServerConnect(
   c: Context,
   params: LocalConnectRequestParams,
-  options: { removeOnFailure: boolean },
+  options: { removeOnFailure: boolean }
 ) {
   const { serverId, projectId, serverDisplayName, bearer } = params;
   const mcpClientManager = c.mcpClientManager;
@@ -771,7 +822,7 @@ export async function executeLocalServerConnect(
         serverDisplayName,
         clientCapabilities: params.clientCapabilities,
         defaults: params.defaults,
-      },
+      }
     );
   } catch (error) {
     if (error instanceof WebRouteError) {
@@ -784,7 +835,7 @@ export async function executeLocalServerConnect(
         error: "Failed to resolve server config",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 
@@ -822,14 +873,59 @@ export async function executeLocalServerConnect(
     return c.json(
       {
         success: false,
-        error: `Connection failed for server ${serverDisplayName}: ${error instanceof Error ? error.message : "Unknown error"}`,
+        error: `Connection failed for server ${serverDisplayName}: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 
-  return c.json(
-    buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName),
+  // Capture the inspection snapshot synchronously so a fast follow-up
+  // disconnect/reconnect on the same server can't tear down the manager
+  // mid-`listTools`. Only the Convex write is fire-and-forget — failures
+  // there never affect the connect response (the connect succeeded
+  // regardless). Port of PR #1731's `use-inspection-coordinator`; mirrors
+  // the hosted `/web/servers/validate` path.
+  const inspectionSnapshot = await exportSingleServerForInspection(
+    mcpClientManager,
+    serverDisplayName,
+    serverId,
+    { logPrefix: "connect-inspection" },
   );
+  void persistConnectInspection({
+    convexBearer: bearer,
+    projectId,
+    snapshot: inspectionSnapshot,
+  }).catch((error) => {
+    logger.debug("Failed to persist connect-time inspection", {
+      serverId: serverDisplayName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  return c.json(
+    buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName)
+  );
+}
+
+async function persistConnectInspection(args: {
+  convexBearer: string | undefined;
+  projectId: string;
+  snapshot: Awaited<ReturnType<typeof exportSingleServerForInspection>>;
+}): Promise<void> {
+  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
+  // derived from it (suffix swap) by the runtime config helper so that
+  // production env (which sets only CONVEX_HTTP_URL) works.
+  const { convexUrl } = getInspectorClientRuntimeConfig();
+  if (!convexUrl || !args.convexBearer) {
+    return;
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(args.convexBearer);
+  await client.mutation("serverInspections:recordFromConnect" as any, {
+    projectId: args.projectId,
+    snapshot: args.snapshot,
+  });
 }

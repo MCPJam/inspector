@@ -3,6 +3,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+import {
+  PredicatesList,
+  parseIterationPredicates,
+} from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
 import {
   MessageSquare,
@@ -784,6 +788,19 @@ export function IterationDetails({
       )
     ) : null;
 
+  const predicates = useMemo(
+    () => parseIterationPredicates(iteration.metadata),
+    [iteration.metadata],
+  );
+  const predicatesSection = predicates ? (
+    <div className="space-y-2" data-testid="iteration-predicates-section">
+      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+        <div className="text-xs font-semibold">Predicate Gate</div>
+      </div>
+      <PredicatesList predicates={predicates} />
+    </div>
+  ) : null;
+
   const traceSection = iteration.blob ? (
     <div
       className={cn(
@@ -874,8 +891,8 @@ export function IterationDetails({
                   className={cn(
                     "rounded-full px-2 py-0.5 text-[10px] font-medium",
                     summary.passed
-                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                      : "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+                      ? "bg-success/50 text-foreground"
+                      : "bg-destructive/50 text-foreground",
                   )}
                 >
                   {summary.passed ? "Passed" : "Failed"}
@@ -889,7 +906,7 @@ export function IterationDetails({
                 {summary.actualToolCalls.length}
               </div>
               {!summary.passed ? (
-                <div className="text-[10px] text-rose-700 dark:text-rose-400">
+                <div className="text-[10px] text-destructive">
                   {formatToolCallsSummary(
                     summary.expectedToolCalls,
                     summary.actualToolCalls,
@@ -961,10 +978,12 @@ export function IterationDetails({
         <>
           {traceSection}
           {toolCallsSection}
+          {predicatesSection}
         </>
       ) : (
         <>
           {toolCallsSection}
+          {predicatesSection}
           {traceSection}
         </>
       )}

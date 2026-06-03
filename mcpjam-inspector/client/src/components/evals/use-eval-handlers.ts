@@ -154,6 +154,17 @@ export type HandleGenerateEvalTestsOptions = {
    * the per-row run control (including `ensureServersReady` and model prep).
    */
   runNewCasesAfterGenerate?: boolean;
+  /**
+   * Optional metadata about the suite's saved server attachment. When
+   * provided, threaded through to the backend so the LLM scopes generated
+   * cases to that attachment's servers (per-server tests + at least one
+   * explicit cross-server test when the attachment spans ≥2 servers).
+   */
+  serverAttachment?: {
+    id?: string;
+    name?: string;
+    resolvedServerNames: string[];
+  };
 };
 
 interface UseEvalHandlersProps {
@@ -355,7 +366,13 @@ export function useEvalHandlers({
       const modelApiKeys: Record<string, string> = {};
 
       return {
-        suiteServers: normalizeSuiteServerRefs(suite.environment?.servers),
+        // Effective server list: union of legacy `environment.servers`,
+        // per-host attachment picks, AND the suite's standalone server
+        // attachment (when set). The runner fallback in
+        // `runEvals.serverIds` reads this, so an attachment-only suite
+        // would otherwise send `serverIds: []` and fail the backend's
+        // `min(1)` validation with HTTP 400.
+        suiteServers: normalizeSuiteServerRefs(getEffectiveSuiteServers(suite)),
         testCases,
         tests,
         modelApiKeys,
@@ -584,6 +601,15 @@ export function useEvalHandlers({
               },
             ];
 
+      // Generate a shared group id ONLY when the rerun fans out to more
+      // than one host. The inspector route threads this through the Zod
+      // schema → recorder → Convex mutation; every sibling run carries
+      // the same id so the UI can collapse them into a single parent
+      // row. Single-host launches stay ungrouped so legacy + single-host
+      // rows render identically.
+      const runGroupId =
+        runPlans.length > 1 ? crypto.randomUUID() : undefined;
+
       // Show toast immediately when user clicks rerun
       toast.success(
         runPlans.length > 1
@@ -645,6 +671,7 @@ export function useEvalHandlers({
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,
               ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
+              ...(runGroupId ? { runGroupId } : {}),
             }),
           ),
         );
@@ -679,6 +706,34 @@ export function useEvalHandlers({
               ? `All ${runPlans.length} host runs started.`
               : "Eval run completed!",
           );
+
+          // Drop the user on the new run's detail page so they can see
+          // results without hunting through the runs list. Multi-host
+          // fan-outs land on the suite's runs view instead, since there
+          // are multiple sibling runs to pick from.
+          if (runPlans.length === 1) {
+            const firstSettled = settled[0];
+            const newRunId =
+              firstSettled?.status === "fulfilled"
+                ? (firstSettled.value as { runId?: unknown } | null | undefined)
+                    ?.runId
+                : undefined;
+            if (typeof newRunId === "string" && newRunId.length > 0) {
+              navigateEvalRoute(
+                {
+                  type: "run-detail",
+                  suiteId: suite._id,
+                  runId: newRunId,
+                },
+                evalsNavigationContext,
+              );
+            }
+          } else {
+            navigateEvalRoute(
+              { type: "suite-overview", suiteId: suite._id, view: "runs" },
+              evalsNavigationContext,
+            );
+          }
         } else if (failures.length < runPlans.length) {
           const failedHostNames = failures
             .map((failure) => failure.plan.hostName ?? "(unnamed host)")
@@ -711,6 +766,7 @@ export function useEvalHandlers({
       projectServers,
       getSuiteExecutionContext,
       handleReplayRun,
+      evalsNavigationContext,
     ]
   );
 
@@ -1330,36 +1386,36 @@ export function useEvalHandlers({
         return;
       }
 
-      const disconnected = suiteServers.filter(
-        (name) => !connectedServerNames?.has(name),
-      );
-      if (disconnected.length > 0) {
-        if (ensureServersReady != null) {
-          const readiness = await ensureServersReady(suiteServers);
-          if (hasUnavailableServers(readiness)) {
-            toast.error(
-              formatEnsureServersReadyError(
-                readiness,
-                "generate test cases",
-                projectServers,
-              ),
-            );
-            return;
-          }
-        } else {
-          toast.error(
-            formatMcpConnectServerPrompt(disconnected, {
-              remoteServers: projectServers,
-              kind: "suite",
-            }),
-          );
-          return;
-        }
-      }
-
       setIsGeneratingTests(true);
 
       try {
+        const disconnected = suiteServers.filter(
+          (name) => !connectedServerNames?.has(name),
+        );
+        if (disconnected.length > 0) {
+          if (ensureServersReady != null) {
+            const readiness = await ensureServersReady(suiteServers);
+            if (hasUnavailableServers(readiness)) {
+              toast.error(
+                formatEnsureServersReadyError(
+                  readiness,
+                  "generate test cases",
+                  projectServers,
+                ),
+              );
+              return;
+            }
+          } else {
+            toast.error(
+              formatMcpConnectServerPrompt(disconnected, {
+                remoteServers: projectServers,
+                kind: "suite",
+              }),
+            );
+            return;
+          }
+        }
+
         const outcome = await generateAndPersistEvalTests({
           convex,
           getAccessToken,
@@ -1375,6 +1431,9 @@ export function useEvalHandlers({
             convex.query("testSuites:listTestCases" as any, {
               suiteId,
             }) as Promise<Array<Record<string, unknown>>>,
+          ...(postOptions?.serverAttachment
+            ? { serverAttachment: postOptions.serverAttachment }
+            : {}),
         });
 
         if (outcome.apiReturnedTests === 0) {

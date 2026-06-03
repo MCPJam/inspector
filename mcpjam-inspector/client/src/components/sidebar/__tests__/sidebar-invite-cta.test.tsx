@@ -297,43 +297,4 @@ describe("sidebar invite CTA", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows disabled Playground with a beta tooltip when the flag is off", () => {
-    mockFeatureFlags["playground-enabled"] = false;
-    window.history.replaceState({}, "", "/servers");
-
-    renderSidebar();
-
-    expect(screen.getByRole("button", { name: "Evaluate" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    const playground = screen.getByRole("button", { name: "Playground" });
-    expect(playground).toHaveAttribute("aria-disabled", "true");
-    expect(playground).toHaveClass("cursor-not-allowed");
-    expect(
-      screen.getByText("Coming soon. Playground is in beta."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
-
-    fireEvent.click(playground);
-
-    expect(window.location.pathname).toBe("/servers");
-    expect(window.location.hash).toBe("");
-  });
-
-  it("enables Playground without a beta badge when the flag is on", () => {
-    mockFeatureFlags["playground-enabled"] = true;
-
-    renderSidebar();
-
-    const playground = screen
-      .getByText("Playground")
-      .closest("button") as HTMLButtonElement;
-    expect(playground).toBeInTheDocument();
-    expect(playground).not.toHaveAttribute("aria-disabled");
-    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Coming soon. Playground is in beta."),
-    ).not.toBeInTheDocument();
-  });
 });

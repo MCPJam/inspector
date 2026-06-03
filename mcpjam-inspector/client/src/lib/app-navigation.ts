@@ -8,10 +8,7 @@
  * (`#chatbox-slug`) are NOT app navigation and are preserved verbatim.
  */
 import { useCallback, useContext, useLayoutEffect, useState } from "react";
-import {
-  UNSAFE_LocationContext,
-  UNSAFE_NavigationContext,
-} from "react-router";
+import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
 import {
@@ -28,6 +25,7 @@ export const routePaths = {
   home: "/home",
   servers: "/servers",
   clients: "/clients",
+  hostCompare: "/host-compare",
   registry: "/registry",
   tools: "/tools",
   resources: "/resources",
@@ -62,10 +60,21 @@ export function buildClientsPath(hostId?: string | null): string {
   return `${routePaths.clients}/${encodeURIComponent(hostId)}`;
 }
 
+/** Build a path that deep-links into Compare with a pre-selected set of hosts. */
+export function buildHostComparePath(
+  hostIds?: ReadonlyArray<string> | null,
+): string {
+  if (!hostIds || hostIds.length === 0) return routePaths.hostCompare;
+  const param = hostIds.map((id) => id.trim()).filter((id) => id.length > 0);
+  if (param.length === 0) return routePaths.hostCompare;
+  const search = new URLSearchParams({ hosts: param.join(",") });
+  return `${routePaths.hostCompare}?${search.toString()}`;
+}
+
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,
-  section?: OrganizationRouteSection,
+  section?: OrganizationRouteSection
 ): string {
   if (section === "billing") return `/organizations/${orgId}/billing`;
   if (section === "models") return `/organizations/${orgId}/models`;
@@ -83,7 +92,10 @@ export function buildCiEvalsPath(route: EvalRoute): string {
   return buildEvalRoutePath("/ci-evals", route);
 }
 
-function buildEvalRoutePath(prefix: "/evals" | "/ci-evals", route: EvalRoute): string {
+function buildEvalRoutePath(
+  prefix: "/evals" | "/ci-evals",
+  route: EvalRoute
+): string {
   switch (route.type) {
     case "list":
       return prefix;
@@ -94,27 +106,39 @@ function buildEvalRoutePath(prefix: "/evals" | "/ci-evals", route: EvalRoute): s
       if (route.view && route.view !== "runs") params.set("view", route.view);
       if (route.fromCommit) params.set("fromCommit", route.fromCommit);
       const query = params.toString();
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}${
+        query ? `?${query}` : ""
+      }`;
     }
     case "run-detail": {
       const params = new URLSearchParams();
       if (route.iteration) params.set("iteration", route.iteration);
+      if (route.testCaseId) params.set("case", route.testCaseId);
       if (route.insightsFocus) params.set("insights", "1");
+      if (route.compareToRunId) params.set("compareTo", route.compareToRunId);
       const query = params.toString();
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(
+        route.suiteId
+      )}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/test/${encodeURIComponent(route.testId)}${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(
+        route.suiteId
+      )}/test/${encodeURIComponent(route.testId)}${query ? `?${query}` : ""}`;
     }
     case "test-edit": {
       const params = new URLSearchParams();
       if (route.openCompare) params.set("compare", "1");
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/test/${encodeURIComponent(route.testId)}/edit${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(
+        route.suiteId
+      )}/test/${encodeURIComponent(route.testId)}/edit${
+        query ? `?${query}` : ""
+      }`;
     }
     case "suite-edit":
       return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit`;
@@ -124,7 +148,9 @@ function buildEvalRoutePath(prefix: "/evals" | "/ci-evals", route: EvalRoute): s
       if (route.suite) params.set("suite", route.suite);
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
-      return `/ci-evals/commit/${encodeURIComponent(route.commitSha)}${query ? `?${query}` : ""}`;
+      return `/ci-evals/commit/${encodeURIComponent(route.commitSha)}${
+        query ? `?${query}` : ""
+      }`;
     }
   }
 }
@@ -177,7 +203,7 @@ export function useAppNavigate() {
       }
       navigateApp(to, options);
     },
-    [navigator],
+    [navigator]
   );
 }
 
@@ -191,7 +217,7 @@ export function useAppNavigate() {
 export function useActiveTab(): string {
   const locationContext = useContext(UNSAFE_LocationContext);
   const [fallbackPathname, setFallbackPathname] = useState(
-    getWindowFallbackPathname,
+    getWindowFallbackPathname
   );
 
   useLayoutEffect(() => {
@@ -214,6 +240,10 @@ const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
   ...HOSTED_HASH_BLOCKED_TABS,
   "chat",
   "home",
+  // Top-level cross-host config comparison surface. Distinct first segment
+  // from "clients" so the sidebar's first-segment isActive resolution
+  // doesn't light up Connect when this is the active route.
+  "host-compare",
 ]);
 
 function isSpecialEntryPathname(pathname: string): boolean {
@@ -259,8 +289,8 @@ export function useCurrentOrgRoute(): CurrentOrgRoute | null {
     sectionSegment === "billing"
       ? "billing"
       : sectionSegment === "models"
-        ? "models"
-        : "overview";
+      ? "models"
+      : "overview";
   return { orgId: decodePathSegment(orgId), orgSection };
 }
 
@@ -274,7 +304,7 @@ function decodePathSegment(segment: string): string {
 
 export function navigationTargetToPath(
   rawTarget: string,
-  fallback: string = routePaths.servers,
+  fallback: string = routePaths.servers
 ): string {
   const stripped = rawTarget.replace(/^#/, "").replace(/^\/+/, "");
   const questionIndex = stripped.indexOf("?");
@@ -311,7 +341,7 @@ export function normalizeInitialLegacyHashBookmark(): void {
 
 export function normalizeReturnTargetPath(
   target?: string | null,
-  fallback: string = routePaths.servers,
+  fallback: string = routePaths.servers
 ): string {
   const trimmed = target?.trim() ?? "";
   if (!trimmed) return fallback;
