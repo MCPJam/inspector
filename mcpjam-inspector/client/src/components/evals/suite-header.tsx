@@ -236,6 +236,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           suiteId: suite._id,
           serverAttachmentId,
         });
+        posthog.capture("eval_suite_server_changed", {
+          location: "suite_header",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          server_attachment_id: serverAttachmentId,
+        });
         toast.success("Server attachment updated");
       } catch (error) {
         toast.error(

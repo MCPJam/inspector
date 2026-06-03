@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Loader2, ChevronDown } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
+import posthog from "posthog-js";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
@@ -79,6 +81,22 @@ export function SuiteInsightsCollapsible({
   const shouldReduceMotion = useReducedMotion();
   const latestCompleted = useMemo(() => pickLatestCompletedRun(runs), [runs]);
 
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (next && !open) {
+        posthog.capture("eval_run_insights_opened", {
+          location: "suite_insights_collapsible",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          title,
+          run_id: latestCompleted?._id ?? null,
+        });
+      }
+      setOpen(next);
+    },
+    [latestCompleted, open, title],
+  );
+
   const {
     summary,
     pending,
@@ -112,7 +130,7 @@ export function SuiteInsightsCollapsible({
   return (
     <Collapsible
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={handleOpenChange}
       className={insightHighlightSectionClass}
     >
       <div className={insightHighlightAccentClass} aria-hidden />

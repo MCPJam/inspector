@@ -617,6 +617,7 @@ export function useEvalHandlers({
           : "Run started successfully! Results will appear shortly.",
       );
 
+      const suiteRunStartedAt = Date.now();
       try {
         const accessToken = await getAccessToken();
 
@@ -698,6 +699,20 @@ export function useEvalHandlers({
           num_models: executionContext.providersNeeded.size,
           minimum_pass_rate: minimumPassRate,
           num_hosts: runPlans.length,
+        });
+
+        posthog.capture("eval_suite_run_completed", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          num_test_cases: executionContext.testCases.length,
+          num_tests: executionContext.tests.length,
+          num_hosts: runPlans.length,
+          num_succeeded_hosts: runPlans.length - failures.length,
+          num_failed_hosts: failures.length,
+          all_succeeded: failures.length === 0,
+          duration_ms: Date.now() - suiteRunStartedAt,
         });
 
         if (failures.length === 0) {
@@ -1268,8 +1283,15 @@ export function useEvalHandlers({
   const directDeleteTestCase = useCallback(
     async (testCaseId: string) => {
       await mutations.deleteTestCaseMutation({ testCaseId });
+      posthog.capture("eval_test_case_deleted", {
+        location: "evals_tab_batch",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: selectedSuiteId ?? null,
+        test_case_id: testCaseId,
+      });
     },
-    [mutations.deleteTestCaseMutation]
+    [mutations.deleteTestCaseMutation, selectedSuiteId]
   );
 
   // Confirm test case deletion
@@ -1281,6 +1303,13 @@ export function useEvalHandlers({
     try {
       await mutations.deleteTestCaseMutation({
         testCaseId: testCaseToDelete.id,
+      });
+      posthog.capture("eval_test_case_deleted", {
+        location: "evals_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: selectedSuiteId ?? null,
+        test_case_id: testCaseToDelete.id,
       });
       toast.success("Test case deleted successfully");
 
@@ -1437,6 +1466,15 @@ export function useEvalHandlers({
         });
 
         if (outcome.apiReturnedTests === 0) {
+          posthog.capture("eval_generate_tests_completed", {
+            location: "evals_tab",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            suite_id: suiteId,
+            generated_count: 0,
+            api_returned_tests: 0,
+            success: true,
+          });
           toast.info("No test cases were generated");
           return;
         }
@@ -1457,6 +1495,19 @@ export function useEvalHandlers({
             ),
           });
         }
+
+        posthog.capture("eval_generate_tests_completed", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          generated_count: outcome.createdCount,
+          api_returned_tests: outcome.apiReturnedTests,
+          auto_ran: Boolean(
+            shouldAutoRun && outcome.createdTestCaseIds.length > 0,
+          ),
+          success: true,
+        });
 
         if (
           shouldAutoRun &&
@@ -1501,6 +1552,20 @@ export function useEvalHandlers({
         }
       } catch (error) {
         console.error("Failed to generate tests:", error);
+        // Cap the raw message at 200 chars so PostHog event cardinality stays
+        // bounded when backend errors include user input or random ids.
+        const rawMessage =
+          error instanceof Error ? error.message : String(error);
+        posthog.capture("eval_generate_tests_completed", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          generated_count: 0,
+          success: false,
+          error_name: error instanceof Error ? error.name : typeof error,
+          error_message: rawMessage.slice(0, 200),
+        });
         toast.error(
           getBillingErrorMessage(error, "Failed to generate test cases")
         );

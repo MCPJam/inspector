@@ -42,6 +42,8 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { EvalsSuiteListSidebar } from "./evals/evals-suite-list-sidebar";
 import { CreateSuiteDialog, type CreateSuitePayload } from "./evals/create-suite-dialog";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
@@ -268,6 +270,33 @@ function EvalsTabContent({
       navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
     }
   }, [overviewQueries.isOverviewLoading, route.type, selectedSuiteEntry, selectedSuiteId]);
+
+  // Wait for auth to settle before firing view events. The parent
+  // ErrorBoundary keys on (projectId, isAuthenticated), so projectId
+  // resolving null→"x" remounts this component and would otherwise
+  // double-fire (once on the null mount, once on the resolved mount).
+  useEffect(() => {
+    if (isLoading) return;
+    posthog.capture("evaluate_tab_viewed", {
+      location: "evals_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      project_id: projectId ?? null,
+    });
+  }, [isLoading, projectId]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!selectedSuiteId) return;
+    posthog.capture("suite_viewed", {
+      location: "evals_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      project_id: projectId ?? null,
+      suite_id: selectedSuiteId,
+      route_type: route.type,
+    });
+  }, [isLoading, selectedSuiteId, route.type, projectId]);
 
   const handleOpenCreateSuite = useCallback(() => {
     navigatePlaygroundEvalsRoute({ type: "create" });
