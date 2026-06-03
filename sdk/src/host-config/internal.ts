@@ -1,13 +1,20 @@
 /**
- * INTERNAL host-config entry — NOT part of the public API.
+ * `@mcpjam/sdk/host-config/internal` — LOW-LEVEL, FIRST-PARTY entry.
  *
- * Exposes the raw canonicalizer + hash + internal storage-row types for SDK
- * tooling (the parity-fixture generator) and SDK tests only. This module is
- * built to `dist/host-config/internal.js` but is intentionally absent from
- * `package.json#exports`, so it is not importable via the package name —
- * external consumers see only `Host` from `@mcpjam/sdk` / `./host-config`.
+ * Exposes the raw canonicalizer + hash + internal storage-row types
+ * (`canonicalizeHostConfigV2`, `computeHostConfigHashV2`, `HostConfigInputV2`,
+ * `CanonicalHostConfigV2`, …). This module is the single source of truth for
+ * the canonical form: it is fully self-contained (zero external/Node-only
+ * imports), so the MCPJam Convex backend imports it directly rather than
+ * hand-mirroring the canonicalizer. There is exactly one canonicalizer shared
+ * across the SDK and backend — no duplicated fixture, no parity ritual.
  *
- * Application code must use the `Host` class instead.
+ * NOT part of the stable public API and NOT semver-guaranteed. External SDK
+ * consumers should use the `Host` builder from `@mcpjam/sdk` /
+ * `@mcpjam/sdk/host-config` — that is the curated public surface (MCP
+ * vocabulary, no storage-row names). This subpath is for first-party
+ * consumers (the backend, the parity-fixture generator, SDK tests) that need
+ * the low-level canonicalizer.
  */
 
 export { canonicalizeHostConfigV2 } from "./canonicalize.js";
