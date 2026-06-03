@@ -967,6 +967,17 @@ export function TestTemplateEditor({
         // Same null-clears-the-field convention for the predicate override.
         predicates: savePayload.predicates ?? null,
       });
+      posthog.capture("eval_test_case_edited", {
+        location: "test_template_editor",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: suiteId ?? null,
+        test_case_id: currentTestCase._id,
+        num_models: currentTestCase.models?.length ?? 0,
+        num_prompt_turns: editForm.promptTurns?.length ?? 0,
+        has_match_options: savePayload.matchOptions != null,
+        has_predicates: savePayload.predicates != null,
+      });
       toast.success("Changes saved");
     } catch (error) {
       console.error("Failed to save:", error);
