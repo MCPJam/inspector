@@ -66,11 +66,18 @@ export async function verifyBearerToken(
   }
 
   try {
-    const { payload } = await jwtVerify(token, getJwks(issuer), { issuer });
+    const { payload } = await jwtVerify(token, getJwks(issuer), {
+      issuer,
+      audience: resourceIdentifier(origin),
+    });
     return { ok: true, verified: { token, payload } };
   } catch {
     return { ok: false, response: invalidTokenResponse(origin) };
   }
+}
+
+export function resourceIdentifier(origin: string): string {
+  return `${origin}/mcp`;
 }
 
 export const OAUTH_DISCOVERY_HEADERS = {

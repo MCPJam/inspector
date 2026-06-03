@@ -2,6 +2,7 @@ import { McpJamMcpServer } from "./server.js";
 import {
   OAUTH_DISCOVERY_HEADERS,
   normalizeIssuer,
+  resourceIdentifier,
   verifyBearerToken,
 } from "./auth.js";
 
@@ -28,7 +29,7 @@ const LANDING_PAGE = `<!doctype html>
 
 function protectedResourceMetadata(origin: string, issuer: string) {
   return {
-    resource: `${origin}/mcp`,
+    resource: resourceIdentifier(origin),
     authorization_servers: [issuer],
     bearer_methods_supported: ["header"],
   };
