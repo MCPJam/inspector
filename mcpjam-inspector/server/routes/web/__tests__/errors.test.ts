@@ -36,6 +36,17 @@ describe("mapRuntimeError", () => {
     expect(mapRuntimeError(new Error("socket hang up")).status).toBe(502);
   });
 
+  it("does NOT misclassify words that merely start with 'econ' as 502", () => {
+    // Regression for code-review feedback: the errno branch was originally
+    // `\becon[a-z]*` (one `n`), which matches server/tool/case names like
+    // "Economics" and re-introduces the same kind of false 502 mapping the
+    // fix was meant to eliminate. Require the full `econn` prefix.
+    expect(
+      mapRuntimeError(new Error("Economics server returned an error")).status,
+    ).toBe(500);
+    expect(mapRuntimeError(new Error("econometric pipeline")).status).toBe(500);
+  });
+
   it("does NOT misclassify 'Reconnect' as 502", () => {
     // Regression: the previous implementation matched the bare substring
     // "connect", which caught the word "Reconnect" inside upstream errors

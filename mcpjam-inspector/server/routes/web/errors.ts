@@ -64,8 +64,11 @@ export function parseErrorMessage(error: unknown): string {
 // Each pattern starts with `\b` so the "econn" and "connect" substrings
 // inside the word `Reconnect` don't slip through — that exact bug is what
 // caused upstream attachment errors to surface as 502 SERVER_UNREACHABLE.
+// The errno branch requires the full `econn` prefix (Node's ECONN* family)
+// rather than `econ` so server/tool names like "Economics" don't slip
+// through and re-introduce the same class of false positive.
 const CONNECTION_ERROR_PATTERNS: readonly RegExp[] = [
-  /\becon[a-z]*/i,
+  /\beconn[a-z]*/i,
   /\bconnection\s+(?:refused|reset|closed|timed?\s*out|aborted|error|failed)\b/i,
   /\b(?:failed|unable)\s+to\s+connect\b/i,
   /\bfetch\s+failed\b/i,
