@@ -48,7 +48,11 @@ import type {
   ServerId,
 } from "./public-types.js";
 
-const DEFAULT_STYLE: HostStyleId = "mcpjam";
+// No default `style` or `model` — both are required to produce a valid host
+// and must be supplied by the caller (constructor `init` or `setStyle()` /
+// `setModel()`). The SDK deliberately refuses to pick a product-style default
+// here: an external agent author who forgets `style` should fail loudly, not
+// silently get MCPJam chrome on a Claude-style flow.
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 
@@ -169,7 +173,11 @@ export class Host {
     // 20, Convex isolate).
     const cfg = structuredClone(init);
     this.input = {
-      hostStyle: cfg.style ?? DEFAULT_STYLE,
+      // `style` and `model` are required for a valid host but kept optional in
+      // `HostInit` so the setter pattern (`new Host().setStyle(...).setModel(...)`)
+      // works. Empty-string sentinels are caught by `requireConfigured()` at
+      // `toJSON()` / `hash()` time with a clear error message.
+      hostStyle: cfg.style ?? "",
       modelId: cfg.model ?? "",
       systemPrompt: cfg.systemPrompt ?? "",
       temperature: cfg.temperature ?? DEFAULT_TEMPERATURE,
@@ -305,13 +313,35 @@ export class Host {
   }
 
   /**
+   * Throw a clear error if required fields (`style`, `model`) are still empty.
+   * Called from `toJSON()` and `hash()` so the failure lands at the moment of
+   * use, not deep inside the canonicalizer with a less obvious message.
+   */
+  private requireConfigured(): void {
+    if (!this.input.hostStyle) {
+      throw new Error(
+        "Host requires a `style` (e.g. \"mcpjam\", \"claude\", \"chatgpt\"). " +
+          "Pass it to the constructor (`new Host({ style: \"...\" })`) or call `.setStyle(...)`.",
+      );
+    }
+    if (!this.input.modelId) {
+      throw new Error(
+        "Host requires a `model` (e.g. \"anthropic/claude-sonnet-4-6\"). " +
+          "Pass it to the constructor (`new Host({ model: \"...\" })`) or call `.setModel(...)`.",
+      );
+    }
+  }
+
+  /**
    * Serialize to the normalized public `HostJson` shape (clean MCP vocabulary
    * — `mcp`, `servers`, `style`; no `mcpProfile`/`schemaVersion`). Normalized
    * and round-trippable: `new Host(host.toJSON())` reproduces an equivalent
    * host with the same `hash()`. Throws if the configuration is invalid (e.g.
-   * a non-finite temperature or a malformed MCP profile).
+   * `style`/`model` not set, a non-finite temperature, or a malformed MCP
+   * profile).
    */
   toJSON(): HostJson {
+    this.requireConfigured();
     return canonicalToPublic(canonicalizeHostConfigV2(this.input));
   }
 
@@ -319,8 +349,10 @@ export class Host {
    * sha256 fingerprint — the host's content address. Computed over the
    * internal canonical form (kept stable for backend compatibility), so it is
    * identical to the value the Convex backend derives from the same host.
+   * Throws if `style` or `model` is missing.
    */
   async hash(): Promise<string> {
+    this.requireConfigured();
     return computeHostConfigHashV2(this.input);
   }
 }

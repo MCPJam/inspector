@@ -89,13 +89,18 @@ export interface HostServerOverride {
 
 /**
  * Optional initial configuration for `new Host(init?)`. Every field is
- * optional; omitted fields fall back to SDK defaults. Equivalent settings are
- * also available as fluent setters (`setModel`, `setMcp`, `addServer`, …).
+ * type-optional so the setter pattern works
+ * (`new Host().setStyle(...).setModel(...)`), but `style` and `model` are
+ * **required at use** — `toJSON()` and `hash()` throw if either is missing.
+ * The SDK deliberately ships no default `style` (so an external author isn't
+ * silently opted into MCPJam product chrome) and no default `model`.
+ * Equivalent settings are available as fluent setters
+ * (`setStyle`, `setModel`, `setMcp`, `addServer`, …).
  */
 export interface HostInit {
-  /** Host style id — a pointer into the host registry. Default: "mcpjam". */
+  /** Host style id (e.g. "mcpjam", "claude", "chatgpt"). Required at `toJSON()` / `hash()`; no SDK default. */
   style?: HostStyleId;
-  /** LLM model id (e.g. "anthropic/claude-sonnet-4-6"). */
+  /** LLM model id (e.g. "anthropic/claude-sonnet-4-6"). Required at `toJSON()` / `hash()`; no SDK default. */
   model?: string;
   systemPrompt?: string;
   /** Sampling temperature. Default: 0.7. */

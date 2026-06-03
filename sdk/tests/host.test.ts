@@ -31,7 +31,9 @@ describe("Host — public surface", () => {
   });
 
   it("chains setters and accumulates servers (public `servers` field)", () => {
-    const host = new Host().addServer("a").addServer("b");
+    const host = new Host({ style: "mcpjam", model: "test-model" })
+      .addServer("a")
+      .addServer("b");
     expect(host).toBeInstanceOf(Host);
     expect(host.toJSON().servers).toEqual(["a", "b"]);
   });
@@ -76,10 +78,22 @@ describe("Host — public surface", () => {
   });
 
   it("validates lazily at toJSON() (invalid profile throws)", () => {
-    const host = new Host().setMcp({
+    const host = new Host({ style: "mcpjam", model: "test-model" }).setMcp({
       apps: { mcpAppsOverrides: { availableDisplayModes: [] } },
     });
     expect(() => host.toJSON()).toThrow(/must contain at least one mode/);
+  });
+
+  it("throws if `style` is not set (no silent SDK default)", async () => {
+    const noStyle = new Host().setModel("test-model");
+    expect(() => noStyle.toJSON()).toThrow(/requires a `style`/);
+    await expect(noStyle.hash()).rejects.toThrow(/requires a `style`/);
+  });
+
+  it("throws if `model` is not set (no silent SDK default)", async () => {
+    const noModel = new Host().setStyle("mcpjam");
+    expect(() => noModel.toJSON()).toThrow(/requires a `model`/);
+    await expect(noModel.hash()).rejects.toThrow(/requires a `model`/);
   });
 });
 
@@ -189,7 +203,8 @@ describe("Host — deterministic under post-construction input mutation", () => 
 
   it("snapshots setter inputs too", async () => {
     const caps = { a: { b: 1 } };
-    const host = new Host().setClientCapabilities(caps);
+    const host = new Host({ style: "mcpjam", model: "test-model" })
+      .setClientCapabilities(caps);
     const hashBefore = await host.hash();
     const jsonBefore = JSON.stringify(host.toJSON());
     (caps.a as { b: number }).b = 2;
