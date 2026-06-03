@@ -15,24 +15,20 @@
  *   })
  *   .addServer("srv_abc");
  *
- * const json = host.toJSON();     // normalized public shape (clean vocab)
- * const fp   = await host.hash(); // sha256 fingerprint
+ * const json = host.toJSON(); // normalized public shape (clean vocab)
  * ```
  *
  * Setters mutate and return `this` for chaining. The public surface is pure
  * MCP vocabulary — `mcp`, `servers`, `protocolVersion`, `clientInfo`. The
- * storage-row vocabulary (`mcpProfile`, `schemaVersion`, the canonicalizer,
- * the hash function) never crosses this boundary: `toJSON()` projects to the
- * public shape, and `hash()` returns an opaque fingerprint.
+ * storage-row vocabulary (`mcpProfile`, `schemaVersion`, the canonicalizer)
+ * never crosses this boundary: `toJSON()` projects to the public shape.
  *
- * Backend compatibility: the fingerprint is computed over the internal
- * canonical form (which still uses `mcpProfile` on the wire), so it is
- * byte-identical to what the Convex backend derives from the same host
- * (golden-vector parity). That internal form is simply never surfaced.
+ * Content-addressed storage (canonical-form hashing for backend dedupe) is a
+ * first-party concern handled at the SDK↔backend boundary via
+ * `@mcpjam/sdk/host-config/internal`. Developers building hosts never call it.
  */
 
 import { canonicalizeHostConfigV2 } from "./canonicalize.js";
-import { computeHostConfigHashV2 } from "./hash.js";
 import type {
   CanonicalHostConfigV2,
   HostConfigInputV2,
@@ -314,8 +310,8 @@ export class Host {
 
   /**
    * Throw a clear error if required fields (`style`, `model`) are still empty.
-   * Called from `toJSON()` and `hash()` so the failure lands at the moment of
-   * use, not deep inside the canonicalizer with a less obvious message.
+   * Called from `toJSON()` so the failure lands at the moment of use, not deep
+   * inside the canonicalizer with a less obvious message.
    */
   private requireConfigured(): void {
     if (!this.input.hostStyle) {
@@ -336,24 +332,12 @@ export class Host {
    * Serialize to the normalized public `HostJson` shape (clean MCP vocabulary
    * — `mcp`, `servers`, `style`; no `mcpProfile`/`schemaVersion`). Normalized
    * and round-trippable: `new Host(host.toJSON())` reproduces an equivalent
-   * host with the same `hash()`. Throws if the configuration is invalid (e.g.
-   * `style`/`model` not set, a non-finite temperature, or a malformed MCP
-   * profile).
+   * host. Throws if the configuration is invalid (e.g. `style`/`model` not
+   * set, a non-finite temperature, or a malformed MCP profile).
    */
   toJSON(): HostJson {
     this.requireConfigured();
     return canonicalToPublic(canonicalizeHostConfigV2(this.input));
-  }
-
-  /**
-   * sha256 fingerprint — the host's content address. Computed over the
-   * internal canonical form (kept stable for backend compatibility), so it is
-   * identical to the value the Convex backend derives from the same host.
-   * Throws if `style` or `model` is missing.
-   */
-  async hash(): Promise<string> {
-    this.requireConfigured();
-    return computeHostConfigHashV2(this.input);
   }
 }
 

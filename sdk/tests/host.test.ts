@@ -1,29 +1,9 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Host } from "../src/host-config/index";
 import type { HostMcp } from "../src/host-config/index";
 // Cross-entry check uses the browser entry (the Node `../src/index` barrel
 // transitively imports `.md` skill files that vitest's transform can't load;
 // the published `@mcpjam/sdk` main export is covered by `test:packaging`).
 import { Host as HostFromBrowser } from "../src/browser";
-
-type FixtureRow = { label: string; sha256: string };
-type Fixture = { rows: FixtureRow[] };
-
-const here = dirname(fileURLToPath(import.meta.url));
-const fixture = JSON.parse(
-  readFileSync(
-    join(here, "fixtures", "host-config-parity-fixtures.json"),
-    "utf8",
-  ),
-) as Fixture;
-
-const sha = (label: string): string => {
-  const row = fixture.rows.find((r) => r.label === label);
-  if (!row) throw new Error(`missing fixture row: ${label}`);
-  return row.sha256;
-};
 
 describe("Host — public surface", () => {
   it("is exported from both @mcpjam/sdk/host-config and @mcpjam/sdk/browser", () => {
@@ -84,46 +64,17 @@ describe("Host — public surface", () => {
     expect(() => host.toJSON()).toThrow(/must contain at least one mode/);
   });
 
-  it("throws if `style` is not set (no silent SDK default)", async () => {
+  it("throws if `style` is not set (no silent SDK default)", () => {
     const noStyle = new Host().setModel("test-model");
     expect(() => noStyle.toJSON()).toThrow(/requires a `style`/);
-    await expect(noStyle.hash()).rejects.toThrow(/requires a `style`/);
   });
 
-  it("throws if `model` is not set (no silent SDK default)", async () => {
+  it("throws if `model` is not set (no silent SDK default)", () => {
     const noModel = new Host().setStyle("mcpjam");
     expect(() => noModel.toJSON()).toThrow(/requires a `model`/);
-    await expect(noModel.hash()).rejects.toThrow(/requires a `model`/);
-  });
-});
-
-describe("Host — fingerprint matches the golden vectors", () => {
-  // hash() is computed over the internal canonical form, so it must equal the
-  // pinned golden sha256 (proving the facade preserves backend parity).
-  it("base-minimal", async () => {
-    const host = new Host({
-      style: "claude",
-      model: "anthropic/claude-sonnet-4-6",
-      systemPrompt: "You are a helpful assistant.",
-    });
-    expect(await host.hash()).toBe(sha("base-minimal"));
   });
 
-  it("mcp-profile-initialize-order-preserved", async () => {
-    const host = new Host({
-      style: "claude",
-      model: "anthropic/claude-sonnet-4-6",
-      systemPrompt: "You are a helpful assistant.",
-    }).setMcp({
-      initialize: {
-        supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
-        clientInfo: { version: "1.2.3", name: "mcpjam", title: "MCPJam" },
-      },
-    });
-    expect(await host.hash()).toBe(sha("mcp-profile-initialize-order-preserved"));
-  });
-
-  it("server-ids-unsorted-plus-overrides", async () => {
+  it("normalizes server ids: sorts, dedupes empty overrides, sorts header keys", () => {
     const host = new Host({
       style: "claude",
       model: "anthropic/claude-sonnet-4-6",
@@ -141,8 +92,6 @@ describe("Host — fingerprint matches the golden vectors", () => {
       })
       .addServerOverride("srv-a", {});
 
-    // Also assert the normalized public shape, not just the hash: servers are
-    // sorted and the empty "srv-a" override is dropped.
     const json = host.toJSON();
     expect(json.servers).toEqual(["srv-a", "srv-b", "srv-c"]);
     expect(json.optionalServers).toEqual(["opt-a", "opt-z"]);
@@ -152,13 +101,11 @@ describe("Host — fingerprint matches the golden vectors", () => {
       requestTimeout: 5000,
       protocolVersion: "2025-06-18",
     });
-
-    expect(await host.hash()).toBe(sha("server-ids-unsorted-plus-overrides"));
   });
 });
 
 describe("Host — toJSON() round-trips", () => {
-  it("new Host(host.toJSON()) reproduces the same JSON and hash", async () => {
+  it("new Host(host.toJSON()) reproduces the same JSON", () => {
     const host = new Host({ style: "chatgpt", model: "openai/gpt-5" })
       .setMcp({
         protocolVersion: "2025-06-18",
@@ -170,15 +117,12 @@ describe("Host — toJSON() round-trips", () => {
 
     const json1 = host.toJSON();
     const rebuilt = new Host(json1);
-    const json2 = rebuilt.toJSON();
-
-    expect(json2).toEqual(json1);
-    expect(await rebuilt.hash()).toBe(await host.hash());
+    expect(rebuilt.toJSON()).toEqual(json1);
   });
 });
 
 describe("Host — deterministic under post-construction input mutation", () => {
-  it("snapshots object inputs so later caller mutations don't leak in", async () => {
+  it("snapshots object inputs so later caller mutations don't leak in", () => {
     const mcp: HostMcp = {
       protocolVersion: "2025-06-18",
       apps: { compatRuntime: { openaiApps: true } },
@@ -190,25 +134,21 @@ describe("Host — deterministic under post-construction input mutation", () => 
       mcp,
       clientCapabilities,
     });
-    const hashBefore = await host.hash();
     const jsonBefore = JSON.stringify(host.toJSON());
 
     // Mutate the very objects the caller handed to the constructor.
     (mcp.apps!.compatRuntime as { openaiApps?: boolean }).openaiApps = false;
     (clientCapabilities.sampling as { tools: unknown }).tools = { added: true };
 
-    expect(await host.hash()).toBe(hashBefore);
     expect(JSON.stringify(host.toJSON())).toBe(jsonBefore);
   });
 
-  it("snapshots setter inputs too", async () => {
+  it("snapshots setter inputs too", () => {
     const caps = { a: { b: 1 } };
     const host = new Host({ style: "mcpjam", model: "test-model" })
       .setClientCapabilities(caps);
-    const hashBefore = await host.hash();
     const jsonBefore = JSON.stringify(host.toJSON());
     (caps.a as { b: number }).b = 2;
-    expect(await host.hash()).toBe(hashBefore);
     expect(JSON.stringify(host.toJSON())).toBe(jsonBefore);
   });
 });

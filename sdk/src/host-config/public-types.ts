@@ -56,10 +56,9 @@ export type HostMcp = Omit<
  * Pure public vocabulary — no implementation names leak here: `mcp` (not
  * `mcpProfile`), `style`/`model`/`servers`, and no `schemaVersion`/
  * `profileVersion` markers. It is normalized (sorted, deduped, derived) and
- * round-trips: `new Host(host.toJSON())` reproduces an equivalent host with
- * the same `hash()`. The internal content-addressed wire form (which the
- * fingerprint is computed over and which the backend stores) is deliberately
- * not exposed.
+ * round-trips: `new Host(host.toJSON())` reproduces an equivalent host. The
+ * internal content-addressed wire form (which the backend stores) is
+ * deliberately not exposed.
  */
 export interface HostJson {
   style: HostStyleId;
@@ -91,16 +90,16 @@ export interface HostServerOverride {
  * Optional initial configuration for `new Host(init?)`. Every field is
  * type-optional so the setter pattern works
  * (`new Host().setStyle(...).setModel(...)`), but `style` and `model` are
- * **required at use** — `toJSON()` and `hash()` throw if either is missing.
- * The SDK deliberately ships no default `style` (so an external author isn't
- * silently opted into MCPJam product chrome) and no default `model`.
- * Equivalent settings are available as fluent setters
- * (`setStyle`, `setModel`, `setMcp`, `addServer`, …).
+ * **required at use** — `toJSON()` throws if either is missing. The SDK
+ * deliberately ships no default `style` (so an external author isn't silently
+ * opted into MCPJam product chrome) and no default `model`. Equivalent
+ * settings are available as fluent setters (`setStyle`, `setModel`, `setMcp`,
+ * `addServer`, …).
  */
 export interface HostInit {
-  /** Host style id (e.g. "mcpjam", "claude", "chatgpt"). Required at `toJSON()` / `hash()`; no SDK default. */
+  /** Host style id (e.g. "mcpjam", "claude", "chatgpt"). Required at `toJSON()`; no SDK default. */
   style?: HostStyleId;
-  /** LLM model id (e.g. "anthropic/claude-sonnet-4-6"). Required at `toJSON()` / `hash()`; no SDK default. */
+  /** LLM model id (e.g. "anthropic/claude-sonnet-4-6"). Required at `toJSON()`; no SDK default. */
   model?: string;
   systemPrompt?: string;
   /** Sampling temperature. Default: 0.7. */
