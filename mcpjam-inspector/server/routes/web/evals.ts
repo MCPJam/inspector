@@ -25,8 +25,6 @@ import {
 } from "../shared/evals.js";
 
 const evals = new Hono();
-const GUEST_UNSUPPORTED_MESSAGE =
-  "Not available for guests yet. Sign in to use this.";
 
 const hostedBatchSchema = z.object({
   projectId: z.string().min(1),
@@ -102,10 +100,7 @@ evals.post("/run", async (c) =>
         ...body,
         convexAuthToken: assertBearerToken(c),
       }),
-    {
-      rpcLogs: false,
-      guestUnsupportedMessage: GUEST_UNSUPPORTED_MESSAGE,
-    },
+    { rpcLogs: false },
   ),
 );
 

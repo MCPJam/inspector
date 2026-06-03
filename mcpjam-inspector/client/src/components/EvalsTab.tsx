@@ -81,33 +81,12 @@ export function EvalsTab({
   );
 }
 
-function isGuestUnavailableError(error: Error | null): boolean {
-  return (
-    error?.message.includes("Not available for guests yet. Sign in to use this.") ??
-    false
-  );
-}
-
 function EvalTabErrorFallback({
-  error,
   onRetry,
 }: {
   error: Error | null;
   onRetry: () => void;
 }) {
-  if (isGuestUnavailableError(error)) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={FlaskConical}
-          title="Sign in to use Testing"
-          description="Testing suites are not available for guests yet. Sign in to create suites, view runs, and investigate cases."
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="p-6">
       <EmptyState
