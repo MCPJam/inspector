@@ -161,42 +161,49 @@ export class Host {
   private input: HostConfigInputV2;
 
   constructor(init: HostInit = {}) {
+    // Defensive deep copy: a Host must be deterministic, so a caller mutating
+    // the objects they passed in (mcp / capabilities / headers / overrides)
+    // must not retroactively change this host's toJSON()/hash(). Arrays were
+    // already copied; this snapshots the object-valued inputs too.
+    // structuredClone is available across the SDK's targets (browser, Node >=
+    // 20, Convex isolate).
+    const cfg = structuredClone(init);
     this.input = {
-      hostStyle: init.style ?? DEFAULT_STYLE,
-      modelId: init.model ?? "",
-      systemPrompt: init.systemPrompt ?? "",
-      temperature: init.temperature ?? DEFAULT_TEMPERATURE,
-      requireToolApproval: init.requireToolApproval ?? false,
+      hostStyle: cfg.style ?? DEFAULT_STYLE,
+      modelId: cfg.model ?? "",
+      systemPrompt: cfg.systemPrompt ?? "",
+      temperature: cfg.temperature ?? DEFAULT_TEMPERATURE,
+      requireToolApproval: cfg.requireToolApproval ?? false,
       connectionDefaults: {
-        headers: init.connectionDefaults?.headers ?? {},
+        headers: cfg.connectionDefaults?.headers ?? {},
         requestTimeout:
-          init.connectionDefaults?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS,
+          cfg.connectionDefaults?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS,
       },
-      clientCapabilities: init.clientCapabilities ?? {},
-      hostContext: init.hostContext ?? {},
+      clientCapabilities: cfg.clientCapabilities ?? {},
+      hostContext: cfg.hostContext ?? {},
     };
-    if (init.progressiveToolDiscovery !== undefined) {
-      this.input.progressiveToolDiscovery = init.progressiveToolDiscovery;
+    if (cfg.progressiveToolDiscovery !== undefined) {
+      this.input.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     }
-    if (init.respectToolVisibility !== undefined) {
-      this.input.respectToolVisibility = init.respectToolVisibility;
+    if (cfg.respectToolVisibility !== undefined) {
+      this.input.respectToolVisibility = cfg.respectToolVisibility;
     }
-    if (init.servers !== undefined) this.input.serverIds = [...init.servers];
-    if (init.optionalServers !== undefined) {
-      this.input.optionalServerIds = [...init.optionalServers];
+    if (cfg.servers !== undefined) this.input.serverIds = [...cfg.servers];
+    if (cfg.optionalServers !== undefined) {
+      this.input.optionalServerIds = [...cfg.optionalServers];
     }
-    if (init.hostCapabilitiesOverride !== undefined) {
-      this.input.hostCapabilitiesOverride = init.hostCapabilitiesOverride;
+    if (cfg.hostCapabilitiesOverride !== undefined) {
+      this.input.hostCapabilitiesOverride = cfg.hostCapabilitiesOverride;
     }
-    if (init.chatUiOverride !== undefined) {
-      this.input.chatUiOverride = init.chatUiOverride;
+    if (cfg.chatUiOverride !== undefined) {
+      this.input.chatUiOverride = cfg.chatUiOverride;
     }
-    if (init.mcp !== undefined) {
-      this.input.mcpProfile = hostMcpToProfile(init.mcp);
+    if (cfg.mcp !== undefined) {
+      this.input.mcpProfile = hostMcpToProfile(cfg.mcp);
     }
-    if (init.serverOverrides !== undefined) {
+    if (cfg.serverOverrides !== undefined) {
       this.input.serverConnectionOverrides = serverOverridesToInternal(
-        init.serverOverrides,
+        cfg.serverOverrides,
       );
     }
   }
@@ -242,7 +249,7 @@ export class Host {
 
   /** The host's MCP settings (`protocolVersion`, `initialize`, `apps`). */
   setMcp(mcp: HostMcp): this {
-    this.input.mcpProfile = hostMcpToProfile(mcp);
+    this.input.mcpProfile = hostMcpToProfile(structuredClone(mcp));
     return this;
   }
 
@@ -261,7 +268,7 @@ export class Host {
   /** Merge connection defaults (headers and/or request timeout). */
   setConnectionDefaults(defaults: Partial<HostConnectionDefaults>): this {
     if (defaults.headers !== undefined) {
-      this.input.connectionDefaults.headers = defaults.headers;
+      this.input.connectionDefaults.headers = structuredClone(defaults.headers);
     }
     if (defaults.requestTimeout !== undefined) {
       this.input.connectionDefaults.requestTimeout = defaults.requestTimeout;
@@ -270,30 +277,30 @@ export class Host {
   }
 
   setClientCapabilities(capabilities: Record<string, unknown>): this {
-    this.input.clientCapabilities = capabilities;
+    this.input.clientCapabilities = structuredClone(capabilities);
     return this;
   }
 
   setHostContext(context: Record<string, unknown>): this {
-    this.input.hostContext = context;
+    this.input.hostContext = structuredClone(context);
     return this;
   }
 
   /** Override the MCP-Apps `hostCapabilities` blob. `{}` = advertise nothing. */
   setHostCapabilitiesOverride(override: Record<string, unknown>): this {
-    this.input.hostCapabilitiesOverride = override;
+    this.input.hostCapabilitiesOverride = structuredClone(override);
     return this;
   }
 
   setChatUiOverride(override: Record<string, unknown>): this {
-    this.input.chatUiOverride = override;
+    this.input.chatUiOverride = structuredClone(override);
     return this;
   }
 
   /** Set a per-server connection override (replaces any existing one). */
   addServerOverride(id: ServerId, override: HostServerOverride): this {
     (this.input.serverConnectionOverrides ??= {})[id] =
-      serverOverrideToInternal(override);
+      serverOverrideToInternal(structuredClone(override));
     return this;
   }
 

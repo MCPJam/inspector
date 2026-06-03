@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Host } from "../src/host-config/index";
+import type { HostMcp } from "../src/host-config/index";
 // Cross-entry check uses the browser entry (the Node `../src/index` barrel
 // transitively imports `.md` skill files that vitest's transform can't load;
 // the published `@mcpjam/sdk` main export is covered by `test:packaging`).
@@ -125,6 +126,19 @@ describe("Host — fingerprint matches the golden vectors", () => {
         protocolVersion: "2025-06-18",
       })
       .addServerOverride("srv-a", {});
+
+    // Also assert the normalized public shape, not just the hash: servers are
+    // sorted and the empty "srv-a" override is dropped.
+    const json = host.toJSON();
+    expect(json.servers).toEqual(["srv-a", "srv-b", "srv-c"]);
+    expect(json.optionalServers).toEqual(["opt-a", "opt-z"]);
+    expect(json.serverOverrides?.["srv-a"]).toBeUndefined();
+    expect(json.serverOverrides?.["srv-b"]).toEqual({
+      headers: { A: "2", Z: "1" },
+      requestTimeout: 5000,
+      protocolVersion: "2025-06-18",
+    });
+
     expect(await host.hash()).toBe(sha("server-ids-unsorted-plus-overrides"));
   });
 });
@@ -146,5 +160,38 @@ describe("Host — toJSON() round-trips", () => {
 
     expect(json2).toEqual(json1);
     expect(await rebuilt.hash()).toBe(await host.hash());
+  });
+});
+
+describe("Host — deterministic under post-construction input mutation", () => {
+  it("snapshots object inputs so later caller mutations don't leak in", async () => {
+    const mcp: HostMcp = {
+      protocolVersion: "2025-06-18",
+      apps: { compatRuntime: { openaiApps: true } },
+    };
+    const clientCapabilities = { sampling: { tools: {} } };
+    const host = new Host({
+      style: "chatgpt",
+      model: "openai/gpt-5",
+      mcp,
+      clientCapabilities,
+    });
+    const hashBefore = await host.hash();
+    const jsonBefore = JSON.stringify(host.toJSON());
+
+    // Mutate the very objects the caller handed to the constructor.
+    (mcp.apps!.compatRuntime as { openaiApps?: boolean }).openaiApps = false;
+    (clientCapabilities.sampling as { tools: unknown }).tools = { added: true };
+
+    expect(await host.hash()).toBe(hashBefore);
+    expect(JSON.stringify(host.toJSON())).toBe(jsonBefore);
+  });
+
+  it("snapshots setter inputs too", async () => {
+    const caps = { a: { b: 1 } };
+    const host = new Host().setClientCapabilities(caps);
+    const hashBefore = await host.hash();
+    (caps.a as { b: number }).b = 2;
+    expect(await host.hash()).toBe(hashBefore);
   });
 });
