@@ -1,37 +1,53 @@
-diff --git a/.changeset/eval-ui-polish.md b/.changeset/eval-ui-polish.md
+diff --git a/.changeset/evals-generate-tests-snapshot-and-502.md b/.changeset/evals-generate-tests-snapshot-and-502.md
 deleted file mode 100644
-index 4783a06be..000000000
---- a/.changeset/eval-ui-polish.md
+index ccad384c4..000000000
+--- a/.changeset/evals-generate-tests-snapshot-and-502.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,8 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Polish evals UI: refine run detail, suite list, cross-host matrix, trace viewer, goal completion card, and test template editor. Improves scroll behavior in trace viewer (stick-to-bottom) and tightens visuals across the evals tab.
+-Inspector updates:
+-
+-- Align the generate-tests snapshot with attachment display names so generated suites reference the same names the user sees
+-- Stop misclassifying upstream 502s as inspector errors in the web error route
+diff --git a/.changeset/evaluate-posthog-events.md b/.changeset/evaluate-posthog-events.md
+deleted file mode 100644
+index 48479ca8d..000000000
+--- a/.changeset/evaluate-posthog-events.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Inspector updates:
+-
+-- Add PostHog instrumentation to Evaluate covering the activation funnel and run lifecycle: `evaluate_tab_viewed`, `suite_viewed`, `eval_suite_run_completed` (with pass/fail counts and duration), `eval_generate_tests_completed` (with success flag and count), `eval_run_insights_opened`, `eval_suite_server_changed`, `eval_test_case_deleted`, and `eval_test_case_edited`
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 6a8c437ad..6969edf83 100644
+index 6969edf83..cb354562e 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.9.1",
-+  "version": "2.9.2",
+-  "version": "2.9.2",
++  "version": "2.9.3",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index d398429c1..6d36a1152 100644
+index 6d36a1152..ec8f2d08b 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.9.1",
-+      "version": "2.9.2",
+-      "version": "2.9.2",
++      "version": "2.9.3",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",

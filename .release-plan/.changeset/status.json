@@ -7,19 +7,30 @@
           "type": "patch"
         }
       ],
-      "summary": "Polish evals UI: refine run detail, suite list, cross-host matrix, trace viewer, goal completion card, and test template editor. Improves scroll behavior in trace viewer (stick-to-bottom) and tightens visuals across the evals tab.",
-      "id": "eval-ui-polish"
+      "summary": "Inspector updates:\n\n- Align the generate-tests snapshot with attachment display names so generated suites reference the same names the user sees\n- Stop misclassifying upstream 502s as inspector errors in the web error route",
+      "id": "evals-generate-tests-snapshot-and-502"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Inspector updates:\n\n- Add PostHog instrumentation to Evaluate covering the activation funnel and run lifecycle: `evaluate_tab_viewed`, `suite_viewed`, `eval_suite_run_completed` (with pass/fail counts and duration), `eval_generate_tests_completed` (with success flag and count), `eval_run_insights_opened`, `eval_suite_server_changed`, `eval_test_case_deleted`, and `eval_test_case_edited`",
+      "id": "evaluate-posthog-events"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.9.1",
+      "oldVersion": "2.9.2",
       "changesets": [
-        "eval-ui-polish"
+        "evals-generate-tests-snapshot-and-502",
+        "evaluate-posthog-events"
       ],
-      "newVersion": "2.9.2"
+      "newVersion": "2.9.3"
     }
   ]
 }
