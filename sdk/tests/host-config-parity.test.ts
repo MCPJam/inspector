@@ -5,8 +5,8 @@ import {
   canonicalizeHostConfigV2,
   computeHostConfigHashV2,
   sha256Hex,
-} from "../src/host-config/index";
-import type { HostConfigInputV2 } from "../src/host-config/index";
+} from "../src/host-config/internal";
+import type { HostConfigInputV2 } from "../src/host-config/internal";
 
 /**
  * Golden-vector parity fixture. The Convex backend keeps a BYTE-IDENTICAL copy

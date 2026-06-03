@@ -19,6 +19,9 @@ export default defineConfig({
     "src/matchers.ts",
     "src/predicates/index.ts",
     "src/host-config/index.ts",
+    // Internal entry: built for SDK tooling (the parity fixture generator) but
+    // NOT advertised in package.json#exports, so it is not publicly importable.
+    "src/host-config/internal.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],

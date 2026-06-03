@@ -1,34 +1,31 @@
 /**
- * `@mcpjam/sdk/host-config` — portable HostConfig v2 core.
+ * `@mcpjam/sdk/host-config` — public host configuration API.
  *
- * The canonical source of truth for the host-config shape, canonicalizer, and
- * content hash. Hand-mirrored (not imported) by the Convex backend; kept in
- * lockstep via a golden-vector parity test. See `./types.ts` for the full
- * parity-discipline note.
+ * Build and fingerprint a host with the `Host` class:
  *
- * This barrel is browser-safe — it carries no `MCPClientManager`/`ToolSet`
- * dependencies. Manager-aware helpers (tool-visibility filtering, host
- * execution policy) live in sibling modules added in later stages and are
- * exported only from the Node entry, not `@mcpjam/sdk/browser`.
+ * ```ts
+ * import { Host } from "@mcpjam/sdk/host-config"; // or from "@mcpjam/sdk"
+ * const host = new Host().setMcp({ protocolVersion: "2025-11-25" }).addServer("srv_abc");
+ * const fp = await host.hash();
+ * ```
+ *
+ * The internal canonicalizer/hash (and the storage-row vocabulary they use)
+ * are deliberately not exported — `Host.toJSON()` / `Host.hash()` are the
+ * public seam. The canonical output is hand-mirrored + golden-vector-parity
+ * tested against the Convex backend; see `./types.ts`.
  */
 
-export {
-  HOST_CONFIG_SCHEMA_VERSION_V2,
-  SEP_1865_PERMISSION_FEATURES,
-} from "./types.js";
+export { Host } from "./host.js";
 export type {
-  HostConfigInputV2,
-  CanonicalHostConfigV2,
-  HostConfigConnectionDefaults,
-  HostConfigMcpProfileV1,
-  HostConfigStyle,
+  HostInit,
+  HostJson,
+  HostMcp,
+  HostServerOverride,
+  HostConnectionDefaults,
   HostStyleId,
+  McpProtocolVersion,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
-  McpProtocolVersion,
-} from "./types.js";
-
-export { canonicalizeHostConfigV2 } from "./canonicalize.js";
-export { sha256Hex, computeHostConfigHashV2 } from "./hash.js";
+} from "./public-types.js";

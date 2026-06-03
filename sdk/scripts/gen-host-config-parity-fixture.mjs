@@ -21,7 +21,7 @@ import {
   canonicalizeHostConfigV2,
   computeHostConfigHashV2,
   sha256Hex,
-} from "../dist/host-config/index.js";
+} from "../dist/host-config/internal.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outPath = join(here, "..", "tests", "fixtures", "host-config-parity-fixtures.json");

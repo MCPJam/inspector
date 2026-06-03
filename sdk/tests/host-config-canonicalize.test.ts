@@ -1,8 +1,8 @@
 import {
   canonicalizeHostConfigV2,
   computeHostConfigHashV2,
-} from "../src/host-config/index";
-import type { HostConfigInputV2 } from "../src/host-config/index";
+} from "../src/host-config/internal";
+import type { HostConfigInputV2 } from "../src/host-config/internal";
 
 function base(overrides: Partial<HostConfigInputV2> = {}): HostConfigInputV2 {
   return {
