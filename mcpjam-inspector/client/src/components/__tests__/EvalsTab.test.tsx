@@ -288,25 +288,21 @@ describe("EvalsTab", () => {
     });
   });
 
-  it("shows a sign-in state instead of crashing when Convex rejects guest eval overview", () => {
+  it("shows the generic error fallback when the suites overview query throws", () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error\nUncaught Error: Not available for guests yet. Sign in to use this.",
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error",
         );
       });
 
-      render(<EvalsTab projectId="guest-project" />);
+      render(<EvalsTab projectId="project-1" />);
 
-      expect(screen.getByText("Sign in to use Testing")).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          "Testing suites are not available for guests yet. Sign in to create suites, view runs, and investigate cases.",
-        ),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
       consoleError.mockRestore();

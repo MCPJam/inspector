@@ -414,7 +414,11 @@ export function useEvalHandlers({
       const replayToastId = toast.loading("Replaying run...");
 
       try {
-        const accessToken = await getAccessToken();
+        // Hosted guests have no WorkOS access token; the request still
+        // authenticates via authFetch attaching a guest bearer. Treat the
+        // LoginRequired throw as an empty token — `buildEvalConvexAuthPayload`
+        // drops it in hosted mode anyway.
+        const accessToken = await getAccessToken().catch(() => "");
         const endpoints = getEvalApiEndpoints();
         const response = await authFetch(endpoints.replayRun, {
           method: "POST",
@@ -619,7 +623,10 @@ export function useEvalHandlers({
 
       const suiteRunStartedAt = Date.now();
       try {
-        const accessToken = await getAccessToken();
+        // Hosted guests have no WorkOS access token; authFetch attaches the
+        // guest bearer instead. `mergeHostedServerBatch` strips
+        // convexAuthToken in hosted mode so an empty string is harmless.
+        const accessToken = await getAccessToken().catch(() => "");
 
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
