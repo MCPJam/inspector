@@ -30,7 +30,10 @@ import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config";
-import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
+import {
+  flattenServerToolSnapshotTools,
+  type ServerToolSnapshot,
+} from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import { type PromptTurn } from "@/shared/prompt-turns";
 import {
@@ -311,10 +314,19 @@ export type ServerAttachmentInput = z.infer<
   typeof ServerAttachmentInputSchema
 >;
 
+// `serverNames` is the optional parallel array that pairs each `serverIds[i]`
+// (the manager key — Convex Id in hosted mode, display name in standalone)
+// with its runtime display name. The backend snapshot/attachment check is
+// keyed by display name (see `applyAttachmentScope` in
+// `convex/evalGeneration/routes.ts`), so generators must rewrite the snapshot's
+// `serverId` to the display name before forwarding. Without the parallel
+// array the rewrite is a no-op and standalone callers (where manager key ==
+// display name) continue to work unchanged.
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  serverNames: z.array(z.string()).optional(),
   convexAuthToken: z.string(),
   projectId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
@@ -326,6 +338,7 @@ export const GenerateNegativeTestsRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  serverNames: z.array(z.string()).optional(),
   convexAuthToken: z.string(),
   projectId: z.string().min(1).optional(),
   serverAttachment: ServerAttachmentInputSchema.optional(),
@@ -1164,6 +1177,54 @@ export async function runEvalTestCaseWithManager(
   };
 }
 
+// Map each manager key back to the runtime display name the inspector client
+// sent in `serverNames`. The map drives the snapshot rewrite below so the
+// Convex `applyAttachmentScope` set-comparison lines up with
+// `serverAttachment.resolvedServerNames` (display names) instead of the
+// manager keys (Convex Ids in hosted mode).
+export function buildManagerKeyToDisplayNameMap(
+  clientManager: MCPClientManager,
+  requestServerIds: string[],
+  requestServerNames: string[] | undefined,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (
+    !requestServerNames ||
+    requestServerNames.length !== requestServerIds.length
+  ) {
+    return map;
+  }
+  const available = clientManager.listServers();
+  for (let i = 0; i < requestServerIds.length; i++) {
+    const requestedId = requestServerIds[i];
+    const displayName = requestServerNames[i];
+    if (!displayName || displayName === requestedId) continue;
+    const match =
+      available.find((id) => id === requestedId) ??
+      available.find((id) => id.toLowerCase() === requestedId.toLowerCase());
+    if (!match) continue;
+    if (!map.has(match)) {
+      map.set(match, displayName);
+    }
+  }
+  return map;
+}
+
+export function remapSnapshotServerIdsForAttachment(
+  snapshot: ServerToolSnapshot,
+  managerKeyToDisplayName: Map<string, string>,
+): ServerToolSnapshot {
+  if (managerKeyToDisplayName.size === 0) return snapshot;
+  let mutated = false;
+  const servers = snapshot.servers.map((server) => {
+    const displayName = managerKeyToDisplayName.get(server.serverId);
+    if (!displayName || displayName === server.serverId) return server;
+    mutated = true;
+    return { ...server, serverId: displayName };
+  });
+  return mutated ? { ...snapshot, servers } : snapshot;
+}
+
 export async function generateEvalTestsWithManager(
   clientManager: MCPClientManager,
   request: GenerateTestsRequest,
@@ -1172,12 +1233,20 @@ export async function generateEvalTestsWithManager(
     request.serverIds,
     clientManager,
   );
-  const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+  const { toolSnapshot: rawSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
     {
       logPrefix: "evals.generate-tests",
     },
+  );
+  const toolSnapshot = remapSnapshotServerIdsForAttachment(
+    rawSnapshot,
+    buildManagerKeyToDisplayNameMap(
+      clientManager,
+      request.serverIds,
+      request.serverNames,
+    ),
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
@@ -1216,12 +1285,20 @@ export async function generateNegativeEvalTestsWithManager(
     request.serverIds,
     clientManager,
   );
-  const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
+  const { toolSnapshot: rawSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
     {
       logPrefix: "evals.generate-negative-tests",
     },
+  );
+  const toolSnapshot = remapSnapshotServerIdsForAttachment(
+    rawSnapshot,
+    buildManagerKeyToDisplayNameMap(
+      clientManager,
+      request.serverIds,
+      request.serverNames,
+    ),
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
