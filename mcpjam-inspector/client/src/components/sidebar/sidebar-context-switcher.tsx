@@ -480,6 +480,15 @@ export function SidebarContextSwitcher({
                     <SidebarCreditUsage
                       variant="full"
                       organizationId={activeOrganizationId}
+                      onClick={
+                        activeOrg && onSwitchOrganization
+                          ? () => {
+                              onSwitchOrganization(activeOrg._id, "billing");
+                              setChipPopoverOpen(false);
+                              setMenuOpen(false);
+                            }
+                          : undefined
+                      }
                     />
                   </div>
                 ) : null}
