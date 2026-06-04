@@ -15,14 +15,20 @@ let balanceState:
   | undefined;
 let isLoadingState = false;
 let hasWorkOsUserState = true;
+let balanceError: Error | null = null;
 let creditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
-  useCreditBalance: () => ({
-    balance: balanceState,
-    isLoading: isLoadingState,
-    hasWorkOsUser: hasWorkOsUserState,
-  }),
+  // Mirrors Convex `useQuery`, which throws during render when the query
+  // errors — that's what bubbles up and crashes the app in local dev.
+  useCreditBalance: () => {
+    if (balanceError) throw balanceError;
+    return {
+      balance: balanceState,
+      isLoading: isLoadingState,
+      hasWorkOsUser: hasWorkOsUserState,
+    };
+  },
 }));
 
 vi.mock("@/lib/credit-topups-flag", () => ({
@@ -44,11 +50,32 @@ describe("SidebarCreditUsage", () => {
     };
     isLoadingState = false;
     hasWorkOsUserState = true;
+    balanceError = null;
     creditsFlagState = true;
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("hides the widget instead of crashing when the balance query throws", () => {
+    // Local dev: a signed-in identity with no org makes the backend throw
+    // "organizationId is required for signed-in credit balance". The error
+    // boundary must swallow it and render null so the whole app doesn't go
+    // down with the sidebar.
+    balanceError = new Error(
+      "organizationId is required for signed-in credit balance",
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    expect(() => render(<SidebarCreditUsage />)).not.toThrow();
+    expect(
+      screen.queryByTestId("sidebar-credit-usage"),
+    ).not.toBeInTheDocument();
+
+    consoleError.mockRestore();
   });
 
   it("renders the daily limit bar with reset timing", () => {

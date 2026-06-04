@@ -6,6 +6,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
@@ -20,7 +21,26 @@ interface SidebarCreditUsageProps {
   onClick?: () => void;
 }
 
-export function SidebarCreditUsage({
+/**
+ * The credit widget lives in the always-rendered sidebar shell, so if its
+ * `billing:getCreditBalance` query throws it would bubble up to the route-level
+ * error boundary and take down the whole app. That actually happens in local
+ * dev: a signed-in identity with no backing org (the nonProd lockdown blocks
+ * `ensureUser`, so no record is created) makes the backend throw
+ * "organizationId is required for signed-in credit balance". Wrap the
+ * query-running body in an error boundary that silently hides the tile instead
+ * — a billing strip should never crash the app. See the `fallback={null}`
+ * pattern already used around the billing-page credit widgets.
+ */
+export function SidebarCreditUsage(props: SidebarCreditUsageProps = {}) {
+  return (
+    <ErrorBoundary fallback={null}>
+      <SidebarCreditUsageInner {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function SidebarCreditUsageInner({
   className,
   organizationId,
   includeGuests = false,
