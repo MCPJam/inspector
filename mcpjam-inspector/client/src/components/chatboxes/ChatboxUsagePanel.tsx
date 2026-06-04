@@ -7,6 +7,7 @@ import {
   chipKey,
   compareThreadsForUsageList,
   removeChipByKey,
+  threadMatchesFilterState,
   toggleChip,
   type UsageFilterChip,
   type UsageFilterPreset,
@@ -77,10 +78,15 @@ export function ChatboxUsagePanel({
     enabled: section === "sessions",
   });
 
+  // Apply filter state here (chips + preset) so chips like "Hide synthetic"
+  // actually narrow the list — ShareUsageThreadList renders provided threads
+  // verbatim when the panel owns the data, so filtering has to happen here.
   const sortedThreads = useMemo(() => {
     if (!threads) return undefined;
-    return [...threads].sort(compareThreadsForUsageList);
-  }, [threads]);
+    return threads
+      .filter((t) => threadMatchesFilterState(t, filter))
+      .sort(compareThreadsForUsageList);
+  }, [threads, filter]);
 
   useEffect(() => {
     setSelection({ chatboxId: chatbox.chatboxId, threadId: null });
