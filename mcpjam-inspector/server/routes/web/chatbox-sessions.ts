@@ -275,7 +275,15 @@ chatboxSessions.get(
   async (c) =>
     handleRoute(c, async () => {
       const bearerToken = assertBearerToken(c);
+      const chatboxId = c.req.param("chatboxId");
       const runId = c.req.param("runId");
+      if (!chatboxId) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "chatboxId required",
+        );
+      }
       if (!runId) {
         throw new WebRouteError(
           400,
@@ -298,6 +306,11 @@ chatboxSessions.get(
         projectId,
         runId,
       );
+      // Use 404 (not 403) on mismatch so the response doesn't leak whether
+      // the runId exists under a different chatbox.
+      if (run.chatboxId !== chatboxId) {
+        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Run not found");
+      }
       return { run, threadIds };
     }),
 );
