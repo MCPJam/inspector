@@ -1,14 +1,21 @@
 /**
  * Frontend types + utilities for HostConfig v2.
  *
- * Mirrors the shape declared in the backend's
- * `convex/lib/hostConfigV2.ts`. Kept in sync by hand: this file is the
- * single client-side source of truth so all four editors (Project Settings,
- * Chatbox Editor/Builder, Eval Suite Settings, Connection Settings) speak
- * one shape.
+ * Shareable leaf primitives (`CspDomainSet`, `HostConfigConnectionDefaults`,
+ * `HostConfigMcpProfileV1`, `McpProtocolVersion`,
+ * `SEP_1865_PERMISSION_FEATURES`, `DEFAULT_TEMPERATURE_V2`,
+ * `resolveEffectiveMcpProtocolVersion`) live in
+ * `@mcpjam/sdk/host-config/internal` — single source of truth shared with the
+ * backend canonicalizer. Re-exported below so the 60+ files importing from
+ * `@/lib/client-config-v2` don't churn.
  *
- * Phase 1 (additive). Subsequent phases will switch read/write paths in
- * place; the shape below is stable.
+ * Strict aggregate types (`HostConfigInputV2`, `HostConfigDtoV2`,
+ * `HostStyleId`) stay client-owned: the editor enforces invariants the
+ * storage layer leaves optional (required `serverIds`/`optionalServerIds`/
+ * `respectToolVisibility`, structured `ChatUiOverride`, closed
+ * `ChatboxHostStyle` union). Single client-side source of truth so all four
+ * editors (Project Settings, Chatbox Editor/Builder, Eval Suite Settings,
+ * Connection Settings) speak one shape.
  */
 
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
@@ -35,245 +42,35 @@ import type {
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+// Shareable host-config primitives + the portable protocol-version resolver
+// live in @mcpjam/sdk/host-config/internal — single source of truth for the
+// backend canonicalizer and the inspector client. Re-exported below so the
+// 60+ files importing from "@/lib/client-config-v2" don't churn.
+import {
+  DEFAULT_TEMPERATURE_V2,
+  resolveEffectiveMcpProtocolVersion,
+  SEP_1865_PERMISSION_FEATURES,
+} from "@mcpjam/sdk/host-config/internal";
+import type {
+  CspDomainSet,
+  HostConfigConnectionDefaults,
+  HostConfigMcpProfileV1,
+  McpProtocolVersion,
+} from "@mcpjam/sdk/host-config/internal";
+
+export {
+  DEFAULT_TEMPERATURE_V2,
+  resolveEffectiveMcpProtocolVersion,
+  SEP_1865_PERMISSION_FEATURES,
+};
+export type {
+  CspDomainSet,
+  HostConfigConnectionDefaults,
+  HostConfigMcpProfileV1,
+  McpProtocolVersion,
+};
 
 export type HostStyleId = ChatboxHostStyle;
-
-/**
- * Permissions Policy feature tokens corresponding to the four SEP-1865
- * spec permissions. KEBAB-CASE browser tokens (as they appear in iframe
- * `allow=` attributes), NOT the camelCase keys used in
- * `mcpProfile.permissions.allow`. The backend canonicalizer drops any
- * key in this list from `allowFeatures` — `permissions.allow` is the
- * single source of truth. Mirror of the same constant in
- * `convex/lib/hostConfigV2.ts`.
- *
- * Naming gap (intentional): `permissions.allow.clipboardWrite` (camel,
- * spec field name) ↔ `allowFeatures["clipboard-write"]` (kebab,
- * Permissions Policy token). Do NOT normalize casing on either side.
- */
-export const SEP_1865_PERMISSION_FEATURES = [
-  "camera",
-  "microphone",
-  "geolocation",
-  "clipboard-write",
-] as const;
-
-export type HostConfigConnectionDefaults = {
-  headers: Record<string, string>;
-  requestTimeout: number;
-};
-
-/**
- * Four parallel allowlists keyed by CSP directive family (SEP-1865 is
- * allowlist-only; there's no deny concept). Mirrors `CspDomainSet` in the
- * backend (`convex/lib/hostConfigV2.ts`). Canonicalized server-side as a set
- * (trimmed, deduped, sorted); the client may emit arrays in any order — the
- * backend hash dedupes regardless.
- */
-export type CspDomainSet = {
-  connectDomains?: string[];
-  resourceDomains?: string[];
-  frameDomains?: string[];
-  baseUriDomains?: string[];
-};
-
-/**
- * Versioned envelope for host-level MCP state. Mirror of
- * `HostConfigMcpProfileV1` in `convex/lib/hostConfigV2.ts` — kept in sync by
- * hand so the inspector and backend speak one shape.
- *
- * `profileVersion: 1` is a forward-compat trip wire: a future incompatible
- * shape will introduce `profileVersion: 2`. The backend rejects any other
- * value at write time.
- *
- * Every field is optional; `undefined` at any nest depth means "use SDK
- * defaults / no host-level override." `undefined` and `{ profileVersion: 1 }`
- * (empty envelope) hash distinctly on the backend, so the inspector MUST NOT
- * synthesize an empty envelope when the user hasn't opted in.
- */
-/**
- * Pinned MCP protocol version for a server connection. Values are wire
- * literals (mirror of `MCP_PROTOCOL_VERSIONS` in `@mcpjam/sdk`'s
- * `mcp-protocol-version.ts`, and `McpProtocolVersion` in
- * `convex/lib/hostConfigV2.ts`).
- *
- * `undefined` = "no opinion — SDK chooses at request time." Do NOT
- * materialize a default value at storage time; canonical hashes would
- * churn whenever the SDK default moves and future SDK default upgrades
- * would silently no-op against existing rows.
- */
-export type McpProtocolVersion =
-  | "2025-03-26"
-  | "2025-06-18"
-  | "2025-11-25"
-  | "2026-07-28";
-
-/**
- * Resolve the effective pinned protocol version for a server connection.
- * Mirror of the rule the backend stamps into `serverConnectionOverrides`
- * at fan-out time, applied at the bridge / wire-client factory site to
- * pick between `OfficialSdkClientAdapter` and
- * `StatelessMcpHttpPreviewClient` (the SDK routes via
- * `isStatelessProtocolVersion`).
- *
- *   server override wins; otherwise host default; otherwise undefined
- *
- * Returns `undefined` when neither layer has an opinion — preserves the
- * SDK-default semantics. Both inputs are optional so callers can read
- * straight off the hydrated host config row without normalizing first.
- */
-export function resolveEffectiveMcpProtocolVersion(
-  serverOverride: McpProtocolVersion | undefined,
-  hostDefault: McpProtocolVersion | undefined,
-): McpProtocolVersion | undefined {
-  return serverOverride ?? hostDefault;
-}
-
-export type HostConfigMcpProfileV1 = {
-  profileVersion: 1;
-  /**
-   * Host-level default pinned MCP protocol version. Absent → SDK chooses
-   * at request time (do NOT materialize a default at write time —
-   * preserves undefined-as-default semantics so canonical hashes don't
-   * churn when the SDK default moves). Sibling of `initialize` and
-   * `apps` because stateless versions explicitly skip the initialize
-   * handshake — keeping this out of `mcpProfile.initialize` keeps the
-   * source-of-truth obvious.
-   *
-   * Per-server overrides live on `serverConnectionOverrides[serverId]
-   * .mcpProtocolVersionOverride`. Resolution rule: server override wins;
-   * otherwise this default; otherwise `undefined` (SDK default).
-   */
-  mcpProtocolVersion?: McpProtocolVersion;
-  initialize?: {
-    /**
-     * Ordered accept-list. First entry is sent in
-     * `initialize.params.protocolVersion`; all entries form the accept-set.
-     * Order is semantic — do NOT sort on the client.
-     */
-    supportedProtocolVersions?: string[];
-    /**
-     * The exact `initialize.clientInfo` object the SDK should send. Backend
-     * soft-validates `name` and `version` (non-empty strings, required when
-     * `clientInfo` is set) and passes everything else through verbatim so
-     * future spec additions (e.g. `title`) land here without a schema
-     * migration.
-     */
-    clientInfo?: Record<string, unknown>;
-  };
-  apps?: {
-    sandbox?: {
-      csp?: {
-        /** Picks the starting baseline; restrictTo applies on top regardless of mode. */
-        mode?: "host-default" | "declared" | "relaxed";
-        /** Intersection — never adds undeclared domains (SEP-1865). */
-        restrictTo?: CspDomainSet;
-        /**
-         * Per-directive CSP source-expression overrides emitted in the inner
-         * doc's `<meta http-equiv="Content-Security-Policy">`. Keys are CSP
-         * directive names (`script-src`, `style-src`, …); values are
-         * source-expression token arrays (`["'unsafe-eval'", "'wasm-unsafe-eval'"]`).
-         * Stored verbatim — no enum — so future tokens (nonces, hashes,
-         * `'strict-dynamic'`) land here without schema churn.
-         * Inspector-only emission knob: NOT advertised in SEP-1865 metadata;
-         * models what real hosts emit at the browser layer.
-         */
-        cspDirectives?: Record<string, string[]>;
-        extensions?: Record<string, unknown>;
-      };
-      permissions?: {
-        mode?: "resource-declared" | "deny-all" | "custom";
-        allow?: Record<string, boolean>;
-        extensions?: Record<string, unknown>;
-      };
-      /**
-       * Extra outer/inner iframe `sandbox=` tokens unioned with the mandatory
-       * `allow-scripts allow-same-origin`. Inspector-only emission knob.
-       */
-      sandboxAttrs?: string[];
-      /**
-       * Extra Permissions Policy entries appended to the OUTER iframe's
-       * `allow=` attribute ONLY. The inner iframe gets only the 4 spec
-       * permissions (from `permissions.allow`), matching real claude.ai's
-       * pattern where the outer grants `fullscreen *; clipboard-write *`
-       * but the inner trims to `clipboard-write *`. Keys are RAW
-       * kebab-case Permissions Policy tokens (`clipboard-write`, not
-       * `clipboardWrite`); values are allowlist strings (`*`, `'self'`,
-       * an origin). The 4 spec features (camera / microphone /
-       * geolocation / clipboard-write) are silently dropped by the
-       * canonicalizer — `permissions.allow` is the single source of
-       * truth for them. Inspector-only.
-       */
-      allowFeatures?: Record<string, string>;
-    };
-    /**
-     * Overrides for the MCP Apps `ui/initialize` response advertised to
-     * the View iframe (SEP-1865). Sibling to `apps.sandbox` because the
-     * `ui/initialize` envelope is the MCP Apps extension's negotiation
-     * step — distinct from the base-protocol `initialize` whose overrides
-     * live under `mcpProfile.initialize`.
-     */
-    uiInitialize?: {
-      /**
-       * The exact `hostInfo` the inspector should report in the
-       * `ui/initialize` result. Backend soft-validates `name` and
-       * `version` (non-empty strings, required when `hostInfo` is set)
-       * and passes everything else through verbatim so future spec
-       * additions (e.g. `title`) land here without a schema migration.
-       * Mirror of `initialize.clientInfo`.
-       */
-      hostInfo?: Record<string, unknown>;
-    };
-    /**
-     * Vendor compat-runtime shims the inspector injects into widget
-     * HTML before handing it to the sandbox. Claude/Cursor/Codex-style
-     * hosts leave these surfaces off; ChatGPT/Copilot and MCPJam's dev
-     * surface enable them. Absent → resolver falls back to the host
-     * style preset (see `resolveEffectiveCompatRuntime`).
-     */
-    compatRuntime?: {
-      /**
-       * Inject the OpenAI Apps SDK `window.openai` shim
-       * (`@mcpjam/sdk`'s `injectOpenAICompat`). Only enable when
-       * emulating a host that historically exposed this surface, or
-       * when the widget under test depends on it.
-       *
-       * Semantics:
-       * - `undefined` (or field absent) → fall back to the host style preset.
-       * - `true` → inject the shim (per-method surface controlled by
-       *   `openaiAppsOverrides` merged over the preset's `openaiAppsCapabilities`).
-       * - `false` → do NOT inject the shim. Per-method overrides are
-       *   ignored when injection is off; `window.openai` is `undefined`
-       *   in the widget, which is what SEP-1865-only hosts advertise.
-       */
-      openaiApps?: boolean;
-      /**
-       * Sparse per-method overrides applied on top of the host style
-       * preset when the shim IS injected. Each present field replaces
-       * the corresponding preset value; absent fields fall back to the
-       * preset. Use this to model a specific host's published subset
-       * (e.g. Microsoft 365 Copilot's "no requestModal, no uploadFile,
-       * fullscreen-only display mode") without redefining the whole
-       * surface.
-       */
-      openaiAppsOverrides?: OpenAiAppsCapabilities;
-    };
-    /**
-     * Sparse user override on the SEP-1865 MCP Apps spec-bridge per-
-     * dimension matrix. Independent of {@link compatRuntime} — the spec
-     * bridge is the primary protocol, not a vendor shim, so the override
-     * is its own sibling. Each present field replaces the corresponding
-     * preset value; absent fields fall back to the host style preset's
-     * {@link ResolvedMcpAppsCapabilities}. Use this to model a host's
-     * published subset (e.g. Microsoft 365 Copilot's "no
-     * `tool-input-partial`, fullscreen-only display modes, no
-     * `_meta.ui.prefersBorder` honoring") without redefining the whole
-     * matrix.
-     */
-    mcpAppsOverrides?: McpAppsCapabilities;
-  };
-  extensions?: Record<string, unknown>;
-};
 
 /**
  * Mutable input shape. All fields are required at write time so the editor
@@ -407,7 +204,6 @@ export type HostConfigDtoV2 = {
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
-export const DEFAULT_TEMPERATURE_V2 = 0.7;
 
 export function emptyHostConfigInputV2(
   partial: Partial<HostConfigInputV2> = {},

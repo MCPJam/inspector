@@ -14,14 +14,17 @@ import type { HostConfigInputV2 } from "../src/host-config/internal";
  * canonicalizer drifts, that repo's copy of this test fails because the
  * canonical JSON / sha256 no longer matches the pinned golden values.
  *
- * `EXPECTED_INPUT_HASH` is the sha256 of the fixture's `rows` array, inlined
- * here AND in `mcpjam-backend/tests/convex/hostConfigV2Parity.test.ts`. If you
- * regenerate the fixture (scripts/gen-host-config-parity-fixture.mjs), copy the
- * new fixture to the backend and update BOTH inlined constants in the same
- * change set — a partial edit fails the stale side loudly.
+ * `EXPECTED_INPUT_HASH` is the sha256 of the fixture's `rows` array. Bump it
+ * whenever you regenerate the fixture (scripts/gen-host-config-parity-fixture.mjs)
+ * so the drift guard fails loudly on a stale copy.
+ *
+ * The backend used to mirror this fixture + constant for cross-repo parity,
+ * but Stage 1 (mcpjam-backend PR #409) collapsed that into a one-import
+ * delegation — the backend's canonicalize tests now exercise the SDK
+ * directly, so the SDK-side constant is the single source of truth.
  */
 const EXPECTED_INPUT_HASH =
-  "8a680395dda47f356458db577201e723427be6e551217cba73c982e28a01b6c7";
+  "32a8406b9ff8d090c2ba3e0c2f4093c3af06e9a54fb6f5913c24e72458ca29c4";
 
 type FixtureRow = {
   label: string;
