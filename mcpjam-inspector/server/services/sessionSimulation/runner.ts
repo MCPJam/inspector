@@ -18,6 +18,59 @@ import {
 } from "../session-agent.js";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+const UPDATE_RUN_RETRY_DELAY_MS = 250;
+
+/**
+ * Best-effort persisted status write that tolerates one transient Convex
+ * failure. Used for per-session progress writes inside the batch loop and
+ * the final terminal write — neither should abort the batch on a single
+ * blip. The second failure is logged and swallowed.
+ */
+async function tryUpdateRunWithRetry(
+  convexHttpUrl: string,
+  convexAuthToken: string,
+  projectId: string,
+  runId: string,
+  delta: { succeeded?: number; failed?: number; rateLimited?: number },
+  status: "running" | "completed" | "partial" | "failed" | undefined,
+  context: string,
+): Promise<void> {
+  try {
+    await updateRun(
+      convexHttpUrl,
+      convexAuthToken,
+      projectId,
+      runId,
+      delta,
+      status,
+    );
+    return;
+  } catch (err) {
+    logger.warn("[sessionSimulation.runner] updateRun failed; retrying", {
+      runId,
+      context,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  await new Promise((resolve) => setTimeout(resolve, UPDATE_RUN_RETRY_DELAY_MS));
+  try {
+    await updateRun(
+      convexHttpUrl,
+      convexAuthToken,
+      projectId,
+      runId,
+      delta,
+      status,
+    );
+  } catch (err) {
+    logger.error("[sessionSimulation.runner] updateRun failed after retry", {
+      runId,
+      context,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 export interface SimulationManagerFactory {
   /**
@@ -71,6 +124,11 @@ export interface RunSimulationOptions {
 
 interface RunningRunHandle {
   abort: () => void;
+  /** Resolves when the run loop's `finally` has cleared the registry. */
+  done: Promise<void>;
+  convexHttpUrl: string;
+  convexAuthToken: string;
+  projectId: string;
 }
 
 const runningRuns = new Map<string, RunningRunHandle>();
@@ -80,13 +138,42 @@ export function getRunningSimulationCount(): number {
 }
 
 /**
- * Best-effort graceful shutdown for the runner registry. Aborts every active
- * runner and lets each runner's `finally` write the failure status.
+ * Graceful shutdown for the runner registry. Aborts every active runner and
+ * actually awaits each loop's `finally` (which writes the failure status)
+ * up to `timeoutMs`. Any run still active after the timeout gets a
+ * best-effort "failed" status write so the UI doesn't see a permanently
+ * "running" run.
  */
-export async function shutdownRunningSimulations(): Promise<void> {
-  for (const handle of runningRuns.values()) {
+export async function shutdownRunningSimulations(
+  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS,
+): Promise<void> {
+  const handles = Array.from(runningRuns.entries());
+  for (const [, handle] of handles) {
     handle.abort();
   }
+  const timeoutPromise = new Promise<void>((resolve) =>
+    setTimeout(resolve, timeoutMs),
+  );
+  await Promise.race([
+    Promise.allSettled(handles.map(([, h]) => h.done)),
+    timeoutPromise,
+  ]);
+  // Anything still in the registry didn't finish before the deadline.
+  // Mark it failed best-effort so the UI doesn't show a stuck "running".
+  const stragglers = Array.from(runningRuns.entries());
+  await Promise.allSettled(
+    stragglers.map(([runId, handle]) =>
+      tryUpdateRunWithRetry(
+        handle.convexHttpUrl,
+        handle.convexAuthToken,
+        handle.projectId,
+        runId,
+        {},
+        "failed",
+        "shutdown-straggler",
+      ),
+    ),
+  );
 }
 
 export async function startSimulation(
@@ -97,11 +184,22 @@ export async function startSimulation(
 ): Promise<void> {
   const controller = new AbortController();
   const composed = composeAbortSignals(partial.abortSignal, controller.signal);
-  runningRuns.set(partial.runId, { abort: () => controller.abort() });
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  runningRuns.set(partial.runId, {
+    abort: () => controller.abort(),
+    done,
+    convexHttpUrl: partial.convexHttpUrl,
+    convexAuthToken: partial.convexAuthToken,
+    projectId: partial.projectId,
+  });
   try {
     await runSimulationLoop({ ...partial, abortSignal: composed });
   } finally {
     runningRuns.delete(partial.runId);
+    resolveDone();
   }
 }
 
@@ -147,13 +245,14 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
 
   const modelDefinition = getModelById(modelId);
   if (!modelDefinition) {
-    await updateRun(
+    await tryUpdateRunWithRetry(
       convexHttpUrl,
       convexAuthToken,
       projectId,
       runId,
       {},
       "failed",
+      "unknown-model",
     );
     throw new Error(`Unknown modelId for simulation: ${modelId}`);
   }
@@ -202,7 +301,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
         else if (outcome === "rate_limited") totalRateLimited++;
         else totalFailed++;
 
-        await updateRun(
+        await tryUpdateRunWithRetry(
           convexHttpUrl,
           convexAuthToken,
           projectId,
@@ -212,6 +311,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
             failed: outcome === "failed" ? 1 : 0,
             rateLimited: outcome === "rate_limited" ? 1 : 0,
           },
+          undefined,
+          "per-session-progress",
         );
 
         if (outcome === "rate_limited") {
@@ -228,31 +329,29 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
         : totalSucceeded === 0
           ? "failed"
           : "partial";
-    await updateRun(
+    await tryUpdateRunWithRetry(
       convexHttpUrl,
       convexAuthToken,
       projectId,
       runId,
       {},
       status,
+      "final-status",
     );
   } catch (error) {
     logger.error("[sessionSimulation.runner] run failed", {
       runId,
       error: error instanceof Error ? error.message : String(error),
     });
-    try {
-      await updateRun(
-        convexHttpUrl,
-        convexAuthToken,
-        projectId,
-        runId,
-        {},
-        "failed",
-      );
-    } catch {
-      // best-effort
-    }
+    await tryUpdateRunWithRetry(
+      convexHttpUrl,
+      convexAuthToken,
+      projectId,
+      runId,
+      {},
+      "failed",
+      "run-failed",
+    );
   } finally {
     clearInterval(heartbeat);
   }

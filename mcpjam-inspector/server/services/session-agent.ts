@@ -52,10 +52,18 @@ export interface DeltaSummary {
   rateLimited?: number;
 }
 
+// Cross-repo HTTP boundary: every Convex call here can hang on a stuck
+// backend, so attach an AbortSignal timeout to all of them. Non-LLM
+// control-plane calls (create/get/update) get 30s; LLM-backed calls
+// (generatePersonas, personaNextTurn) get 120s to cover slower models.
+const NON_LLM_TIMEOUT_MS = 30_000;
+const LLM_TIMEOUT_MS = 120_000;
+
 async function postJson<T>(
   url: string,
   convexAuthToken: string,
   body: unknown,
+  timeoutMs: number,
 ): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
@@ -64,6 +72,7 @@ async function postJson<T>(
       Authorization: `Bearer ${convexAuthToken}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     const errorText = await response.text();
@@ -90,6 +99,7 @@ export async function generatePersonas(
     `${convexHttpUrl}/session-simulation/generate-personas`,
     convexAuthToken,
     { projectId, chatboxId, toolSnapshot, personaCount },
+    LLM_TIMEOUT_MS,
   );
   if (!data.ok || !Array.isArray(data.personas)) {
     throw new Error(
@@ -116,6 +126,7 @@ export async function createRun(
     `${convexHttpUrl}/session-simulation/runs/create`,
     convexAuthToken,
     { projectId, chatboxId, personas, sessionsPerPersona, maxTurns },
+    NON_LLM_TIMEOUT_MS,
   );
   if (!data.ok || typeof data.runId !== "string") {
     throw new Error(
@@ -142,6 +153,7 @@ export async function personaNextTurn(
     `${convexHttpUrl}/session-simulation/persona-next-turn`,
     convexAuthToken,
     { projectId, runId, personaId, transcriptSoFar },
+    LLM_TIMEOUT_MS,
   );
   if (!data.ok || typeof data.message !== "string") {
     throw new Error(
@@ -162,7 +174,7 @@ export async function updateRun(
   deltaSummary: DeltaSummary,
   status?: RunRecord["status"],
 ): Promise<void> {
-  await postJson<{ ok?: boolean; error?: string }>(
+  const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/session-simulation/runs/update`,
     convexAuthToken,
     {
@@ -171,7 +183,16 @@ export async function updateRun(
       deltaSummary,
       ...(status ? { status } : {}),
     },
+    NON_LLM_TIMEOUT_MS,
   );
+  // Backend may return HTTP 200 with {ok: false} for soft validation
+  // failures; treat that as an error so callers can decide whether to
+  // retry or abort the batch.
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend updateRun: ${data.error ?? "unknown error"}`,
+    );
+  }
 }
 
 export async function getRun(
@@ -190,6 +211,7 @@ export async function getRun(
     headers: {
       Authorization: `Bearer ${convexAuthToken}`,
     },
+    signal: AbortSignal.timeout(NON_LLM_TIMEOUT_MS),
   });
   if (!response.ok) {
     const errorText = await response.text();
