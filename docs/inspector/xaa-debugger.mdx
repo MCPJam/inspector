@@ -34,7 +34,7 @@ After step 4 (authorization server discovery), the debugger displays a compatibi
 
 - **Green (Pass)** - Authorization server advertises `urn:ietf:params:oauth:grant-type:jwt-bearer` and has a token endpoint. The flow should succeed if issuer trust is configured.
 - **Amber (Warn)** - The authorization server didn't advertise `grant_types_supported` in its metadata. Support can't be verified without attempting the token exchange.
-- **Red (Fail)** - The authorization server doesn't advertise jwt-bearer grant support, or is a known-unsupported vendor. The flow will fail at step 11.
+- **Red (Fail)** - The authorization server doesn't advertise jwt-bearer grant support, or is a known-unsupported vendor. The flow will fail at the token exchange step.
 
 ### Vendor Detection
 
