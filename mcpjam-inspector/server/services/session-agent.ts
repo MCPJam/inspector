@@ -256,6 +256,10 @@ export async function updateRun(
 
 const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export class SessionWorkerLeaseLostError extends Error {
   constructor(message: string = "Lease lost") {
     super(message);
@@ -351,7 +355,27 @@ export interface ClaimedJob {
   personaId: string;
   sessionIndex: number;
   attemptCount: number;
+  /**
+   * Lease owner the backend stamped onto the claim. Echoed back to
+   * heartbeat/complete/fail so a stale process can't mutate someone
+   * else's job. The durable runner passes this through verbatim.
+   */
+  leaseOwner: string;
   leaseExpiresAt: number;
+  /**
+   * Worker-safe runtime material persisted on the run record at
+   * `runs/create` time (plan v4 §C). The pump rebuilds the MCP
+   * manager from this without a user bearer.
+   *
+   * `null` means the run predates the descriptor field (legacy v2
+   * row) — the worker terminal-fails the job with
+   * `errorCode='missing_descriptor'`.
+   */
+  runtimeDescriptor: Record<string, unknown> | null;
+  /** Full persona record (id, name, role, notes). */
+  persona: PersonaSlate;
+  /** Mirrored from the run record so the worker doesn't need to refetch. */
+  maxTurns: number;
 }
 
 export interface BudgetCapTerminatedJob {
@@ -389,6 +413,19 @@ export async function claimJob(
   );
   if (data.kind === "no_job") return { kind: "no_job" };
   if (data.kind === "claimed") {
+    // Persona is fanned out by the backend so the worker can drive the
+    // session without a second Convex round-trip. Trust the wire shape
+    // defensively — missing fields surface as `execution_error` upstream.
+    const personaRaw = isRecord(data.persona) ? data.persona : null;
+    const persona: PersonaSlate = {
+      id: String(personaRaw?.id ?? data.personaId),
+      name: typeof personaRaw?.name === "string" ? personaRaw.name : "",
+      role: typeof personaRaw?.role === "string" ? personaRaw.role : "",
+      notes: typeof personaRaw?.notes === "string" ? personaRaw.notes : "",
+    };
+    const runtimeDescriptor = isRecord(data.runtimeDescriptor)
+      ? (data.runtimeDescriptor as Record<string, unknown>)
+      : null;
     return {
       kind: "claimed",
       jobId: String(data.jobId),
@@ -398,7 +435,11 @@ export async function claimJob(
       personaId: String(data.personaId),
       sessionIndex: Number(data.sessionIndex),
       attemptCount: Number(data.attemptCount),
+      leaseOwner: String(data.leaseOwner),
       leaseExpiresAt: Number(data.leaseExpiresAt),
+      runtimeDescriptor,
+      persona,
+      maxTurns: Number(data.maxTurns),
     };
   }
   return {

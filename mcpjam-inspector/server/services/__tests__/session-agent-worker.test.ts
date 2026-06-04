@@ -58,7 +58,21 @@ describe("session-agent worker helpers", () => {
       personaId: "p-1",
       sessionIndex: 0,
       attemptCount: 1,
+      leaseOwner: "w-1",
       leaseExpiresAt: 1_000_000,
+      runtimeDescriptor: {
+        selectedServerIds: ["srv-1"],
+        perServer: [
+          { serverId: "srv-1", transportType: "http", url: "https://x.test" },
+        ],
+      },
+      persona: {
+        id: "p-1",
+        name: "Alice",
+        role: "user",
+        notes: "patient",
+      },
+      maxTurns: 5,
     });
     const result = await claimJob(HTTP_URL, {
       workerInstanceId: "w-1",
@@ -73,7 +87,16 @@ describe("session-agent worker helpers", () => {
       personaId: "p-1",
       sessionIndex: 0,
       attemptCount: 1,
+      leaseOwner: "w-1",
       leaseExpiresAt: 1_000_000,
+      runtimeDescriptor: {
+        selectedServerIds: ["srv-1"],
+        perServer: [
+          { serverId: "srv-1", transportType: "http", url: "https://x.test" },
+        ],
+      },
+      persona: { id: "p-1", name: "Alice", role: "user", notes: "patient" },
+      maxTurns: 5,
     });
     const { url, init } = lastFetchArgs();
     expect(url).toContain("/session-simulation/jobs/claim");
@@ -84,6 +107,34 @@ describe("session-agent worker helpers", () => {
       workerInstanceId: "w-1",
       workerScope: "any",
     });
+  });
+
+  it("claimJob() surfaces null runtimeDescriptor for legacy v2 runs", async () => {
+    mockJson(200, {
+      ok: true,
+      kind: "claimed",
+      jobId: "job-2",
+      runId: "run-2",
+      projectId: "proj-1",
+      chatboxId: "cb-1",
+      personaId: "p-1",
+      sessionIndex: 0,
+      attemptCount: 1,
+      leaseOwner: "w-1",
+      leaseExpiresAt: 1_000_000,
+      runtimeDescriptor: null,
+      persona: { id: "p-1", name: "Alice", role: "user", notes: "" },
+      maxTurns: 3,
+    });
+    const result = await claimJob(HTTP_URL, {
+      workerInstanceId: "w-1",
+      workerScope: "any",
+    });
+    expect(result.kind).toBe("claimed");
+    if (result.kind !== "claimed") throw new Error("unreachable");
+    expect(result.runtimeDescriptor).toBeNull();
+    expect(result.maxTurns).toBe(3);
+    expect(result.leaseOwner).toBe("w-1");
   });
 
   it("claimJob() returns kind=no_job when backend has nothing to hand out", async () => {

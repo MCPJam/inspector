@@ -177,7 +177,11 @@ describe("runOneJob", () => {
     personaId: "p-1",
     sessionIndex: 0,
     attemptCount: 1,
+    leaseOwner: "w-1",
     leaseExpiresAt: Date.now() + 60_000,
+    runtimeDescriptor: baseSnapshot.runtimeDescriptor as Record<string, unknown>,
+    persona: baseSnapshot.personas[0]!,
+    maxTurns: baseSnapshot.maxTurns,
   };
 
   it("drives persona → assistant turns, persists chat session, completes job", async () => {
