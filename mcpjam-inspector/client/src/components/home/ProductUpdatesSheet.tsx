@@ -38,19 +38,21 @@ interface VideoPreviewProps {
   onOpen: () => void;
 }
 
+const PREVIEW_WRAPPER_CLASS =
+  "group/play relative mt-2 block aspect-video w-full overflow-hidden rounded-md border border-border bg-muted";
+
 function VideoPreview({ update, onOpen }: VideoPreviewProps) {
   const embed = update.videoUrl ? parseVideoEmbed(update.videoUrl) : null;
   const hasPreviewMp4 = !!update.previewVideoUrl;
   const poster = update.videoPosterUrl || embed?.posterSrc || undefined;
-  const isInlineEmbeddable = embed && embed.provider !== "raw";
+  const canEmbedInModal = !!embed && embed.provider !== "raw";
 
-  // No preview to show, no full video to open: render nothing.
-  if (!hasPreviewMp4 && !isInlineEmbeddable && embed?.provider !== "raw") {
-    return null;
-  }
+  // Nothing to render: no preview clip and no parseable full video URL.
+  if (!hasPreviewMp4 && !embed) return null;
 
-  // Raw / non-embeddable URL: keep the existing "Watch" link behavior, no
-  // modal — we can't reliably autoplay or iframe an arbitrary URL.
+  // Raw / non-embeddable URL with no MP4 preview: keep the existing
+  // "Watch" link behavior, no modal — we can't reliably iframe an
+  // arbitrary URL.
   if (!hasPreviewMp4 && embed?.provider === "raw") {
     return (
       <div className="mt-2">
@@ -69,57 +71,90 @@ function VideoPreview({ update, onOpen }: VideoPreviewProps) {
     );
   }
 
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`Play video for ${update.title}`}
-      className="group/play relative mt-2 block aspect-video w-full overflow-hidden rounded-md border border-border bg-muted"
+  const media = hasPreviewMp4 ? (
+    <video
+      src={update.previewVideoUrl}
+      poster={poster}
+      className="absolute inset-0 size-full object-cover"
+      aria-hidden
+      autoPlay
+      loop
+      muted
+      playsInline
+      preload="auto"
+    />
+  ) : poster ? (
+    <img
+      src={poster}
+      alt=""
+      loading="lazy"
+      className="absolute inset-0 size-full object-cover"
+    />
+  ) : null;
+
+  // Play affordance is only meaningful when clicking the preview actually
+  // does something — opens the modal, or navigates to a raw URL. With only
+  // a `previewVideoUrl` and no full `videoUrl`, the preview is decorative
+  // (it already autoplays) and we skip the overlay entirely.
+  const showAffordance = canEmbedInModal || embed?.provider === "raw";
+  const affordance = showAffordance ? (
+    <span
+      className={`absolute inset-0 flex items-center justify-center transition-colors ${
+        hasPreviewMp4
+          ? "bg-black/0 group-hover/play:bg-black/20"
+          : "bg-black/20 group-hover/play:bg-black/30"
+      }`}
     >
-      {hasPreviewMp4 ? (
-        <video
-          src={update.previewVideoUrl}
-          poster={poster}
-          className="absolute inset-0 size-full object-cover"
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-        />
-      ) : poster ? (
-        <img
-          src={poster}
-          alt=""
-          loading="lazy"
-          className="absolute inset-0 size-full object-cover"
-        />
-      ) : null}
-      {/* Play affordance: faded over the autoplay preview, prominent over a
-          static poster. */}
       <span
-        className={`absolute inset-0 flex items-center justify-center transition-colors ${
+        className={`flex size-12 items-center justify-center rounded-full bg-white/90 text-foreground shadow-md transition-all group-hover/play:scale-105 ${
           hasPreviewMp4
-            ? "bg-black/0 group-hover/play:bg-black/20"
-            : "bg-black/20 group-hover/play:bg-black/30"
+            ? "opacity-0 group-hover/play:opacity-100"
+            : "opacity-100"
         }`}
       >
-        <span
-          className={`flex size-12 items-center justify-center rounded-full bg-white/90 text-foreground shadow-md transition-all group-hover/play:scale-105 ${
-            hasPreviewMp4
-              ? "opacity-0 group-hover/play:opacity-100"
-              : "opacity-100"
-          }`}
-        >
-          <Play
-            className="size-5 translate-x-[1px]"
-            strokeWidth={2}
-            fill="currentColor"
-          />
-        </span>
+        <Play
+          className="size-5 translate-x-[1px]"
+          strokeWidth={2}
+          fill="currentColor"
+        />
       </span>
-    </button>
-  );
+    </span>
+  ) : null;
+
+  if (canEmbedInModal) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Play video for ${update.title}`}
+        className={PREVIEW_WRAPPER_CLASS}
+      >
+        {media}
+        {affordance}
+      </button>
+    );
+  }
+
+  // Raw `videoUrl` with an MP4 preview: open the raw URL in a new tab
+  // rather than the in-app modal (the modal can only iframe known
+  // embeddable providers).
+  if (embed?.provider === "raw") {
+    return (
+      <a
+        href={embed.embedSrc}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Watch video for ${update.title}`}
+        className={PREVIEW_WRAPPER_CLASS}
+      >
+        {media}
+        {affordance}
+      </a>
+    );
+  }
+
+  // Preview MP4 only, no full video: decorative autoplay, not clickable.
+  return <div className={PREVIEW_WRAPPER_CLASS}>{media}</div>;
 }
 
 interface VideoModalProps {
