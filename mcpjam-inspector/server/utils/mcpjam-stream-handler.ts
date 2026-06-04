@@ -1857,12 +1857,53 @@ async function processOneStep(
 }
 
 /**
- * Main handler for MCPJam-provided models.
- * Orchestrates the agentic loop between Convex (LLM) and local tool execution.
+ * Result returned from {@link runChatEngineLoop}.
+ *
+ * - `streamSink: "ui"` callers get a Hono-shaped Response built from
+ *   {@link createUIMessageStreamResponse}, exactly as the live `/stream`
+ *   route expects. The Response's body, when drained, runs the agent
+ *   loop and fires `onConversationComplete` via `onFinish`.
+ *
+ * - `streamSink: "none"` callers (synthetic runner) get the captured
+ *   `messageHistory` synchronously — the engine ran inline with a no-op
+ *   writer, no `createUIMessageStream`, no Response. `messageHistory`
+ *   is the same array reference that was passed to
+ *   `onConversationComplete` (if `runSucceeded && !aborted`).
  */
-export async function handleMCPJamFreeChatModel(
-  options: MCPJamHandlerOptions
-): Promise<Response> {
+export interface ChatEngineLoopResult {
+  response?: Response;
+  messageHistory: ModelMessage[];
+  turnTrace?: PersistedTurnTrace;
+  aborted: boolean;
+}
+
+/**
+ * Core engine for the MCPJam agentic chat loop.
+ *
+ * This is the body that used to live inside `handleMCPJamFreeChatModel`.
+ * It owns the per-step Convex `/stream` fetch + local tool execution
+ * cycle, the trace event emission, and the conversation persistence tap.
+ *
+ * Two delivery modes:
+ *
+ * - `streamSink: "ui"` wraps the loop in `createUIMessageStream` +
+ *   `createUIMessageStreamResponse` and returns a Hono Response. This is
+ *   byte-for-byte the same chunk sequence as before the extraction
+ *   (covered by `mcpjam-stream-handler-snapshot.test.ts`).
+ *
+ * - `streamSink: "none"` runs the same `execute` closure with a no-op
+ *   writer and then calls `onFinish` directly. No `Response` is built;
+ *   the synthetic runner reads the transcript out of the returned
+ *   `messageHistory` (also delivered via `onConversationComplete`).
+ *
+ * `handleMCPJamFreeChatModel` is now a thin wrapper around this in
+ * `streamSink: "ui"` mode; `runAssistantTurn` calls it in either mode
+ * depending on the caller's `streamSink` choice.
+ */
+export async function runChatEngineLoop(
+  options: MCPJamHandlerOptions,
+  streamSink: "ui" | "none"
+): Promise<ChatEngineLoopResult> {
   const {
     messages,
     modelId,
@@ -1958,8 +1999,16 @@ export async function handleMCPJamFreeChatModel(
   let runSucceeded = false;
   let aborted = false;
 
-  const stream = createUIMessageStream({
-    execute: async ({ writer }) => {
+  // Engine `execute` closure. Factored so it can be invoked either via
+  // `createUIMessageStream` (streamSink: "ui") or directly with a no-op
+  // writer (streamSink: "none"). Captures the engine's shared state
+  // (`messageHistory`, `traceTurn`, `steps`, `runSucceeded`, `aborted`)
+  // via closure exactly as before.
+  const executeEngine = async ({
+    writer,
+  }: {
+    writer: { write: (chunk: UIMessageChunk) => void };
+  }) => {
       let finishEmitted = false;
       let streamClosed = false;
       let lastWriteAt = Date.now();
@@ -2221,27 +2270,35 @@ export async function handleMCPJamFreeChatModel(
           abortSignal.removeEventListener("abort", abortListener);
         }
       }
-    },
-    onFinish: async () => {
+  };
+
+  // Engine `onFinish` closure. Same logic that used to live as the
+  // `onFinish` option on `createUIMessageStream`. Captures the latest
+  // `turnTrace` (if produced) so the engine result can surface it to
+  // synthetic-runner callers via {@link ChatEngineLoopResult.turnTrace}.
+  let capturedTurnTrace: PersistedTurnTrace | undefined;
+  const onFinishEngine = async () => {
       try {
         // Persist only successful, non-aborted turns. An aborted turn is
         // partial by definition — recording it as a completed conversation
         // would corrupt history and reverse the cost-safety win.
         if (runSucceeded && !aborted) {
+          const trace: PersistedTurnTrace = {
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+            startedAt: traceTurn.turnStartedAt,
+            endedAt: Date.now(),
+            spans: [...traceTurn.turnSpans],
+            usage: traceTurn.turnUsage,
+            finishReason:
+              promptStepBaseIndex + steps >= resolvedMaxSteps
+                ? "length"
+                : "stop",
+            modelId,
+          };
+          capturedTurnTrace = trace;
           try {
-            await onConversationComplete?.([...messageHistory], {
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              startedAt: traceTurn.turnStartedAt,
-              endedAt: Date.now(),
-              spans: [...traceTurn.turnSpans],
-              usage: traceTurn.turnUsage,
-              finishReason:
-                promptStepBaseIndex + steps >= resolvedMaxSteps
-                  ? "length"
-                  : "stop",
-              modelId,
-            });
+            await onConversationComplete?.([...messageHistory], trace);
           } catch (persistenceError) {
             logger.error(
               "[mcpjam-stream-handler] Error while persisting conversation",
@@ -2259,8 +2316,68 @@ export async function handleMCPJamFreeChatModel(
           );
         }
       }
-    },
-  });
+  };
 
-  return createUIMessageStreamResponse({ stream });
+  if (streamSink === "ui") {
+    const stream = createUIMessageStream({
+      execute: executeEngine,
+      onFinish: onFinishEngine,
+    });
+    const response = createUIMessageStreamResponse({ stream });
+    return {
+      response,
+      messageHistory,
+      aborted: false,
+      // turnTrace will be captured inside `onFinish` once the caller
+      // drains the Response body; we don't surface it on the eager
+      // result for the UI-sink path because the live route doesn't
+      // need it (persistence runs via `onConversationComplete`).
+    };
+  }
+
+  // streamSink === "none": run the engine inline against a no-op writer.
+  // The agent loop, trace events, and `onConversationComplete` tap all
+  // still fire — we just discard the SSE chunks. No `Response` is
+  // constructed and no body is drained, so `runAssistantTurn` can return
+  // the captured transcript synchronously without the previous
+  // facade-style drain dance.
+  const noopWriter = {
+    write: (_chunk: UIMessageChunk) => {
+      // Discard. The agent-loop trace/persistence side-effects fire via
+      // closures over engine state, not via the writer.
+    },
+  };
+  try {
+    await executeEngine({ writer: noopWriter });
+  } finally {
+    await onFinishEngine();
+  }
+  return {
+    messageHistory,
+    aborted,
+    ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
+  };
+}
+
+/**
+ * Main handler for MCPJam-provided models.
+ *
+ * Thin wrapper around {@link runChatEngineLoop} for the live `/stream`
+ * path. The engine produces an SSE Response that the chat-v2 routes
+ * hand directly back to Hono.
+ *
+ * The signature is preserved so `handleHostedOrgChatModel` (org BYOK
+ * delegation chain) can continue forwarding `endpointPath: "/stream/org"`
+ * and `extraBodyFields: { providerKey }` without modification.
+ */
+export async function handleMCPJamFreeChatModel(
+  options: MCPJamHandlerOptions
+): Promise<Response> {
+  const result = await runChatEngineLoop(options, "ui");
+  if (!result.response) {
+    throw new Error(
+      "runChatEngineLoop(streamSink: 'ui') returned no Response — internal invariant violated"
+    );
+  }
+  return result.response;
 }
