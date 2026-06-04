@@ -8,7 +8,11 @@ import {
   type MCPJamHandlerOptions,
 } from "../../utils/mcpjam-stream-handler.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
-import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
+import {
+  persistChatSessionToConvex,
+  type PersistedTurnTrace,
+} from "../../utils/chat-ingestion.js";
+import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
 import {
   createRun,
   getRun,
@@ -429,6 +433,7 @@ async function runOneSession(args: {
     let messageHistory: ModelMessage[] = [];
     let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =
       [];
+    let anyTurnPersisted = false;
 
     for (let turn = 0; turn < maxTurns; turn++) {
       if (abortSignal?.aborted) return "failed";
@@ -450,7 +455,7 @@ async function runOneSession(args: {
       } as ModelMessage);
       lastTranscript.push({ role: "user", content: next.message });
 
-      const updatedHistory = await drainAssistantTurn({
+      const { history: updatedHistory, turnTrace } = await drainAssistantTurn({
         messages: messageHistory,
         modelId: String(modelDefinition.id),
         chatSessionId,
@@ -473,25 +478,75 @@ async function runOneSession(args: {
       messageHistory = updatedHistory;
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
+
+      if (!turnTrace) continue;
+
+      // Mirror chat-v2's per-turn persistence so the Trace tab and the
+      // tool-snapshot/serverInspections fan-out work identically for
+      // synthetic sessions and Playground sessions. Snapshot failures
+      // must never block the persist.
+      let toolSnapshot: unknown;
+      try {
+        const liveManager = built.manager;
+        const knownIds =
+          typeof liveManager.hasServer === "function"
+            ? selectedServerIds.filter((id) => liveManager.hasServer(id))
+            : selectedServerIds;
+        if (knownIds.length > 0) {
+          toolSnapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
+            liveManager,
+            knownIds,
+            { logPrefix: "sessionSimulation.persist" },
+          );
+        }
+      } catch {
+        toolSnapshot = undefined;
+      }
+
+      await persistChatSessionToConvex({
+        chatSessionId,
+        modelId: String(modelDefinition.id),
+        modelSource: "mcpjam",
+        authHeader,
+        projectId,
+        sourceType: "chatbox",
+        surface: "share_link",
+        chatboxId,
+        sessionMessages: messageHistory,
+        startedAt: sessionStartedAt,
+        lastActivityAt: Date.now(),
+        synthetic: true,
+        personaId: persona.id,
+        personaLabel: persona.name,
+        synthesisRunId: runId,
+        turnTrace,
+        ...(toolSnapshot ? { toolSnapshot } : {}),
+      });
+      anyTurnPersisted = true;
     }
 
-    await persistChatSessionToConvex({
-      chatSessionId,
-      modelId: String(modelDefinition.id),
-      modelSource: "mcpjam",
-      authHeader,
-      projectId,
-      sourceType: "chatbox",
-      surface: "share_link",
-      chatboxId,
-      sessionMessages: messageHistory,
-      startedAt: sessionStartedAt,
-      lastActivityAt: Date.now(),
-      synthetic: true,
-      personaId: persona.id,
-      personaLabel: persona.name,
-      synthesisRunId: runId,
-    });
+    if (!anyTurnPersisted) {
+      // Session ended before any assistant turn completed (persona returned
+      // endSession on turn 0, or every turn aborted). Persist once with no
+      // trace so the chatSessions row exists and the run summary lines up.
+      await persistChatSessionToConvex({
+        chatSessionId,
+        modelId: String(modelDefinition.id),
+        modelSource: "mcpjam",
+        authHeader,
+        projectId,
+        sourceType: "chatbox",
+        surface: "share_link",
+        chatboxId,
+        sessionMessages: messageHistory,
+        startedAt: sessionStartedAt,
+        lastActivityAt: Date.now(),
+        synthetic: true,
+        personaId: persona.id,
+        personaLabel: persona.name,
+        synthesisRunId: runId,
+      });
+    }
 
     return "succeeded";
   } catch (error) {
@@ -521,8 +576,12 @@ async function runOneSession(args: {
 }
 
 /**
- * Drive one assistant turn through `handleMCPJamFreeChatModel`, then return
- * the post-turn message history captured by `onConversationComplete`.
+ * Drive one assistant turn through `handleMCPJamFreeChatModel`, returning the
+ * post-turn message history and the per-turn trace captured by
+ * `onConversationComplete`. The caller persists each successful turn through
+ * the same `chat-ingestion.ts` path Playground uses, so synthetic sessions
+ * look identical to normal Playground sessions in the Trace tab and the
+ * Convex `chatSessionTurnTraces` table.
  *
  * Drains the SSE response body (`createUIMessageStreamResponse` requires the
  * consumer to read the stream before `onFinish` runs).
@@ -531,16 +590,16 @@ async function drainAssistantTurn(
   args: Omit<MCPJamHandlerOptions, "onConversationComplete" | "onStreamComplete"> & {
     chatSessionId: string;
   },
-): Promise<ModelMessage[]> {
+): Promise<{ history: ModelMessage[]; turnTrace: PersistedTurnTrace | undefined }> {
   let captured: ModelMessage[] = [];
+  let capturedTurnTrace: PersistedTurnTrace | undefined;
   const { chatSessionId: _omit, ...rest } = args;
-  // Suppress per-turn ingestion — the runner persists the full session once
-  // at the end with synthetic tagging.
   const options: MCPJamHandlerOptions = {
     ...rest,
     approvalMode: "auto-deny",
-    onConversationComplete: (fullHistory) => {
+    onConversationComplete: (fullHistory, turnTrace) => {
       captured = [...fullHistory];
+      capturedTurnTrace = turnTrace;
     },
   };
   const response = await handleMCPJamFreeChatModel(options);
@@ -551,7 +610,10 @@ async function drainAssistantTurn(
       if (done) break;
     }
   }
-  return captured.length > 0 ? captured : args.messages;
+  return {
+    history: captured.length > 0 ? captured : args.messages,
+    turnTrace: capturedTurnTrace,
+  };
 }
 
 function extractAssistantText(history: ModelMessage[]): string {
