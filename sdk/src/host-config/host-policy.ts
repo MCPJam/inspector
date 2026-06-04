@@ -18,6 +18,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * Read the host style from either shape:
+ *   - canonical / internal storage (`hostStyle`)
+ *   - public `HostJson` from `Host.toJSON()` (`style`)
+ *
+ * Both helpers in this module operate on either shape because callers
+ * span: inspector eval runners (canonical, via Convex), SDK `HostRunner`
+ * (public, via `Host.toJSON()`), and unit tests on both.
+ */
+function readHostStyle(hostConfig: Record<string, unknown>): string | undefined {
+  if (typeof hostConfig.hostStyle === "string") return hostConfig.hostStyle;
+  if (typeof hostConfig.style === "string") return hostConfig.style;
+  return undefined;
+}
+
 export type HostExecutionPolicy = {
   requireToolApproval: boolean;
   /** undefined = spec default (filter app-only tools from model). false = opt out. */
@@ -57,8 +72,7 @@ export function extractHostExecutionPolicy(
       ? discoveryRaw
       : isRecord(discoveryRaw) && discoveryRaw.enabled === true;
 
-  const hostStyle =
-    typeof hostConfig.hostStyle === "string" ? hostConfig.hostStyle : undefined;
+  const hostStyle = readHostStyle(hostConfig);
 
   return {
     requireToolApproval,

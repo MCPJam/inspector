@@ -142,6 +142,68 @@ describe("HostRunner host integration", () => {
     });
   });
 
+  describe("withOptions preserves host snapshot across clones", () => {
+    it("clone keeps getHostSnapshot() populated when constructed from a Host", () => {
+      const host = new Host({
+        style: "mcpjam",
+        model: "openai/gpt-4o",
+      }).requireServer("everything");
+
+      const runner = new HostRunner({
+        host,
+        tools: [],
+        apiKey: "test-key",
+      });
+
+      const clone = runner.withOptions({});
+
+      const originalSnap = runner.getHostSnapshot();
+      const cloneSnap = clone.getHostSnapshot();
+      expect(cloneSnap).toBeDefined();
+      // Same snapshot reference is OK — the snapshot is immutable.
+      expect(cloneSnap?.servers).toEqual(originalSnap?.servers);
+      expect(cloneSnap?.model).toBe("openai/gpt-4o");
+    });
+
+    it("clone keeps host-derived injectOpenAiCompat after withOptions({})", () => {
+      // `mcpjam` style → resolveOpenAiCompatForHostConfig === true. The
+      // clone must carry that through.
+      const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+      const runner = new HostRunner({ host, tools: [], apiKey: "test-key" });
+      const clone = runner.withOptions({});
+      // Indirect: a runner constructed without preserving the host
+      // would fall back to the explicit-model branch and lose the
+      // host policy entirely.
+      expect(clone.getHostPolicy()?.hostStyle).toBe("mcpjam");
+    });
+
+    it("explicit options.host wins over the existing snapshot", () => {
+      const baseHost = new Host({ style: "claude", model: "anthropic/claude-3" });
+      const runner = new HostRunner({ host: baseHost, tools: [], apiKey: "k" });
+
+      const otherHost = new Host({
+        style: "mcpjam",
+        model: "openai/gpt-4o",
+      }).requireServer("alpha");
+
+      const clone = runner.withOptions({ host: otherHost });
+      expect(clone.getHostSnapshot()?.style).toBe("mcpjam");
+      expect(clone.getHostSnapshot()?.servers).toEqual(["alpha"]);
+    });
+
+    it("legacy explicit-model runner stays host-less through withOptions", () => {
+      const runner = new HostRunner({
+        tools: [],
+        apiKey: "test-key",
+        model: "openai/gpt-4o",
+      });
+
+      const clone = runner.withOptions({});
+      expect(clone.getHostSnapshot()).toBeUndefined();
+      expect(clone.getHostPolicy()).toBeUndefined();
+    });
+  });
+
   describe("legacy explicit-model path", () => {
     it("constructs without host when model is given", () => {
       const runner = new HostRunner({

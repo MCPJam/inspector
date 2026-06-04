@@ -6,10 +6,15 @@
  * snapshots for hosts that emulate ChatGPT-style apps.
  *
  * Resolution order (first match wins):
- *   1. Explicit override on `hostConfigOverride.mcpProfile.apps.compatRuntime.openaiApps`
- *   2. Host-style preset from `hostConfigOverride.hostStyle`
- *   3. Explicit base on `hostConfig.mcpProfile.apps.compatRuntime.openaiApps`
- *   4. Host-style preset from `hostConfig.hostStyle` (defaults to `false`)
+ *   1. Explicit override on `hostConfigOverride.{mcpProfile|mcp}.apps.compatRuntime.openaiApps`
+ *   2. Host-style preset from `hostConfigOverride.{hostStyle|style}`
+ *   3. Explicit base on `hostConfig.{mcpProfile|mcp}.apps.compatRuntime.openaiApps`
+ *   4. Host-style preset from `hostConfig.{hostStyle|style}` (defaults to `false`)
+ *
+ * Both canonical (`hostStyle`/`mcpProfile`) and public (`style`/`mcp`)
+ * shapes are accepted because callers span: inspector eval runners
+ * (canonical, via Convex) and SDK `HostRunner` / `HostRuntime` (public,
+ * via `Host.toJSON()`).
  *
  * Style presets:
  *   - "chatgpt" | "copilot" | "mcpjam" → true
@@ -21,9 +26,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function readOpenAiCompatOverride(value: unknown): boolean | undefined {
+function readHostStyle(value: unknown): unknown {
   if (!isRecord(value)) return undefined;
-  const profile = isRecord(value.mcpProfile) ? value.mcpProfile : undefined;
+  return value.hostStyle ?? value.style;
+}
+
+function readMcpProfileOrMcp(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  if (isRecord(value.mcpProfile)) return value.mcpProfile;
+  if (isRecord(value.mcp)) return value.mcp;
+  return undefined;
+}
+
+export function readOpenAiCompatOverride(value: unknown): boolean | undefined {
+  const profile = readMcpProfileOrMcp(value);
   const apps = isRecord(profile?.apps) ? profile.apps : undefined;
   const compatRuntime = isRecord(apps?.compatRuntime)
     ? apps.compatRuntime
@@ -58,16 +74,12 @@ export function resolveOpenAiCompatForHostConfig(
   if (explicitOverride !== undefined) return explicitOverride;
 
   const overridePreset = compatPresetForHostStyle(
-    hostConfigOverride?.hostStyle,
+    readHostStyle(hostConfigOverride),
   );
   if (overridePreset !== undefined) return overridePreset;
 
   const explicitBase = readOpenAiCompatOverride(hostConfig);
   if (explicitBase !== undefined) return explicitBase;
 
-  return (
-    compatPresetForHostStyle(
-      isRecord(hostConfig) ? hostConfig.hostStyle : undefined,
-    ) ?? false
-  );
+  return compatPresetForHostStyle(readHostStyle(hostConfig)) ?? false;
 }

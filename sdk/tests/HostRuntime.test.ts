@@ -1,4 +1,30 @@
 import { describe, it, expect, vi } from "vitest";
+
+// Mock the dynamic `HostRunner` import that lives inside
+// `HostRuntime.run()` (`await import("../HostRunner.js")`). Vitest
+// intercepts at the resolved-module level, so the relative path from
+// this test file is the same key — both resolve to
+// `sdk/src/HostRunner.ts`.
+const lastRunnerArgs: any = { config: undefined };
+const runnerRunSpy = vi.fn();
+
+vi.mock("../src/HostRunner.js", () => {
+  class FakeHostRunner {
+    constructor(config: unknown) {
+      lastRunnerArgs.config = config;
+    }
+    async run(input: string, options?: unknown) {
+      runnerRunSpy(input, options);
+      return {
+        kind: "fake-prompt-result",
+        prompt: input,
+        getPrompt: () => input,
+      };
+    }
+  }
+  return { HostRunner: FakeHostRunner };
+});
+
 import { Host } from "../src/host-config/host.js";
 import { HostRuntime } from "../src/host-config/host-runtime.js";
 import type {
@@ -89,7 +115,7 @@ describe("HostRuntime server validation", () => {
     expect(manager.getToolsForAiSdkSpy).not.toHaveBeenCalled();
   });
 
-  it("skips unknown OPTIONAL servers silently", async () => {
+  it("skips unknown OPTIONAL servers and passes only known ids to the manager", async () => {
     const host = new Host({
       style: "mcpjam",
       model: "openai/gpt-4o",
@@ -99,31 +125,124 @@ describe("HostRuntime server validation", () => {
     const manager = fakeManager(["everything"]);
     const runtime = host.withManager(manager, baseDefaults);
 
-    // Validation should NOT throw — server is optional, not required.
-    // The .run() call will hit the AI SDK and fail downstream, so we
-    // stub at the manager edge by asserting the resolver got the right ids.
-    await runtime.run("hi").catch(() => {
-      /* expected: model has no API to call */
-    });
+    // Now that the dynamic HostRunner is mocked, the full .run() pipeline
+    // resolves and we can assert the resolved ids without a downstream failure.
+    const result = await runtime.run("hi");
+    expect((result as any).kind).toBe("fake-prompt-result");
 
-    expect(manager.getToolsForAiSdkSpy).toHaveBeenCalled();
-    const firstCall = manager.getToolsForAiSdkSpy.mock.calls[0];
-    const resolvedIds = firstCall[0];
+    expect(manager.getToolsForAiSdkSpy).toHaveBeenCalledTimes(1);
+    const [resolvedIds, options] = manager.getToolsForAiSdkSpy.mock.calls[0];
     expect(resolvedIds).toEqual(["everything"]);
+    // `mcpjam` style doesn't set respectToolVisibility, so we leave
+    // includeAppOnly as undefined / falsy (manager filters by spec default).
+    expect(options?.includeAppOnly).not.toBe(true);
   });
 });
 
-describe("HostRuntime stateless turns", () => {
-  it("accumulates prompt history across .run() calls", async () => {
+describe("HostRuntime end-to-end run", () => {
+  it("constructs HostRunner with the snapshot + bound apiKey and returns its result", async () => {
+    runnerRunSpy.mockClear();
+    lastRunnerArgs.config = undefined;
+
+    const host = new Host({
+      style: "mcpjam",
+      model: "openai/gpt-4o",
+    }).requireServer("alpha");
+    const manager = fakeManager(["alpha"], {
+      alpha: { hello: { _serverId: "alpha" } },
+    });
+    const runtime = host.withManager(manager, {
+      apiKey: "bound-key",
+      maxSteps: 7,
+    });
+
+    const result = await runtime.run("first message");
+
+    expect((result as any).prompt).toBe("first message");
+
+    // Runner was constructed with the snapshot (HostJson), bound apiKey,
+    // and forwarded defaults.
+    expect(lastRunnerArgs.config?.apiKey).toBe("bound-key");
+    expect(lastRunnerArgs.config?.maxSteps).toBe(7);
+    // Manager passed through so the runner can capture widget snapshots.
+    expect(lastRunnerArgs.config?.mcpClientManager).toBe(manager);
+    // Host snapshot identity: passed as the live snapshot, not the Host
+    // instance itself (HostRuntime calls .toJSON()).
+    expect(lastRunnerArgs.config?.host?.style).toBe("mcpjam");
+    expect(lastRunnerArgs.config?.host?.servers).toEqual(["alpha"]);
+
+    expect(runnerRunSpy).toHaveBeenCalledWith("first message", undefined);
+  });
+
+  it("accumulates prompt history across .run() calls and resets cleanly", async () => {
     const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+    const runtime = host.withManager(fakeManager([]), baseDefaults);
+
+    expect(runtime.getPromptHistory()).toEqual([]);
+
+    const r1 = await runtime.run("a");
+    const r2 = await runtime.run("b");
+
+    const history = runtime.getPromptHistory();
+    expect(history).toHaveLength(2);
+    expect(history[0]).toBe(r1);
+    expect(history[1]).toBe(r2);
+    expect((history[0] as any).prompt).toBe("a");
+    expect((history[1] as any).prompt).toBe("b");
+
+    runtime.resetPromptHistory();
+    expect(runtime.getPromptHistory()).toEqual([]);
+  });
+
+  it("turns are independent — the second turn does NOT receive turn-1 context unless caller threads it explicitly", async () => {
+    runnerRunSpy.mockClear();
+    const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+    const runtime = host.withManager(fakeManager([]), baseDefaults);
+
+    await runtime.run("a");
+    await runtime.run("b");
+
+    // Both calls forward options unchanged — no auto-threaded context.
+    expect(runnerRunSpy).toHaveBeenNthCalledWith(1, "a", undefined);
+    expect(runnerRunSpy).toHaveBeenNthCalledWith(2, "b", undefined);
+
+    // Explicit context survives the forward.
+    await runtime.run("c", { context: { fake: "prior" } as any });
+    expect(runnerRunSpy).toHaveBeenNthCalledWith(3, "c", {
+      context: { fake: "prior" },
+    });
+  });
+
+  it("mutating the host between runs is reflected on the NEXT run's snapshot", async () => {
+    runnerRunSpy.mockClear();
+    const host = new Host({
+      style: "mcpjam",
+      model: "openai/gpt-4o",
+    }).requireServer("alpha");
+    const manager = fakeManager(["alpha", "beta"]);
+    const runtime = host.withManager(manager, baseDefaults);
+
+    await runtime.run("first");
+    expect(lastRunnerArgs.config?.host?.servers).toEqual(["alpha"]);
+
+    host.requireServer("beta");
+    await runtime.run("second");
+    expect(lastRunnerArgs.config?.host?.servers).toEqual(["alpha", "beta"]);
+  });
+
+  it("passes includeAppOnly: true when host opts out of visibility filtering", async () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "openai/gpt-4o",
+      respectToolVisibility: false,
+    });
     const manager = fakeManager([]);
     const runtime = host.withManager(manager, baseDefaults);
 
-    expect(runtime.getPromptHistory()).toEqual([]);
-    // Without exercising the real AI SDK, this test focuses on the
-    // history-API contract; full per-turn behavior is covered in
-    // HostRunner.test.ts via the mock path.
-    runtime.resetPromptHistory();
-    expect(runtime.getPromptHistory()).toEqual([]);
+    await runtime.run("x");
+
+    const lastCall = manager.getToolsForAiSdkSpy.mock.calls.at(-1)!;
+    const options = lastCall[1];
+    expect(options?.includeAppOnly).toBe(true);
   });
 });

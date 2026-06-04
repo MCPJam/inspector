@@ -817,9 +817,14 @@ export class HostRunner implements HostExecutor {
    * @returns A new HostRunner instance with the merged configuration
    */
   withOptions(options: Partial<HostRunnerConfig>): HostRunner {
-    return new HostRunner({
+    // Preserve the host snapshot across clones so iteration runners
+    // (EvalTest's per-iteration `executor.withOptions({})` path) keep
+    // `getHostSnapshot()` / `getHostPolicy()` populated and host-derived
+    // defaults (model / systemPrompt / temperature / injectOpenAiCompat)
+    // remain in effect. Explicit `options.host` still wins.
+    const nextHost = options.host ?? this.hostSnapshot;
+    const base = {
       tools: options.tools ?? this.tools,
-      model: options.model ?? this.model,
       apiKey: options.apiKey ?? this.apiKey,
       systemPrompt: options.systemPrompt ?? this.systemPrompt,
       temperature: options.temperature ?? this.temperature,
@@ -828,7 +833,10 @@ export class HostRunner implements HostExecutor {
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
       injectOpenAiCompat:
         options.injectOpenAiCompat ?? this.injectOpenAiCompat,
-    });
+    };
+    return nextHost
+      ? new HostRunner({ ...base, host: nextHost, model: options.model })
+      : new HostRunner({ ...base, model: options.model ?? this.model });
   }
 
   /**
