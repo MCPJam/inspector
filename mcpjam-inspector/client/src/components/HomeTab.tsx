@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMemo } from "react";
+import { useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
@@ -77,20 +77,6 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
       ? ({ organizationId, metric: "messages_sent_30d" } as any)
       : "skip"
   ) as OrgMetricResult;
-
-  const ensureMetricFresh = useMutation(
-    "orgMetrics:ensureOrgMetricFresh" as any
-  );
-  useEffect(() => {
-    if (!organizationId) return;
-    const args = { organizationId } as { organizationId: string };
-    Promise.all([
-      ensureMetricFresh({ ...args, metric: "tool_executions_30d" } as any),
-      ensureMetricFresh({ ...args, metric: "messages_sent_30d" } as any),
-    ]).catch(() => {
-      // Soft-fail: cache stays stale, UI shows last known value (or 0).
-    });
-  }, [organizationId, ensureMetricFresh]);
 
   const fullName =
     convexUser?.name ||
