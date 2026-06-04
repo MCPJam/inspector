@@ -70,16 +70,13 @@ vi.mock("@/shared/types", () => ({
   getModelById: vi.fn(() => ({ id: "openai/gpt-oss-120b", name: "gpt" })),
 }));
 
-import {
-  getRunnerMode,
-  __setFetchRunSnapshotForTesting,
-  __internals,
-  type DurableRunSnapshot,
-} from "../durable-runner";
+import { getRunnerMode, __internals } from "../durable-runner";
 
 import {
   SessionWorkerLeaseLostError,
   SessionWorkerRefreshUnavailableError,
+  type ClaimedJob,
+  type PersonaSlate,
 } from "../../session-agent";
 
 beforeEach(() => {
@@ -147,29 +144,27 @@ describe("deriveWorkerScope", () => {
 });
 
 describe("runOneJob", () => {
-  const baseSnapshot: DurableRunSnapshot = {
-    runId: "run-1",
-    projectId: "proj-1",
-    chatboxId: "cb-1",
-    personas: [{ id: "p-1", name: "Alice", role: "user", notes: "n" }],
-    maxTurns: 2,
-    modelId: "openai/gpt-oss-120b",
-    systemPrompt: "sys",
-    temperature: 0.7,
-    requireToolApproval: false,
-    runtimeDescriptor: {
-      selectedServerIds: ["srv-1"],
-      perServer: [
-        {
-          serverId: "srv-1",
-          transportType: "http",
-          url: "https://x.test/mcp",
-        },
-      ],
+  const persona: PersonaSlate = {
+    id: "p-1",
+    name: "Alice",
+    role: "user",
+    notes: "n",
+  };
+  const baseDescriptor: Record<string, unknown> = {
+    selectedServerIds: ["srv-1"],
+    perServer: [
+      { serverId: "srv-1", transportType: "http", url: "https://x.test/mcp" },
+    ],
+    chatboxConfig: {
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      systemPrompt: "sys",
+      temperature: 0.7,
+      requireToolApproval: false,
     },
   };
-  const baseJob = {
-    kind: "claimed" as const,
+  const baseJob: ClaimedJob = {
+    kind: "claimed",
     jobId: "job-1",
     runId: "run-1",
     projectId: "proj-1",
@@ -179,14 +174,12 @@ describe("runOneJob", () => {
     attemptCount: 1,
     leaseOwner: "w-1",
     leaseExpiresAt: Date.now() + 60_000,
-    runtimeDescriptor: baseSnapshot.runtimeDescriptor as Record<string, unknown>,
-    persona: baseSnapshot.personas[0]!,
-    maxTurns: baseSnapshot.maxTurns,
+    runtimeDescriptor: baseDescriptor,
+    persona,
+    maxTurns: 2,
   };
 
-  it("drives persona → assistant turns, persists chat session, completes job", async () => {
-    __setFetchRunSnapshotForTesting(async () => baseSnapshot);
-
+  it("drives persona → assistant turns, persists chat session via worker mode, completes job", async () => {
     sessionAgentMocks.personaNextTurnWorker
       .mockResolvedValueOnce({ message: "Q1", endSession: false })
       .mockResolvedValueOnce({ message: "Q2", endSession: true });
@@ -201,10 +194,12 @@ describe("runOneJob", () => {
     expect(sessionAgentMocks.personaNextTurnWorker).toHaveBeenCalledTimes(2);
     expect(assistantTurnMocks.runAssistantTurn).toHaveBeenCalledTimes(1);
 
-    // Verify ingestion was called with the v2 synthetic fields.
+    // Verify ingestion was called with worker mode + synthetic fields.
     expect(ingestionMocks.persistChatSessionToConvex).toHaveBeenCalledTimes(1);
     const persistArgs = ingestionMocks.persistChatSessionToConvex.mock.calls[0]![0];
     expect(persistArgs).toMatchObject({
+      ingestMode: "worker",
+      serviceToken: "tok",
       synthetic: true,
       personaId: "p-1",
       personaLabel: "Alice",
@@ -213,6 +208,7 @@ describe("runOneJob", () => {
       sourceType: "chatbox",
       surface: "share_link",
       chatboxId: "cb-1",
+      projectId: "proj-1",
       modelSource: "mcpjam",
     });
     expect(persistArgs.chatSessionId).toBe("synth_run-1_p-1_0");
@@ -220,13 +216,33 @@ describe("runOneJob", () => {
     expect(sessionAgentMocks.completeJob).toHaveBeenCalledTimes(1);
     expect(sessionAgentMocks.completeJob.mock.calls[0]![1]).toMatchObject({
       jobId: "job-1",
+      leaseOwner: "w-1",
       resultChatSessionId: "synth_run-1_p-1_0",
     });
     expect(sessionAgentMocks.failJob).not.toHaveBeenCalled();
   });
 
+  it("terminal-fails with errorCode=missing_descriptor when claim has runtimeDescriptor: null", async () => {
+    const ac = new AbortController();
+    await __internals.runOneJob({
+      convexHttpUrl: "https://convex.test",
+      job: { ...baseJob, runtimeDescriptor: null },
+      abortSignal: ac.signal,
+    });
+
+    expect(sessionAgentMocks.failJob).toHaveBeenCalledTimes(1);
+    expect(sessionAgentMocks.failJob.mock.calls[0]![1]).toMatchObject({
+      jobId: "job-1",
+      leaseOwner: "w-1",
+      errorCode: "missing_descriptor",
+    });
+    // No manager build, no chat ingestion, no completion.
+    expect(managerBuildMocks.buildSynthesisManager).not.toHaveBeenCalled();
+    expect(ingestionMocks.persistChatSessionToConvex).not.toHaveBeenCalled();
+    expect(sessionAgentMocks.completeJob).not.toHaveBeenCalled();
+  });
+
   it("treats personaNextTurn lease-lost as silent abort (no failJob)", async () => {
-    __setFetchRunSnapshotForTesting(async () => baseSnapshot);
     sessionAgentMocks.personaNextTurnWorker.mockRejectedValueOnce(
       new SessionWorkerLeaseLostError("Lease lost"),
     );
@@ -243,7 +259,6 @@ describe("runOneJob", () => {
   });
 
   it("classifies 501 refresh-unavailable to errorCode=refresh_unavailable", async () => {
-    __setFetchRunSnapshotForTesting(async () => baseSnapshot);
     sessionAgentMocks.personaNextTurnWorker.mockRejectedValueOnce(
       new SessionWorkerRefreshUnavailableError("nope"),
     );
@@ -263,7 +278,6 @@ describe("runOneJob", () => {
   });
 
   it("classifies other errors as execution_error", async () => {
-    __setFetchRunSnapshotForTesting(async () => baseSnapshot);
     sessionAgentMocks.personaNextTurnWorker.mockRejectedValueOnce(
       new Error("boom"),
     );
@@ -280,21 +294,6 @@ describe("runOneJob", () => {
       jobId: "job-1",
       errorCode: "execution_error",
       errorMessage: "boom",
-    });
-  });
-
-  it("fails fast when the run snapshot is missing", async () => {
-    __setFetchRunSnapshotForTesting(async () => null);
-    const ac = new AbortController();
-    await __internals.runOneJob({
-      convexHttpUrl: "https://convex.test",
-      job: baseJob,
-      abortSignal: ac.signal,
-    });
-    expect(sessionAgentMocks.failJob).toHaveBeenCalledTimes(1);
-    expect(sessionAgentMocks.failJob.mock.calls[0]![1]).toMatchObject({
-      errorCode: "execution_error",
-      errorMessage: expect.stringContaining("Run snapshot not found"),
     });
   });
 });

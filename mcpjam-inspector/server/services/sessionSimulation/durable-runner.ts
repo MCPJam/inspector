@@ -5,18 +5,21 @@
  *   1. Calls `POST /session-simulation/jobs/claim` with its
  *      `workerInstanceId` + `workerScope` and a per-turn cost estimate.
  *   2. If a job is returned, drives one persona/session attempt
- *      end-to-end: fetch the run record for the persona + descriptor,
- *      build an MCPClientManager via the descriptor (no user bearer),
- *      loop persona-next-turn/worker ↔ runAssistantTurn until the
- *      persona ends or maxTurns is reached, persist the chat-session
- *      row, then `complete` the job.
+ *      end-to-end straight from the claim response — descriptor,
+ *      persona, maxTurns all arrive on the claim so the worker
+ *      doesn't make a second Convex round-trip. It builds an
+ *      MCPClientManager via the descriptor (no user bearer), loops
+ *      persona-next-turn/worker ↔ runAssistantTurn until the persona
+ *      ends or maxTurns is reached, persists the chat-session row via
+ *      ingestMode='worker', then `complete`s the job.
  *   3. Errors during execution terminal-fail the job with a
  *      classification: `lease_lost` (409 mid-flight → silent abort),
  *      `refresh_unavailable` (501 from descriptor/refresh-tokens),
- *      else `execution_error`.
+ *      `missing_descriptor` (claim returned `runtimeDescriptor: null`,
+ *      i.e. a legacy pre-§C run row), else `execution_error`.
  *
  * Gated behind `SYNTHESIS_RUNNER_MODE` env. Default `'in_process'`;
- * Commit G flips the default to `'durable'`.
+ * the follow-on commit flips the default to `'durable'`.
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -26,6 +29,7 @@ import { workerInstanceId } from "../../utils/worker-identity.js";
 import {
   buildSynthesisManager,
   type SynthesisRuntimeDescriptor,
+  type SynthesisChatboxConfig,
 } from "../../utils/synthesis-manager-build.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
@@ -38,7 +42,6 @@ import {
   personaNextTurnWorker,
   SessionWorkerLeaseLostError,
   SessionWorkerRefreshUnavailableError,
-  type PersonaSlate,
   type ClaimedJob,
 } from "../session-agent.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -202,45 +205,22 @@ function sleep(ms: number, abortSignal: AbortSignal): Promise<void> {
   });
 }
 
-// Internal helper exposed for tests so the run/persona/descriptor
-// fetch shape can be stubbed without spinning up the whole pump.
-export interface DurableRunSnapshot {
-  runId: string;
-  projectId: string;
-  chatboxId: string;
-  personas: PersonaSlate[];
-  maxTurns: number;
-  modelId: string;
-  systemPrompt: string;
-  temperature?: number;
-  requireToolApproval: boolean;
-  respectToolVisibility?: boolean;
-  progressiveToolDiscovery?: boolean;
-  runtimeDescriptor: SynthesisRuntimeDescriptor;
-}
-
-export type FetchRunSnapshot = (
-  convexHttpUrl: string,
-  runId: string,
-) => Promise<DurableRunSnapshot | null>;
-
 /**
- * The pump fetches the snapshot via the existing service-token-authed
- * `getSynthesisRun` HTTP route. The implementation hits the backend
- * `internal.sessionSimulation.routes.getSynthesisRun` via the
- * `/session-simulation/persona-next-turn/worker` path's same fetch
- * pattern; refactor into a shared helper once the backend exposes a
- * dedicated GET endpoint. For now we surface the contract here so
- * tests can override it.
+ * Lazily read the inspector service token. The durable runner is the
+ * only caller that should ever hit this in production; the bearer
+ * paths route around it. Throwing here (vs returning "") surfaces a
+ * deployment misconfiguration as a terminal `execution_error` for the
+ * one job that triggered it, rather than silently posting unauthorized
+ * requests that get rejected later.
  */
-export let fetchRunSnapshot: FetchRunSnapshot = async () => {
-  throw new Error(
-    "fetchRunSnapshot is not yet wired against the backend; the durable runner cannot resolve a claimed job without it. Wire via SYNTHESIS_RUNNER_MODE='in_process' until then.",
-  );
-};
-
-export function __setFetchRunSnapshotForTesting(fn: FetchRunSnapshot): void {
-  fetchRunSnapshot = fn;
+function inspectorServiceToken(): string {
+  const tok = process.env.INSPECTOR_SERVICE_TOKEN;
+  if (typeof tok !== "string" || tok.length === 0) {
+    throw new Error(
+      "INSPECTOR_SERVICE_TOKEN env var is not set; the durable synthesis runner cannot authenticate to the backend",
+    );
+  }
+  return tok;
 }
 
 interface RunOneJobArgs {
@@ -249,50 +229,59 @@ interface RunOneJobArgs {
   abortSignal: AbortSignal;
 }
 
+/**
+ * Coerce a `runtimeDescriptor` carried verbatim on the claim into the
+ * typed shape the manager builder consumes. The wire shape is
+ * already validated by the backend `parseRuntimeDescriptor`; this is
+ * just the local type cast + chatbox-config narrowing so the runner
+ * doesn't have to inline `Record<string, unknown>` everywhere.
+ */
+function narrowDescriptor(
+  raw: Record<string, unknown>,
+): SynthesisRuntimeDescriptor {
+  return raw as unknown as SynthesisRuntimeDescriptor;
+}
+
 async function runOneJob(args: RunOneJobArgs): Promise<void> {
   const { convexHttpUrl, job, abortSignal } = args;
-  const leaseOwner = workerInstanceId;
+  const leaseOwner = job.leaseOwner;
 
-  let snapshot: DurableRunSnapshot | null;
-  try {
-    snapshot = await fetchRunSnapshot(convexHttpUrl, job.runId);
-  } catch (err) {
+  // Legacy v2 runs predate `runtimeDescriptor` persistence (plan §C).
+  // The pump can't synthesize the manager without it, so terminal-fail
+  // the job immediately with the dedicated classification so the
+  // dialog/UI can tell the operator the run can't be resumed.
+  if (!job.runtimeDescriptor) {
     await safelyFailJob(convexHttpUrl, job.jobId, leaseOwner, {
-      code: "execution_error",
-      message: `fetchRunSnapshot failed: ${err instanceof Error ? err.message : String(err)}`,
-    });
-    return;
-  }
-  if (!snapshot) {
-    await safelyFailJob(convexHttpUrl, job.jobId, leaseOwner, {
-      code: "execution_error",
-      message: "Run snapshot not found",
+      code: "missing_descriptor",
+      message:
+        "Run has no runtimeDescriptor (legacy v2 run created before plan v4 §C); the durable runner cannot rebuild the MCP manager without it",
     });
     return;
   }
 
-  const persona = snapshot.personas.find((p) => p.id === job.personaId);
-  if (!persona) {
+  const descriptor = narrowDescriptor(job.runtimeDescriptor);
+  const chatboxConfig: SynthesisChatboxConfig = descriptor.chatboxConfig ?? {};
+  const modelId = chatboxConfig.modelId;
+  if (typeof modelId !== "string" || modelId.length === 0) {
     await safelyFailJob(convexHttpUrl, job.jobId, leaseOwner, {
       code: "execution_error",
-      message: `Persona ${job.personaId} not found on run`,
+      message:
+        "runtimeDescriptor.chatboxConfig.modelId missing; cannot resolve model definition",
     });
     return;
   }
-
-  const modelDefinition: ModelDefinition | undefined = getModelById(
-    snapshot.modelId,
-  );
+  const modelDefinition: ModelDefinition | undefined = getModelById(modelId);
   if (!modelDefinition) {
     await safelyFailJob(convexHttpUrl, job.jobId, leaseOwner, {
       code: "execution_error",
-      message: `Unknown modelId: ${snapshot.modelId}`,
+      message: `Unknown modelId: ${modelId}`,
     });
     return;
   }
 
+  const persona = job.persona;
   const built = buildSynthesisManager({
-    descriptor: snapshot.runtimeDescriptor,
+    descriptor,
     timeoutMs: WEB_STREAM_TIMEOUT_MS,
   });
   const manager: MCPClientManager = built.manager;
@@ -316,20 +305,21 @@ async function runOneJob(args: RunOneJobArgs): Promise<void> {
 
   const chatSessionId = `synth_${job.runId}_${persona.id}_${job.sessionIndex}`;
   const sessionStartedAt = Date.now();
+  const requireToolApproval = chatboxConfig.requireToolApproval === true;
 
   try {
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
       modelDefinition,
-      systemPrompt: snapshot.systemPrompt,
-      temperature: snapshot.temperature,
-      requireToolApproval: snapshot.requireToolApproval,
-      respectToolVisibility: snapshot.respectToolVisibility,
-      ...(snapshot.progressiveToolDiscovery !== undefined
+      systemPrompt: chatboxConfig.systemPrompt ?? "",
+      temperature: chatboxConfig.temperature,
+      requireToolApproval,
+      respectToolVisibility: chatboxConfig.respectToolVisibility,
+      ...(chatboxConfig.progressiveToolDiscovery !== undefined
         ? {
             progressiveToolDiscovery: {
-              enabled: snapshot.progressiveToolDiscovery,
+              enabled: chatboxConfig.progressiveToolDiscovery,
             },
           }
         : {}),
@@ -341,7 +331,7 @@ async function runOneJob(args: RunOneJobArgs): Promise<void> {
       content: string;
     }> = [];
 
-    const maxTurns = snapshot.maxTurns ?? DEFAULT_MAX_TURNS;
+    const maxTurns = job.maxTurns ?? DEFAULT_MAX_TURNS;
     for (let turn = 0; turn < maxTurns; turn++) {
       if (abortSignal.aborted) {
         await safelyFailJob(convexHttpUrl, job.jobId, leaseOwner, {
@@ -353,7 +343,7 @@ async function runOneJob(args: RunOneJobArgs): Promise<void> {
       await beatIfDue();
 
       const next = await personaNextTurnWorker(convexHttpUrl, {
-        projectId: snapshot.projectId,
+        projectId: job.projectId,
         runId: job.runId,
         jobId: job.jobId,
         personaId: persona.id,
@@ -369,8 +359,8 @@ async function runOneJob(args: RunOneJobArgs): Promise<void> {
 
       const turnResult = await runAssistantTurn({
         messages: messageHistory,
-        projectId: snapshot.projectId,
-        chatboxId: snapshot.chatboxId,
+        projectId: job.projectId,
+        chatboxId: job.chatboxId,
         modelDefinition,
         systemPrompt: prepared.enhancedSystemPrompt,
         temperature: prepared.resolvedTemperature,
@@ -378,12 +368,12 @@ async function runOneJob(args: RunOneJobArgs): Promise<void> {
         mcpClientManager: manager,
         authContext: {
           kind: "service_token",
-          token: process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+          token: inspectorServiceToken(),
         },
         sourceType: "chatbox",
         surface: "share_link",
         approvalMode: "auto-deny",
-        requireToolApproval: snapshot.requireToolApproval,
+        requireToolApproval,
         streamSink: "none",
         persistMode: "caller",
         synthesisRunId: job.runId,
@@ -406,11 +396,12 @@ async function runOneJob(args: RunOneJobArgs): Promise<void> {
       chatSessionId,
       modelId: String(modelDefinition.id),
       modelSource: "mcpjam",
-      authHeader: "", // service-token path; ingestion accepts empty bearer
-      projectId: snapshot.projectId,
+      ingestMode: "worker",
+      serviceToken: inspectorServiceToken(),
+      projectId: job.projectId,
       sourceType: "chatbox",
       surface: "share_link",
-      chatboxId: snapshot.chatboxId,
+      chatboxId: job.chatboxId,
       sessionMessages: messageHistory,
       startedAt: sessionStartedAt,
       lastActivityAt: Date.now(),

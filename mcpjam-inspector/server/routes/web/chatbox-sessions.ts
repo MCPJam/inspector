@@ -266,6 +266,21 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         requireToolApproval: runtime.config.requireToolApproval,
         modelId: runtime.config.modelId,
         modelSource: "mcpjam",
+        // Carried so the durable worker can drive the chat loop
+        // without re-fetching the chatbox row.
+        systemPrompt: runtime.config.systemPrompt,
+        ...(typeof runtime.config.temperature === "number"
+          ? { temperature: runtime.config.temperature }
+          : {}),
+        ...(typeof runtime.config.respectToolVisibility === "boolean"
+          ? { respectToolVisibility: runtime.config.respectToolVisibility }
+          : {}),
+        ...(typeof runtime.config.progressiveToolDiscovery === "boolean"
+          ? {
+              progressiveToolDiscovery:
+                runtime.config.progressiveToolDiscovery,
+            }
+          : {}),
       },
     };
 

@@ -39,15 +39,33 @@ export interface SynthesisDescriptorPerServerEntry {
   oauthRefreshHandle?: string;
 }
 
+/**
+ * Chatbox-level configuration the durable runner needs in order to
+ * drive the chat loop without re-reading the chatbox config from
+ * Convex at job-execution time. Mirrors the subset of fields the
+ * in-process runner used to read off the live chatbox row.
+ */
+export interface SynthesisChatboxConfig {
+  modelId?: string;
+  modelSource?: "mcpjam" | "byok" | "local_byok";
+  systemPrompt?: string;
+  temperature?: number;
+  requireToolApproval?: boolean;
+  respectToolVisibility?: boolean;
+  progressiveToolDiscovery?: boolean;
+  allowedServerIds?: string[];
+  accessVersion?: number;
+}
+
 export interface SynthesisRuntimeDescriptor {
   selectedServerIds: string[];
   perServer: SynthesisDescriptorPerServerEntry[];
   /**
-   * Carried for documentation/replay; the worker doesn't read it when
-   * building the manager. Chatbox-level policies (model, approval,
-   * visibility) are read from the run record directly.
+   * Chatbox-level policies (model, approval, visibility, system
+   * prompt). The durable runner reads these directly so it doesn't
+   * need a second Convex round-trip per claim.
    */
-  chatboxConfig?: Record<string, unknown>;
+  chatboxConfig?: SynthesisChatboxConfig;
 }
 
 export interface BuildSynthesisManagerOptions {
