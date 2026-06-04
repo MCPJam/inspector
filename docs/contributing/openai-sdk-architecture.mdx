@@ -981,12 +981,6 @@ window.openai.setOpenInAppUrl({ href: "https://app.example.com/item/42" });
 - The override resets when the widget is reloaded or the `toolCallId` changes.
 - If the host capability matrix has `setOpenInAppUrl: false`, the button is hidden and the postMessage is ignored.
 
-**Implementation files:**
-
-- `sdk/src/McpAppsOpenAICompatibleRuntime.ts` — installs `window.openai.setOpenInAppUrl` when the capability is enabled.
-- `mcpjam-inspector/client/src/components/chat-v2/thread/mcp-apps/mcp-apps-renderer.tsx` — handles the `openai:setOpenInAppUrl` postMessage and renders the button.
-- `mcpjam-inspector/client/src/components/ui/sandboxed-iframe.tsx` — forwards `openai:setOpenInAppUrl` messages through the sandbox proxy.
-
 #### Fullscreen Navigation (PR #1033)
 
 When a widget is in fullscreen mode, a navigation header is rendered at the top with back/forward buttons, widget title, and close button. This enables users to navigate multi-page widgets without leaving fullscreen mode.
