@@ -7,6 +7,7 @@ import {
   handleRoute,
   parseWithSchema,
   readJsonBody,
+  authorizeBatch,
   createAuthorizedManager,
   withManager,
 } from "./auth.js";
@@ -14,15 +15,15 @@ import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { captureToolSnapshotForEvalAuthoring } from "../../services/evals/route-helpers.js";
 import {
+  createRun,
   generatePersonas,
   getRun,
   type PersonaSlate,
 } from "../../services/session-agent.js";
-import {
-  createRun,
-  startSimulation,
-} from "../../services/sessionSimulation/runner.js";
+import { startSimulation } from "../../services/sessionSimulation/runner.js";
+import { getRunnerMode } from "../../services/sessionSimulation/durable-runner.js";
 import { logger } from "../../utils/logger.js";
+import { isMCPJamProvidedModel } from "@/shared/types";
 
 const chatboxSessions = new Hono();
 
@@ -210,6 +211,65 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       );
     }
 
+    // BYOK guard (plan v4 §H): synthetic runs require an MCPJam-provided
+    // model so per-run spend can be attributed to chatboxSynthesisRuns
+    // via the /stream usage-record path. Org BYOK chats route through
+    // /stream/org with the provider key, which the worker can't
+    // re-resolve without the user bearer.
+    if (!isMCPJamProvidedModel(runtime.config.modelId)) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        "Synthetic sessions are not yet supported for chatboxes using your own model keys. Coming soon.",
+        { errorCode: "byok_unsupported" },
+      );
+    }
+
+    // Resolve the worker-safe runtime descriptor (plan v4 §C). This
+    // batch authorize round-trip happens while we still hold the
+    // user bearer; the result becomes the snapshot the durable worker
+    // reads later without any user identity.
+    const batch = await authorizeBatch(
+      c,
+      bearerToken,
+      body.projectId,
+      selectedServerIds,
+      {
+        accessScope: "chat_v2",
+        chatboxId,
+        accessVersion: body.accessVersion,
+      },
+    );
+    const descriptorPerServer: Array<Record<string, unknown>> = [];
+    for (const serverId of selectedServerIds) {
+      const entry = batch.results[serverId];
+      if (!entry?.ok) continue;
+      const sc = entry.serverConfig;
+      const useOAuth = sc.useOAuth === true;
+      descriptorPerServer.push({
+        serverId,
+        transportType: sc.transportType ?? "http",
+        ...(sc.url ? { url: sc.url } : {}),
+        ...(sc.headers ? { headers: sc.headers } : {}),
+        useOAuth,
+        ...(useOAuth && entry.oauthAccessToken
+          ? { oauthAccessToken: entry.oauthAccessToken }
+          : {}),
+      });
+    }
+    const runtimeDescriptor: Record<string, unknown> = {
+      selectedServerIds,
+      perServer: descriptorPerServer,
+      chatboxConfig: {
+        allowedServerIds: selectedServerIds,
+        accessVersion: body.accessVersion,
+        requireToolApproval: runtime.config.requireToolApproval,
+        modelId: runtime.config.modelId,
+        modelSource: "mcpjam",
+      },
+    };
+
+    // workerScope: web route is the hosted-shareable surface, plan §I.
     const { runId } = await createRun(
       convexHttpUrl,
       bearerToken,
@@ -218,6 +278,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       body.personas as PersonaSlate[],
       body.sessionsPerPersona,
       body.maxTurns,
+      { workerScope: "any", runtimeDescriptor },
     );
 
     const projectId = body.projectId;
@@ -230,6 +291,12 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const requireToolApproval = runtime.config.requireToolApproval;
     const respectToolVisibility = runtime.config.respectToolVisibility;
     const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
+
+    if (getRunnerMode() === "durable") {
+      // The pump (boot in `server/app.ts`) claims the freshly-inserted
+      // jobs on its next tick. The route returns immediately.
+      return { runId };
+    }
 
     setImmediate(() => {
       startSimulation({
