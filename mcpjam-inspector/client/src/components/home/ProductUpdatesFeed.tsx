@@ -23,6 +23,7 @@ export interface ProductUpdateEntry {
   href?: string;
   videoUrl?: string;
   videoPosterUrl?: string;
+  previewVideoUrl?: string;
   dismissed: boolean;
   isNew: boolean;
 }
