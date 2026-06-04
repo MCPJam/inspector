@@ -28,10 +28,12 @@
         "group": "Inspector Features",
         "icon": "star",
         "pages": [
+          "inspector/home",
           "inspector/playground",
           "inspector/clients",
           "inspector/protocol-versions",
           "inspector/guided-oauth",
+          "inspector/xaa-debugger",
           "inspector/tools-prompts-resources",
           "inspector/evals",
           "inspector/projects",

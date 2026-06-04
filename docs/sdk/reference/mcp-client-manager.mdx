@@ -70,6 +70,7 @@ For remote MCP servers via SSE or Streamable HTTP.
 | `preferSSE` | `boolean` | No | Forces SSE instead of Streamable HTTP |
 | `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
 | `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
+| `onUnauthorized` | `UnauthorizedRefreshHandler` | No | 401 recovery hook. Called once when an operation fails with HTTP 401; return a new `accessToken` and the SDK rebuilds the transport and retries. Not invoked for 403, or when `refreshToken`/`authProvider` is set. |
 
 ```typescript
 {
@@ -119,6 +120,39 @@ Use `clientInfo` to pin the identity sent in MCP `initialize`. This is useful wh
 ```
 
 The first entry in `supportedProtocolVersions` is proposed to the server; the full list is the accept-set. A server that negotiates any listed version is accepted.
+
+##### onUnauthorized Example
+
+Use `onUnauthorized` when you manage access tokens externally (e.g., from a secrets vault) and want the SDK to automatically recover from a 401 without a full reconnect flow:
+
+```typescript
+import { MCPClientManager, UnauthorizedRefreshHandler } from "@mcpjam/sdk";
+
+const refreshToken: UnauthorizedRefreshHandler = async ({ serverId }) => {
+  // Fetch a fresh token from your own token store or backend
+  const response = await fetch("https://auth.example.com/token/refresh", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.SERVICE_TOKEN}` },
+    body: JSON.stringify({ serverId }),
+  });
+  const { accessToken } = await response.json();
+  return { accessToken };
+};
+
+const manager = new MCPClientManager({
+  myServer: {
+    url: "https://mcp.example.com/mcp",
+    accessToken: await getInitialToken(),
+    onUnauthorized: refreshToken,
+  },
+});
+```
+
+When the server returns HTTP 401, the SDK calls `onUnauthorized` once, updates the access token, rebuilds the transport, and retries the operation. A second 401 after the retry surfaces the error to the caller.
+
+<Note>
+`onUnauthorized` is only active for `accessToken`-based HTTP configs. It is ignored when `refreshToken` or `authProvider` is set, and it is never triggered by 403 responses.
+</Note>
 
 ### Example
 

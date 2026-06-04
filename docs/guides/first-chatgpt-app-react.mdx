@@ -47,9 +47,6 @@ server.registerResource(
       text: WIDGET_HTML,
       _meta: {
         "openai/widgetPrefersBorder": true,  // Adds a border around your widget in the chat
-        "openai/widgetCSP": {
-          redirect_domains: ["https://www.mcpjam.com"]  // Domains users can be redirected to
-        }
       }
     }]
   })
@@ -166,17 +163,20 @@ This capability is optional — hosts can turn it off, in which case `window.ope
 
 ### Content Security Policy (CSP)
 
-Widgets run in a sandboxed iframe, so you need to declare which external domains your widget can interact with. Set `openai/widgetCSP` in your resource's `_meta` to configure these permissions:
+Widgets run in a sandboxed iframe, so you need to declare which external domains your widget can interact with. Configure these permissions in your resource's `_meta` using one of two formats:
 
-- **`connect_domains`** - Domains your widget can fetch from (API calls)
-- **`resource_domains`** - Domains for static assets (images, fonts, scripts)
-- **`redirect_domains`** - Domains for `window.openai.openExternal()` redirects
+- **`_meta.ui.csp`** (preferred) — uses camelCase field names and is the standard MCP Apps format
+- **`_meta["openai/widgetCSP"]`** (legacy) — the original ChatGPT Apps format, still supported
 
-Our Coffee Shop uses `redirect_domains` to allow the "Learn more" button to redirect users to mcpjam.com:
+When both are present, `ui.csp` values take precedence field-by-field; any field absent from `ui.csp` falls back to `openai/widgetCSP`.
 
-```javascript src/CoffeeShopWidget.tsx
-window.openai.openExternal({ href: "https://www.mcpjam.com" });
-```
+Both formats support the same domain categories:
+
+| `ui.csp` field | `openai/widgetCSP` field | Purpose |
+|---|---|---|
+| `connectDomains` | `connect_domains` | Domains your widget can fetch from (API calls) |
+| `resourceDomains` | `resource_domains` | Domains for static assets (images, fonts, scripts) |
+| `frameDomains` | `frame_domains` | Domains allowed in nested iframes |
 
 <Note>
 Without declaring a domain in your CSP, the sandbox will block the request. Only declare the domains you actually need.
@@ -209,8 +209,9 @@ The easiest way to test your app:
 
 To connect your app to ChatGPT:
 
-1. In MCPJam Inspector, click **Create ngrok tunnel** with your server connected
-2. Use the tunnel URL as your connector endpoint in ChatGPT
+1. Sign in to MCPJam Inspector (ngrok tunnels require an account)
+2. Click **Create ngrok tunnel** with your server connected
+3. Use the tunnel URL as your connector endpoint in ChatGPT
 
 For more information, see our [ngrok tunneling feature blog](https://www.mcpjam.com/blog/ngrok).
 
