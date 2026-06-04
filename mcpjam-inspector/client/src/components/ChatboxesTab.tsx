@@ -13,6 +13,12 @@ import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
+import { ChatboxHostCanvasPanel } from "@/components/chatboxes/ChatboxHostCanvasPanel";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { useChatboxByHostId } from "@/hooks/useChatboxes";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -251,38 +257,53 @@ export function ChatboxesTab({
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {tab === "publish" ? (
-          <div className="h-full overflow-y-auto px-6 py-6">
-            <div className="mx-auto flex max-w-3xl flex-col gap-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="text-lg font-semibold">{chatbox.name}</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Publishing the {host?.name ?? "host"} chatbox — share
-                    link, access mode, members, and welcome surface.
-                  </p>
+          <ResizablePanelGroup
+            direction="horizontal"
+            className="h-full"
+          >
+            <ResizablePanel defaultSize={50} minSize={32}>
+              <div className="h-full overflow-y-auto px-6 py-6">
+                <div className="mx-auto flex max-w-3xl flex-col gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-semibold">{chatbox.name}</h2>
+                      <p className="text-xs text-muted-foreground">
+                        Publishing the {host?.name ?? "host"} chatbox — share
+                        link, access mode, members, and welcome surface.
+                      </p>
+                    </div>
+                    {publishLink ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={handleCopyLink}
+                      >
+                        Copy link
+                      </Button>
+                    ) : null}
+                  </div>
+                  <ChatboxPublishClientBar
+                    chatboxId={chatbox.chatboxId}
+                    projectId={chatbox.projectId}
+                    hostId={chatbox.namedHostId}
+                    hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+                    isAuthenticated={effectiveAuth}
+                    currentServerIds={chatbox.servers.map((s) => s.serverId)}
+                  />
+                  <ChatboxShareSection chatbox={chatbox} />
                 </div>
-                {publishLink ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-xl"
-                    onClick={handleCopyLink}
-                  >
-                    Copy link
-                  </Button>
-                ) : null}
               </div>
-              <ChatboxPublishClientBar
-                chatboxId={chatbox.chatboxId}
-                projectId={chatbox.projectId}
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={50} minSize={30}>
+              <ChatboxHostCanvasPanel
                 hostId={chatbox.namedHostId}
-                hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+                projectId={chatbox.projectId}
                 isAuthenticated={effectiveAuth}
-                currentServerIds={chatbox.servers.map((s) => s.serverId)}
               />
-              <ChatboxShareSection chatbox={chatbox} />
-            </div>
-          </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         ) : tab === "preview" ? (
           <ChatboxPreviewPane
             publishLink={publishLink}
