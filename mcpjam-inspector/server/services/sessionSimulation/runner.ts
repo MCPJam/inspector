@@ -1,0 +1,454 @@
+import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { MCPClientManager } from "@mcpjam/sdk";
+import type { ModelDefinition } from "@/shared/types";
+import { getModelById } from "@/shared/types";
+import { logger } from "../../utils/logger.js";
+import {
+  handleMCPJamFreeChatModel,
+  type MCPJamHandlerOptions,
+} from "../../utils/mcpjam-stream-handler.js";
+import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
+import {
+  createRun,
+  getRun,
+  personaNextTurn,
+  updateRun,
+  type PersonaSlate,
+} from "../session-agent.js";
+
+const HEARTBEAT_INTERVAL_MS = 10_000;
+
+export interface SimulationManagerFactory {
+  /**
+   * Builds a fresh, fully-connected MCPClientManager for one session, scoped
+   * to the chatbox's `selectedServerIds`. The runner disposes it after the
+   * session completes (success or failure).
+   *
+   * Implemented by the route handler so the runner stays free of authorize
+   * + secrets fetch wiring.
+   */
+  (): Promise<{
+    manager: MCPClientManager;
+    /** Server IDs that successfully connected (skip-listed OAuth servers excluded). */
+    connectedServerIds: string[];
+    /** Async cleanup invoked after the session terminates. */
+    dispose: () => Promise<void>;
+  }>;
+}
+
+export interface RunSimulationOptions {
+  runId: string;
+  chatboxId: string;
+  projectId: string;
+  personas: PersonaSlate[];
+  sessionsPerPersona: number;
+  maxTurns: number;
+  modelId: string;
+  systemPrompt: string;
+  temperature?: number;
+  /** When true, approval-required tool calls auto-deny inside the loop. */
+  requireToolApproval: boolean;
+  convexHttpUrl: string;
+  convexAuthToken: string;
+  authHeader: string;
+  managerFactory: SimulationManagerFactory;
+  /** Aborts the runner mid-batch on inspector shutdown. */
+  abortSignal?: AbortSignal;
+}
+
+interface RunningRunHandle {
+  abort: () => void;
+}
+
+const runningRuns = new Map<string, RunningRunHandle>();
+
+export function getRunningSimulationCount(): number {
+  return runningRuns.size;
+}
+
+/**
+ * Best-effort graceful shutdown for the runner registry. Aborts every active
+ * runner and lets each runner's `finally` write the failure status.
+ */
+export async function shutdownRunningSimulations(): Promise<void> {
+  for (const handle of runningRuns.values()) {
+    handle.abort();
+  }
+}
+
+export async function startSimulation(
+  partial: Omit<RunSimulationOptions, "runId"> & {
+    /** Returned by backend `createRun`. */
+    runId: string;
+  },
+): Promise<void> {
+  const controller = new AbortController();
+  const composed = composeAbortSignals(partial.abortSignal, controller.signal);
+  runningRuns.set(partial.runId, { abort: () => controller.abort() });
+  try {
+    await runSimulationLoop({ ...partial, abortSignal: composed });
+  } finally {
+    runningRuns.delete(partial.runId);
+  }
+}
+
+function composeAbortSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (!signal) continue;
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener(
+      "abort",
+      () => controller.abort(signal.reason),
+      { once: true },
+    );
+  }
+  return controller.signal;
+}
+
+async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
+  const {
+    runId,
+    chatboxId,
+    projectId,
+    personas,
+    sessionsPerPersona,
+    maxTurns,
+    modelId,
+    systemPrompt,
+    temperature,
+    requireToolApproval,
+    convexHttpUrl,
+    convexAuthToken,
+    authHeader,
+    managerFactory,
+    abortSignal,
+  } = opts;
+
+  const modelDefinition = getModelById(modelId);
+  if (!modelDefinition) {
+    await updateRun(
+      convexHttpUrl,
+      convexAuthToken,
+      projectId,
+      runId,
+      {},
+      "failed",
+    );
+    throw new Error(`Unknown modelId for simulation: ${modelId}`);
+  }
+
+  let totalSucceeded = 0;
+  let totalFailed = 0;
+  let totalRateLimited = 0;
+
+  const heartbeat = setInterval(() => {
+    if (abortSignal?.aborted) return;
+    updateRun(convexHttpUrl, convexAuthToken, projectId, runId, {}).catch(
+      (err) => {
+        logger.warn("[sessionSimulation.runner] heartbeat updateRun failed", {
+          runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    );
+  }, HEARTBEAT_INTERVAL_MS);
+
+  try {
+    outer: for (const persona of personas) {
+      for (let sessionIdx = 0; sessionIdx < sessionsPerPersona; sessionIdx++) {
+        if (abortSignal?.aborted) break outer;
+        const outcome = await runOneSession({
+          persona,
+          sessionIdx,
+          runId,
+          chatboxId,
+          projectId,
+          maxTurns,
+          modelDefinition,
+          systemPrompt,
+          temperature,
+          requireToolApproval,
+          convexHttpUrl,
+          convexAuthToken,
+          authHeader,
+          managerFactory,
+          abortSignal,
+        });
+
+        if (outcome === "succeeded") totalSucceeded++;
+        else if (outcome === "rate_limited") totalRateLimited++;
+        else totalFailed++;
+
+        await updateRun(
+          convexHttpUrl,
+          convexAuthToken,
+          projectId,
+          runId,
+          {
+            succeeded: outcome === "succeeded" ? 1 : 0,
+            failed: outcome === "failed" ? 1 : 0,
+            rateLimited: outcome === "rate_limited" ? 1 : 0,
+          },
+        );
+
+        if (outcome === "rate_limited") {
+          // Skip remaining sessions for this persona on rate-limit, per plan.
+          break;
+        }
+      }
+    }
+
+    const total = personas.length * sessionsPerPersona;
+    const status =
+      totalSucceeded === total
+        ? "completed"
+        : totalSucceeded === 0
+          ? "failed"
+          : "partial";
+    await updateRun(
+      convexHttpUrl,
+      convexAuthToken,
+      projectId,
+      runId,
+      {},
+      status,
+    );
+  } catch (error) {
+    logger.error("[sessionSimulation.runner] run failed", {
+      runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    try {
+      await updateRun(
+        convexHttpUrl,
+        convexAuthToken,
+        projectId,
+        runId,
+        {},
+        "failed",
+      );
+    } catch {
+      // best-effort
+    }
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+type SessionOutcome = "succeeded" | "failed" | "rate_limited";
+
+async function runOneSession(args: {
+  persona: PersonaSlate;
+  sessionIdx: number;
+  runId: string;
+  chatboxId: string;
+  projectId: string;
+  maxTurns: number;
+  modelDefinition: ModelDefinition;
+  systemPrompt: string;
+  temperature?: number;
+  requireToolApproval: boolean;
+  convexHttpUrl: string;
+  convexAuthToken: string;
+  authHeader: string;
+  managerFactory: SimulationManagerFactory;
+  abortSignal?: AbortSignal;
+}): Promise<SessionOutcome> {
+  const {
+    persona,
+    sessionIdx,
+    runId,
+    chatboxId,
+    projectId,
+    maxTurns,
+    modelDefinition,
+    systemPrompt,
+    temperature,
+    requireToolApproval,
+    convexHttpUrl,
+    convexAuthToken,
+    authHeader,
+    managerFactory,
+    abortSignal,
+  } = args;
+
+  const sessionStartedAt = Date.now();
+  const chatSessionId = `synth_${runId}_${persona.id}_${sessionIdx}`;
+  let manager: MCPClientManager | undefined;
+  let dispose: (() => Promise<void>) | undefined;
+
+  try {
+    const built = await managerFactory();
+    manager = built.manager;
+    dispose = built.dispose;
+    const selectedServerIds = built.connectedServerIds;
+
+    const prepared = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: selectedServerIds,
+      modelDefinition,
+      systemPrompt,
+      temperature,
+      requireToolApproval,
+    });
+
+    let messageHistory: ModelMessage[] = [];
+    let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =
+      [];
+
+    for (let turn = 0; turn < maxTurns; turn++) {
+      if (abortSignal?.aborted) return "failed";
+
+      const next = await personaNextTurn(
+        convexHttpUrl,
+        convexAuthToken,
+        projectId,
+        runId,
+        persona.id,
+        lastTranscript,
+      );
+
+      if (next.endSession) break;
+
+      messageHistory.push({
+        role: "user",
+        content: next.message,
+      } as ModelMessage);
+      lastTranscript.push({ role: "user", content: next.message });
+
+      const updatedHistory = await drainAssistantTurn({
+        messages: messageHistory,
+        modelId: String(modelDefinition.id),
+        chatSessionId,
+        sourceType: "chatbox",
+        systemPrompt: prepared.enhancedSystemPrompt,
+        temperature: prepared.resolvedTemperature,
+        tools: prepared.allTools,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+        mcpClientManager: manager,
+        selectedServers: selectedServerIds,
+        requireToolApproval,
+        chatboxId,
+        accessVersion: undefined,
+        projectId,
+        authHeader,
+        abortSignal,
+      });
+
+      messageHistory = updatedHistory;
+      const assistantText = extractAssistantText(updatedHistory);
+      lastTranscript.push({ role: "assistant", content: assistantText });
+    }
+
+    await persistChatSessionToConvex({
+      chatSessionId,
+      modelId: String(modelDefinition.id),
+      modelSource: "mcpjam",
+      authHeader,
+      projectId,
+      sourceType: "chatbox",
+      surface: "share_link",
+      chatboxId,
+      sessionMessages: messageHistory,
+      startedAt: sessionStartedAt,
+      lastActivityAt: Date.now(),
+      synthetic: true,
+      personaId: persona.id,
+      personaLabel: persona.name,
+      synthesisRunId: runId,
+    });
+
+    return "succeeded";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/rate.?limit|spend|cap/i.test(message)) {
+      return "rate_limited";
+    }
+    logger.warn("[sessionSimulation.runner] session failed", {
+      runId,
+      personaId: persona.id,
+      sessionIdx,
+      error: message,
+    });
+    return "failed";
+  } finally {
+    if (dispose) {
+      try {
+        await dispose();
+      } catch (err) {
+        logger.warn("[sessionSimulation.runner] manager dispose failed", {
+          runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Drive one assistant turn through `handleMCPJamFreeChatModel`, then return
+ * the post-turn message history captured by `onConversationComplete`.
+ *
+ * Drains the SSE response body (`createUIMessageStreamResponse` requires the
+ * consumer to read the stream before `onFinish` runs).
+ */
+async function drainAssistantTurn(
+  args: Omit<MCPJamHandlerOptions, "onConversationComplete" | "onStreamComplete"> & {
+    chatSessionId: string;
+  },
+): Promise<ModelMessage[]> {
+  let captured: ModelMessage[] = [];
+  const { chatSessionId: _omit, ...rest } = args;
+  // Suppress per-turn ingestion — the runner persists the full session once
+  // at the end with synthetic tagging.
+  const options: MCPJamHandlerOptions = {
+    ...rest,
+    approvalMode: "auto-deny",
+    onConversationComplete: (fullHistory) => {
+      captured = [...fullHistory];
+    },
+  };
+  const response = await handleMCPJamFreeChatModel(options);
+  if (response.body) {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  }
+  return captured.length > 0 ? captured : args.messages;
+}
+
+function extractAssistantText(history: ModelMessage[]): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (!msg || msg.role !== "assistant") continue;
+    const content = msg.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    const text = content
+      .filter(
+        (part): part is { type: "text"; text: string } =>
+          typeof part === "object" &&
+          part !== null &&
+          (part as { type?: string }).type === "text" &&
+          typeof (part as { text?: unknown }).text === "string",
+      )
+      .map((part) => part.text)
+      .join("");
+    return text;
+  }
+  return "";
+}
+
+// Re-export for the route — keeps `createRun`/`getRun` co-located with the
+// runner from the route's perspective.
+export { createRun, getRun };
