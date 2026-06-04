@@ -237,6 +237,41 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
     ).toThrow(/clientCapabilities must be a plain object/);
   });
 
+  // Regression: Date / Map / Set / class instances all return `[]` from
+  // `Object.keys`, so without the prototype guard in isPlainObject they
+  // would silently canonicalize to `{}` and merge with the empty-record
+  // dedupe pool — the exact dedupe collapse the fail-fast is meant to
+  // prevent. CodeRabbit flagged this on the original PR.
+  it("rejects Date / Map / Set / class instances on plain-object fields (prototype-guarded)", () => {
+    const samples: Array<[string, unknown]> = [
+      ["Date", new Date(0)],
+      ["Map", new Map()],
+      ["Set", new Set()],
+      ["class instance", new (class { x = 1 })()],
+    ];
+    for (const [label, value] of samples) {
+      expect(
+        () =>
+          canonicalizeHostConfigV2(
+            base({ clientCapabilities: value as Record<string, unknown> }),
+          ),
+        `clientCapabilities = ${label}`,
+      ).toThrow(/clientCapabilities must be a plain object/);
+    }
+  });
+
+  it("accepts Object.create(null) records on plain-object fields (no prototype, still serializable)", async () => {
+    const nullProto = Object.create(null) as Record<string, unknown>;
+    nullProto.foo = 1;
+    nullProto.bar = { baz: 2 };
+    expect(() => canonicalizeHostConfigV2(base({ clientCapabilities: nullProto }))).not.toThrow();
+    // And hashes identically to the `{}`-literal form — proto difference
+    // doesn't leak into canonical JSON.
+    const a = base({ clientCapabilities: nullProto });
+    const b = base({ clientCapabilities: { foo: 1, bar: { baz: 2 } } });
+    expect(await hash(a)).toBe(await hash(b));
+  });
+
   // Item 3: empty allowFeatures collapses to absent. Sibling
   // openaiAppsOverrides already does this; allowFeatures was the odd one
   // out and minted distinct hashes for semantically identical configs.

@@ -109,13 +109,18 @@ function sortStringKeys<T extends Record<string, unknown>>(input: T): T {
 // upstream `v.any()` validators. Returns a deep-sorted copy so nested key
 // order doesn't leak into the hash.
 function requireRecord(value: unknown, fieldName: string): Record<string, unknown> {
-  if (value === undefined || value === null) {
+  if (value === undefined) {
     throw new Error(`hostConfigV2: ${fieldName} is required`);
   }
-  if (typeof value !== "object" || Array.isArray(value)) {
+  // Reuses the shared isPlainObject predicate (now prototype-guarded), so
+  // Date / class instance / Map / Set inputs hit a hard error here instead
+  // of silently canonicalizing to `{}` and merging with the empty-record
+  // dedupe pool. Only `{}` literals and Object.create(null) records are
+  // accepted — both are valid JSON-serializable plain objects.
+  if (!isPlainObject(value)) {
     throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
   }
-  return deepSortStringKeys(value as Record<string, unknown>);
+  return deepSortStringKeys(value);
 }
 
 // Deep variant: recursively sorts keys at every object level so nested
@@ -143,7 +148,16 @@ function sortUniqueServerIds(ids: Array<ServerId> | undefined): Array<ServerId> 
 // Arrays/null satisfy `typeof === 'object'`; the canonicalizer is the
 // chokepoint.
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  // Reject Date, Map, Set, class instances, etc. — `Object.keys` returns
+  // `[]` on most of these, so without this guard they'd canonicalize to
+  // `{}` and silently merge with the empty-record dedupe pool. Plain
+  // objects have a prototype of either `Object.prototype` (literal `{}`)
+  // or `null` (Object.create(null)).
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 // Canonicalize a CSP domain list as a SET: trim, drop empty, dedupe, sort.
