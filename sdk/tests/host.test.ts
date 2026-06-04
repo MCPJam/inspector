@@ -38,6 +38,15 @@ describe("Host — public surface", () => {
     expect(json.serverOverrides?.srv_a?.requestTimeout).toBe(1234);
   });
 
+  it("dedupes server ids added through direct array mutation", () => {
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.servers.push("srv_b", "srv_a", "srv_b");
+    host.optionalServers.push("opt_b", "opt_a", "opt_a");
+
+    expect(host.toJSON().servers).toEqual(["srv_a", "srv_b"]);
+    expect(host.toJSON().optionalServers).toEqual(["opt_a", "opt_b"]);
+  });
+
   it("untouched mcp is omitted from toJSON (empty default collapses)", () => {
     const json = new Host({ style: "mcpjam", model: "test-model" }).toJSON();
     expect(json.mcp).toBeUndefined();
@@ -86,6 +95,14 @@ describe("Host — public surface", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" });
     host.mcp.apps = { mcpAppsOverrides: { availableDisplayModes: [] } };
     expect(() => host.toJSON()).toThrow(/must contain at least one mode/);
+  });
+
+  it("validates per-server request timeout overrides at toJSON()", () => {
+    const host = new Host({ style: "mcpjam", model: "test-model" })
+      .addServer("srv_a")
+      .setServerOverride("srv_a", { requestTimeout: Infinity });
+
+    expect(() => host.toJSON()).toThrow(/requestTimeoutOverride must be finite/);
   });
 
   it("throws if `style` is not set (no silent SDK default)", () => {

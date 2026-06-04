@@ -6,10 +6,10 @@
  * (`HostConfigInputV2`, `mcpProfile`, schema versions) stays in `./types.ts`
  * and `./canonicalize.ts` and is reached only through `Host`.
  *
- * Wire compatibility (option b): the *serialized* canonical shape
- * (`HostJson`) keeps the on-disk field name `mcpProfile`; only the fluent API
- * renames it to `mcp`. A small mapper in `./host.ts` bridges the two so the
- * canonical JSON + hash never change (the golden-vector fixture still holds).
+ * Wire compatibility (option b): the internal canonical shape keeps the
+ * on-disk field name `mcpProfile`, but `HostJson` deliberately exposes public
+ * vocabulary (`mcp`). A small mapper in `./host.ts` bridges the two so the
+ * storage-row canonical JSON + hash stay stable.
  */
 
 import type {

@@ -118,6 +118,10 @@ function deepSortStringKeys<T>(input: T): T {
   return input;
 }
 
+function sortUniqueServerIds(ids: Array<ServerId> | undefined): Array<ServerId> {
+  return Array.from(new Set(ids ?? [])).sort() as Array<ServerId>;
+}
+
 // Plain-object guard shared by hostCapabilitiesOverride and mcpProfile.
 // Arrays/null satisfy `typeof === 'object'`; the canonicalizer is the
 // chokepoint.
@@ -842,6 +846,14 @@ function canonicalizeServerConnectionOverrides(
       }
       mcpProtocolVersionOverride = entry.mcpProtocolVersionOverride;
     }
+    if (
+      entry.requestTimeoutOverride !== undefined &&
+      !Number.isFinite(entry.requestTimeoutOverride)
+    ) {
+      throw new Error(
+        `hostConfigV2: serverConnectionOverrides["${serverId}"].requestTimeoutOverride must be finite`,
+      );
+    }
     const hasContent =
       normalizedHeaders !== undefined ||
       entry.requestTimeoutOverride !== undefined ||
@@ -902,6 +914,8 @@ export function canonicalizeHostConfigV2(
   ) {
     throw new Error("hostConfigV2: chatUiOverride must be a plain object");
   }
+  const serverIds = sortUniqueServerIds(input.serverIds);
+  const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   return {
     schemaVersion: HOST_CONFIG_SCHEMA_VERSION_V2,
     hostStyle: input.hostStyle,
@@ -913,12 +927,10 @@ export function canonicalizeHostConfigV2(
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,
     respectToolVisibility: input.respectToolVisibility,
-    // Normalize undefined → [] BEFORE sort so canonical/hash output is
-    // identical to the pre-tolerance "explicit empty array" case.
-    serverIds: [...(input.serverIds ?? [])].sort() as Array<ServerId>,
-    optionalServerIds: [...(input.optionalServerIds ?? [])].sort() as Array<
-      ServerId
-    >,
+    // Normalize undefined → [] and dedupe before sort so canonical/hash output
+    // is identical for semantically equivalent server lists.
+    serverIds,
+    optionalServerIds,
     connectionDefaults: {
       headers: sortStringKeys(input.connectionDefaults.headers),
       requestTimeout: input.connectionDefaults.requestTimeout,
@@ -937,8 +949,8 @@ export function canonicalizeHostConfigV2(
         : deepSortStringKeys(input.chatUiOverride),
     mcpProfile: canonicalizeMcpProfile(input.mcpProfile),
     serverConnectionOverrides: canonicalizeServerConnectionOverrides(
-      input.serverIds ?? [],
-      input.optionalServerIds ?? [],
+      serverIds,
+      optionalServerIds,
       input.serverConnectionOverrides,
     ),
   };

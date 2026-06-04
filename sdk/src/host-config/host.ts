@@ -76,7 +76,8 @@ function hostMcpToProfile(mcp: HostMcp): HostConfigMcpProfileV1 {
  * NOT collapsed here — the canonicalizer drops empty sub-blocks on its own,
  * but the wrapper profile still appears.
  */
-function isEmptyHostMcp(mcp: HostMcp): boolean {
+function isEmptyHostMcp(mcp: HostMcp | undefined): boolean {
+  if (mcp === undefined) return true;
   return (
     mcp.protocolVersion === undefined &&
     mcp.initialize === undefined &&
@@ -494,8 +495,8 @@ export class Host {
       input.chatUiOverride = snap.chatUiOverride;
     }
     // Collapse "empty mcp": an untouched `host.mcp = {}` (the default after
-    // construction) maps to no `mcpProfile`, so a freshly-constructed host
-    // hashes identically to one with `host.mcp = undefined`.
+    // construction) maps to no `mcpProfile`, matching an explicitly cleared
+    // profile.
     if (!isEmptyHostMcp(snap.mcp)) {
       input.mcpProfile = hostMcpToProfile(snap.mcp);
     }

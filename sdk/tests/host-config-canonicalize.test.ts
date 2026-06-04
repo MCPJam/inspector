@@ -48,11 +48,15 @@ describe("canonicalizeHostConfigV2 — hash stability", () => {
     );
   });
 
-  it("sorts serverIds deterministically", () => {
+  it("sorts and dedupes serverIds deterministically", () => {
     const c = canonicalizeHostConfigV2(
-      base({ serverIds: ["c", "a", "b"] as string[] }),
+      base({
+        serverIds: ["c", "a", "b", "a"] as string[],
+        optionalServerIds: ["z", "x", "x"] as string[],
+      }),
     );
     expect(c.serverIds).toEqual(["a", "b", "c"]);
+    expect(c.optionalServerIds).toEqual(["x", "z"]);
   });
 });
 
@@ -103,6 +107,17 @@ describe("canonicalizeHostConfigV2 — validation", () => {
         }),
       ),
     ).toThrow(/not in serverIds or optionalServerIds/);
+  });
+
+  it("rejects a non-finite per-server request timeout override", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          serverIds: ["a"] as string[],
+          serverConnectionOverrides: { a: { requestTimeoutOverride: Infinity } },
+        }),
+      ),
+    ).toThrow(/requestTimeoutOverride must be finite/);
   });
 
   it("requires mcpProfile.profileVersion === 1", () => {

@@ -6,8 +6,8 @@
  * ```ts
  * import { Host } from "@mcpjam/sdk/host-config"; // or from "@mcpjam/sdk"
  * const host = new Host({ style: "mcpjam", model: "anthropic/claude-sonnet-4-6" })
- *   .setMcp({ protocolVersion: "2025-11-25" })
  *   .addServer("srv_abc");
+ * host.mcp.protocolVersion = "2025-11-25";
  * const json = host.toJSON();
  * ```
  *
