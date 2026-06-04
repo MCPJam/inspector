@@ -590,11 +590,27 @@ export type HostSource = Host | HostInit | HostJson;
 export function isHostJson(value: unknown): value is HostJson {
   if (!value || typeof value !== "object") return false;
   if (value instanceof Host) return false;
-  const candidate = value as Partial<HostJson>;
+  const c = value as Partial<HostJson>;
+  // Require the full normalized shape — fields that `HostJson` always
+  // carries (with concrete types / non-optional) but `HostInit` typically
+  // leaves out. A naked init like `{ style, model, servers }` therefore
+  // falls through to the `new Host(init).toJSON()` normalization path
+  // rather than getting passed straight to the runner with missing
+  // `connectionDefaults` / `optionalServers` / etc.
   return (
-    typeof candidate.style === "string" &&
-    typeof candidate.model === "string" &&
-    Array.isArray(candidate.servers)
+    typeof c.style === "string" &&
+    typeof c.model === "string" &&
+    typeof c.systemPrompt === "string" &&
+    typeof c.temperature === "number" &&
+    typeof c.requireToolApproval === "boolean" &&
+    Array.isArray(c.servers) &&
+    Array.isArray(c.optionalServers) &&
+    !!c.connectionDefaults &&
+    typeof c.connectionDefaults === "object" &&
+    !!c.clientCapabilities &&
+    typeof c.clientCapabilities === "object" &&
+    !!c.hostContext &&
+    typeof c.hostContext === "object"
   );
 }
 

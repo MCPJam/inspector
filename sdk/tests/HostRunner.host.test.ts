@@ -140,6 +140,33 @@ describe("HostRunner host integration", () => {
       expect(isHostJson(snap)).toBe(true);
       expect(snap?.servers).toEqual(["a"]);
     });
+
+    it("a HostInit shaped like { style, model, servers } is NOT misclassified as a HostJson — it gets normalized", () => {
+      // Regression: previously `isHostJson` only checked style/model/servers,
+      // so a HostInit with those three fields bypassed normalization and
+      // the runner ended up with `optionalServers`, `connectionDefaults`,
+      // `temperature` etc. missing entirely.
+      const naked = { style: "mcpjam", model: "openai/gpt-4o", servers: ["a"] };
+      expect(isHostJson(naked)).toBe(false);
+
+      const runner = new HostRunner({
+        host: naked,
+        tools: [],
+        apiKey: "test-key",
+      });
+      const snap = runner.getHostSnapshot();
+      expect(snap).toBeDefined();
+      // The snapshot is now the result of `new Host(naked).toJSON()` — every
+      // field that `HostJson` requires must be present with its normalized
+      // default.
+      expect(Array.isArray(snap?.optionalServers)).toBe(true);
+      expect(typeof snap?.connectionDefaults).toBe("object");
+      expect(typeof snap?.temperature).toBe("number");
+      expect(typeof snap?.requireToolApproval).toBe("boolean");
+      expect(typeof snap?.systemPrompt).toBe("string");
+      expect(typeof snap?.clientCapabilities).toBe("object");
+      expect(typeof snap?.hostContext).toBe("object");
+    });
   });
 
   describe("withOptions preserves host snapshot across clones", () => {
@@ -191,6 +218,32 @@ describe("HostRunner host integration", () => {
       expect(clone.getHostSnapshot()?.servers).toEqual(["alpha"]);
     });
 
+    it("preserves an explicit model override through withOptions({})", () => {
+      // Regression: when constructed as `new HostRunner({ host, model: X })`
+      // the explicit model should win at clone time too. Otherwise
+      // `EvalTest`'s per-iteration `executor.withOptions({})` silently
+      // switches the iteration runner from `X` back to `host.model`.
+      const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+      const runner = new HostRunner({
+        host,
+        tools: [],
+        apiKey: "test-key",
+        model: "anthropic/claude-sonnet-4-6",
+      });
+
+      expect(runner.getParsedProvider()).toBe("anthropic");
+      expect(runner.getParsedModel()).toBe("claude-sonnet-4-6");
+
+      const clone = runner.withOptions({});
+      expect(clone.getParsedProvider()).toBe("anthropic");
+      expect(clone.getParsedModel()).toBe("claude-sonnet-4-6");
+
+      // Explicit override at clone time still wins.
+      const clone2 = runner.withOptions({ model: "openai/gpt-5-mini" });
+      expect(clone2.getParsedProvider()).toBe("openai");
+      expect(clone2.getParsedModel()).toBe("gpt-5-mini");
+    });
+
     it("legacy explicit-model runner stays host-less through withOptions", () => {
       const runner = new HostRunner({
         tools: [],
@@ -201,6 +254,46 @@ describe("HostRunner host integration", () => {
       const clone = runner.withOptions({});
       expect(clone.getHostSnapshot()).toBeUndefined();
       expect(clone.getHostPolicy()).toBeUndefined();
+    });
+  });
+
+  describe("structural manager compatibility (widget snapshot guard)", () => {
+    it("does NOT crash when the manager lacks getToolMetadata / readResource", async () => {
+      // Regression: `HostRuntimeManager` only requires `hasServer` +
+      // `getToolsForAiSdk`, but `HostRunner` used to dereference
+      // `mcpClientManager.getToolMetadata(...)` unconditionally during
+      // widget snapshot capture. A custom structural manager that
+      // satisfied `HostRuntimeManager` would type-check and crash at
+      // runtime.
+      const structuralManager = {
+        hasServer: () => true,
+        listServers: () => ["alpha"],
+        getToolsForAiSdk: async () => ({}),
+        // intentionally NO getToolMetadata / readResource
+      };
+
+      const runner = new HostRunner({
+        host: new Host({ style: "mcpjam", model: "openai/gpt-4o" }),
+        tools: [],
+        apiKey: "test-key",
+        // Bypass the concrete-class type — same shape HostRuntime passes via
+        // its `as never` cast.
+        mcpClientManager: structuralManager as never,
+      });
+
+      const buffer = new Map();
+      // The capture method is private at the TS level; cast to call it.
+      // It must short-circuit on the missing-method guard rather than
+      // throw on `undefined is not a function`.
+      await (runner as any).captureMcpAppSnapshot({
+        toolName: "whatever",
+        tool: { _serverId: "alpha" },
+        options: { toolCallId: "tc-1" },
+        toolInput: {},
+        toolOutput: {},
+        snapshotBuffer: buffer,
+      });
+      expect(buffer.size).toBe(0);
     });
   });
 

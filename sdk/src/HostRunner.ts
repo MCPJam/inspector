@@ -336,6 +336,25 @@ export class HostRunner implements HostExecutor {
     if (!this.mcpClientManager) {
       return;
     }
+    // The HostRuntime path accepts a structural `HostRuntimeManager`
+    // that only requires `hasServer` + `getToolsForAiSdk`. Widget
+    // snapshot capture additionally needs `getToolMetadata` and
+    // `readResource` — defensively skip capture for managers that
+    // don't expose them rather than crash an otherwise-successful run.
+    // The concrete `MCPClientManager` always satisfies this; custom
+    // structural managers that don't implement the metadata/resource
+    // pair just fall through silently, matching the "no manager"
+    // semantics above.
+    const manager = this.mcpClientManager as MCPClientManager & {
+      getToolMetadata?: MCPClientManager["getToolMetadata"];
+      readResource?: MCPClientManager["readResource"];
+    };
+    if (
+      typeof manager.getToolMetadata !== "function" ||
+      typeof manager.readResource !== "function"
+    ) {
+      return;
+    }
 
     const toolCallId =
       typeof params.options?.toolCallId === "string"
@@ -350,7 +369,7 @@ export class HostRunner implements HostExecutor {
       return;
     }
 
-    const toolMetadata = this.mcpClientManager.getToolMetadata(
+    const toolMetadata = manager.getToolMetadata(
       serverId,
       params.toolName
     );
@@ -366,7 +385,7 @@ export class HostRunner implements HostExecutor {
     }
 
     try {
-      const resourceResult = await this.mcpClientManager.readResource(
+      const resourceResult = await manager.readResource(
         serverId,
         {
           uri: resourceUri,
@@ -820,9 +839,17 @@ export class HostRunner implements HostExecutor {
     // Preserve the host snapshot across clones so iteration runners
     // (EvalTest's per-iteration `executor.withOptions({})` path) keep
     // `getHostSnapshot()` / `getHostPolicy()` populated and host-derived
-    // defaults (model / systemPrompt / temperature / injectOpenAiCompat)
-    // remain in effect. Explicit `options.host` still wins.
+    // defaults (systemPrompt / temperature / injectOpenAiCompat) remain
+    // in effect. Explicit `options.host` still wins.
+    //
+    // CRITICAL: preserve `this.model` (the resolved model the parent runner
+    // is using) regardless of which branch we end up in. Without this,
+    // a runner constructed as `new HostRunner({ host, model: "anthropic/..." })`
+    // would clone with `model: undefined` on the host branch, and the
+    // new constructor would fall back to `host.model` — silently switching
+    // models per iteration in `EvalTest`'s clone-per-iteration loop.
     const nextHost = options.host ?? this.hostSnapshot;
+    const nextModel = options.model ?? this.model;
     const base = {
       tools: options.tools ?? this.tools,
       apiKey: options.apiKey ?? this.apiKey,
@@ -833,10 +860,11 @@ export class HostRunner implements HostExecutor {
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
       injectOpenAiCompat:
         options.injectOpenAiCompat ?? this.injectOpenAiCompat,
+      model: nextModel,
     };
     return nextHost
-      ? new HostRunner({ ...base, host: nextHost, model: options.model })
-      : new HostRunner({ ...base, model: options.model ?? this.model });
+      ? new HostRunner({ ...base, host: nextHost })
+      : new HostRunner(base);
   }
 
   /**
