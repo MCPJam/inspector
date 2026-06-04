@@ -63,11 +63,18 @@ export function GenerateSessionsDialog({
   const [sessionsPerPersona, setSessionsPerPersona] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
   const [generating, setGenerating] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [personas, setPersonas] = useState<PersonaEditState[]>([]);
   const [running, setRunning] = useState<RunStatus | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const runStartAt = useRef<number>(0);
+  // Guards `chatbox_simulate_sessions_completed` against firing more than
+  // once if a poll re-runs after the run is already in a terminal state.
+  // Ref (not state) so the guard is checked synchronously inside the poll
+  // callback without depending on a re-render.
+  const completionAnalyticsFired = useRef(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -75,6 +82,9 @@ export function GenerateSessionsDialog({
       setPersonas([]);
       setRunning(null);
       setRunId(null);
+      setPollError(null);
+      setStarting(false);
+      completionAnalyticsFired.current = false;
       if (pollTimer.current) {
         clearInterval(pollTimer.current);
         pollTimer.current = null;
@@ -152,6 +162,7 @@ export function GenerateSessionsDialog({
   }
 
   async function handleRun() {
+    if (starting) return;
     const selected = personas.filter((p) => p.selected);
     if (selected.length === 0) {
       toast.error("Select at least one persona");
@@ -159,6 +170,7 @@ export function GenerateSessionsDialog({
     }
     const totalSessions = selected.length * sessionsPerPersona;
     runStartAt.current = Date.now();
+    setStarting(true);
     try {
       const response = await fetch(
         `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/start`,
@@ -204,6 +216,8 @@ export function GenerateSessionsDialog({
       const message =
         error instanceof Error ? error.message : "Failed to start simulation";
       toast.error(message);
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -221,28 +235,39 @@ export function GenerateSessionsDialog({
             },
           },
         );
-        if (!response.ok) return;
+        if (!response.ok) {
+          setPollError(`Last update failed (${response.status})`);
+          return;
+        }
         const data = (await response.json()) as {
           run: RunStatus;
         };
+        setPollError(null);
         setRunning(data.run);
         if (data.run.status !== "running") {
+          // Clear the timer first so a late same-tick scheduling can't
+          // re-enter and re-fire analytics before the guard ref flips.
           if (pollTimer.current) {
             clearInterval(pollTimer.current);
             pollTimer.current = null;
           }
-          posthog.capture("chatbox_simulate_sessions_completed", {
-            ...standardEventProps("chatbox_usage_panel"),
-            chatbox_id: chatbox.chatboxId,
-            run_id: runId,
-            sessions_created: data.run.summary.succeeded,
-            sessions_failed: data.run.summary.failed,
-            sessions_rate_limited: data.run.summary.rateLimited,
-            duration_ms: Date.now() - runStartAt.current,
-          });
+          if (!completionAnalyticsFired.current) {
+            completionAnalyticsFired.current = true;
+            posthog.capture("chatbox_simulate_sessions_completed", {
+              ...standardEventProps("chatbox_usage_panel"),
+              chatbox_id: chatbox.chatboxId,
+              run_id: runId,
+              sessions_created: data.run.summary.succeeded,
+              sessions_failed: data.run.summary.failed,
+              sessions_rate_limited: data.run.summary.rateLimited,
+              duration_ms: Date.now() - runStartAt.current,
+            });
+          }
         }
       } catch {
-        // network blips are tolerable
+        // Errors may be transient; surface a recoverable message but keep
+        // polling so a momentary network blip doesn't abandon the run.
+        setPollError("Last update failed");
       }
     }, 1000);
     return () => {
@@ -411,8 +436,14 @@ export function GenerateSessionsDialog({
               >
                 Back
               </Button>
-              <Button size="sm" onClick={handleRun}>
-                Run simulation
+              <Button size="sm" onClick={handleRun} disabled={starting}>
+                {starting ? (
+                  <>
+                    <Loader2 className="mr-1 size-3 animate-spin" /> Starting
+                  </>
+                ) : (
+                  "Run simulation"
+                )}
               </Button>
             </div>
           </div>
@@ -444,14 +475,26 @@ export function GenerateSessionsDialog({
               {running.error ? (
                 <p className="text-xs text-destructive">{running.error}</p>
               ) : null}
+              {pollError && running.status === "running" ? (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {pollError} — retrying…
+                </p>
+              ) : null}
             </div>
             <div className="flex justify-end">
+              {/* When polling fails we re-enable Close so the user isn't
+                  trapped in a stuck "Working…" state if the backend goes
+                  unreachable. Polling continues in the background. */}
               <Button
                 size="sm"
                 onClick={onClose}
-                disabled={running.status === "running"}
+                disabled={running.status === "running" && !pollError}
               >
-                {running.status === "running" ? "Working…" : "View sessions"}
+                {running.status !== "running"
+                  ? "View sessions"
+                  : pollError
+                    ? "Close"
+                    : "Working…"}
               </Button>
             </div>
           </div>
