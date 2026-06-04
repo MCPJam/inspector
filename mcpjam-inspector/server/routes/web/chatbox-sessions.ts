@@ -258,6 +258,13 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         requireToolApproval,
         respectToolVisibility,
         progressiveToolDiscovery,
+        // Threaded into the runner's per-tool widget snapshot capture so
+        // `chatSessions:createWidgetSnapshot` can authenticate against the
+        // chatbox path. Without it the Sessions viewer can't render MCP App
+        // widgets (e.g. Excalidraw) for synthetic threads.
+        ...(body.accessVersion !== undefined
+          ? { accessVersion: body.accessVersion }
+          : {}),
         convexHttpUrl,
         convexAuthToken: bearerToken,
         authHeader,

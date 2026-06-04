@@ -1,5 +1,6 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
 import { getModelById } from "@/shared/types";
 import { logger } from "../../utils/logger.js";
@@ -13,6 +14,8 @@ import {
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
+import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
+import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
 import {
   createRun,
   getRun,
@@ -125,6 +128,15 @@ export interface RunSimulationOptions {
    * visitor would get.
    */
   progressiveToolDiscovery?: boolean;
+  /**
+   * Optional hosted-chat access version. Forwarded into
+   * `chatSessions:createWidgetSnapshot` so the optimistic-concurrency check
+   * fires if the chatbox's access surface (mode/allowlist/grants) shifted
+   * mid-run. Omitting it is safe — the project owner running synthesis is
+   * authorized regardless; the version gate is a guest/visitor stale-cache
+   * guard.
+   */
+  accessVersion?: number;
   convexHttpUrl: string;
   convexAuthToken: string;
   authHeader: string;
@@ -247,6 +259,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
+    accessVersion,
     convexHttpUrl,
     convexAuthToken,
     authHeader,
@@ -301,6 +314,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           requireToolApproval,
           respectToolVisibility,
           progressiveToolDiscovery,
+          accessVersion,
           convexHttpUrl,
           convexAuthToken,
           authHeader,
@@ -383,6 +397,7 @@ async function runOneSession(args: {
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  accessVersion?: number;
   convexHttpUrl: string;
   convexAuthToken: string;
   authHeader: string;
@@ -402,6 +417,7 @@ async function runOneSession(args: {
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
+    accessVersion,
     convexHttpUrl,
     convexAuthToken,
     authHeader,
@@ -548,6 +564,22 @@ async function runOneSession(args: {
         ...(toolSnapshot ? { toolSnapshot } : {}),
       });
       anyTurnPersisted = true;
+
+      // Capture + persist MCP App widget snapshots for any tool calls in this
+      // session so the Sessions viewer renders the actual widget (e.g.
+      // Excalidraw `create_view`) instead of a collapsed tool pill. Mirrors
+      // what the live browser capture hook
+      // (`useSharedChatWidgetCapture`) does for real visitor sessions, just
+      // server-side using the runner's MCP manager. Best-effort: a failure
+      // here never aborts the run.
+      await captureAndPersistWidgetSnapshotsForSession({
+        messages: messageHistory,
+        mcpClientManager: manager,
+        convexAuthToken,
+        chatSessionId,
+        chatboxId,
+        accessVersion,
+      });
     }
 
     if (!anyTurnPersisted) {
@@ -599,6 +631,131 @@ async function runOneSession(args: {
       }
     }
   }
+}
+
+/**
+ * Walk the synthetic session's message history for MCP App tool calls,
+ * fetch each widget's HTML via `MCPClientManager.readResource()`, upload it
+ * to Convex storage, and persist a `sharedChatWidgetSnapshots` row through
+ * `chatSessions:createWidgetSnapshot`. Without this, the Chatbox Sessions
+ * viewer's `getWidgetSnapshots` query returns empty for synthetic threads
+ * and MCP App tool calls collapse to a plain pill instead of rendering the
+ * actual widget (e.g. Excalidraw `create_view`).
+ *
+ * Best-effort end-to-end: any failure (missing accessVersion, mutation
+ * error, transient network) is logged and swallowed — never aborts the
+ * synthetic run. The Convex mutation patches existing rows on
+ * `(sessionId, toolCallId)` so re-running this per turn is idempotent.
+ */
+async function captureAndPersistWidgetSnapshotsForSession(args: {
+  messages: ModelMessage[];
+  mcpClientManager: MCPClientManager;
+  convexAuthToken: string;
+  chatSessionId: string;
+  chatboxId: string;
+  accessVersion: number | undefined;
+}): Promise<void> {
+  const {
+    messages,
+    mcpClientManager,
+    convexAuthToken,
+    chatSessionId,
+    chatboxId,
+    accessVersion,
+  } = args;
+
+  // `convexHttpUrl` is the `.convex.site` HTTP-actions endpoint (the runner
+  // uses it for `/session-simulation/*` fetches). `ConvexHttpClient` wants
+  // the deployment URL (`.convex.cloud`) so it can call queries/mutations.
+  // The evals runner pulls the same env via `createConvexClient` in
+  // `server/services/evals/route-helpers.ts`; we read it directly here to
+  // avoid cross-importing an eval-flavored helper.
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    logger.warn(
+      "[sessionSimulation.runner] CONVEX_URL not set; skipping widget snapshot capture",
+      { chatSessionId, chatboxId },
+    );
+    return;
+  }
+
+  let convexClient: ConvexHttpClient;
+  try {
+    convexClient = new ConvexHttpClient(convexUrl);
+    convexClient.setAuth(convexAuthToken);
+  } catch (err) {
+    logger.warn("[sessionSimulation.runner] convex client setup failed", {
+      chatSessionId,
+      convexUrl,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return;
+  }
+
+  let snapshots: EvalTraceWidgetSnapshot[] | undefined;
+  try {
+    snapshots = await captureMcpAppWidgetSnapshots({
+      messages,
+      mcpClientManager,
+      convexClient,
+    });
+  } catch (err) {
+    logger.warn("[sessionSimulation.runner] widget snapshot capture failed", {
+      chatSessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  if (!snapshots || snapshots.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(
+    snapshots.map(async (snap) => {
+      // The capture helper short-circuits when readResource fails or the
+      // resource is missing HTML, but it still emits a snapshot stub.
+      // The Convex mutation requires a `widgetHtmlBlobId`, so drop the
+      // stub instead of sending an invalid call.
+      if (!snap.widgetHtmlBlobId) return;
+      try {
+        await convexClient.mutation(
+          "chatSessions:createWidgetSnapshot" as any,
+          {
+            chatboxId,
+            ...(accessVersion !== undefined ? { accessVersion } : {}),
+            chatSessionId,
+            serverId: snap.serverId,
+            toolCallId: snap.toolCallId,
+            toolName: snap.toolName,
+            widgetHtmlBlobId: snap.widgetHtmlBlobId,
+            uiType: snap.protocol,
+            ...(snap.resourceUri ? { resourceUri: snap.resourceUri } : {}),
+            ...(snap.widgetCsp ? { widgetCsp: snap.widgetCsp } : {}),
+            ...(snap.widgetPermissions
+              ? { widgetPermissions: snap.widgetPermissions }
+              : {}),
+            ...(snap.widgetPermissive !== undefined
+              ? { widgetPermissive: snap.widgetPermissive }
+              : {}),
+            ...(snap.prefersBorder !== undefined
+              ? { prefersBorder: snap.prefersBorder }
+              : {}),
+          },
+        );
+      } catch (err) {
+        logger.warn(
+          "[sessionSimulation.runner] createWidgetSnapshot failed",
+          {
+            chatSessionId,
+            toolCallId: snap.toolCallId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+    }),
+  );
 }
 
 /**
