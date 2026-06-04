@@ -32,6 +32,8 @@ Use this when you want to check reachability and OAuth metadata without triggeri
 - OAuth metadata (resource metadata URL, authorization server metadata, registration strategies, scopes)
 - `WWW-Authenticate` header parsing
 
+Sensitive fields such as `Authorization` headers are automatically redacted to `[REDACTED]` in the printed result.
+
 ### `server doctor`
 
 Combined triage — runs probe, then attempts a full client connection, then sweeps tools, resources, resource templates, and prompts. Returns a single JSON artifact.
@@ -56,6 +58,8 @@ mcpjam server doctor --command node --args server.js --cwd /path/to/project
 The `--out <path>` flag writes the full JSON artifact to a file — useful for handoff to another engineer or agent.
 For stdio targets, those artifacts only record the explicit env keys you passed
 via `-e/--env`; inherited shell variables are not enumerated.
+
+Sensitive fields such as `Authorization` headers are automatically redacted to `[REDACTED]` in all printed output and written artifacts, including RPC logs attached via `--rpc`.
 
 ### `server info`
 

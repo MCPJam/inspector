@@ -1,0 +1,70 @@
+---
+title: "Home"
+description: "Org-scoped dashboard with activity stats, recommended servers, and quick-start clients"
+icon: "house"
+---
+
+The Home dashboard is the default landing page for authenticated users with an active organization. It gives you a snapshot of your org's activity and lets you connect recommended MCP servers or spin up sandbox clients without leaving the page.
+
+<Note>
+The Home dashboard is available in the hosted app at [app.mcpjam.com](https://app.mcpjam.com) and requires you to be signed in with an active organization.
+</Note>
+
+## Overview
+
+When you open MCPJam, the Home tab loads at `/home` (also the root `/`). If you don't have an active organization yet, the page shows a **Get started** prompt that takes you to the Organizations page.
+
+With an organization selected, the dashboard shows:
+
+- **Greeting** — a time-aware greeting and today's date.
+- **Org stats strip** — live counts for teammates, projects, servers, eval suites, tool executions (last 30 days), and messages sent (last 30 days).
+- **Recommended servers** — a curated list of MCP servers you can connect to your active project with one click.
+- **Recommended clients** — sandbox client templates (Claude, ChatGPT, Cursor) you can create directly from the dashboard.
+- **What's new** — a feed of recent platform releases and changes.
+
+## Org stats strip
+
+The stats strip shows six metrics for your organization:
+
+| Stat | Description |
+|------|-------------|
+| Teammates | Number of members in your organization |
+| Projects | Total projects in your organization |
+| Servers | Total MCP servers across all projects |
+| Eval suites | Number of evaluation suites |
+| Tool executions · 30d | Tool calls made in the last 30 days |
+| Messages · 30d | Messages sent in the last 30 days |
+
+Click **projects** or **servers** to jump to the Servers tab. Click **eval suites** to jump to the Evals tab. The 30-day metrics refresh automatically in the background.
+
+## Recommended servers
+
+The **Recommended servers** card shows a hand-picked list of MCP servers. To connect one:
+
+1. Make sure you have an active project selected.
+2. Click **Connect** next to the server you want.
+3. MCPJam creates the server on your active project and navigates to the Servers tab.
+
+If the server is already connected to your project, you'll see an info toast and be taken to the Servers tab instead.
+
+Click **Browse all** to go directly to the Servers tab and see all your servers.
+
+## Recommended clients
+
+The **Recommended clients** card lets you create a pre-configured sandbox client from a template. Available templates include Claude, ChatGPT, and Cursor.
+
+To create a client:
+
+1. Make sure you have an active project selected.
+2. Click the template you want.
+3. MCPJam creates the client on your active project and opens it in the Clients tab.
+
+## What's new
+
+The **What's new** card shows a timeline of recent platform updates — new features, changes, and releases — so you can stay current without leaving the app.
+
+## What's next
+
+- [Projects](/inspector/projects) — create and manage projects for your servers
+- [Clients](/inspector/clients) — configure and test MCP clients
+- [Servers](/getting-started#3-connect-your-own-server) — connect your own MCP servers

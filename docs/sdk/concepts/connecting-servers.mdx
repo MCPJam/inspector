@@ -67,11 +67,12 @@ const manager = new MCPClientManager({
 
 ### HTTP Authentication Options
 
-For HTTP servers, `MCPClientManager` supports three auth patterns:
+For HTTP servers, `MCPClientManager` supports four auth patterns:
 
 - `accessToken` for a static bearer token
 - `refreshToken` + `clientId` for non-interactive OAuth token exchange with automatic refresh
 - `authProvider` when you need to provide a custom MCP SDK OAuth provider
+- `onUnauthorized` for custom 401 recovery when you manage tokens externally
 
 If you already have a refresh token, you can let the SDK handle access token exchange and refresh for you:
 
@@ -94,6 +95,35 @@ With this configuration, the SDK:
 
 <Note>
 `refreshToken` is only supported for HTTP servers. When you use it, do not also set `accessToken`, `authProvider`, or an `Authorization` header in `requestInit.headers`.
+</Note>
+
+#### Custom 401 recovery with onUnauthorized
+
+Use `onUnauthorized` when you supply an `accessToken` but manage token rotation yourself — for example, when tokens come from a secrets vault or a backend service rather than a standard OAuth flow:
+
+```typescript
+const manager = new MCPClientManager({
+  myServer: {
+    url: "https://mcp.example.com/mcp",
+    accessToken: currentToken,
+    onUnauthorized: async ({ serverId }) => {
+      // Call your own token endpoint to get a fresh token
+      const { accessToken } = await myTokenService.refresh(serverId);
+      return { accessToken };
+    },
+  },
+});
+```
+
+When the server returns HTTP 401, the SDK:
+
+1. Calls `onUnauthorized` once to obtain a fresh access token.
+2. Strips any stale `Authorization` header from `requestInit`.
+3. Rebuilds the transport with the new token and retries the operation.
+4. If the retry also returns 401, the error is surfaced to the caller.
+
+<Note>
+`onUnauthorized` only fires on strict HTTP 401 responses — not 403. It is also skipped when `refreshToken` or `authProvider` is configured, since those patterns handle token refresh internally. Parallel 401s for the same server share a single refresh call.
 </Note>
 
 ## Connecting and Disconnecting
