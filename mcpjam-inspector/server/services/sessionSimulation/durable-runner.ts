@@ -18,8 +18,11 @@
  *      `missing_descriptor` (claim returned `runtimeDescriptor: null`,
  *      i.e. a legacy pre-§C run row), else `execution_error`.
  *
- * Gated behind `SYNTHESIS_RUNNER_MODE` env. Default `'in_process'`;
- * the follow-on commit flips the default to `'durable'`.
+ * Gated behind `SYNTHESIS_RUNNER_MODE` env. Default flipped 2026-06-04
+ * to `'durable'` after the backend descriptor + worker-ingest endpoints
+ * landed. Operators can roll back to the in-process path by setting
+ * `SYNTHESIS_RUNNER_MODE=in_process` explicitly — the in-process
+ * runner in `runner.ts` is still wired and runnable.
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -52,13 +55,15 @@ const SHUTDOWN_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_TURNS = 6;
 
 /**
- * Backend uses a single env literal for the runner mode. `durable`
- * enables the pump in this file; anything else leaves the in-process
- * runner in `runner.ts` in charge.
+ * Inspector reads a single env literal for the runner mode. The
+ * default is `'durable'` (this file's pump); set
+ * `SYNTHESIS_RUNNER_MODE=in_process` to opt back into the in-process
+ * runner in `runner.ts`. Any other value falls through to the
+ * `'durable'` default so a typo doesn't silently switch runners.
  */
 export function getRunnerMode(): "durable" | "in_process" {
   const raw = process.env.SYNTHESIS_RUNNER_MODE;
-  return raw === "durable" ? "durable" : "in_process";
+  return raw === "in_process" ? "in_process" : "durable";
 }
 
 /**

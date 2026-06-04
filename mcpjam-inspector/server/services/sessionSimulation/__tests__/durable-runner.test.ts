@@ -117,17 +117,21 @@ afterEach(() => {
 });
 
 describe("getRunnerMode", () => {
-  it("defaults to in_process", () => {
+  it("defaults to durable (flipped 2026-06-04)", () => {
     delete process.env.SYNTHESIS_RUNNER_MODE;
+    expect(getRunnerMode()).toBe("durable");
+  });
+  it("returns in_process when the operator sets the explicit opt-out", () => {
+    process.env.SYNTHESIS_RUNNER_MODE = "in_process";
     expect(getRunnerMode()).toBe("in_process");
   });
-  it("returns durable when env literal is set", () => {
+  it("returns durable when env literal is explicitly set", () => {
     process.env.SYNTHESIS_RUNNER_MODE = "durable";
     expect(getRunnerMode()).toBe("durable");
   });
-  it("any other env value falls back to in_process", () => {
+  it("any other env value falls back to durable (avoids silent typo switch)", () => {
     process.env.SYNTHESIS_RUNNER_MODE = "other";
-    expect(getRunnerMode()).toBe("in_process");
+    expect(getRunnerMode()).toBe("durable");
   });
 });
 
