@@ -25,8 +25,8 @@ vi.mock("@/hooks/useCreditBalance", () => ({
   }),
 }));
 
-vi.mock("@/lib/credit-topups-flag", () => ({
-  useCreditTopupsUiEnabled: () => creditsFlagState,
+vi.mock("@/lib/team-credits-flag", () => ({
+  useTeamCreditsUiEnabled: () => creditsFlagState,
 }));
 
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
