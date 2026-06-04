@@ -35,3 +35,28 @@ export type {
   CspDomainSet,
   McpProtocolVersion,
 } from "./types.js";
+
+// Stage 3: host-execution policy + visibility filter + OpenAI compat.
+// Stays browser-safe — `tool-visibility.ts` is structurally typed
+// (no `MCPClientManager` runtime import) and `app-only-tool.ts` is a pure
+// leaf, so re-exporting them from this barrel does not drag runtime SDK
+// or Vercel AI SDK code into the inspector client bundle.
+export { isAppOnlyTool } from "./app-only-tool.js";
+export {
+  filterAppOnlyTools,
+  applyVisibilityPolicyAndCountSignals,
+} from "./tool-visibility.js";
+export type { ToolMetadataSource } from "./tool-visibility.js";
+export {
+  extractHostExecutionPolicy,
+  buildHostIterationMetadata,
+} from "./host-policy.js";
+export type {
+  HostExecutionPolicy,
+  ToolExposureSignals,
+} from "./host-policy.js";
+export {
+  readOpenAiCompatOverride,
+  compatPresetForHostStyle,
+  resolveOpenAiCompatForHostConfig,
+} from "./compat-runtime.js";
