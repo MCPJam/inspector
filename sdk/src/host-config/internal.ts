@@ -23,9 +23,15 @@ export {
   HOST_CONFIG_SCHEMA_VERSION_V2,
   SEP_1865_PERMISSION_FEATURES,
 } from "./types.js";
+export {
+  DEFAULT_TEMPERATURE_V2,
+  resolveEffectiveMcpProtocolVersion,
+} from "./defaults.js";
 export type {
   HostConfigInputV2,
   CanonicalHostConfigV2,
   HostConfigMcpProfileV1,
   HostConfigConnectionDefaults,
+  CspDomainSet,
+  McpProtocolVersion,
 } from "./types.js";
