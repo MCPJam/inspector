@@ -334,6 +334,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
           return {
             manager,
             connectedServerIds: selectedServerIds,
+            connectedServerNames: selectedServerNames,
             dispose: async () => {
               await manager.disconnectAllServers();
             },

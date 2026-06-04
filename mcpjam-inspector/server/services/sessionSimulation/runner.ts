@@ -89,6 +89,13 @@ export interface SimulationManagerFactory {
     manager: MCPClientManager;
     /** Server IDs that successfully connected (skip-listed OAuth servers excluded). */
     connectedServerIds: string[];
+    /**
+     * Optional human-readable names aligned 1:1 with `connectedServerIds`.
+     * Persisted into the session's `resumeConfig.selectedServers` so the
+     * Chatbox Sessions viewer can reconnect the right servers when the user
+     * opens the session later (live `readResource()` for MCP App widgets).
+     */
+    connectedServerNames?: string[];
     /** Async cleanup invoked after the session terminates. */
     dispose: () => Promise<void>;
   }>;
@@ -412,6 +419,23 @@ async function runOneSession(args: {
     manager = built.manager;
     dispose = built.dispose;
     const selectedServerIds = built.connectedServerIds;
+    const selectedServerNames = built.connectedServerNames;
+
+    // Mirror chat-v2's direct-chat resumeConfig shape so the Chatbox Sessions
+    // viewer can reconnect the same servers when the user opens this session
+    // later. Without this, `readResource()` for MCP App widgets fails at
+    // replay time and `create_view` collapses to a tool pill.
+    const resumeConfig = {
+      systemPrompt,
+      ...(temperature !== undefined ? { temperature } : {}),
+      requireToolApproval,
+      ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+      selectedServers:
+        Array.isArray(selectedServerNames) &&
+        selectedServerNames.length === selectedServerIds.length
+          ? selectedServerNames
+          : selectedServerIds,
+    };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -520,6 +544,7 @@ async function runOneSession(args: {
         personaLabel: persona.name,
         synthesisRunId: runId,
         turnTrace,
+        resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
       });
       anyTurnPersisted = true;
@@ -545,6 +570,7 @@ async function runOneSession(args: {
         personaId: persona.id,
         personaLabel: persona.name,
         synthesisRunId: runId,
+        resumeConfig,
       });
     }
 
