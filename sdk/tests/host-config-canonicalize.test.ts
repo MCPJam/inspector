@@ -21,17 +21,19 @@ function base(overrides: Partial<HostConfigInputV2> = {}): HostConfigInputV2 {
 const hash = (input: HostConfigInputV2) => computeHostConfigHashV2(input);
 
 describe("canonicalizeHostConfigV2 — hash stability", () => {
-  it("is independent of TOP-LEVEL header / capability key order (shallow sort)", async () => {
-    // connectionDefaults.headers, clientCapabilities and hostContext use a
-    // SHALLOW key sort — top-level order is normalized, nested order is NOT
-    // (matches the backend; only *Override + mcpProfile deep-sort).
+  it("is independent of header / capability key order at every depth (deep sort)", async () => {
+    // connectionDefaults.headers stays shallow (flat by design).
+    // clientCapabilities and hostContext now deep-sort: nested key order
+    // must not leak into the canonical hash.
     const a = base({
       connectionDefaults: { headers: { a: "1", b: "2" }, requestTimeout: 1 },
-      clientCapabilities: { x: 1, y: 3 },
+      clientCapabilities: { x: { p: 1, q: 2 }, y: 3 },
+      hostContext: { foo: { a: 1, b: 2 } },
     });
     const b = base({
       connectionDefaults: { headers: { b: "2", a: "1" }, requestTimeout: 1 },
-      clientCapabilities: { y: 3, x: 1 },
+      clientCapabilities: { y: 3, x: { q: 2, p: 1 } },
+      hostContext: { foo: { b: 2, a: 1 } },
     });
     expect(await hash(a)).toBe(await hash(b));
   });
@@ -202,5 +204,109 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
         }),
       ),
     ).toThrow(/ConflictingProtocolVersionPin/);
+  });
+});
+
+describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
+  // Item 5: fail-fast on missing required record fields. The previous
+  // `?? {}` coalescing silently merged undefined-cap rows with explicit-{}
+  // rows; both now reach an explicit error at the canonicalize boundary.
+  it("throws when clientCapabilities is missing (fail-fast, no `?? {}` fallback)", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        // The Input type marks it required; cast simulates an upstream bug
+        // (writer who let v.any() through with undefined).
+        base({ clientCapabilities: undefined as unknown as Record<string, unknown> }),
+      ),
+    ).toThrow(/clientCapabilities is required/);
+  });
+
+  it("throws when hostContext is missing (fail-fast)", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ hostContext: undefined as unknown as Record<string, unknown> }),
+      ),
+    ).toThrow(/hostContext is required/);
+  });
+
+  it("throws when clientCapabilities is not a plain object", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ clientCapabilities: [] as unknown as Record<string, unknown> }),
+      ),
+    ).toThrow(/clientCapabilities must be a plain object/);
+  });
+
+  // Item 3: empty allowFeatures collapses to absent. Sibling
+  // openaiAppsOverrides already does this; allowFeatures was the odd one
+  // out and minted distinct hashes for semantically identical configs.
+  it("collapses empty allowFeatures to absent (hash-identical to omitting it)", async () => {
+    const omitted = base({
+      mcpProfile: { profileVersion: 1, apps: { sandbox: {} } },
+    });
+    const explicitEmpty = base({
+      mcpProfile: { profileVersion: 1, apps: { sandbox: { allowFeatures: {} } } },
+    });
+    expect(await hash(omitted)).toBe(await hash(explicitEmpty));
+  });
+
+  it("collapses an allowFeatures with only spec-feature keys (all dropped) to absent", async () => {
+    const omitted = base({
+      mcpProfile: { profileVersion: 1, apps: { sandbox: {} } },
+    });
+    const onlySpecKeys = base({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: { allowFeatures: { camera: "*", microphone: "self" } },
+        },
+      },
+    });
+    expect(await hash(omitted)).toBe(await hash(onlySpecKeys));
+  });
+
+  // Item 6: drop openaiAppsOverrides when openaiApps:false. The resolver
+  // ignores them when the shim isn't injected; letting them affect the
+  // hash mints rows that resolve to identical runtime behavior.
+  it("drops openaiAppsOverrides when compatRuntime.openaiApps is false (resolver ignores them)", async () => {
+    const withOverrides = base({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          compatRuntime: {
+            openaiApps: false,
+            openaiAppsOverrides: { requestModal: true, uploadFile: false },
+          },
+        },
+      },
+    });
+    const withoutOverrides = base({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { compatRuntime: { openaiApps: false } },
+      },
+    });
+    expect(await hash(withOverrides)).toBe(await hash(withoutOverrides));
+  });
+
+  it("keeps openaiAppsOverrides when compatRuntime.openaiApps is true (overrides are live)", async () => {
+    const withOverrides = base({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          compatRuntime: {
+            openaiApps: true,
+            openaiAppsOverrides: { requestModal: true },
+          },
+        },
+      },
+    });
+    const withoutOverrides = base({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { compatRuntime: { openaiApps: true } },
+      },
+    });
+    expect(await hash(withOverrides)).not.toBe(await hash(withoutOverrides));
   });
 });
