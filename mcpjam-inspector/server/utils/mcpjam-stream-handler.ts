@@ -150,6 +150,17 @@ export interface MCPJamHandlerOptions {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  /**
+   * Approval-pause policy. `"prompt"` (default) is the real-chat path:
+   * approval-required tool calls pause the loop until the user answers
+   * via the next round-trip. `"auto-deny"` is the synthetic-session
+   * path: each approval-required tool call resolves with an
+   * `approval-denied (synthetic session)` error result and the loop
+   * continues so the model can adapt. Real chat call sites pass
+   * `"prompt"` (or omit the option); the synthetic-session runner
+   * passes `"auto-deny"`.
+   */
+  approvalMode?: "prompt" | "auto-deny";
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
@@ -243,6 +254,7 @@ interface StepContext {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
   usedToolCallIds: Set<string>;
   traceTurn: LiveTraceTurnContext;
@@ -1227,6 +1239,7 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    approvalMode,
     stepIndex,
     usedToolCallIds,
     traceTurn,
@@ -1480,7 +1493,83 @@ async function processOneStep(
       return false;
     })();
 
-    if (requireToolApproval && hasUnresolvedRealToolCall) {
+    if (
+      requireToolApproval &&
+      hasUnresolvedRealToolCall &&
+      approvalMode === "auto-deny"
+    ) {
+      // Synthetic-session path: instead of pausing the loop for a
+      // human approval that will never come, synthesize a denial
+      // tool-result for every approval-required unresolved real
+      // tool call so the model can react and continue. Meta-tool
+      // calls in the same step still execute normally below.
+      const resultIds = new Set<string>();
+      for (const msg of messageHistory) {
+        if (msg?.role !== "tool") continue;
+        for (const part of (msg as ToolModelMessage).content) {
+          if (part.type === "tool-result") resultIds.add(part.toolCallId);
+        }
+      }
+      const deniedByAssistantIdx = new Map<number, ToolResultPart[]>();
+      for (let i = 0; i < messageHistory.length; i++) {
+        const msg = messageHistory[i];
+        if (msg?.role !== "assistant") continue;
+        const content = (msg as AssistantModelMessage).content;
+        if (!Array.isArray(content)) continue;
+        for (const part of content) {
+          if (
+            part.type !== "tool-call" ||
+            resultIds.has(part.toolCallId) ||
+            isApprovalFreeMetaToolName(part.toolName, progressivePlan)
+          ) {
+            continue;
+          }
+          const denial: ToolResultPart = {
+            type: "tool-result",
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            output: {
+              type: "error-text",
+              value: "approval-denied (synthetic session)",
+            },
+          };
+          const bucket = deniedByAssistantIdx.get(i) ?? [];
+          bucket.push(denial);
+          deniedByAssistantIdx.set(i, bucket);
+        }
+      }
+      if (deniedByAssistantIdx.size > 0) {
+        const denialMessages: ModelMessage[] = [];
+        const sortedKeys = [...deniedByAssistantIdx.keys()].sort(
+          (a, b) => b - a
+        );
+        for (const idx of sortedKeys) {
+          const denialContent = deniedByAssistantIdx.get(idx)!;
+          const denialMsg = {
+            role: "tool",
+            content: denialContent,
+          } as ModelMessage;
+          messageHistory.splice(idx + 1, 0, denialMsg);
+          denialMessages.push(denialMsg);
+        }
+        emitToolResults(
+          writer,
+          mcpClientManager,
+          denialMessages,
+          traceTurn,
+          stepIndex
+        );
+      }
+      // Fall through to the normal tool-execution branch below so
+      // meta-tools still run and the loop continues. The synthesized
+      // denials count as resolved tool-results for the next step.
+    }
+
+    if (
+      requireToolApproval &&
+      hasUnresolvedRealToolCall &&
+      approvalMode !== "auto-deny"
+    ) {
       // Drain any unresolved meta-tool calls (search/load) before pausing
       // for approval on real tools. Otherwise mixed-step turns (model
       // emits a load_mcp_tools + a real tool in one assistant message)
@@ -1787,6 +1876,7 @@ export async function handleMCPJamFreeChatModel(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    approvalMode,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -2014,6 +2104,7 @@ export async function handleMCPJamFreeChatModel(
             mcpClientManager,
             selectedServers,
             requireToolApproval,
+            approvalMode,
             stepIndex: effectiveSteps(),
             usedToolCallIds,
             traceTurn,

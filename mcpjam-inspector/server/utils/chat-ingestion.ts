@@ -177,6 +177,19 @@ interface PersistChatSessionOptions {
    * for this session/turn.
    */
   toolSnapshot?: unknown;
+  /**
+   * Synthetic-session tagging propagated from
+   * `server/services/sessionSimulation/runner.ts` into the Convex
+   * `chatSessions` row. The backend uses these to (a) badge the thread
+   * "Synthetic" in the Sessions list, (b) default
+   * `visitorDisplayName = personaLabel` when omitted, (c) exclude the
+   * row from semantic clustering, and (d) join the row back to its
+   * `chatboxSynthesisRuns` parent for progress polling.
+   */
+  synthetic?: boolean;
+  personaId?: string;
+  personaLabel?: string;
+  synthesisRunId?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -360,6 +373,14 @@ export async function persistChatSessionToConvex(
         ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
         ...(options.toolSnapshot
           ? { toolSnapshot: options.toolSnapshot }
+          : {}),
+        ...(options.synthetic ? { synthetic: true } : {}),
+        ...(options.personaId ? { personaId: options.personaId } : {}),
+        ...(options.personaLabel
+          ? { personaLabel: options.personaLabel }
+          : {}),
+        ...(options.synthesisRunId
+          ? { synthesisRunId: options.synthesisRunId }
           : {}),
       }),
     });
