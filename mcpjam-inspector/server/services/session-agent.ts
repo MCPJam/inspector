@@ -177,12 +177,14 @@ export async function updateRun(
 export async function getRun(
   convexHttpUrl: string,
   convexAuthToken: string,
+  projectId: string,
   runId: string,
 ): Promise<{ run: RunRecord; threadIds: string[] }> {
   const url = new URL(
     `${convexHttpUrl}/session-simulation/runs`,
   );
   url.searchParams.set("runId", runId);
+  url.searchParams.set("projectId", projectId);
   const response = await fetch(url.toString(), {
     method: "GET",
     headers: {

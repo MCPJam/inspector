@@ -238,10 +238,19 @@ chatboxSessions.get(
           "runId required",
         );
       }
+      const projectId = c.req.query("projectId");
+      if (!projectId) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "projectId required",
+        );
+      }
       const convexHttpUrl = requireConvexHttpUrl();
       const { run, threadIds } = await getRun(
         convexHttpUrl,
         bearerToken,
+        projectId,
         runId,
       );
       return { run, threadIds };

@@ -209,7 +209,7 @@ export function GenerateSessionsDialog({
     pollTimer.current = setInterval(async () => {
       try {
         const response = await fetch(
-          `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/${runId}`,
+          `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/${runId}?projectId=${encodeURIComponent(chatbox.projectId)}`,
           {
             method: "GET",
             headers: {
