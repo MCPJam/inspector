@@ -60,13 +60,14 @@ export function ProductUpdatesFeed() {
   }, [isAuthenticated, initialize]);
 
   if (!isAuthenticated) return null;
+  // Hold render until the query has resolved at least once, so the card
+  // doesn't flash an empty state before the data arrives.
+  if (updates === undefined) return null;
 
-  const all = updates ?? [];
-  if (all.length === 0) return null;
-
-  const visible = all.filter((u) => !u.dismissed);
+  const visible = updates.filter((u) => !u.dismissed);
   const top = visible.slice(0, 5);
   const newCount = visible.filter((u) => u.isNew).length;
+  const hasAny = updates.length > 0;
 
   const handleDismiss = async (slug: string) => {
     try {
@@ -100,7 +101,9 @@ export function ProductUpdatesFeed() {
         <CardContent className="px-6 pb-4 pt-3">
           {top.length === 0 ? (
             <p className="py-2 text-[12.5px] text-muted-foreground">
-              You&apos;re all caught up.
+              {hasAny
+                ? "You’re all caught up."
+                : "No updates yet. Releases and platform changes will show up here."}
             </p>
           ) : (
             <ol className="relative">
@@ -192,16 +195,18 @@ export function ProductUpdatesFeed() {
             </ol>
           )}
 
-          <div className="mt-3 flex justify-end border-t border-border pt-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-[12px] text-muted-foreground hover:text-foreground"
-              onClick={() => setSheetOpen(true)}
-            >
-              See all &rarr;
-            </Button>
-          </div>
+          {hasAny ? (
+            <div className="mt-3 flex justify-end border-t border-border pt-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[12px] text-muted-foreground hover:text-foreground"
+                onClick={() => setSheetOpen(true)}
+              >
+                See all &rarr;
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
