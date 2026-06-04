@@ -1,10 +1,9 @@
-import { describe, it, expect } from "vitest";
 import {
   extractHostExecutionPolicy,
   buildHostIterationMetadata,
   type HostExecutionPolicy,
   type ToolExposureSignals,
-} from "../host-execution-policy";
+} from "../src/host-config/internal";
 
 describe("extractHostExecutionPolicy", () => {
   it("returns safe defaults when hostConfig is null", () => {
@@ -60,7 +59,10 @@ describe("extractHostExecutionPolicy", () => {
   });
 
   it("extracts hostStyle and namedHostId", () => {
-    const policy = extractHostExecutionPolicy({ hostStyle: "cursor" }, "h_abc");
+    const policy = extractHostExecutionPolicy(
+      { hostStyle: "cursor" },
+      "h_abc",
+    );
     expect(policy.hostStyle).toBe("cursor");
     expect(policy.namedHostId).toBe("h_abc");
   });
@@ -103,7 +105,10 @@ describe("buildHostIterationMetadata", () => {
   });
 
   it("stamps approvals_would_require when requireToolApproval and count > 0", () => {
-    const policy: HostExecutionPolicy = { ...basePolicy, requireToolApproval: true };
+    const policy: HostExecutionPolicy = {
+      ...basePolicy,
+      requireToolApproval: true,
+    };
     const meta = buildHostIterationMetadata(policy, baseSignals, 3, false);
     expect(meta.approvals_would_require).toBe(3);
   });

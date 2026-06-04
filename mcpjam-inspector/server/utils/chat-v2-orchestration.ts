@@ -18,7 +18,7 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { isToolVisibilityAppOnly } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { filterAppOnlyTools } from "@mcpjam/sdk/host-config/internal";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -45,43 +45,11 @@ import { createProgressiveMetaTools } from "./progressive-tool-meta-tools.js";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
-/**
- * Mutates `tools` in place, removing entries whose source MCP tool
- * declares SEP-1865 `_meta.ui.visibility` as exactly `["app"]`.
- *
- * The visibility array defaults to `["model", "app"]` per SEP-1865, so a
- * tool with no visibility metadata is treated as visible to both.
- *
- * Exported so eval runner can apply the same filter and compute visibility
- * drop counts for cross-host dashboard metadata.
- */
-export function filterAppOnlyTools(
-  tools: ToolSet,
-  manager: InstanceType<typeof MCPClientManager>
-): void {
-  // Cache per-server metadata maps so we don't repeatedly clone them.
-  const metaByServer = new Map<string, Record<string, Record<string, any>>>();
-  const getMeta = (serverId: string) => {
-    let cached = metaByServer.get(serverId);
-    if (!cached) {
-      cached = manager.getAllToolsMetadata(serverId);
-      metaByServer.set(serverId, cached);
-    }
-    return cached;
-  };
-
-  for (const [name, tool] of Object.entries(tools)) {
-    const serverId = (tool as { _serverId?: unknown })._serverId;
-    if (typeof serverId !== "string") continue;
-    const meta = getMeta(serverId)[name];
-    // SDK helper takes a tool-shaped object with `_meta`; wrap the per-tool
-    // metadata to match its expected shape. Returns true iff `_meta.ui.visibility`
-    // is exactly `["app"]`.
-    if (isToolVisibilityAppOnly({ _meta: meta })) {
-      delete tools[name];
-    }
-  }
-}
+// `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
+// eval runtime can apply it without reaching into this file. Re-exported here
+// so existing importers (web/mcp routes, tests) continue to work without
+// churning their import paths.
+export { filterAppOnlyTools };
 
 /**
  * SEP-1865 App-Provided Tool descriptor as accepted by `prepareChatV2`,
