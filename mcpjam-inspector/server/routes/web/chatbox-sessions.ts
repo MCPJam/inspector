@@ -53,6 +53,10 @@ const generatePersonasSchema = z.object({
   servers: z.array(chatboxServerSchema).min(1),
   personaCount: z.number().int().min(1).max(10),
   accessVersion: z.number().int().nonnegative().optional(),
+  // Optional human label for the chatbox surface. Forwarded to the backend
+  // as `serverAttachment.name` so generated personas are grounded in the
+  // actual product framing instead of inferred from raw tool descriptions.
+  chatboxName: z.string().min(1).optional(),
 });
 
 const personaSlateSchema = z.object({
@@ -139,6 +143,16 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
           body.projectId,
           chatboxId,
           body.personaCount,
+          // Chatbox is a 1:1 attachment surface — id/name come from the
+          // chatbox itself; resolvedServerNames mirrors the snapshot's
+          // serverIds (no display-name rewrite happens on this pipeline,
+          // unlike the eval flow). The backend uses `name` for the prompt
+          // label and `resolvedServerNames` for defense-in-depth scoping.
+          {
+            id: chatboxId,
+            ...(body.chatboxName ? { name: body.chatboxName } : {}),
+            resolvedServerNames: selectedServerIds,
+          },
         );
         return { personas };
       },

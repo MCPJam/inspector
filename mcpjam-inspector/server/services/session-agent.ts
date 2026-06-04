@@ -1,4 +1,10 @@
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
+// Reuse eval-agent's attachment payload type — backend treats the wire
+// shape identically for both eval generation and session simulation
+// (single shared parser in mcpjam-backend/convex/lib/snapshotAttachmentScope.ts).
+import type { ServerAttachmentInput } from "./eval-agent.js";
+
+export type { ServerAttachmentInput };
 
 /**
  * Inspector-side adapter for backend AI-generated chatbox session simulation.
@@ -90,6 +96,7 @@ export async function generatePersonas(
   projectId: string,
   chatboxId: string,
   personaCount: number,
+  serverAttachment?: ServerAttachmentInput,
 ): Promise<PersonaSlate[]> {
   const data = await postJson<{
     ok?: boolean;
@@ -98,7 +105,13 @@ export async function generatePersonas(
   }>(
     `${convexHttpUrl}/session-simulation/generate-personas`,
     convexAuthToken,
-    { projectId, chatboxId, toolSnapshot, personaCount },
+    {
+      projectId,
+      chatboxId,
+      toolSnapshot,
+      personaCount,
+      ...(serverAttachment ? { serverAttachment } : {}),
+    },
     LLM_TIMEOUT_MS,
   );
   if (!data.ok || !Array.isArray(data.personas)) {

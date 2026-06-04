@@ -128,6 +128,7 @@ export function GenerateSessionsDialog({
             projectId: chatbox.projectId,
             servers: serversPayload,
             personaCount,
+            chatboxName: chatbox.name,
           }),
         },
       );
