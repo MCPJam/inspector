@@ -4,6 +4,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
+import { isMCPJamProvidedModel } from "@/shared/types";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -32,7 +33,7 @@ interface PersonaEditState extends PersonaSlate {
 }
 
 interface RunStatus {
-  status: "running" | "completed" | "partial" | "failed";
+  status: "running" | "completed" | "partial" | "failed" | "rate_limited";
   summary: {
     total: number;
     succeeded: number;
@@ -41,6 +42,7 @@ interface RunStatus {
   };
   error?: string;
 }
+
 
 type DialogStage = "configure" | "review" | "running";
 
@@ -101,6 +103,15 @@ export function GenerateSessionsDialog({
     optional: s.optional === true,
   }));
   const hasRequiredServers = serversPayload.some((s) => !s.optional);
+
+  // BYOK guard (plan v4 §H). The synthesis worker threads
+  // `synthesisRunId` into the MCPJam `/stream` usage record so
+  // per-run spend lands on `chatboxSynthesisRuns.spendUsdActual`. Org
+  // BYOK chats route through `/stream/org` instead, which isn't yet
+  // wired into the synthesis usage path. The server route is the
+  // load-bearing guard; this is the UI affordance so the button
+  // doesn't hand the user a 400 they have to debug.
+  const isByokChatbox = !isMCPJamProvidedModel(chatbox.modelId);
 
   async function authHeader(): Promise<Record<string, string>> {
     const token = await getAccessToken();
@@ -352,12 +363,22 @@ export function GenerateSessionsDialog({
               </div>
             </div>
 
+            {isByokChatbox ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  Synthetic sessions are not yet supported for chatboxes using
+                  your own model keys. Coming soon.
+                </span>
+              </div>
+            ) : null}
+
             {chatbox.requireToolApproval ? (
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  Approval-required tools will be auto-denied during synthetic
-                  runs.
+                  Synthetic sessions cannot exercise approval-required tools.
+                  The persona will only see meta/discovery tools.
                 </span>
               </div>
             ) : null}
@@ -369,7 +390,7 @@ export function GenerateSessionsDialog({
               <Button
                 size="sm"
                 onClick={handleGenerate}
-                disabled={!hasRequiredServers || generating}
+                disabled={!hasRequiredServers || isByokChatbox || generating}
               >
                 {generating ? (
                   <>
@@ -453,14 +474,22 @@ export function GenerateSessionsDialog({
         {stage === "running" && running ? (
           <div className="space-y-3">
             <div className="space-y-1">
-              <p className="text-sm font-medium">
+              <p
+                className={
+                  running.status === "rate_limited"
+                    ? "text-sm font-medium text-amber-700 dark:text-amber-400"
+                    : "text-sm font-medium"
+                }
+              >
                 {running.status === "running"
                   ? "Running…"
                   : running.status === "completed"
                     ? "Done"
                     : running.status === "partial"
                       ? "Completed partially"
-                      : "Failed"}
+                      : running.status === "rate_limited"
+                        ? "Rate-limited — budget reached"
+                        : "Failed"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {running.summary.succeeded + running.summary.failed +
