@@ -3,23 +3,30 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Evals: allow guests to create suites and rerun runs. Removes the auth-gated branch in the Evals tab and on the server route so guest users can create suites and re-execute existing runs without signing in.",
-      "id": "evals-guest-create-rerun"
+      "summary": "SDK: add public `Host` builder + portable HostConfig v2 core (`@mcpjam/sdk/host-config`).\n\nConstruct a host with MCP-vocabulary fields and serialize a normalized JSON shape:\n\n```ts\nimport { Host } from \"@mcpjam/sdk\";\n\nconst host = new Host({ style: \"mcpjam\", model: \"anthropic/claude-sonnet-4-6\" });\nhost.mcp.protocolVersion = \"2025-11-25\";\nhost.mcp.apps = { sandbox: { csp: { mode: \"declared\" } } };\nhost.addServer(\"srv_abc\");\n\nconst json = host.toJSON();\n```\n\nNew public exports (from `@mcpjam/sdk` and `@mcpjam/sdk/host-config`): `Host`, `HostInit`, `HostJson`, `HostMcp`, `HostServerOverride`, `HostConnectionDefaults`, `HostStyleId`, `ServerId`, `CspDomainSet`, `OpenAiAppsCapabilities`, `McpAppsCapabilities`.\n\nAlso publishes `@mcpjam/sdk/host-config/internal` — a first-party, non-semver-stable subpath exposing `canonicalizeHostConfigV2`, `computeHostConfigHashV2`, and storage-row types. Intended for first-party consumers (the MCPJam backend, parity-fixture tooling); external SDK users should stay on the `Host` builder.",
+      "id": "sdk-host-config-public-api"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.9.3",
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.10.1",
       "changesets": [
-        "evals-guest-create-rerun"
+        "sdk-host-config-public-api"
       ],
-      "newVersion": "2.9.4"
+      "newVersion": "1.11.0"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }

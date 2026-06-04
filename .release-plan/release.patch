@@ -1,37 +1,53 @@
-diff --git a/.changeset/evals-guest-create-rerun.md b/.changeset/evals-guest-create-rerun.md
+diff --git a/.changeset/sdk-host-config-public-api.md b/.changeset/sdk-host-config-public-api.md
 deleted file mode 100644
-index ca5e9b3af..000000000
---- a/.changeset/evals-guest-create-rerun.md
+index 70d6348ef..000000000
+--- a/.changeset/sdk-host-config-public-api.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,22 +0,0 @@
 ----
--"@mcpjam/inspector": patch
+-"@mcpjam/sdk": minor
 ----
 -
--Evals: allow guests to create suites and rerun runs. Removes the auth-gated branch in the Evals tab and on the server route so guest users can create suites and re-execute existing runs without signing in.
-diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index cb354562e..b0deb53ef 100644
---- a/mcpjam-inspector/package.json
-+++ b/mcpjam-inspector/package.json
-@@ -1,7 +1,7 @@
- {
-   "name": "@mcpjam/inspector",
-   "productName": "MCPJam Inspector",
--  "version": "2.9.3",
-+  "version": "2.9.4",
-   "type": "module",
-   "engines": {
-     "node": ">=22.0.0"
+-SDK: add public `Host` builder + portable HostConfig v2 core (`@mcpjam/sdk/host-config`).
+-
+-Construct a host with MCP-vocabulary fields and serialize a normalized JSON shape:
+-
+-```ts
+-import { Host } from "@mcpjam/sdk";
+-
+-const host = new Host({ style: "mcpjam", model: "anthropic/claude-sonnet-4-6" });
+-host.mcp.protocolVersion = "2025-11-25";
+-host.mcp.apps = { sandbox: { csp: { mode: "declared" } } };
+-host.addServer("srv_abc");
+-
+-const json = host.toJSON();
+-```
+-
+-New public exports (from `@mcpjam/sdk` and `@mcpjam/sdk/host-config`): `Host`, `HostInit`, `HostJson`, `HostMcp`, `HostServerOverride`, `HostConnectionDefaults`, `HostStyleId`, `ServerId`, `CspDomainSet`, `OpenAiAppsCapabilities`, `McpAppsCapabilities`.
+-
+-Also publishes `@mcpjam/sdk/host-config/internal` — a first-party, non-semver-stable subpath exposing `canonicalizeHostConfigV2`, `computeHostConfigHashV2`, and storage-row types. Intended for first-party consumers (the MCPJam backend, parity-fixture tooling); external SDK users should stay on the `Host` builder.
 diff --git a/package-lock.json b/package-lock.json
-index ec8f2d08b..143fc1940 100644
+index 143fc1940..5252980ee 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -289,7 +289,7 @@
+@@ -36114,7 +36114,7 @@
      },
-     "mcpjam-inspector": {
-       "name": "@mcpjam/inspector",
--      "version": "2.9.3",
-+      "version": "2.9.4",
-       "license": "Apache-2.0",
+     "sdk": {
+       "name": "@mcpjam/sdk",
+-      "version": "1.10.1",
++      "version": "1.11.0",
+       "license": "MIT",
        "dependencies": {
-         "@ai-sdk/anthropic": "^3.0.36",
+         "@ai-sdk/anthropic": "^2.0.17",
+diff --git a/sdk/package.json b/sdk/package.json
+index 64de7c80a..cfae63519 100644
+--- a/sdk/package.json
++++ b/sdk/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/sdk",
+-  "version": "1.10.1",
++  "version": "1.11.0",
+   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
+   "type": "module",
+   "main": "dist/index.js",
