@@ -15,7 +15,7 @@ import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { formatCreditResetText } from "@/lib/credit-usage";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
+import { useTeamCreditsUiEnabled } from "@/lib/team-credits-flag";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
 /** Pulls the limit-modal redirect flag out of the current URL and clears it
@@ -51,7 +51,7 @@ export function CreditBalanceCard({
   canManageCredits = false,
   chatSessionId,
 }: CreditBalanceCardProps = {}) {
-  const creditsUiEnabled = useCreditTopupsUiEnabled();
+  const creditsUiEnabled = useTeamCreditsUiEnabled();
   const { balance, isLoading } = useCreditBalance({
     organizationId,
     enabled: creditsUiEnabled,

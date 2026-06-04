@@ -8,7 +8,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
+import { useTeamCreditsUiEnabled } from "@/lib/team-credits-flag";
 import { formatCreditResetText } from "@/lib/credit-usage";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +27,7 @@ export function SidebarCreditUsage({
   variant = "strip",
   onClick,
 }: SidebarCreditUsageProps = {}) {
-  const creditsUiEnabled = useCreditTopupsUiEnabled();
+  const creditsUiEnabled = useTeamCreditsUiEnabled();
   const { balance, isLoading, hasWorkOsUser } = useCreditBalance({
     organizationId,
     includeGuests,
