@@ -167,6 +167,12 @@ function ThreadCard({
             Needs review
           </span>
         ) : null}
+        {thread.synthetic === true ? (
+          <span className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-200">
+            <Sparkles className="size-2.5" />
+            Synthetic
+          </span>
+        ) : null}
         {thread.themeClusterLabel ? (
           <span className="inline-flex max-w-[120px] items-center gap-0.5 truncate rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
             <Sparkles className="size-2.5 shrink-0" />

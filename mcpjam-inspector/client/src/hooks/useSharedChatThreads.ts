@@ -43,6 +43,11 @@ export interface SharedChatThread {
    * to model / server / etc.
    */
   hostConfigIdAtStart?: string;
+  /** AI-generated chatbox session. Drives the "Synthetic" badge + filter. */
+  synthetic?: boolean;
+  personaId?: string;
+  personaLabel?: string;
+  synthesisRunId?: string;
 }
 
 /**

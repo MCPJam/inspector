@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   EMPTY_USAGE_FILTER,
+  chipKey,
   compareThreadsForUsageList,
   removeChipByKey,
   toggleChip,
@@ -21,6 +22,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
+import { GenerateSessionsDialog } from "@/components/chatboxes/GenerateSessionsDialog";
 
 export type ChatboxUsagePanelSection = "sessions" | "insights";
 
@@ -49,6 +51,7 @@ export function ChatboxUsagePanel({
   }>({ chatboxId: chatbox.chatboxId, threadId: null });
   const [filter, setFilter] = useState<UsageFilterState>(EMPTY_USAGE_FILTER);
   const [rebuildBusy, setRebuildBusy] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   // Synchronous latch so double-clicks can't queue two concurrent rebuilds
   // before React commits `rebuildBusy`.
   const rebuildInFlightRef = useRef(false);
@@ -170,9 +173,19 @@ export function ChatboxUsagePanel({
     );
   }
 
+  const hideSyntheticChip: UsageFilterChip = {
+    kind: "dimension",
+    key: "synthetic",
+    value: "hide",
+    label: "Hide synthetic",
+  };
+  const isHideSyntheticActive = filter.chips.some(
+    (c) => chipKey(c) === chipKey(hideSyntheticChip),
+  );
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap gap-2 border-b px-5 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3">
         {PRESET_OPTIONS.map(({ id, label }) => (
           <Button
             key={id}
@@ -185,6 +198,31 @@ export function ChatboxUsagePanel({
             {label}
           </Button>
         ))}
+        <Button
+          type="button"
+          size="sm"
+          variant={isHideSyntheticActive ? "secondary" : "outline"}
+          className="rounded-full"
+          onClick={() => handleToggleChip(hideSyntheticChip)}
+        >
+          Hide synthetic
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="rounded-full"
+          onClick={() => setGenerateOpen(true)}
+          disabled={chatbox.servers.length === 0}
+          title={
+            chatbox.servers.length === 0
+              ? "Attach at least one server to generate sessions"
+              : undefined
+          }
+        >
+          <Sparkles className="mr-1 size-3" />
+          Generate with AI
+        </Button>
         {filter.chips.length > 0 ? (
           <Button
             type="button"
@@ -197,6 +235,12 @@ export function ChatboxUsagePanel({
           </Button>
         ) : null}
       </div>
+
+      <GenerateSessionsDialog
+        isOpen={generateOpen}
+        onClose={() => setGenerateOpen(false)}
+        chatbox={chatbox}
+      />
 
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
