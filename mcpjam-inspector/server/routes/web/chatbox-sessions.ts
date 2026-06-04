@@ -38,10 +38,19 @@ function requireConvexHttpUrl(): string {
   return url;
 }
 
+// The dialog sends the full chatbox server list and the start route filters
+// optionals out, matching what a real visitor with no opt-ins would see.
+// Optional-default-off is enforced server-side so a tampered body can't
+// quietly widen the synthetic tool set beyond the no-opt-in baseline.
+const chatboxServerSchema = z.object({
+  serverId: z.string().min(1),
+  serverName: z.string().min(1).optional(),
+  optional: z.boolean().optional(),
+});
+
 const generatePersonasSchema = z.object({
   projectId: z.string().min(1),
-  selectedServerIds: z.array(z.string().min(1)).min(1),
-  selectedServerNames: z.array(z.string().min(1)).optional(),
+  servers: z.array(chatboxServerSchema).min(1),
   personaCount: z.number().int().min(1).max(10),
   accessVersion: z.number().int().nonnegative().optional(),
 });
@@ -55,13 +64,24 @@ const personaSlateSchema = z.object({
 
 const startSimulationSchema = z.object({
   projectId: z.string().min(1),
-  selectedServerIds: z.array(z.string().min(1)).min(1),
-  selectedServerNames: z.array(z.string().min(1)).optional(),
+  servers: z.array(chatboxServerSchema).min(1),
   accessVersion: z.number().int().nonnegative().optional(),
   personas: z.array(personaSlateSchema).min(1).max(10),
   sessionsPerPersona: z.number().int().min(1).max(5),
   maxTurns: z.number().int().min(1).max(20),
 });
+
+function resolveRequiredServers(
+  servers: Array<{ serverId: string; serverName?: string; optional?: boolean }>,
+): { selectedServerIds: string[]; selectedServerNames: string[] } {
+  const required = servers.filter((s) => s.optional !== true);
+  return {
+    selectedServerIds: required.map((s) => s.serverId),
+    selectedServerNames: required
+      .map((s) => s.serverName)
+      .filter((n): n is string => typeof n === "string"),
+  };
+}
 
 chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
   handleRoute(c, async () => {
@@ -79,13 +99,23 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
       await readJsonBody<unknown>(c),
     );
     const convexHttpUrl = requireConvexHttpUrl();
+    const { selectedServerIds, selectedServerNames } = resolveRequiredServers(
+      body.servers,
+    );
+    if (selectedServerIds.length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Chatbox has no required servers",
+      );
+    }
 
     const result = await withManager(
       createAuthorizedManager(
         c,
         bearerToken,
         body.projectId,
-        body.selectedServerIds,
+        selectedServerIds,
         WEB_STREAM_TIMEOUT_MS,
         undefined,
         undefined,
@@ -93,13 +123,13 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
           accessScope: "chat_v2",
           chatboxId,
           accessVersion: body.accessVersion,
-          serverNames: body.selectedServerNames,
+          serverNames: selectedServerNames,
         },
       ),
       async (manager) => {
         const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
           manager,
-          body.selectedServerIds,
+          selectedServerIds,
           { logPrefix: "session-simulation.generate-personas" },
         );
         const personas = await generatePersonas(
@@ -155,6 +185,17 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       );
     }
 
+    const { selectedServerIds, selectedServerNames } = resolveRequiredServers(
+      body.servers,
+    );
+    if (selectedServerIds.length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Chatbox has no required servers",
+      );
+    }
+
     const { runId } = await createRun(
       convexHttpUrl,
       bearerToken,
@@ -173,6 +214,8 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const systemPrompt = runtime.config.systemPrompt;
     const temperature = runtime.config.temperature;
     const requireToolApproval = runtime.config.requireToolApproval;
+    const respectToolVisibility = runtime.config.respectToolVisibility;
+    const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
 
     setImmediate(() => {
       startSimulation({
@@ -186,6 +229,8 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         systemPrompt,
         temperature,
         requireToolApproval,
+        respectToolVisibility,
+        progressiveToolDiscovery,
         convexHttpUrl,
         convexAuthToken: bearerToken,
         authHeader,
@@ -194,7 +239,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
             c,
             bearerToken,
             projectId,
-            body.selectedServerIds,
+            selectedServerIds,
             WEB_STREAM_TIMEOUT_MS,
             undefined,
             undefined,
@@ -202,12 +247,12 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
               accessScope: "chat_v2",
               chatboxId,
               accessVersion: body.accessVersion,
-              serverNames: body.selectedServerNames,
+              serverNames: selectedServerNames,
             },
           );
           return {
             manager,
-            connectedServerIds: body.selectedServerIds,
+            connectedServerIds: selectedServerIds,
             dispose: async () => {
               await manager.disconnectAllServers();
             },

@@ -82,9 +82,15 @@ export function GenerateSessionsDialog({
     }
   }, [isOpen]);
 
-  const serverIds = chatbox.servers.map((s) => s.serverId);
-  const serverNames = chatbox.servers.map((s) => s.serverName);
-  const hasServers = serverIds.length > 0;
+  // Server selection lives on the backend: the dialog forwards the full
+  // chatbox server list and the start route filters optionals out so the
+  // synthetic run matches what a real visitor with no opt-ins would see.
+  const serversPayload = chatbox.servers.map((s) => ({
+    serverId: s.serverId,
+    serverName: s.serverName,
+    optional: s.optional === true,
+  }));
+  const hasRequiredServers = serversPayload.some((s) => !s.optional);
 
   async function authHeader(): Promise<Record<string, string>> {
     const token = await getAccessToken();
@@ -92,7 +98,7 @@ export function GenerateSessionsDialog({
   }
 
   async function handleGenerate() {
-    if (!hasServers) return;
+    if (!hasRequiredServers) return;
     setGenerating(true);
     posthog.capture("chatbox_generate_personas_started", {
       ...standardEventProps("chatbox_usage_panel"),
@@ -110,8 +116,7 @@ export function GenerateSessionsDialog({
           },
           body: JSON.stringify({
             projectId: chatbox.projectId,
-            selectedServerIds: serverIds,
-            selectedServerNames: serverNames,
+            servers: serversPayload,
             personaCount,
           }),
         },
@@ -165,8 +170,7 @@ export function GenerateSessionsDialog({
           },
           body: JSON.stringify({
             projectId: chatbox.projectId,
-            selectedServerIds: serverIds,
-            selectedServerNames: serverNames,
+            servers: serversPayload,
             personas: selected.map(({ selected: _, ...rest }) => rest),
             sessionsPerPersona,
             maxTurns,
@@ -339,7 +343,7 @@ export function GenerateSessionsDialog({
               <Button
                 size="sm"
                 onClick={handleGenerate}
-                disabled={!hasServers || generating}
+                disabled={!hasRequiredServers || generating}
               >
                 {generating ? (
                   <>

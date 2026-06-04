@@ -49,6 +49,18 @@ export interface RunSimulationOptions {
   temperature?: number;
   /** When true, approval-required tool calls auto-deny inside the loop. */
   requireToolApproval: boolean;
+  /**
+   * Mirrors the chatbox-host SEP-1865 visibility filter. Undefined → host's
+   * runtime config didn't include it (older backend) and prepareChatV2 uses
+   * its default (filter on).
+   */
+  respectToolVisibility?: boolean;
+  /**
+   * Mirrors the chatbox-host progressive-discovery toggle. Undefined →
+   * prepareChatV2 falls back to its auto policy, matching what a real
+   * visitor would get.
+   */
+  progressiveToolDiscovery?: boolean;
   convexHttpUrl: string;
   convexAuthToken: string;
   authHeader: string;
@@ -124,6 +136,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     systemPrompt,
     temperature,
     requireToolApproval,
+    respectToolVisibility,
+    progressiveToolDiscovery,
     convexHttpUrl,
     convexAuthToken,
     authHeader,
@@ -175,6 +189,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           systemPrompt,
           temperature,
           requireToolApproval,
+          respectToolVisibility,
+          progressiveToolDiscovery,
           convexHttpUrl,
           convexAuthToken,
           authHeader,
@@ -255,6 +271,8 @@ async function runOneSession(args: {
   systemPrompt: string;
   temperature?: number;
   requireToolApproval: boolean;
+  respectToolVisibility?: boolean;
+  progressiveToolDiscovery?: boolean;
   convexHttpUrl: string;
   convexAuthToken: string;
   authHeader: string;
@@ -272,6 +290,8 @@ async function runOneSession(args: {
     systemPrompt,
     temperature,
     requireToolApproval,
+    respectToolVisibility,
+    progressiveToolDiscovery,
     convexHttpUrl,
     convexAuthToken,
     authHeader,
@@ -297,6 +317,14 @@ async function runOneSession(args: {
       systemPrompt,
       temperature,
       requireToolApproval,
+      respectToolVisibility,
+      ...(progressiveToolDiscovery !== undefined
+        ? {
+            progressiveToolDiscovery: {
+              enabled: progressiveToolDiscovery,
+            },
+          }
+        : {}),
     });
 
     let messageHistory: ModelMessage[] = [];
