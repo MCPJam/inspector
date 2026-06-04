@@ -150,6 +150,17 @@ export interface MCPJamHandlerOptions {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  /**
+   * Approval-pause policy. `"prompt"` (default) is the real-chat path:
+   * approval-required tool calls pause the loop until the user answers
+   * via the next round-trip. `"auto-deny"` is the synthetic-session
+   * path: each approval-required tool call resolves with an
+   * `approval-denied (synthetic session)` error result and the loop
+   * continues so the model can adapt. Real chat call sites pass
+   * `"prompt"` (or omit the option); the synthetic-session runner
+   * passes `"auto-deny"`.
+   */
+  approvalMode?: "prompt" | "auto-deny";
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
@@ -243,6 +254,7 @@ interface StepContext {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
   usedToolCallIds: Set<string>;
   traceTurn: LiveTraceTurnContext;
@@ -1227,6 +1239,7 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    approvalMode,
     stepIndex,
     usedToolCallIds,
     traceTurn,
@@ -1480,7 +1493,83 @@ async function processOneStep(
       return false;
     })();
 
-    if (requireToolApproval && hasUnresolvedRealToolCall) {
+    if (
+      requireToolApproval &&
+      hasUnresolvedRealToolCall &&
+      approvalMode === "auto-deny"
+    ) {
+      // Synthetic-session path: instead of pausing the loop for a
+      // human approval that will never come, synthesize a denial
+      // tool-result for every approval-required unresolved real
+      // tool call so the model can react and continue. Meta-tool
+      // calls in the same step still execute normally below.
+      const resultIds = new Set<string>();
+      for (const msg of messageHistory) {
+        if (msg?.role !== "tool") continue;
+        for (const part of (msg as ToolModelMessage).content) {
+          if (part.type === "tool-result") resultIds.add(part.toolCallId);
+        }
+      }
+      const deniedByAssistantIdx = new Map<number, ToolResultPart[]>();
+      for (let i = 0; i < messageHistory.length; i++) {
+        const msg = messageHistory[i];
+        if (msg?.role !== "assistant") continue;
+        const content = (msg as AssistantModelMessage).content;
+        if (!Array.isArray(content)) continue;
+        for (const part of content) {
+          if (
+            part.type !== "tool-call" ||
+            resultIds.has(part.toolCallId) ||
+            isApprovalFreeMetaToolName(part.toolName, progressivePlan)
+          ) {
+            continue;
+          }
+          const denial: ToolResultPart = {
+            type: "tool-result",
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            output: {
+              type: "error-text",
+              value: "approval-denied (synthetic session)",
+            },
+          };
+          const bucket = deniedByAssistantIdx.get(i) ?? [];
+          bucket.push(denial);
+          deniedByAssistantIdx.set(i, bucket);
+        }
+      }
+      if (deniedByAssistantIdx.size > 0) {
+        const denialMessages: ModelMessage[] = [];
+        const sortedKeys = [...deniedByAssistantIdx.keys()].sort(
+          (a, b) => b - a
+        );
+        for (const idx of sortedKeys) {
+          const denialContent = deniedByAssistantIdx.get(idx)!;
+          const denialMsg = {
+            role: "tool",
+            content: denialContent,
+          } as ModelMessage;
+          messageHistory.splice(idx + 1, 0, denialMsg);
+          denialMessages.push(denialMsg);
+        }
+        emitToolResults(
+          writer,
+          mcpClientManager,
+          denialMessages,
+          traceTurn,
+          stepIndex
+        );
+      }
+      // Fall through to the normal tool-execution branch below so
+      // meta-tools still run and the loop continues. The synthesized
+      // denials count as resolved tool-results for the next step.
+    }
+
+    if (
+      requireToolApproval &&
+      hasUnresolvedRealToolCall &&
+      approvalMode !== "auto-deny"
+    ) {
       // Drain any unresolved meta-tool calls (search/load) before pausing
       // for approval on real tools. Otherwise mixed-step turns (model
       // emits a load_mcp_tools + a real tool in one assistant message)
@@ -1768,12 +1857,53 @@ async function processOneStep(
 }
 
 /**
- * Main handler for MCPJam-provided models.
- * Orchestrates the agentic loop between Convex (LLM) and local tool execution.
+ * Result returned from {@link runChatEngineLoop}.
+ *
+ * - `streamSink: "ui"` callers get a Hono-shaped Response built from
+ *   {@link createUIMessageStreamResponse}, exactly as the live `/stream`
+ *   route expects. The Response's body, when drained, runs the agent
+ *   loop and fires `onConversationComplete` via `onFinish`.
+ *
+ * - `streamSink: "none"` callers (synthetic runner) get the captured
+ *   `messageHistory` synchronously — the engine ran inline with a no-op
+ *   writer, no `createUIMessageStream`, no Response. `messageHistory`
+ *   is the same array reference that was passed to
+ *   `onConversationComplete` (if `runSucceeded && !aborted`).
  */
-export async function handleMCPJamFreeChatModel(
-  options: MCPJamHandlerOptions
-): Promise<Response> {
+export interface ChatEngineLoopResult {
+  response?: Response;
+  messageHistory: ModelMessage[];
+  turnTrace?: PersistedTurnTrace;
+  aborted: boolean;
+}
+
+/**
+ * Core engine for the MCPJam agentic chat loop.
+ *
+ * This is the body that used to live inside `handleMCPJamFreeChatModel`.
+ * It owns the per-step Convex `/stream` fetch + local tool execution
+ * cycle, the trace event emission, and the conversation persistence tap.
+ *
+ * Two delivery modes:
+ *
+ * - `streamSink: "ui"` wraps the loop in `createUIMessageStream` +
+ *   `createUIMessageStreamResponse` and returns a Hono Response. This is
+ *   byte-for-byte the same chunk sequence as before the extraction
+ *   (covered by `mcpjam-stream-handler-snapshot.test.ts`).
+ *
+ * - `streamSink: "none"` runs the same `execute` closure with a no-op
+ *   writer and then calls `onFinish` directly. No `Response` is built;
+ *   the synthetic runner reads the transcript out of the returned
+ *   `messageHistory` (also delivered via `onConversationComplete`).
+ *
+ * `handleMCPJamFreeChatModel` is now a thin wrapper around this in
+ * `streamSink: "ui"` mode; `runAssistantTurn` calls it in either mode
+ * depending on the caller's `streamSink` choice.
+ */
+export async function runChatEngineLoop(
+  options: MCPJamHandlerOptions,
+  streamSink: "ui" | "none"
+): Promise<ChatEngineLoopResult> {
   const {
     messages,
     modelId,
@@ -1787,6 +1917,7 @@ export async function handleMCPJamFreeChatModel(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    approvalMode,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -1868,8 +1999,16 @@ export async function handleMCPJamFreeChatModel(
   let runSucceeded = false;
   let aborted = false;
 
-  const stream = createUIMessageStream({
-    execute: async ({ writer }) => {
+  // Engine `execute` closure. Factored so it can be invoked either via
+  // `createUIMessageStream` (streamSink: "ui") or directly with a no-op
+  // writer (streamSink: "none"). Captures the engine's shared state
+  // (`messageHistory`, `traceTurn`, `steps`, `runSucceeded`, `aborted`)
+  // via closure exactly as before.
+  const executeEngine = async ({
+    writer,
+  }: {
+    writer: { write: (chunk: UIMessageChunk) => void };
+  }) => {
       let finishEmitted = false;
       let streamClosed = false;
       let lastWriteAt = Date.now();
@@ -2014,6 +2153,7 @@ export async function handleMCPJamFreeChatModel(
             mcpClientManager,
             selectedServers,
             requireToolApproval,
+            approvalMode,
             stepIndex: effectiveSteps(),
             usedToolCallIds,
             traceTurn,
@@ -2130,27 +2270,35 @@ export async function handleMCPJamFreeChatModel(
           abortSignal.removeEventListener("abort", abortListener);
         }
       }
-    },
-    onFinish: async () => {
+  };
+
+  // Engine `onFinish` closure. Same logic that used to live as the
+  // `onFinish` option on `createUIMessageStream`. Captures the latest
+  // `turnTrace` (if produced) so the engine result can surface it to
+  // synthetic-runner callers via {@link ChatEngineLoopResult.turnTrace}.
+  let capturedTurnTrace: PersistedTurnTrace | undefined;
+  const onFinishEngine = async () => {
       try {
         // Persist only successful, non-aborted turns. An aborted turn is
         // partial by definition — recording it as a completed conversation
         // would corrupt history and reverse the cost-safety win.
         if (runSucceeded && !aborted) {
+          const trace: PersistedTurnTrace = {
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+            startedAt: traceTurn.turnStartedAt,
+            endedAt: Date.now(),
+            spans: [...traceTurn.turnSpans],
+            usage: traceTurn.turnUsage,
+            finishReason:
+              promptStepBaseIndex + steps >= resolvedMaxSteps
+                ? "length"
+                : "stop",
+            modelId,
+          };
+          capturedTurnTrace = trace;
           try {
-            await onConversationComplete?.([...messageHistory], {
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              startedAt: traceTurn.turnStartedAt,
-              endedAt: Date.now(),
-              spans: [...traceTurn.turnSpans],
-              usage: traceTurn.turnUsage,
-              finishReason:
-                promptStepBaseIndex + steps >= resolvedMaxSteps
-                  ? "length"
-                  : "stop",
-              modelId,
-            });
+            await onConversationComplete?.([...messageHistory], trace);
           } catch (persistenceError) {
             logger.error(
               "[mcpjam-stream-handler] Error while persisting conversation",
@@ -2168,8 +2316,68 @@ export async function handleMCPJamFreeChatModel(
           );
         }
       }
-    },
-  });
+  };
 
-  return createUIMessageStreamResponse({ stream });
+  if (streamSink === "ui") {
+    const stream = createUIMessageStream({
+      execute: executeEngine,
+      onFinish: onFinishEngine,
+    });
+    const response = createUIMessageStreamResponse({ stream });
+    return {
+      response,
+      messageHistory,
+      aborted: false,
+      // turnTrace will be captured inside `onFinish` once the caller
+      // drains the Response body; we don't surface it on the eager
+      // result for the UI-sink path because the live route doesn't
+      // need it (persistence runs via `onConversationComplete`).
+    };
+  }
+
+  // streamSink === "none": run the engine inline against a no-op writer.
+  // The agent loop, trace events, and `onConversationComplete` tap all
+  // still fire — we just discard the SSE chunks. No `Response` is
+  // constructed and no body is drained, so `runAssistantTurn` can return
+  // the captured transcript synchronously without the previous
+  // facade-style drain dance.
+  const noopWriter = {
+    write: (_chunk: UIMessageChunk) => {
+      // Discard. The agent-loop trace/persistence side-effects fire via
+      // closures over engine state, not via the writer.
+    },
+  };
+  try {
+    await executeEngine({ writer: noopWriter });
+  } finally {
+    await onFinishEngine();
+  }
+  return {
+    messageHistory,
+    aborted,
+    ...(capturedTurnTrace ? { turnTrace: capturedTurnTrace } : {}),
+  };
+}
+
+/**
+ * Main handler for MCPJam-provided models.
+ *
+ * Thin wrapper around {@link runChatEngineLoop} for the live `/stream`
+ * path. The engine produces an SSE Response that the chat-v2 routes
+ * hand directly back to Hono.
+ *
+ * The signature is preserved so `handleHostedOrgChatModel` (org BYOK
+ * delegation chain) can continue forwarding `endpointPath: "/stream/org"`
+ * and `extraBodyFields: { providerKey }` without modification.
+ */
+export async function handleMCPJamFreeChatModel(
+  options: MCPJamHandlerOptions
+): Promise<Response> {
+  const result = await runChatEngineLoop(options, "ui");
+  if (!result.response) {
+    throw new Error(
+      "runChatEngineLoop(streamSink: 'ui') returned no Response — internal invariant violated"
+    );
+  }
+  return result.response;
 }
