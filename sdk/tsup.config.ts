@@ -18,6 +18,9 @@ export default defineConfig({
     "src/model-factory.ts",
     "src/matchers.ts",
     "src/predicates/index.ts",
+    "src/host-config/index.ts",
+    // Low-level first-party entry used by the backend and SDK tooling.
+    "src/host-config/internal.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],

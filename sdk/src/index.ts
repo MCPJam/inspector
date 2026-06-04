@@ -536,3 +536,22 @@ export type {
   EvalToolCall,
   EvalToolCallMatchResult,
 } from "./matchers.js";
+
+// HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).
+// SOURCE OF TRUTH for the host shape + canonicalizer + hash; the Convex
+// backend hand-mirrors it under a golden-vector parity test. The canonicalizer
+// itself is internal — `Host.toJSON()` / `Host.hash()` are the public seam.
+// `McpProtocolVersion` is intentionally omitted here — already exported above.
+export { Host } from "./host-config/index.js";
+export type {
+  HostInit,
+  HostJson,
+  HostMcp,
+  HostServerOverride,
+  HostConnectionDefaults,
+  HostStyleId,
+  ServerId,
+  CspDomainSet,
+  OpenAiAppsCapabilities,
+  McpAppsCapabilities,
+} from "./host-config/index.js";
