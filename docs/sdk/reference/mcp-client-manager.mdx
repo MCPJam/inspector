@@ -35,6 +35,8 @@ For subprocess-based MCP servers.
 | `command` | `string` | Yes | The command to run (e.g., `"node"`, `"python"`, `"npx"`) |
 | `args` | `string[]` | No | Command arguments |
 | `env` | `Record<string, string>` | No | Environment variables for the subprocess |
+| `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
+| `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
 
 ```typescript
 {
@@ -66,6 +68,8 @@ For remote MCP servers via SSE or Streamable HTTP.
 | `reconnectionOptions` | `StreamableHTTPClientTransportOptions["reconnectionOptions"]` | No | Streamable HTTP reconnection behavior |
 | `sessionId` | `string` | No | Existing Streamable HTTP session ID |
 | `preferSSE` | `boolean` | No | Forces SSE instead of Streamable HTTP |
+| `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
+| `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
 
 ```typescript
 {
@@ -99,6 +103,22 @@ When `refreshToken` is provided, the SDK will exchange it for an access token du
 <Note>
 `refreshToken` is mutually exclusive with `accessToken`, `authProvider`, and `requestInit.headers.Authorization`.
 </Note>
+
+##### Client Identity Example
+
+Use `clientInfo` to pin the identity sent in MCP `initialize`. This is useful when testing how a server behaves for different clients (e.g., Claude, ChatGPT):
+
+```typescript
+{
+  remoteServer: {
+    url: "https://mcp.example.com/mcp",
+    clientInfo: { name: "claude-ai", version: "0.1.0" },
+    supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+  },
+}
+```
+
+The first entry in `supportedProtocolVersions` is proposed to the server; the full list is the accept-set. A server that negotiates any listed version is accepted.
 
 ### Example
 
@@ -495,8 +515,60 @@ console.log(result.getText());
 ```
 
 <Note>
-Tools with `visibility: ["app"]` are automatically filtered out by `TestAgent` per MCP specification. These tools are callable by apps but should not be exposed to the AI model.
+`getTools()` returns all tools including app-only ones. Tools with `_meta.ui.visibility = ["app"]` are filtered out by `getToolsForAiSdk()` per SEP-1865 before being passed to the model. These tools remain callable by apps via the MCP bridge.
 </Note>
+
+---
+
+### getToolsForAiSdk()
+
+Returns tools in Vercel AI SDK format, ready to pass directly to `generateText()` or `streamText()`. App-only tools are filtered out by default per SEP-1865.
+
+```typescript
+getToolsForAiSdk(
+  serverIds?: string[] | string,
+  options?: {
+    schemas?: ToolSchemaOverrides | "automatic";
+    needsApproval?: boolean;
+    includeAppOnly?: boolean;
+  }
+): Promise<ToolSet>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverIds` | `string[] \| string` | Optional. Server IDs to include. If omitted, uses all connected servers. |
+| `options.schemas` | `ToolSchemaOverrides \| "automatic"` | Optional. Control JSON schema conversion. |
+| `options.needsApproval` | `boolean` | Optional. When true, each tool call requires user approval before execution. |
+| `options.includeAppOnly` | `boolean` | Optional. When true, includes tools with `_meta.ui.visibility = ["app"]` in the returned set. Defaults to `false` (spec-compliant). Use only when intentionally mirroring a host that does not implement SEP-1865 visibility filtering. |
+
+#### Returns
+
+`Promise<ToolSet>` - Tools in Vercel AI SDK format with execution wired up.
+
+#### Example
+
+```typescript
+// Default: app-only tools are excluded (spec-compliant)
+const tools = await manager.getToolsForAiSdk(["myServer"]);
+
+// Include app-only tools (e.g. to mirror a non-filtering host)
+const allTools = await manager.getToolsForAiSdk(["myServer"], {
+  includeAppOnly: true,
+});
+
+// Use directly with Vercel AI SDK
+import { generateText } from "ai";
+import { openai } from "@ai-sdk/openai";
+
+const response = await generateText({
+  model: openai("gpt-4o"),
+  tools: await manager.getToolsForAiSdk(),
+  messages: [{ role: "user", content: "Add 5 and 7" }],
+});
+```
 
 ---
 

@@ -25,6 +25,23 @@ export interface CreditBalanceState {
   freeDailyCreditsTotal: number;
   /** Whether org credit spending is paused for manual review. */
   walletLocked: boolean;
+  /**
+   * Which credit model the server is billing this org against. "daily" is the
+   * free per-day bucket (free orgs + guests); "monthly_per_seat" is the team
+   * monthly allowance. Absent/unknown is treated as "daily".
+   */
+  billingModel: "daily" | "monthly_per_seat";
+  /** Team monthly allowance granted this period. Only set when monthly. */
+  monthlyAllowanceTotal?: number;
+  /** Team monthly allowance still available this period. Only set when monthly. */
+  monthlyAllowanceRemaining?: number;
+  /** Epoch ms when the monthly allowance resets. Only set when monthly. */
+  monthlyResetAt?: number | null;
+  /**
+   * Paid top-up credits still available, kept separate from the monthly
+   * allowance (the allowance is spent first). Only set when monthly.
+   */
+  paidCreditsRemaining?: number;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -37,6 +54,12 @@ const clampPercent = (value: unknown): number => {
 const optionalNumber = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
+// Returns the number when present and finite, otherwise undefined. Used for
+// the monthly fields so an absent value stays undefined (distinguishable from
+// a real 0 allowance) and the renderer can skip cleanly.
+const optionalNumberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
 const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
@@ -48,6 +71,16 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
     freeDailyCreditsRemaining: optionalNumber(r.freeDailyCreditsRemaining),
     freeDailyCreditsTotal: optionalNumber(r.freeDailyCreditsTotal),
     walletLocked: r.walletLocked === true,
+    // Discriminant: only the explicit "monthly_per_seat" opts into the monthly
+    // view; anything else (including absent) falls back to daily.
+    billingModel:
+      r.billingModel === "monthly_per_seat" ? "monthly_per_seat" : "daily",
+    monthlyAllowanceTotal: optionalNumberOrUndefined(r.monthlyAllowanceTotal),
+    monthlyAllowanceRemaining: optionalNumberOrUndefined(
+      r.monthlyAllowanceRemaining,
+    ),
+    monthlyResetAt: optionalNumberOrUndefined(r.monthlyResetAt) ?? null,
+    paidCreditsRemaining: optionalNumberOrUndefined(r.paidCreditsRemaining),
   };
 };
 

@@ -76,6 +76,8 @@ describe("useCreditBalance", () => {
       freeDailyCreditsRemaining: 7,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
+      billingModel: "daily",
+      monthlyResetAt: null,
     });
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isAuthenticated).toBe(true);
@@ -109,5 +111,54 @@ describe("useCreditBalance", () => {
       "skip"
     );
     expect(result.current.balance).toBeUndefined();
+  });
+
+  it("surfaces the monthly model fields for team orgs", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    mocks.queryResult = {
+      billingModel: "monthly_per_seat",
+      availableCredits: 19_500,
+      hasPurchaseHistory: true,
+      monthlyAllowanceTotal: 18_000,
+      monthlyAllowanceRemaining: 13_950,
+      monthlyResetAt: 1_777_777_777_000,
+      paidCreditsRemaining: 1_500,
+      walletLocked: false,
+    };
+
+    const { result } = renderHook(() =>
+      useCreditBalance({ organizationId: "org-1" })
+    );
+
+    expect(result.current.balance?.billingModel).toBe("monthly_per_seat");
+    expect(result.current.balance?.monthlyAllowanceTotal).toBe(18_000);
+    expect(result.current.balance?.monthlyAllowanceRemaining).toBe(13_950);
+    expect(result.current.balance?.paidCreditsRemaining).toBe(1_500);
+    expect(result.current.balance?.monthlyResetAt).toBe(1_777_777_777_000);
+  });
+
+  it("defaults billingModel to daily when absent or unrecognized", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    mocks.queryResult = {
+      billingModel: "something_new",
+      availableCredits: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 10,
+      freeDailyResetAt: 1,
+      freeDailyCreditsRemaining: 1,
+      freeDailyCreditsTotal: 20,
+      walletLocked: false,
+    };
+
+    const { result } = renderHook(() =>
+      useCreditBalance({ organizationId: "org-1" })
+    );
+
+    expect(result.current.balance?.billingModel).toBe("daily");
+    // Monthly numerics stay undefined (not coerced to 0).
+    expect(result.current.balance?.monthlyAllowanceTotal).toBeUndefined();
+    expect(result.current.balance?.monthlyAllowanceRemaining).toBeUndefined();
   });
 });
