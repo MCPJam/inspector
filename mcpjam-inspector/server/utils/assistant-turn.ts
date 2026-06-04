@@ -39,35 +39,17 @@ import type { PersistedTurnTrace } from "./chat-ingestion.js";
 /**
  * Authentication context for `runAssistantTurn`.
  *
- * - `"user_bearer"` is the live-chat path: the caller forwards the
- *   inbound `authorization` header from the browser request directly to
- *   Convex. `clientIp` is the originating IP for the per-IP guest spend
- *   cap (see `mcpjam-stream-handler.ts` doc on `clientIp`).
- * - `"service_token"` is the durable-worker path (synthetic runner):
- *   the inspector authenticates to Convex with
- *   `INSPECTOR_SERVICE_TOKEN` so jobs created hours earlier can be
- *   processed without storing a user bearer on the run record. The
- *   exact header wire format is intentionally not exposed here — the
- *   wrapper translates `token` into the `authorization` field that
- *   `handleMCPJamFreeChatModel` already understands. See plan v3 §D.
+ * The caller forwards the inbound `authorization` header from the browser
+ * request directly to Convex. `clientIp` is the originating IP for the
+ * per-IP guest spend cap (see `mcpjam-stream-handler.ts` doc on `clientIp`).
  */
-export type RunAssistantTurnAuthContext =
-  | {
-      kind: "user_bearer";
-      /** Full `authorization` header value, e.g. `"Bearer …"`. */
-      token: string;
-      /** Originating client IP for the per-IP guest spend cap. */
-      clientIp?: string | null;
-    }
-  | {
-      kind: "service_token";
-      /** Raw service token. Stage 1 does not yet ship a service-token
-       *  caller, so this is wired through as `authorization` for forward
-       *  compatibility; the synthetic runner stage will switch the
-       *  header to `x-inspector-service-token` per plan v3 §D. */
-      token: string;
-      clientIp?: string | null;
-    };
+export type RunAssistantTurnAuthContext = {
+  kind: "user_bearer";
+  /** Full `authorization` header value, e.g. `"Bearer …"`. */
+  token: string;
+  /** Originating client IP for the per-IP guest spend cap. */
+  clientIp?: string | null;
+};
 
 /** Where streamed chunks go. */
 export type RunAssistantTurnStreamSink = "ui" | "none";

@@ -146,7 +146,7 @@ describe("runAssistantTurn", () => {
       mcpClientManager: {
         getAllToolsMetadata: vi.fn().mockReturnValue({}),
       } as any,
-      authContext: { kind: "service_token", token: "Bearer test-token" },
+      authContext: { kind: "user_bearer", token: "Bearer test-token" },
       sourceType: "chatbox",
       approvalMode: "auto-deny",
       streamSink: "none",
@@ -242,7 +242,7 @@ describe("runAssistantTurn", () => {
       mcpClientManager: {
         getAllToolsMetadata: vi.fn().mockReturnValue({}),
       } as any,
-      authContext: { kind: "service_token", token: "Bearer service" },
+      authContext: { kind: "user_bearer", token: "Bearer service" },
       sourceType: "chatbox",
       streamSink: "none",
       persistMode: "caller",

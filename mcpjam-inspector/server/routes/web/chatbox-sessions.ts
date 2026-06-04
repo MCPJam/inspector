@@ -7,7 +7,6 @@ import {
   handleRoute,
   parseWithSchema,
   readJsonBody,
-  authorizeBatch,
   createAuthorizedManager,
   withManager,
 } from "./auth.js";
@@ -21,7 +20,6 @@ import {
   type PersonaSlate,
 } from "../../services/session-agent.js";
 import { startSimulation } from "../../services/sessionSimulation/runner.js";
-import { getRunnerMode } from "../../services/sessionSimulation/durable-runner.js";
 import { logger } from "../../utils/logger.js";
 import { isMCPJamProvidedModel } from "@/shared/types";
 
@@ -225,66 +223,6 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       );
     }
 
-    // Resolve the worker-safe runtime descriptor (plan v4 §C). This
-    // batch authorize round-trip happens while we still hold the
-    // user bearer; the result becomes the snapshot the durable worker
-    // reads later without any user identity.
-    const batch = await authorizeBatch(
-      c,
-      bearerToken,
-      body.projectId,
-      selectedServerIds,
-      {
-        accessScope: "chat_v2",
-        chatboxId,
-        accessVersion: body.accessVersion,
-      },
-    );
-    const descriptorPerServer: Array<Record<string, unknown>> = [];
-    for (const serverId of selectedServerIds) {
-      const entry = batch.results[serverId];
-      if (!entry?.ok) continue;
-      const sc = entry.serverConfig;
-      const useOAuth = sc.useOAuth === true;
-      descriptorPerServer.push({
-        serverId,
-        transportType: sc.transportType ?? "http",
-        ...(sc.url ? { url: sc.url } : {}),
-        ...(sc.headers ? { headers: sc.headers } : {}),
-        useOAuth,
-        ...(useOAuth && entry.oauthAccessToken
-          ? { oauthAccessToken: entry.oauthAccessToken }
-          : {}),
-      });
-    }
-    const runtimeDescriptor: Record<string, unknown> = {
-      selectedServerIds,
-      perServer: descriptorPerServer,
-      chatboxConfig: {
-        allowedServerIds: selectedServerIds,
-        accessVersion: body.accessVersion,
-        requireToolApproval: runtime.config.requireToolApproval,
-        modelId: runtime.config.modelId,
-        modelSource: "mcpjam",
-        // Carried so the durable worker can drive the chat loop
-        // without re-fetching the chatbox row.
-        systemPrompt: runtime.config.systemPrompt,
-        ...(typeof runtime.config.temperature === "number"
-          ? { temperature: runtime.config.temperature }
-          : {}),
-        ...(typeof runtime.config.respectToolVisibility === "boolean"
-          ? { respectToolVisibility: runtime.config.respectToolVisibility }
-          : {}),
-        ...(typeof runtime.config.progressiveToolDiscovery === "boolean"
-          ? {
-              progressiveToolDiscovery:
-                runtime.config.progressiveToolDiscovery,
-            }
-          : {}),
-      },
-    };
-
-    // workerScope: web route is the hosted-shareable surface, plan §I.
     const { runId } = await createRun(
       convexHttpUrl,
       bearerToken,
@@ -293,7 +231,6 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       body.personas as PersonaSlate[],
       body.sessionsPerPersona,
       body.maxTurns,
-      { workerScope: "any", runtimeDescriptor },
     );
 
     const projectId = body.projectId;
@@ -306,12 +243,6 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const requireToolApproval = runtime.config.requireToolApproval;
     const respectToolVisibility = runtime.config.respectToolVisibility;
     const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
-
-    if (getRunnerMode() === "durable") {
-      // The pump (boot in `server/app.ts`) claims the freshly-inserted
-      // jobs on its next tick. The route returns immediately.
-      return { runId };
-    }
 
     setImmediate(() => {
       startSimulation({

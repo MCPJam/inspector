@@ -45,11 +45,6 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
-import {
-  getRunnerMode,
-  startDurablePump,
-  stopDurablePump,
-} from "./services/sessionSimulation/durable-runner.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -70,30 +65,6 @@ export function createHonoApp() {
   initXAAIdpKeyPair();
 
   startGuestAuthProvisioningInBackground();
-
-  // Plan v4 §F: boot the durable synthesis pump when the env literal is
-  // set. Default mode stays in_process until Commit G flips it. The
-  // pump itself is a no-op if CONVEX_HTTP_URL isn't configured yet —
-  // it logs and exits the loop on the next tick.
-  if (getRunnerMode() === "durable") {
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (convexHttpUrl) {
-      startDurablePump({ convexHttpUrl });
-      // Graceful shutdown: stop claiming new jobs on SIGTERM/SIGINT,
-      // finish the current job, timeout after 30s. We register the
-      // handlers once; subsequent process restarts get a fresh worker
-      // identity per `worker-identity.ts`.
-      const shutdown = () => {
-        void stopDurablePump();
-      };
-      process.once("SIGTERM", shutdown);
-      process.once("SIGINT", shutdown);
-    } else {
-      appLogger.warn(
-        "[sessionSimulation.durable-runner] SYNTHESIS_RUNNER_MODE=durable but CONVEX_HTTP_URL is unset; pump not started",
-      );
-    }
-  }
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>

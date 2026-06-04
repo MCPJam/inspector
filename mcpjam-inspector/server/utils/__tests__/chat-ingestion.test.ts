@@ -459,55 +459,7 @@ describe("chat-ingestion", () => {
     expect("hostConfig" in body).toBe(false);
   });
 
-  it("worker ingestMode posts to /ingest-chat/worker with the service-token header", async () => {
-    await persistChatSessionToConvex({
-      chatSessionId: "synth_run-1_p-1_0",
-      modelId: "openai/gpt-oss-120b",
-      modelSource: "mcpjam",
-      ingestMode: "worker",
-      serviceToken: "svc-token-xyz",
-      projectId: "proj-1",
-      chatboxId: "cb-1",
-      synthesisRunId: "run-1",
-      sourceType: "chatbox",
-      surface: "share_link",
-      startedAt: 1,
-      synthetic: true,
-      personaId: "p-1",
-      personaLabel: "Alice",
-    });
-
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    const [url, request] = (global.fetch as any).mock.calls[0];
-    expect(url).toBe("https://test-convex.example.com/ingest-chat/worker");
-    const headers = request.headers as Record<string, string>;
-    expect(headers["X-Inspector-Service-Token"]).toBe("svc-token-xyz");
-    expect(headers["authorization"]).toBeUndefined();
-    const body = JSON.parse((request?.body as string) ?? "{}");
-    expect(body.synthesisRunId).toBe("run-1");
-    expect(body.chatboxId).toBe("cb-1");
-    expect(body.projectId).toBe("proj-1");
-    expect(body.synthetic).toBe(true);
-  });
-
-  it("worker ingestMode skips when required identity fields are missing", async () => {
-    await persistChatSessionToConvex({
-      chatSessionId: "synth_run-1_p-1_0",
-      modelId: "openai/gpt-oss-120b",
-      modelSource: "mcpjam",
-      ingestMode: "worker",
-      serviceToken: "svc-token-xyz",
-      // Missing projectId/chatboxId/synthesisRunId
-      startedAt: 1,
-    });
-    expect(global.fetch).not.toHaveBeenCalled();
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("worker ingestion called without"),
-      expect.any(Object)
-    );
-  });
-
-  it("user ingestMode (default) keeps posting to /ingest-chat with the bearer", async () => {
+  it("posts to /ingest-chat with the bearer authorization header", async () => {
     await persistChatSessionToConvex({
       chatSessionId: "session-user-default",
       modelId: "openai/gpt-4o-mini",
@@ -521,7 +473,6 @@ describe("chat-ingestion", () => {
     expect(url).toBe("https://test-convex.example.com/ingest-chat");
     const headers = request.headers as Record<string, string>;
     expect(headers["authorization"]).toBe("Bearer bearer-token");
-    expect(headers["X-Inspector-Service-Token"]).toBeUndefined();
   });
 
   it("includes directVisibility when persisting a direct chat", async () => {

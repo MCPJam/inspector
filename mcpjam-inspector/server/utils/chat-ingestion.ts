@@ -143,26 +143,7 @@ interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
   modelSource: "mcpjam" | "byok" | "local_byok";
-  /**
-   * User-mode bearer; ignored when `ingestMode === 'worker'`. The
-   * worker path uses `serviceToken` + the `/ingest-chat/worker` route
-   * (plan v4 §F) so the durable runner doesn't need to hold a user
-   * bearer at job-execution time.
-   */
   authHeader?: string;
-  /**
-   * Which Convex endpoint to call:
-   *   - `'user'` (default, existing behavior): POST `/ingest-chat`
-   *     with `Authorization: <authHeader>`.
-   *   - `'worker'`: POST `/ingest-chat/worker` with
-   *     `X-Inspector-Service-Token: <serviceToken>`. The backend
-   *     validates `synthesisRunId` + `chatboxId` + `projectId`
-   *     against the run record before persisting, so all three are
-   *     required when this mode is used.
-   */
-  ingestMode?: "user" | "worker";
-  /** Required when `ingestMode === 'worker'`. */
-  serviceToken?: string;
   projectId?: string;
   sourceType?: "chatbox" | "direct";
   directVisibility?: "private" | "project";
@@ -331,30 +312,7 @@ export async function persistChatSessionToConvex(
   if (!convexUrl || !options.chatSessionId) {
     return;
   }
-  const ingestMode = options.ingestMode ?? "user";
-  if (ingestMode === "user") {
-    if (!options.authHeader) return;
-  } else {
-    // Worker mode: backend validates these three against the run record
-    // before persisting, so all of them are mandatory here.
-    if (
-      !options.serviceToken ||
-      !options.synthesisRunId ||
-      !options.chatboxId ||
-      !options.projectId
-    ) {
-      logger.warn(
-        "[chat-session-persistence] worker ingestion called without serviceToken / synthesisRunId / chatboxId / projectId; skipping",
-        {
-          hasServiceToken: Boolean(options.serviceToken),
-          hasSynthesisRunId: Boolean(options.synthesisRunId),
-          hasChatboxId: Boolean(options.chatboxId),
-          hasProjectId: Boolean(options.projectId),
-        }
-      );
-      return;
-    }
-  }
+  if (!options.authHeader) return;
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_INGEST_TIMEOUT_MS;
   const controller = new AbortController();
@@ -362,23 +320,14 @@ export async function persistChatSessionToConvex(
     controller.abort();
   }, timeoutMs);
 
-  const ingestPath =
-    ingestMode === "worker" ? "/ingest-chat/worker" : "/ingest-chat";
-  const ingestHeaders: Record<string, string> =
-    ingestMode === "worker"
-      ? {
-          "content-type": "application/json",
-          "X-Inspector-Service-Token": options.serviceToken!,
-          ...options.forwardHeaders,
-        }
-      : {
-          "content-type": "application/json",
-          authorization: options.authHeader!,
-          ...options.forwardHeaders,
-        };
+  const ingestHeaders: Record<string, string> = {
+    "content-type": "application/json",
+    authorization: options.authHeader,
+    ...options.forwardHeaders,
+  };
 
   try {
-    const response = await fetch(`${convexUrl}${ingestPath}`, {
+    const response = await fetch(`${convexUrl}/ingest-chat`, {
       method: "POST",
       headers: ingestHeaders,
       signal: controller.signal,
