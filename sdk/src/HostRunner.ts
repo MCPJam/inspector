@@ -163,8 +163,12 @@ type StartedToolCall = {
 
 
 /**
- * Agent for running LLM prompts with tool calling.
- * Wraps the AI SDK generateText function with proper tool integration.
+ * Synchronous executor that runs LLM prompts with tool calling. Wraps the
+ * AI SDK `generateText` and applies the host-derived execution policy
+ * (visibility filtering, OpenAI compat injection) at construction time.
+ *
+ * Implements {@link HostExecutor} so it plugs into `EvalTest.run(...)` /
+ * `EvalSuite.run(...)` interchangeably with `HostRuntime`.
  *
  * @example
  * ```typescript
@@ -173,13 +177,13 @@ type StartedToolCall = {
  * });
  * await manager.connectToServer("everything");
  *
- * const agent = new HostRunner({
+ * const runner = new HostRunner({
  *   tools: await manager.getToolsForAiSdk(["everything"]),
  *   model: "openai/gpt-4o",
  *   apiKey: process.env.OPENAI_API_KEY!,
  * });
  *
- * const result = await agent.run("Add 2 and 3");
+ * const result = await runner.run("Add 2 and 3");
  * console.log(result.toolsCalled()); // ["add"]
  * console.log(result.text); // "The result of adding 2 and 3 is 5."
  * ```
@@ -589,18 +593,18 @@ export class HostRunner implements HostExecutor {
    *
    * @example
    * // Single-turn (default)
-   * const result = await agent.run("Show me projects");
+   * const result = await runner.run("Show me projects");
    *
    * @example
    * // Multi-turn with context
-   * const r1 = await agent.run("Show me projects");
-   * const r2 = await agent.run("Now show tasks", { context: r1 });
+   * const r1 = await runner.run("Show me projects");
+   * const r2 = await runner.run("Now show tasks", { context: r1 });
    *
    * @example
    * // Multi-turn with multiple context results
-   * const r1 = await agent.run("Show projects");
-   * const r2 = await agent.run("Pick the first", { context: r1 });
-   * const r3 = await agent.run("Show tasks", { context: [r1, r2] });
+   * const r1 = await runner.run("Show projects");
+   * const r2 = await runner.run("Pick the first", { context: r1 });
+   * const r3 = await runner.run("Show tasks", { context: [r1, r2] });
    */
   async run(
     message: string,
@@ -836,35 +840,64 @@ export class HostRunner implements HostExecutor {
    * @returns A new HostRunner instance with the merged configuration
    */
   withOptions(options: Partial<HostRunnerConfig>): HostRunner {
-    // Preserve the host snapshot across clones so iteration runners
-    // (EvalTest's per-iteration `executor.withOptions({})` path) keep
-    // `getHostSnapshot()` / `getHostPolicy()` populated and host-derived
-    // defaults (systemPrompt / temperature / injectOpenAiCompat) remain
-    // in effect. Explicit `options.host` still wins.
+    // Two modes:
     //
-    // CRITICAL: preserve `this.model` (the resolved model the parent runner
-    // is using) regardless of which branch we end up in. Without this,
-    // a runner constructed as `new HostRunner({ host, model: "anthropic/..." })`
-    // would clone with `model: undefined` on the host branch, and the
-    // new constructor would fall back to `host.model` — silently switching
-    // models per iteration in `EvalTest`'s clone-per-iteration loop.
+    //   1. `withOptions({})` / `withOptions({ apiKey, ... })` — no host
+    //      change. Preserve the parent's resolved `model`,
+    //      `systemPrompt`, `temperature`, and `injectOpenAiCompat` so
+    //      `EvalTest`'s per-iteration `executor.withOptions({})` clone
+    //      does NOT silently revert an explicit override applied via
+    //      the parent's ctor (e.g. `new HostRunner({ host, model: "X" })`
+    //      would otherwise clone with `model: undefined` and resolve
+    //      back to `host.model`).
+    //
+    //   2. `withOptions({ host: newHost, ... })` — host is being
+    //      REPLACED. The new host is meant to drive defaults, so do NOT
+    //      carry the parent's resolved values; let the new host's
+    //      snapshot supply `model` / `systemPrompt` / `temperature` /
+    //      `injectOpenAiCompat`. Explicit `options.*` still wins.
+    //      Otherwise `withOptions({ host: newHost })` would surprise
+    //      with `getHostSnapshot().model === newHost.model` but the
+    //      runner actually executing against the parent's old model.
+    const replacingHost = options.host !== undefined;
+    const carryParent = !replacingHost;
     const nextHost = options.host ?? this.hostSnapshot;
-    const nextModel = options.model ?? this.model;
+
+    const nextModel =
+      options.model ?? (carryParent ? this.model : undefined);
+    const nextSystemPrompt =
+      options.systemPrompt ?? (carryParent ? this.systemPrompt : undefined);
+    const nextTemperature =
+      options.temperature ?? (carryParent ? this.temperature : undefined);
+    const nextInjectOpenAiCompat =
+      options.injectOpenAiCompat ??
+      (carryParent ? this.injectOpenAiCompat : undefined);
+
     const base = {
       tools: options.tools ?? this.tools,
       apiKey: options.apiKey ?? this.apiKey,
-      systemPrompt: options.systemPrompt ?? this.systemPrompt,
-      temperature: options.temperature ?? this.temperature,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
-      injectOpenAiCompat:
-        options.injectOpenAiCompat ?? this.injectOpenAiCompat,
-      model: nextModel,
+      systemPrompt: nextSystemPrompt,
+      temperature: nextTemperature,
+      injectOpenAiCompat: nextInjectOpenAiCompat,
     };
-    return nextHost
-      ? new HostRunner({ ...base, host: nextHost })
-      : new HostRunner(base);
+
+    if (nextHost) {
+      return new HostRunner({ ...base, host: nextHost, model: nextModel });
+    }
+    if (!nextModel) {
+      // Unreachable in normal use: the parent runner already had a model
+      // (constructor guarantees one) and `carryParent` is true here
+      // (since `replacingHost` is false). Belt-and-braces for the
+      // hypothetical case where a caller tries to drop the host and
+      // model simultaneously.
+      throw new Error(
+        "HostRunner.withOptions: cannot drop both `host` and `model` from a host-backed runner.",
+      );
+    }
+    return new HostRunner({ ...base, model: nextModel });
   }
 
   /**
@@ -991,15 +1024,17 @@ export class HostRunner implements HostExecutor {
   }
 
   /**
-   * Create a mock HostRunner for deterministic eval tests.
-   * The mock agent calls the provided function instead of making real LLM calls.
+   * Create a mock executor for deterministic eval tests. The mock calls
+   * the provided function instead of making real LLM calls, and satisfies
+   * {@link HostExecutor} so it can be passed to `EvalTest.run` /
+   * `EvalSuite.run` directly.
    *
    * @param promptFn - Function that returns a PromptResult for a given message
-   * @returns A HostRunner-compatible object for use in EvalTest/EvalSuite
+   * @returns A HostExecutor compatible with EvalTest / EvalSuite
    *
    * @example
    * ```typescript
-   * const agent = HostRunner.mock(async (message) =>
+   * const runner = HostRunner.mock(async (message) =>
    *   PromptResult.from({
    *     prompt: message,
    *     messages: [{ role: "user", content: message }],
@@ -1012,12 +1047,12 @@ export class HostRunner implements HostExecutor {
    *
    * const test = new EvalTest({
    *   name: "my-test",
-   *   test: async (a) => {
-   *     const r = await a.run("test");
+   *   test: async (executor) => {
+   *     const r = await executor.run("test");
    *     return r.hasToolCall("my_tool");
    *   },
    * });
-   * await test.run(agent, { iterations: 3 });
+   * await test.run(runner, { iterations: 3 });
    * ```
    */
   static mock(

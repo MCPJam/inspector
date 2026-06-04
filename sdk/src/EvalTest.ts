@@ -233,6 +233,8 @@ export class EvalTest {
     executor: HostExecutor,
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
+    // Internal alias kept short so the iteration loop reads cleanly; the
+    // public-facing parameter name is `executor`.
     const agent = executor;
     posthog.capture({
       distinctId: "anonymous",

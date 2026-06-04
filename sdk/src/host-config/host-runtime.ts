@@ -22,6 +22,7 @@
 import type { HostExecutor, PromptOptions } from "../HostExecutor.js";
 import type { PromptResult } from "../PromptResult.js";
 import type { CustomProvider } from "../types.js";
+import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 import {
   assertHostServersKnown,
   resolveKnownServerIds,
@@ -52,6 +53,15 @@ export type HostRuntimeManager = HostServerRegistry & {
       needsApproval?: boolean;
     },
   ): Promise<AiSdkToolRecord>;
+  /**
+   * Optional. When the runtime is bound to a manager that exposes
+   * replayable server configs (the concrete `MCPClientManager` does),
+   * `HostRuntime.getServerReplayConfigs()` delegates here so SDK eval
+   * uploads (`EvalTest`/`EvalSuite` -> `resolveServerReplayConfigs`) can
+   * stamp them without callers manually copying configs into
+   * `mcpjam.serverReplayConfigs`.
+   */
+  getServerReplayConfigs?(): MCPServerReplayConfig[] | undefined;
 };
 
 /**
@@ -180,5 +190,16 @@ export class HostRuntime implements HostExecutor {
    */
   getHostSnapshot(): HostJson {
     return this.host.toJSON();
+  }
+
+  /**
+   * Delegate to the bound manager so SDK eval uploads
+   * (`EvalTest`/`EvalSuite` -> `resolveServerReplayConfigs`) can infer
+   * replay configs from the runtime, matching the `HostRunner` shape.
+   * Returns `undefined` when the manager doesn't expose
+   * `getServerReplayConfigs` (custom structural managers).
+   */
+  getServerReplayConfigs(): MCPServerReplayConfig[] | undefined {
+    return this.manager.getServerReplayConfigs?.();
   }
 }

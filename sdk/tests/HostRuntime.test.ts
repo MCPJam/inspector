@@ -139,6 +139,37 @@ describe("HostRuntime server validation", () => {
   });
 });
 
+describe("HostRuntime.getServerReplayConfigs", () => {
+  it("delegates to manager.getServerReplayConfigs when present", () => {
+    const replayConfigs = [
+      { serverId: "alpha", url: "https://alpha.example/mcp" } as any,
+    ];
+    const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+    const manager: HostRuntimeManager = {
+      hasServer: () => true,
+      listServers: () => ["alpha"],
+      getToolsForAiSdk: async () => ({}),
+      getServerReplayConfigs: () => replayConfigs,
+    };
+    const runtime = host.withManager(manager, baseDefaults);
+
+    expect(runtime.getServerReplayConfigs()).toBe(replayConfigs);
+  });
+
+  it("returns undefined when the manager doesn't implement it (structural manager)", () => {
+    const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+    const manager: HostRuntimeManager = {
+      hasServer: () => true,
+      listServers: () => ["alpha"],
+      getToolsForAiSdk: async () => ({}),
+      // intentionally no getServerReplayConfigs
+    };
+    const runtime = host.withManager(manager, baseDefaults);
+
+    expect(runtime.getServerReplayConfigs()).toBeUndefined();
+  });
+});
+
 describe("HostRuntime end-to-end run", () => {
   it("constructs HostRunner with the snapshot + bound apiKey and returns its result", async () => {
     runnerRunSpy.mockClear();

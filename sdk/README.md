@@ -58,7 +58,7 @@ import { MCPClientManager, HostRunner, EvalTest } from "@mcpjam/sdk";
 
 describe("Asana MCP Evals", () => {
   let manager: MCPClientManager;
-  let agent: HostRunner;
+  let runner: HostRunner;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -69,7 +69,7 @@ describe("Asana MCP Evals", () => {
       },
     });
 
-    agent = new HostRunner({
+    runner = new HostRunner({
       tools: await manager.getToolsForAiSdk(["asana"]),
       model: "openai/gpt-4o",
       apiKey: process.env.OPENAI_API_KEY!,
@@ -84,13 +84,13 @@ describe("Asana MCP Evals", () => {
   test("list workspaces > 80% accuracy", async () => {
     const evalTest = new EvalTest({
       name: "list-workspaces",
-      test: async (agent) => {
-        const result = await agent.run("Show me all my Asana workspaces");
+      test: async (runner) => {
+        const result = await runner.run("Show me all my Asana workspaces");
         return result.hasToolCall("asana_list_workspaces");
       },
     });
 
-    await evalTest.run(agent, {
+    await evalTest.run(runner, {
       iterations: 10,
       onFailure: (report) => console.error(report), // Print the report when a test iteration fails.
     });
@@ -102,18 +102,18 @@ describe("Asana MCP Evals", () => {
   test("get user then list projects > 80% accuracy", async () => {
     const evalTest = new EvalTest({
       name: "user-then-projects",
-      test: async (agent) => {
-        const r1 = await agent.run("Who am I in Asana?");
+      test: async (runner) => {
+        const r1 = await runner.run("Who am I in Asana?");
         if (!r1.hasToolCall("asana_get_user")) return false;
 
-        const r2 = await agent.run("Now list my projects", {
+        const r2 = await runner.run("Now list my projects", {
           context: [r1],
         }); // Continue the conversation from the previous prompt
         return r2.hasToolCall("asana_get_projects");
       },
     });
 
-    await evalTest.run(agent, {
+    await evalTest.run(runner, {
       iterations: 5,
       onFailure: (report) => console.error(report),
     });
@@ -125,8 +125,8 @@ describe("Asana MCP Evals", () => {
   test("search tasks passes correct workspace_gid", async () => {
     const evalTest = new EvalTest({
       name: "search-args",
-      test: async (agent) => {
-        const result = await agent.run(
+      test: async (runner) => {
+        const result = await runner.run(
           "Search for tasks containing 'bug' in my workspace"
         );
         const args = result.getToolArguments("asana_search_tasks");
@@ -137,7 +137,7 @@ describe("Asana MCP Evals", () => {
       },
     });
 
-    await evalTest.run(agent, {
+    await evalTest.run(runner, {
       iterations: 5,
       onFailure: (report) => console.error(report),
     });
@@ -343,7 +343,7 @@ Runs LLM prompts with MCP tool access.
 ```ts
 import { hasToolCall } from "@mcpjam/sdk";
 
-const agent = new HostRunner({
+const runner = new HostRunner({
   tools: await manager.getToolsForAiSdk(),
   model: "openai/gpt-4o", // provider/model format
   apiKey: process.env.OPENAI_API_KEY!,
@@ -353,26 +353,26 @@ const agent = new HostRunner({
 });
 
 // Run a prompt
-const result = await agent.run("Add 2 and 3");
+const result = await runner.run("Add 2 and 3");
 
 // Multi-turn with context
-const r1 = await agent.run("Who am I?");
-const r2 = await agent.run("List my projects", { context: [r1] });
+const r1 = await runner.run("Who am I?");
+const r2 = await runner.run("List my projects", { context: [r1] });
 
 // Stop the loop after the step where a tool is called
-const r3 = await agent.run("Search tasks", {
+const r3 = await runner.run("Search tasks", {
   stopWhen: hasToolCall("search_tasks"),
 });
 r3.hasToolCall("search_tasks"); // true
 
 // Bound prompt runtime
-const r4 = await agent.run("Run a long workflow", {
+const r4 = await runner.run("Run a long workflow", {
   timeout: { totalMs: 10_000, stepMs: 2_500 },
 });
 r4.hasError(); // true if the prompt timed out
 
 // Exit early after selecting a tool without waiting for the MCP round-trip
-const r5 = await agent.run("Search tasks", {
+const r5 = await runner.run("Search tasks", {
   stopAfterToolCall: "search_tasks",
   timeoutMs: 5_000,
 });
@@ -392,10 +392,10 @@ r5.getToolArguments("search_tasks"); // captured even if the prompt stops early
 <details>
 <summary><strong>PromptResult</strong></summary>
 
-Returned by `agent.run()`. Contains the LLM response and tool calls.
+Returned by `runner.run()`. Contains the LLM response and tool calls.
 
 ```ts
-const result = await agent.run("Add 2 and 3");
+const result = await runner.run("Add 2 and 3");
 
 // Tool calls
 result.hasToolCall("add"); // boolean
@@ -440,13 +440,13 @@ Runs a single test scenario with multiple iterations.
 ```ts
 const test = new EvalTest({
   name: "addition",
-  test: async (agent) => {
-    const result = await agent.run("Add 2 and 3");
+  test: async (runner) => {
+    const result = await runner.run("Add 2 and 3");
     return result.hasToolCall("add");
   },
 });
 
-await test.run(agent, {
+await test.run(runner, {
   iterations: 30,
   concurrency: 5, // parallel iterations (default: 5)
   retries: 2, // retry failed iterations (default: 0)
@@ -479,8 +479,8 @@ const suite = new EvalSuite({ name: "Math Operations" });
 suite.add(
   new EvalTest({
     name: "addition",
-    test: async (agent) => {
-      const r = await agent.run("Add 2+3");
+    test: async (runner) => {
+      const r = await runner.run("Add 2+3");
       return r.hasToolCall("add");
     },
   })
@@ -489,14 +489,14 @@ suite.add(
 suite.add(
   new EvalTest({
     name: "multiply",
-    test: async (agent) => {
-      const r = await agent.run("Multiply 4*5");
+    test: async (runner) => {
+      const r = await runner.run("Multiply 4*5");
       return r.hasToolCall("multiply");
     },
   })
 );
 
-await suite.run(agent, { iterations: 30 });
+await suite.run(runner, { iterations: 30 });
 
 // Aggregate metrics
 suite.accuracy(); // overall accuracy

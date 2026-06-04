@@ -218,6 +218,56 @@ describe("HostRunner host integration", () => {
       expect(clone.getHostSnapshot()?.servers).toEqual(["alpha"]);
     });
 
+    it("withOptions({ host: newHost }) lets the new host drive defaults", () => {
+      // Regression: previously `withOptions` preserved `this.model`
+      // unconditionally, so replacing the host left the clone running
+      // against the old host's model (and likewise systemPrompt /
+      // temperature / injectOpenAiCompat). Now: when `options.host` is
+      // supplied, parent defaults are NOT carried — the new host's
+      // snapshot drives them.
+      const hostA = new Host({
+        style: "claude",
+        model: "anthropic/claude-3",
+        systemPrompt: "Be terse.",
+        temperature: 0.1,
+      });
+      const runnerA = new HostRunner({
+        host: hostA,
+        tools: [],
+        apiKey: "test-key",
+      });
+
+      const hostB = new Host({
+        style: "mcpjam",
+        model: "openai/gpt-5-mini",
+        systemPrompt: "Be playful.",
+        temperature: 0.9,
+      });
+      const clone = runnerA.withOptions({ host: hostB });
+
+      // Model: drives from hostB, not from runnerA's resolved model.
+      expect(clone.getParsedProvider()).toBe("openai");
+      expect(clone.getParsedModel()).toBe("gpt-5-mini");
+      // systemPrompt + temperature: derived from hostB's snapshot.
+      expect(clone.getSystemPrompt()).toBe("Be playful.");
+      // injectOpenAiCompat: hostB is mcpjam style → true (hostA was claude → false).
+      expect(clone.getHostPolicy()?.hostStyle).toBe("mcpjam");
+    });
+
+    it("withOptions({ host: newHost, model: 'X' }) still honors explicit model override", () => {
+      const hostA = new Host({ style: "claude", model: "anthropic/claude-3" });
+      const runnerA = new HostRunner({ host: hostA, tools: [], apiKey: "k" });
+
+      const hostB = new Host({ style: "mcpjam", model: "openai/gpt-5-mini" });
+      const clone = runnerA.withOptions({
+        host: hostB,
+        model: "openai/gpt-4o",
+      });
+
+      expect(clone.getParsedProvider()).toBe("openai");
+      expect(clone.getParsedModel()).toBe("gpt-4o");
+    });
+
     it("preserves an explicit model override through withOptions({})", () => {
       // Regression: when constructed as `new HostRunner({ host, model: X })`
       // the explicit model should win at clone time too. Otherwise
