@@ -41,7 +41,11 @@ export interface RunRecord {
   sessionsPerPersona: number;
   maxTurns: number;
   personas: PersonaSlate[];
-  status: "running" | "completed" | "partial" | "failed";
+  // `rate_limited` was added on the backend after the LLM driver
+  // started returning 429s as a terminal state on the run summary.
+  // The dialog already renders the label (Stage 3); this just
+  // tightens the type so call sites don't need a defensive cast.
+  status: "running" | "completed" | "partial" | "failed" | "rate_limited";
   summary: RunSummary;
   error?: string;
   lastHeartbeatAt: number;
