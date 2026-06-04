@@ -40,7 +40,7 @@ async function tryUpdateRunWithRetry(
   projectId: string,
   runId: string,
   delta: { succeeded?: number; failed?: number; rateLimited?: number },
-  status: "running" | "completed" | "partial" | "failed" | undefined,
+  status: "running" | "completed" | "partial" | "failed" | "rate_limited" | undefined,
   context: string,
 ): Promise<void> {
   try {
@@ -348,12 +348,17 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     }
 
     const total = personas.length * sessionsPerPersona;
-    const status =
+    // When the whole batch trips the spend cap (no successes, no hard
+    // failures), surface "rate_limited" so the dialog's amber treatment
+    // applies. The RunRecord type already permits this terminal state.
+    const status: "completed" | "partial" | "failed" | "rate_limited" =
       totalSucceeded === total
         ? "completed"
-        : totalSucceeded === 0
-          ? "failed"
-          : "partial";
+        : totalSucceeded === 0 && totalFailed === 0 && totalRateLimited > 0
+          ? "rate_limited"
+          : totalSucceeded === 0
+            ? "failed"
+            : "partial";
     await tryUpdateRunWithRetry(
       convexHttpUrl,
       convexAuthToken,
@@ -513,6 +518,10 @@ async function runOneSession(args: {
         projectId,
         authHeader,
         abortSignal,
+        // Tag the /stream usage record with the synthesis run so spend lands
+        // on `chatboxSynthesisRuns.spendUsdActual`. The BYOK guard at the
+        // route ensures we're on the /stream (MCPJam-provided) path here.
+        extraBodyFields: { synthesisRunId: runId },
       });
 
       messageHistory = updatedHistory;

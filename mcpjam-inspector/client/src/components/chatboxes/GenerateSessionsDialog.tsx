@@ -288,7 +288,9 @@ export function GenerateSessionsDialog({
         pollTimer.current = null;
       }
     };
-  }, [runId, isOpen, chatbox.chatboxId, posthog]);
+    // `chatbox.projectId` is read inside the poll URL; include it so a
+    // (rare) projectId swap on the same chatboxId doesn't stale-close.
+  }, [runId, isOpen, chatbox.chatboxId, chatbox.projectId, posthog]);
 
   function updatePersona(
     index: number,

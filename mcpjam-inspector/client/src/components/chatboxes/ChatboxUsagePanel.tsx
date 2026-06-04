@@ -213,22 +213,33 @@ export function ChatboxUsagePanel({
         >
           Hide synthetic
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="rounded-full"
-          onClick={() => setGenerateOpen(true)}
-          disabled={chatbox.servers.length === 0}
-          title={
-            chatbox.servers.length === 0
-              ? "Attach at least one server to generate sessions"
-              : undefined
-          }
-        >
-          <Sparkles className="mr-1 size-3" />
-          Generate with AI
-        </Button>
+        {(() => {
+          // Optional servers default off for a no-opt-in visitor, so a
+          // chatbox with only optional attachments would open the dialog
+          // and then no-op on "Generate personas". Gate the entry point on
+          // the same predicate the server route enforces.
+          const hasRequiredServers = chatbox.servers.some(
+            (s) => s.optional !== true,
+          );
+          return (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="rounded-full"
+              onClick={() => setGenerateOpen(true)}
+              disabled={!hasRequiredServers}
+              title={
+                hasRequiredServers
+                  ? undefined
+                  : "Attach at least one required (non-optional) server to generate sessions"
+              }
+            >
+              <Sparkles className="mr-1 size-3" />
+              Generate with AI
+            </Button>
+          );
+        })()}
         {filter.chips.length > 0 ? (
           <Button
             type="button"
