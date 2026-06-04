@@ -6,29 +6,27 @@ export interface VideoEmbed {
   posterSrc?: string;
 }
 
-function extractYouTubeId(url: string): string | null {
-  // youtube.com/watch?v=<id>
-  const watchMatch = url.match(/[?&]v=([A-Za-z0-9_-]{6,})/);
-  if (watchMatch) return watchMatch[1];
+function extractYouTubeId(u: URL): string | null {
   // youtu.be/<id>
-  const shortMatch = url.match(/youtu\.be\/([A-Za-z0-9_-]{6,})/);
-  if (shortMatch) return shortMatch[1];
-  // youtube.com/shorts/<id>
-  const shortsMatch = url.match(/youtube\.com\/shorts\/([A-Za-z0-9_-]{6,})/);
-  if (shortsMatch) return shortsMatch[1];
-  // youtube.com/embed/<id>
-  const embedMatch = url.match(/youtube\.com\/embed\/([A-Za-z0-9_-]{6,})/);
-  if (embedMatch) return embedMatch[1];
-  return null;
-}
-
-function extractLoomId(url: string): string | null {
-  const m = url.match(/loom\.com\/(?:share|embed)\/([A-Za-z0-9]+)/);
+  if (u.hostname === "youtu.be") {
+    const m = u.pathname.match(/^\/([A-Za-z0-9_-]{6,})/);
+    return m ? m[1] : null;
+  }
+  // youtube.com/watch?v=<id>
+  const v = u.searchParams.get("v");
+  if (v && /^[A-Za-z0-9_-]{6,}$/.test(v)) return v;
+  // youtube.com/shorts/<id> or youtube.com/embed/<id>
+  const m = u.pathname.match(/^\/(?:shorts|embed)\/([A-Za-z0-9_-]{6,})/);
   return m ? m[1] : null;
 }
 
-function extractVimeoId(url: string): string | null {
-  const m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+function extractLoomId(u: URL): string | null {
+  const m = u.pathname.match(/^\/(?:share|embed)\/([A-Za-z0-9]+)/);
+  return m ? m[1] : null;
+}
+
+function extractVimeoId(u: URL): string | null {
+  const m = u.pathname.match(/^\/(?:video\/)?(\d+)/);
   return m ? m[1] : null;
 }
 
@@ -37,8 +35,24 @@ export function parseVideoEmbed(url: string): VideoEmbed | null {
   const trimmed = url.trim();
   if (!trimmed) return null;
 
-  if (/youtube\.com|youtu\.be/.test(trimmed)) {
-    const id = extractYouTubeId(trimmed);
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null;
+  }
+
+  // Hostname checks accept the canonical host and any subdomain (e.g.
+  // www.youtube.com, m.youtube.com), but reject lookalikes like
+  // evil.com/youtube.com that the previous string-regex matched.
+  const host = parsed.hostname.toLowerCase();
+  const isHost = (h: string) => host === h || host.endsWith(`.${h}`);
+
+  if (isHost("youtube.com") || host === "youtu.be") {
+    const id = extractYouTubeId(parsed);
     if (id) {
       return {
         provider: "youtube",
@@ -48,8 +62,8 @@ export function parseVideoEmbed(url: string): VideoEmbed | null {
     }
   }
 
-  if (/loom\.com/.test(trimmed)) {
-    const id = extractLoomId(trimmed);
+  if (isHost("loom.com")) {
+    const id = extractLoomId(parsed);
     if (id) {
       return {
         provider: "loom",
@@ -58,8 +72,8 @@ export function parseVideoEmbed(url: string): VideoEmbed | null {
     }
   }
 
-  if (/vimeo\.com/.test(trimmed)) {
-    const id = extractVimeoId(trimmed);
+  if (isHost("vimeo.com")) {
+    const id = extractVimeoId(parsed);
     if (id) {
       return {
         provider: "vimeo",
@@ -68,8 +82,5 @@ export function parseVideoEmbed(url: string): VideoEmbed | null {
     }
   }
 
-  // Basic sanity check before treating as raw
-  if (!/^https?:\/\//i.test(trimmed)) return null;
-
-  return { provider: "raw", embedSrc: trimmed };
+  return { provider: "raw", embedSrc: parsed.href };
 }

@@ -61,9 +61,10 @@ export function ProductUpdatesFeed() {
 
   if (!isAuthenticated) return null;
 
-  const visible = (updates ?? []).filter((u) => !u.dismissed);
-  if (visible.length === 0) return null;
+  const all = updates ?? [];
+  if (all.length === 0) return null;
 
+  const visible = all.filter((u) => !u.dismissed);
   const top = visible.slice(0, 5);
   const newCount = visible.filter((u) => u.isNew).length;
 
@@ -97,13 +98,18 @@ export function ProductUpdatesFeed() {
         </CardHeader>
 
         <CardContent className="px-6 pb-4 pt-3">
-          <ol className="relative">
-            {/* timeline rail */}
-            <span
-              aria-hidden
-              className="absolute left-[5px] top-1.5 bottom-2 w-px bg-border"
-            />
-            {top.map((update) => {
+          {top.length === 0 ? (
+            <p className="py-2 text-[12.5px] text-muted-foreground">
+              You&apos;re all caught up.
+            </p>
+          ) : (
+            <ol className="relative">
+              {/* timeline rail */}
+              <span
+                aria-hidden
+                className="absolute left-[5px] top-1.5 bottom-2 w-px bg-border"
+              />
+              {top.map((update) => {
               const embed = update.videoUrl
                 ? parseVideoEmbed(update.videoUrl)
                 : null;
@@ -135,7 +141,7 @@ export function ProductUpdatesFeed() {
                       type="button"
                       aria-label={`Dismiss "${update.title}"`}
                       onClick={() => handleDismiss(update.slug)}
-                      className="ml-auto inline-flex size-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100 focus:opacity-100"
+                      className="ml-auto inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100"
                     >
                       <X className="size-3" strokeWidth={2} />
                     </button>
@@ -182,8 +188,9 @@ export function ProductUpdatesFeed() {
                   ) : null}
                 </li>
               );
-            })}
-          </ol>
+              })}
+            </ol>
+          )}
 
           <div className="mt-3 flex justify-end border-t border-border pt-3">
             <Button

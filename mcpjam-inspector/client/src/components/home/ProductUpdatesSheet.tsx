@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -35,6 +35,12 @@ export function ProductUpdatesSheet({
   onDismiss,
 }: ProductUpdatesSheetProps) {
   const [playing, setPlaying] = useState<Set<string>>(new Set());
+
+  // Stop any inline iframes (and their autoplay state) when the drawer closes,
+  // so reopening doesn't immediately restart playback.
+  useEffect(() => {
+    if (!open) setPlaying(new Set());
+  }, [open]);
 
   const togglePlaying = (slug: string) => {
     setPlaying((prev) => {
@@ -113,7 +119,7 @@ export function ProductUpdatesSheet({
                         type="button"
                         aria-label={`Dismiss "${update.title}"`}
                         onClick={() => onDismiss(update.slug)}
-                        className="ml-auto inline-flex size-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100 focus:opacity-100"
+                        className="ml-auto inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100"
                       >
                         <X className="size-3" strokeWidth={2} />
                       </button>
