@@ -414,7 +414,11 @@ export function useEvalHandlers({
       const replayToastId = toast.loading("Replaying run...");
 
       try {
-        const accessToken = await getAccessToken();
+        // Hosted guests have no WorkOS access token; the request still
+        // authenticates via authFetch attaching a guest bearer. Treat the
+        // LoginRequired throw as an empty token — `buildEvalConvexAuthPayload`
+        // drops it in hosted mode anyway.
+        const accessToken = await getAccessToken().catch(() => "");
         const endpoints = getEvalApiEndpoints();
         const response = await authFetch(endpoints.replayRun, {
           method: "POST",
@@ -617,8 +621,12 @@ export function useEvalHandlers({
           : "Run started successfully! Results will appear shortly.",
       );
 
+      const suiteRunStartedAt = Date.now();
       try {
-        const accessToken = await getAccessToken();
+        // Hosted guests have no WorkOS access token; authFetch attaches the
+        // guest bearer instead. `mergeHostedServerBatch` strips
+        // convexAuthToken in hosted mode so an empty string is harmless.
+        const accessToken = await getAccessToken().catch(() => "");
 
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
@@ -700,12 +708,54 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
         });
 
+        posthog.capture("eval_suite_run_completed", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          num_test_cases: executionContext.testCases.length,
+          num_tests: executionContext.tests.length,
+          num_hosts: runPlans.length,
+          num_succeeded_hosts: runPlans.length - failures.length,
+          num_failed_hosts: failures.length,
+          all_succeeded: failures.length === 0,
+          duration_ms: Date.now() - suiteRunStartedAt,
+        });
+
         if (failures.length === 0) {
           toast.success(
             runPlans.length > 1
               ? `All ${runPlans.length} host runs started.`
               : "Eval run completed!",
           );
+
+          // Drop the user on the new run's detail page so they can see
+          // results without hunting through the runs list. Multi-host
+          // fan-outs land on the suite's runs view instead, since there
+          // are multiple sibling runs to pick from.
+          if (runPlans.length === 1) {
+            const firstSettled = settled[0];
+            const newRunId =
+              firstSettled?.status === "fulfilled"
+                ? (firstSettled.value as { runId?: unknown } | null | undefined)
+                    ?.runId
+                : undefined;
+            if (typeof newRunId === "string" && newRunId.length > 0) {
+              navigateEvalRoute(
+                {
+                  type: "run-detail",
+                  suiteId: suite._id,
+                  runId: newRunId,
+                },
+                evalsNavigationContext,
+              );
+            }
+          } else {
+            navigateEvalRoute(
+              { type: "suite-overview", suiteId: suite._id, view: "runs" },
+              evalsNavigationContext,
+            );
+          }
         } else if (failures.length < runPlans.length) {
           const failedHostNames = failures
             .map((failure) => failure.plan.hostName ?? "(unnamed host)")
@@ -738,6 +788,7 @@ export function useEvalHandlers({
       projectServers,
       getSuiteExecutionContext,
       handleReplayRun,
+      evalsNavigationContext,
     ]
   );
 
@@ -1239,8 +1290,15 @@ export function useEvalHandlers({
   const directDeleteTestCase = useCallback(
     async (testCaseId: string) => {
       await mutations.deleteTestCaseMutation({ testCaseId });
+      posthog.capture("eval_test_case_deleted", {
+        location: "evals_tab_batch",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: selectedSuiteId ?? null,
+        test_case_id: testCaseId,
+      });
     },
-    [mutations.deleteTestCaseMutation]
+    [mutations.deleteTestCaseMutation, selectedSuiteId]
   );
 
   // Confirm test case deletion
@@ -1252,6 +1310,13 @@ export function useEvalHandlers({
     try {
       await mutations.deleteTestCaseMutation({
         testCaseId: testCaseToDelete.id,
+      });
+      posthog.capture("eval_test_case_deleted", {
+        location: "evals_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: selectedSuiteId ?? null,
+        test_case_id: testCaseToDelete.id,
       });
       toast.success("Test case deleted successfully");
 
@@ -1357,36 +1422,36 @@ export function useEvalHandlers({
         return;
       }
 
-      const disconnected = suiteServers.filter(
-        (name) => !connectedServerNames?.has(name),
-      );
-      if (disconnected.length > 0) {
-        if (ensureServersReady != null) {
-          const readiness = await ensureServersReady(suiteServers);
-          if (hasUnavailableServers(readiness)) {
-            toast.error(
-              formatEnsureServersReadyError(
-                readiness,
-                "generate test cases",
-                projectServers,
-              ),
-            );
-            return;
-          }
-        } else {
-          toast.error(
-            formatMcpConnectServerPrompt(disconnected, {
-              remoteServers: projectServers,
-              kind: "suite",
-            }),
-          );
-          return;
-        }
-      }
-
       setIsGeneratingTests(true);
 
       try {
+        const disconnected = suiteServers.filter(
+          (name) => !connectedServerNames?.has(name),
+        );
+        if (disconnected.length > 0) {
+          if (ensureServersReady != null) {
+            const readiness = await ensureServersReady(suiteServers);
+            if (hasUnavailableServers(readiness)) {
+              toast.error(
+                formatEnsureServersReadyError(
+                  readiness,
+                  "generate test cases",
+                  projectServers,
+                ),
+              );
+              return;
+            }
+          } else {
+            toast.error(
+              formatMcpConnectServerPrompt(disconnected, {
+                remoteServers: projectServers,
+                kind: "suite",
+              }),
+            );
+            return;
+          }
+        }
+
         const outcome = await generateAndPersistEvalTests({
           convex,
           getAccessToken,
@@ -1408,6 +1473,15 @@ export function useEvalHandlers({
         });
 
         if (outcome.apiReturnedTests === 0) {
+          posthog.capture("eval_generate_tests_completed", {
+            location: "evals_tab",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            suite_id: suiteId,
+            generated_count: 0,
+            api_returned_tests: 0,
+            success: true,
+          });
           toast.info("No test cases were generated");
           return;
         }
@@ -1428,6 +1502,19 @@ export function useEvalHandlers({
             ),
           });
         }
+
+        posthog.capture("eval_generate_tests_completed", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          generated_count: outcome.createdCount,
+          api_returned_tests: outcome.apiReturnedTests,
+          auto_ran: Boolean(
+            shouldAutoRun && outcome.createdTestCaseIds.length > 0,
+          ),
+          success: true,
+        });
 
         if (
           shouldAutoRun &&
@@ -1472,6 +1559,20 @@ export function useEvalHandlers({
         }
       } catch (error) {
         console.error("Failed to generate tests:", error);
+        // Cap the raw message at 200 chars so PostHog event cardinality stays
+        // bounded when backend errors include user input or random ids.
+        const rawMessage =
+          error instanceof Error ? error.message : String(error);
+        posthog.capture("eval_generate_tests_completed", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          generated_count: 0,
+          success: false,
+          error_name: error instanceof Error ? error.name : typeof error,
+          error_message: rawMessage.slice(0, 200),
+        });
         toast.error(
           getBillingErrorMessage(error, "Failed to generate test cases")
         );

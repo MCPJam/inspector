@@ -1,10 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { RunCaseIterationOutcome } from "./run-case-groups";
-import {
-  EVAL_FAIL_BAR_CLASS,
-  EVAL_LOW_PASS_RATE_TEXT_CLASS,
-} from "./constants";
+import { EVAL_FAIL_BAR_CLASS } from "./constants";
 import { evalSurfaceHeaderClass } from "./eval-surface-chrome";
 
 /**
@@ -20,14 +17,14 @@ export function runCaseListRowClassName() {
 
 /** Fixed-width metric columns — shared by header labels and row cells. */
 export const runCaseMetricsRailClassName =
-  "grid w-[16.25rem] shrink-0 grid-cols-[7.5rem_3.25rem_3.25rem_2.25rem] items-center";
+  "grid w-[17.5rem] shrink-0 grid-cols-[7.5rem_3.25rem_3.25rem_3.5rem] items-center";
 
 /** Sort icon column width — aligns header control with row gutter. */
 export const runCaseListSortGutterClassName = "flex w-7 shrink-0 items-center justify-end pr-2";
 
 /** Header row — mirrors `.matrix-row.head` from evals_playground_design.html */
 export const runCaseListHeadClassName = cn(
-  "min-h-9 font-mono text-xs font-medium uppercase tracking-wide text-muted-foreground",
+  "min-h-9 text-xs font-medium uppercase tracking-wide text-muted-foreground",
   evalSurfaceHeaderClass,
 );
 
@@ -74,10 +71,8 @@ export function RunCaseIterationBar({
       <div className="flex w-full min-w-0 items-baseline gap-2">
         <span
           className={cn(
-            "font-metric text-xs font-semibold tabular-nums tracking-tight shrink-0",
-            total === 0 && "text-muted-foreground",
-            total > 0 && passed === total && "text-foreground",
-            total > 0 && passed < total && EVAL_LOW_PASS_RATE_TEXT_CLASS,
+            "text-xs font-semibold tabular-nums tracking-tight shrink-0",
+            total === 0 ? "text-muted-foreground" : "text-foreground",
           )}
         >
           {passed}/{total}
@@ -98,7 +93,7 @@ export function RunCaseIterationBar({
             key={index}
             className={cn(
               "min-h-1 min-w-0 rounded-[1px]",
-              result === "pass" && "bg-success",
+              result === "pass" && "bg-success/50",
               result === "fail" && EVAL_FAIL_BAR_CLASS,
               result === "pending" && "bg-muted-foreground/25",
               result === "cancelled" && "bg-muted-foreground/20",
@@ -115,7 +110,5 @@ export const RunCaseIterationDots = RunCaseIterationBar;
 
 export const runCasePassCheckClass = "text-success";
 
-export const runCaseFailCountClass = cn(
-  "font-mono text-xs font-semibold tabular-nums",
-  EVAL_LOW_PASS_RATE_TEXT_CLASS,
-);
+export const runCaseFailCountClass =
+  "text-xs font-semibold tabular-nums text-muted-foreground";

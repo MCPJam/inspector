@@ -29,6 +29,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvex: () => ({ query: vi.fn().mockResolvedValue([]) }),
+  useMutation: () => vi.fn().mockResolvedValue({ _id: "stub-id" }),
 }));
 
 vi.mock("posthog-js", () => ({
@@ -242,14 +243,8 @@ describe("EvalsTab", () => {
     render(<EvalsTab projectId="ws-1" />);
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
-    expect(screen.getByRole("tab", { name: "Suites" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: "Executions" })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
+    expect(screen.getByRole("button", { name: "Suites" })).toBeInTheDocument();
+    expect(screen.getByTitle("Suite suite-a")).toBeInTheDocument();
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       suite: expect.objectContaining({ _id: "suite-a" }),
@@ -268,17 +263,16 @@ describe("EvalsTab", () => {
     expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
   });
 
-  it("navigates to the eval list when the Suites tab is activated while a suite is open", async () => {
+  it("navigates to the eval list when the Suites breadcrumb is clicked while a suite is open", async () => {
     const user = userEvent.setup();
     render(<EvalsTab projectId="ws-1" />);
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("tab", { name: "Suites" }));
+    await user.click(screen.getByRole("button", { name: "Suites" }));
 
-    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
-      { type: "list" },
-      { replace: true },
-    );
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "list",
+    });
   });
 
   it("redirects invalid suite routes back to the eval list", async () => {
@@ -294,25 +288,21 @@ describe("EvalsTab", () => {
     });
   });
 
-  it("shows a sign-in state instead of crashing when Convex rejects guest eval overview", () => {
+  it("shows the generic error fallback when the suites overview query throws", () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error\nUncaught Error: Not available for guests yet. Sign in to use this.",
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error",
         );
       });
 
-      render(<EvalsTab projectId="guest-project" />);
+      render(<EvalsTab projectId="project-1" />);
 
-      expect(screen.getByText("Sign in to use Testing")).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          "Testing suites are not available for guests yet. Sign in to create suites, view runs, and investigate cases.",
-        ),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
       consoleError.mockRestore();

@@ -213,13 +213,13 @@ export function SuitePassRateDeltaChip({
 }
 
 export function SuiteSourceBadge({ source }: { source?: "ui" | "sdk" }) {
-  if (!source) return null;
+  if (source !== "sdk") return null;
   return (
     <Badge
       variant="outline"
       className="shrink-0 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide"
     >
-      {source}
+      SDK
     </Badge>
   );
 }

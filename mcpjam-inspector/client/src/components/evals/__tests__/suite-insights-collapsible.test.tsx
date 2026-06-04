@@ -32,16 +32,16 @@ const completedRun = {
 };
 
 describe("SuiteInsightsCollapsible", () => {
-  it("renders summary and toggles header when clicked", async () => {
+  it("starts collapsed and expands the body when the header is clicked", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SuiteInsightsCollapsible runs={[completedRun]} />);
 
     const trigger = screen.getByRole("button", { name: /Run insights/i });
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("Insight body text")).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
 
     await user.click(trigger);
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Insight body text")).toBeInTheDocument();
   });
 
   it("renders nothing when there is no completed run", () => {

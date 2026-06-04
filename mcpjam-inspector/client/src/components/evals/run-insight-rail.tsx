@@ -1,8 +1,7 @@
 import { useMemo, type ReactNode } from "react";
-import { ArrowLeftRight } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
+import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
-import { formatRunId } from "./helpers";
+import { formatRelativeTime, formatRunId } from "./helpers";
 import {
   computeRunPassFailStats,
   normalizeRunPassRatePercent,
@@ -14,16 +13,10 @@ import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
 import type { DurationChartDatum, TokensChartDatum } from "./run-chart-data";
 import {
   runDetailHeroStatClass,
-  runDetailMetaLabelClass,
   runDetailSectionLabelClass,
   runDetailSupportingClass,
 } from "./run-detail-typography";
 import type { EvalIteration, EvalSuiteRun } from "./types";
-import {
-  passRateColorClass,
-  passRateSegmentColorClass,
-} from "./suite-overview-presentation";
-import { EVAL_LOW_PASS_RATE_TEXT_CLASS } from "./constants";
 import { evalSurfaceCardClass } from "./eval-surface-chrome";
 
 export type RunTrendPoint = {
@@ -37,34 +30,6 @@ export type RunTrendPoint = {
 };
 
 const RUN_TREND_CHIP_LIMIT = 6;
-
-function RunAccuracySegmentBar({
-  passRate,
-  className,
-}: {
-  passRate: number;
-  className?: string;
-}) {
-  const filled = Math.min(10, Math.max(0, Math.round(passRate / 10)));
-  const fillClass = passRateSegmentColorClass(passRate);
-
-  return (
-    <div
-      className={cn("grid h-2 w-full grid-cols-10 gap-px", className)}
-      aria-hidden
-    >
-      {Array.from({ length: 10 }, (_, index) => (
-        <span
-          key={index}
-          className={cn(
-            "min-h-full rounded-[1px]",
-            index < filled ? fillClass : "bg-muted-foreground/15",
-          )}
-        />
-      ))}
-    </div>
-  );
-}
 
 function runAccuracyCardContextLabel(
   point: RunTrendPoint & { runIndexLabel: string },
@@ -88,47 +53,33 @@ function RunAccuracyRunCard({
   const canNavigate = Boolean(onSelectRun) && !isCurrent;
   const cardSummary = `Run ${point.runIdDisplay}, ${point.passRate}% accuracy, ${contextLabel}`;
 
+  /*
+   * Compact recent-run chip. Previously these were ~11rem-wide cards with
+   * an explicit segment bar and two-line meta — visually heavy for what is
+   * essentially "run id + accuracy + is-this-the-current-run." Color and
+   * the ring/dot now do the comparative lifting; full context is in the
+   * hover title + the row that this navigates into.
+   */
   const cardClassName = cn(
-    "flex min-w-[10rem] flex-1 basis-[10rem] flex-col gap-2 rounded-lg border border-border/80 bg-muted/30 p-3 shadow-sm transition-colors sm:min-w-[11rem] sm:basis-[11rem] sm:p-3.5",
+    "flex min-w-[5.5rem] flex-col gap-0.5 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 shadow-none transition-colors",
     isCurrent &&
-      "border-primary/50 bg-muted/45 ring-1 ring-inset ring-primary/35 shadow-sm",
-    canNavigate && "hover:border-border hover:bg-muted/45",
+      "border-primary/50 bg-primary/[0.07] ring-1 ring-inset ring-primary/30",
+    canNavigate && "hover:border-border hover:bg-muted/40",
   );
 
   const cardBody = (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p
-            className="truncate text-sm font-medium leading-tight text-foreground"
-            title={point.runId}
-          >
-            Run{" "}
-            <span className="font-mono font-normal tabular-nums">
-              {point.runIdDisplay}
-            </span>
-          </p>
-          <p
-            className={cn(
-              "mt-0.5 truncate text-[11px] leading-tight",
-              isCurrent
-                ? "font-medium text-primary"
-                : "text-muted-foreground",
-            )}
-          >
-            {contextLabel}
-          </p>
-        </div>
+      <div className="flex items-baseline justify-between gap-1">
         <span
-          className={cn(
-            "shrink-0 font-metric text-xl font-semibold tabular-nums leading-none tracking-tight",
-            passRateColorClass(point.passRate),
-          )}
+          className="truncate font-mono text-[10px] tabular-nums text-muted-foreground"
+          title={point.runId}
         >
-          {point.passRate}%
+          {point.runIdDisplay}
         </span>
       </div>
-      <RunAccuracySegmentBar passRate={point.passRate} />
+      <span className="text-base font-semibold tabular-nums leading-tight tracking-tight text-foreground">
+        {point.passRate}%
+      </span>
     </>
   );
 
@@ -178,12 +129,10 @@ function RunInsightRailCard({
 export function RunAccuracyHeroBand({
   run,
   iterations,
-  compareBaseRun,
   runTrendData,
   metricLabel,
   badgeMetricLabel = metricLabel,
   onSelectRun,
-  onCompareWithRun,
   includeRunIdentity = false,
   hideReplayLineage = false,
   runClient = null,
@@ -191,7 +140,12 @@ export function RunAccuracyHeroBand({
 }: {
   run: EvalSuiteRun;
   iterations: EvalIteration[];
-  compareBaseRun: EvalSuiteRun | null;
+  /**
+   * Previous completed run for deterministic diff context. Plumbed for
+   * future re-surfacing (matrix wiring is separate); no UI consumes it
+   * here today.
+   */
+  compareBaseRun?: EvalSuiteRun | null;
   runTrendData: RunTrendPoint[];
   metricLabel: string;
   /** Pass/fail badge copy (e.g. "Accuracy" vs "Pass Rate"). */
@@ -221,15 +175,6 @@ export function RunAccuracyHeroBand({
       : run.summary
         ? normalizeRunPassRatePercent(run.summary.passRate)
         : null;
-
-  const basePassRate = compareBaseRun?.summary
-    ? normalizeRunPassRatePercent(compareBaseRun.summary.passRate)
-    : null;
-
-  const deltaPp =
-    passRatePercent !== null && basePassRate !== null
-      ? passRatePercent - basePassRate
-      : null;
 
   const trendChips = useMemo(() => {
     if (runTrendData.length < 2) return { points: [], hiddenCount: 0 };
@@ -262,8 +207,12 @@ export function RunAccuracyHeroBand({
         }
       : undefined;
 
+  const runServers = run.configSnapshot?.environment?.servers ?? [];
+  const visibleServers = runServers.slice(0, 3);
+  const hiddenServerCount = runServers.length - visibleServers.length;
+
   const runIdentityBlock = includeRunIdentity ? (
-    <div className="flex shrink-0 flex-col gap-1 sm:max-w-[11rem]">
+    <div className="flex shrink-0 flex-col gap-1.5 sm:max-w-[16rem]">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <h2 className="text-lg font-semibold tracking-tight">
           Run {formatRunId(run._id)}
@@ -274,18 +223,49 @@ export function RunAccuracyHeroBand({
           metricLabel={badgeMetricLabel}
         />
       </div>
-      <RunHeaderCompactStats
-        run={run}
-        variant="operational"
-        statsOverride={statsOverride}
-      />
-      {runClient ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={runDetailMetaLabelClass}>Client</span>
-          <ClientChip
-            name={runClient.displayName}
-            hostId={runClient.hostId}
-          />
+      <div className="flex flex-wrap items-baseline gap-x-1.5 text-xs text-muted-foreground">
+        <RunHeaderCompactStats
+          run={run}
+          variant="operational"
+          statsOverride={statsOverride}
+        />
+        {run.createdAt ? (
+          <>
+            <span aria-hidden>·</span>
+            <span
+              className="tabular-nums"
+              title={new Date(run.createdAt).toLocaleString()}
+            >
+              {formatRelativeTime(run.createdAt)}
+            </span>
+          </>
+        ) : null}
+      </div>
+      {runClient || runServers.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {runClient ? (
+            <ClientChip
+              name={runClient.displayName}
+              hostId={runClient.hostId}
+            />
+          ) : null}
+          {visibleServers.map((name) => (
+            <Badge
+              key={name}
+              variant="outline"
+              className="font-mono text-[10px] font-normal text-muted-foreground"
+            >
+              {name}
+            </Badge>
+          ))}
+          {hiddenServerCount > 0 ? (
+            <span
+              className={runDetailSupportingClass}
+              title={runServers.slice(visibleServers.length).join(", ")}
+            >
+              +{hiddenServerCount}
+            </span>
+          ) : null}
         </div>
       ) : null}
       {!hideReplayLineage && run.replayedFromRunId ? (
@@ -310,55 +290,24 @@ export function RunAccuracyHeroBand({
       )}
     >
       <p className={runDetailSectionLabelClass}>{metricLabel}</p>
-      <p className={cn(runDetailHeroStatClass, passRateColorClass(passRatePercent))}>
+      <p className={runDetailHeroStatClass}>
         {passRatePercent}
-        <span className="text-2xl font-medium text-muted-foreground sm:text-3xl">
+        <span className="text-xl font-medium text-muted-foreground sm:text-2xl">
           %
         </span>
       </p>
-      {deltaPp !== null && compareBaseRun ? (
-        <p
-          className={cn(
-            "font-metric text-sm font-medium tabular-nums",
-            deltaPp > 0 && "text-success",
-            deltaPp < 0 && EVAL_LOW_PASS_RATE_TEXT_CLASS,
-            deltaPp === 0 && "text-muted-foreground",
-          )}
-        >
-          {deltaPp > 0 ? "+" : ""}
-          {deltaPp}pp vs run #
-          {compareBaseRun.runNumber ?? formatRunId(compareBaseRun._id)}
-        </p>
-      ) : null}
     </div>
   );
 
-  const compareButton =
-    compareBaseRun && onCompareWithRun ? (
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => onCompareWithRun(compareBaseRun._id)}
-        className="h-7 shrink-0 gap-1.5 text-xs"
-      >
-        <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden />
-        Compare to previous run
-      </Button>
-    ) : null;
-
   const recentRunsBlock = hasRecentRuns ? (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <p className={runDetailSectionLabelClass}>Recent runs</p>
-          {trendChips.hiddenCount > 0 ? (
-            <p className={runDetailSupportingClass}>
-              Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
-            </p>
-          ) : null}
-        </div>
-        {compareButton}
+      <div className="flex min-w-0 items-baseline gap-2">
+        <p className={runDetailSectionLabelClass}>Recent runs</p>
+        {trendChips.hiddenCount > 0 ? (
+          <p className={runDetailSupportingClass}>
+            Last {RUN_TREND_CHIP_LIMIT} of {runTrendData.length}
+          </p>
+        ) : null}
       </div>
       <div
         className="flex w-full min-w-0 gap-3 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
@@ -383,13 +332,7 @@ export function RunAccuracyHeroBand({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
           <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-4">
             {runIdentityBlock}
-            {recentRunsBlock ?? (
-              compareButton ? (
-                <div className="flex min-w-0 flex-1 items-start justify-end sm:justify-start">
-                  {compareButton}
-                </div>
-              ) : null
-            )}
+            {recentRunsBlock}
           </div>
           {accuracyBlock}
         </div>

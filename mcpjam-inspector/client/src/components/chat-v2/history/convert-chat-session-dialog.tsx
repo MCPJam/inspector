@@ -1,6 +1,7 @@
-import { useAction, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -32,7 +33,13 @@ import {
   normalizeServerNames,
 } from "@/components/evals/suite-environment-utils";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { useProjectServers } from "@/hooks/useViews";
+import { useProjectServerAttachments, useProjectServers } from "@/hooks/useViews";
+import { useHostList } from "@/hooks/useClients";
+import {
+  ClientAttachmentsEditor,
+  type HostAttachmentDraft,
+} from "@/components/evals/client-attachments-editor";
+import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
 
@@ -69,11 +76,28 @@ export function ConvertChatSessionDialog({
   onImported,
 }: ConvertChatSessionDialogProps) {
   const effectiveProjectId = session?.projectId ?? projectId ?? null;
+  // Mirror Create suite's `hostsEnabled` gate: the server/host attachment
+  // pickers (and the new-suite branch's serverAttachmentId/hostAttachments
+  // wiring) only apply in the unified-attachment world. Without the flag,
+  // we preserve the legacy path that #395 already covers.
+  const hostsFlagEnabled = useFeatureFlagEnabled("hosts-enabled");
+  const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const attachmentPickersEnabled =
+    hostsFlagEnabled === true && convexAuthed && Boolean(effectiveProjectId);
   const { servers, serversById, isLoading: projectServersLoading } =
     useProjectServers({
       isAuthenticated,
       projectId: effectiveProjectId,
     });
+  const { serverAttachments: projectServerAttachments } =
+    useProjectServerAttachments({
+      isAuthenticated: attachmentPickersEnabled,
+      projectId: attachmentPickersEnabled ? effectiveProjectId : null,
+    });
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated: attachmentPickersEnabled,
+    projectId: attachmentPickersEnabled ? effectiveProjectId : null,
+  });
   const knownServerNames = useMemo(
     () => (servers ?? []).map((s) => s.name),
     [servers],
@@ -100,6 +124,16 @@ export function ConvertChatSessionDialog({
   const [updateSuiteEnvironment, setUpdateSuiteEnvironment] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const suiteDefaultsAppliedForSessionId = useRef<string | null>(null);
+  // New-suite-branch picker state. Only consulted when
+  // `attachmentPickersEnabled` is true; defaults seeded from the project's
+  // first standalone serverAttachment / first project host, mirroring
+  // CreateSuiteDialog.
+  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
+    null,
+  );
+  const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
+    [],
+  );
 
   const sessionServerDisplay = useMemo(
     () =>
@@ -228,8 +262,33 @@ export function ConvertChatSessionDialog({
       setUsedServerRefs([]);
       setUpdateSuiteEnvironment(false);
       setIsSubmitting(false);
+      setServerAttachmentId(null);
+      setHostAttachments([]);
     }
   }, [open]);
+
+  // Seed picker defaults when the dialog opens against a project that has
+  // attachments/hosts available. Mirrors CreateSuiteDialog: pick the first
+  // standalone serverAttachment and the first project host. User can swap
+  // either via the picker (Create new is supported inline by both editors).
+  useEffect(() => {
+    if (!attachmentPickersEnabled) return;
+    if (serverAttachmentId === null && projectServerAttachments.length > 0) {
+      setServerAttachmentId(projectServerAttachments[0]._id);
+    }
+  }, [attachmentPickersEnabled, projectServerAttachments, serverAttachmentId]);
+
+  useEffect(() => {
+    if (!attachmentPickersEnabled) return;
+    if (hostAttachments.length === 0 && projectHosts.length > 0) {
+      setHostAttachments([
+        {
+          namedHostId: projectHosts[0].hostId,
+          enabledOptionalServerIds: [],
+        },
+      ]);
+    }
+  }, [attachmentPickersEnabled, hostAttachments.length, projectHosts]);
 
   useEffect(() => {
     if (!open) {
@@ -258,6 +317,14 @@ export function ConvertChatSessionDialog({
     sessionServerLabels,
   ]);
 
+  // New-suite branch + attachment pickers visible: require both a server
+  // attachment and at least one host (parity with CreateSuiteDialog —
+  // otherwise the created suite lands in the same broken state the
+  // pickers were added to prevent).
+  const newSuiteRequirementsMet =
+    !attachmentPickersEnabled ||
+    (serverAttachmentId !== null && hostAttachments.length > 0);
+
   const canSubmit =
     Boolean(session) &&
     Boolean(effectiveProjectId) &&
@@ -266,7 +333,7 @@ export function ConvertChatSessionDialog({
     caseTitle.trim().length > 0 &&
     !isSubmitting &&
     (destinationMode === "new"
-      ? newSuiteName.trim().length > 0
+      ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
       : Boolean(selectedSuiteId) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
 
@@ -287,6 +354,15 @@ export function ConvertChatSessionDialog({
             }
           : {
               newSuiteName: newSuiteName.trim(),
+              // Forward picker selections so the new suite lands fully
+              // configured (matches `createTestSuite`'s wiring). Omitted
+              // when pickers are disabled — backend keeps the legacy path.
+              ...(attachmentPickersEnabled && serverAttachmentId
+                ? { newSuiteServerAttachmentId: serverAttachmentId }
+                : {}),
+              ...(attachmentPickersEnabled && hostAttachments.length > 0
+                ? { newSuiteHostAttachments: hostAttachments }
+                : {}),
             }),
         testCaseTitle: caseTitle.trim(),
       })) as {
@@ -450,14 +526,55 @@ export function ConvertChatSessionDialog({
             </div>
 
             {destinationMode === "new" ? (
-              <div className="space-y-2">
-                <Label htmlFor="chat-import-suite-name">Suite name</Label>
-                <Input
-                  id="chat-import-suite-name"
-                  value={newSuiteName}
-                  onChange={(event) => setNewSuiteName(event.target.value)}
-                  placeholder="Imported suite"
-                />
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="chat-import-suite-name">Suite name</Label>
+                  <Input
+                    id="chat-import-suite-name"
+                    value={newSuiteName}
+                    onChange={(event) => setNewSuiteName(event.target.value)}
+                    placeholder="Imported suite"
+                  />
+                </div>
+
+                {attachmentPickersEnabled && effectiveProjectId ? (
+                  <div className="divide-y rounded-lg border bg-muted/20">
+                    <div className="flex items-start justify-between gap-4 p-3">
+                      <div className="min-w-0 space-y-0.5">
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Servers
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Server set all clients run against.
+                        </p>
+                      </div>
+                      <div className="shrink-0">
+                        <ServerAttachmentPicker
+                          projectId={effectiveProjectId}
+                          value={serverAttachmentId}
+                          onChange={setServerAttachmentId}
+                          disabled={isSubmitting}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2 p-3">
+                      <div className="space-y-0.5">
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Clients
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Each attached client fans out into its own run.
+                        </p>
+                      </div>
+                      <ClientAttachmentsEditor
+                        projectId={effectiveProjectId}
+                        value={hostAttachments}
+                        onChange={setHostAttachments}
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="space-y-3">

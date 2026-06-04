@@ -50,6 +50,8 @@ import { RegistryTab } from "./components/RegistryTab";
 import { ClientsTab } from "./components/ClientsTab";
 import { HostConfigCompareView } from "./components/clients/comparison/HostConfigCompareView";
 import { ConnectViewHeader } from "./components/clients/ConnectViewHeader";
+import { motion } from "framer-motion";
+import { SNAPPY_RAIL } from "./components/clients/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -649,7 +651,13 @@ export function HostCompareRoute() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <motion.div
+      key="host-compare"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
       <ConnectViewHeader
         value="compare"
         previewedHostId={previewedHostId}
@@ -662,7 +670,7 @@ export function HostCompareRoute() {
         }}
       />
       <div className="min-h-0 flex-1">{compareView}</div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -716,21 +724,22 @@ export function ToolsRoute() {
 
 export function EvalsRoute() {
   const {
-    playgroundEnabled,
+    evaluateUiEnabled,
     billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
     ensureServersReady,
     handleContinueEvalInChat,
+    handleConnect,
   } = useAppRouteContext();
 
-  if (playgroundEnabled === false) {
+  if (evaluateUiEnabled !== true) {
     return (
       <EmptyState
         icon={Construction}
-        title="Playground Coming Soon"
-        description="The Playground is under construction. Stay tuned!"
+        title="Evaluate Coming Soon"
+        description="The Evaluate suite is under construction. Stay tuned!"
       />
     );
   }
@@ -744,6 +753,7 @@ export function EvalsRoute() {
       projectId={convexProjectId}
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
+      handleConnect={handleConnect}
     />
   );
 }
@@ -1162,6 +1172,7 @@ export default function App() {
   const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
@@ -2892,11 +2903,14 @@ export default function App() {
             setHostsTabSelectedHostId(hostId);
             navigateApp(buildClientsPath(hostId));
           },
-          // Only present while the host canvas is open — re-targets it on
-          // dropdown change so the diagram tracks the selected host instead
-          // of stuck on whatever was first opened via Edit.
+          // Active whenever the clients tab is mounted — the URL is the
+          // source of truth for which host the canvas renders, so every
+          // dropdown/cycle change must push `/clients/<hostId>`. Without
+          // this, bare `/clients` (no `:hostId`) renders the cached
+          // `previewedHostId` and clicking a different host only updates
+          // the preview store, leaving the canvas stuck on the original.
           onCanvasReplaceHost:
-            activeTab === "clients" && hostsTabSelectedHostId
+            activeTab === "clients"
               ? (hostId: string) => {
                   setHostsTabSelectedHostId(hostId);
                   navigateApp(buildClientsPath(hostId), { replace: true });
@@ -2960,6 +2974,7 @@ export default function App() {
     navigateToTarget,
     pendingDashboardOAuth,
     playgroundEnabled,
+    evaluateUiEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,

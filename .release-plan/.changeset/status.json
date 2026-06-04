@@ -5,47 +5,21 @@
         {
           "name": "@mcpjam/sdk",
           "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
         }
       ],
-      "summary": "Workspace release rollup:\n\n- Add the advisory Goal Completion judge panel for eval test-case iterations\n- Surface partial-state visibility and insight error details in eval run views",
-      "id": "inspector-evals-ui-release"
+      "summary": "SDK: add public `Host` builder + portable HostConfig v2 core (`@mcpjam/sdk/host-config`).\n\nConstruct a host with MCP-vocabulary fields and serialize a normalized JSON shape:\n\n```ts\nimport { Host } from \"@mcpjam/sdk\";\n\nconst host = new Host({ style: \"mcpjam\", model: \"anthropic/claude-sonnet-4-6\" });\nhost.mcp.protocolVersion = \"2025-11-25\";\nhost.mcp.apps = { sandbox: { csp: { mode: \"declared\" } } };\nhost.addServer(\"srv_abc\");\n\nconst json = host.toJSON();\n```\n\nNew public exports (from `@mcpjam/sdk` and `@mcpjam/sdk/host-config`): `Host`, `HostInit`, `HostJson`, `HostMcp`, `HostServerOverride`, `HostConnectionDefaults`, `HostStyleId`, `ServerId`, `CspDomainSet`, `OpenAiAppsCapabilities`, `McpAppsCapabilities`.\n\nAlso publishes `@mcpjam/sdk/host-config/internal` — a first-party, non-semver-stable subpath exposing `canonicalizeHostConfigV2`, `computeHostConfigHashV2`, and storage-row types. Intended for first-party consumers (the MCPJam backend, parity-fixture tooling); external SDK users should stay on the `Host` builder.",
+      "id": "sdk-host-config-public-api"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.9.0",
+      "oldVersion": "1.10.1",
       "changesets": [
-        "inspector-evals-ui-release"
+        "sdk-host-config-public-api"
       ],
-      "newVersion": "1.10.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.3.5",
-      "changesets": [
-        "inspector-evals-ui-release"
-      ],
-      "newVersion": "3.4.0"
-    },
-    {
-      "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.8.1",
-      "changesets": [
-        "inspector-evals-ui-release"
-      ],
-      "newVersion": "2.9.0"
+      "newVersion": "1.11.0"
     },
     {
       "name": "@mcpjam/mcp",

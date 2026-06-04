@@ -56,7 +56,7 @@ export function RunDetailInsightCollapsible({
             transition={{ type: "spring", stiffness: 520, damping: 32 }}
           >
             <motion.span
-              className="inline-flex shrink-0 text-primary/70"
+              className="inline-flex shrink-0 text-muted-foreground"
               aria-hidden
               initial={false}
               animate={{ rotate: open ? 0 : -90 }}

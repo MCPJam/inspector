@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
-import { Loader2, RotateCw, Sparkles } from "lucide-react";
+import { Loader2, RotateCw } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import {
   Select,
@@ -12,7 +11,7 @@ import {
 } from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
-import type { EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import type { GoalCompletionRequestArgs } from "./use-goal-completion";
 
 /** Managed default judge model (mirrors GOAL_COMPLETION_MODEL in the backend). */
@@ -31,25 +30,14 @@ export interface GoalCompletionCardProps {
   failedGeneration: boolean;
   error: string | null;
   onRun: (args: GoalCompletionRequestArgs, force?: boolean) => void;
-}
-
-function clampThreshold(value: number): number {
-  if (Number.isNaN(value)) {
-    return DEFAULT_THRESHOLD;
-  }
-  return Math.min(1, Math.max(0, value));
-}
-
-/**
- * Parse the threshold input. A blank field must fall back to the default — NOT
- * `Number("") === 0`, which would pass every nonnegative score and make a run
- * look successful just because the field was left empty.
- */
-function parseThreshold(input: string): number {
-  if (input.trim() === "") {
-    return DEFAULT_THRESHOLD;
-  }
-  return clampThreshold(Number(input));
+  /**
+   * Current suite-level judge config (live, not snapshotted on the run).
+   * When the suite has the judge enabled NOW, the card lets the user re-run
+   * even on older runs whose snapshot didn't have it on. When omitted,
+   * the card falls back to the run's snapshot — older parents
+   * (e.g. commit-detail) don't need to thread suite data through.
+   */
+  currentSuiteJudgeConfig?: EvalJudgeConfig | null;
 }
 
 function formatScore(score: number): string {
@@ -88,6 +76,7 @@ export function GoalCompletionCard({
   failedGeneration,
   error,
   onRun,
+  currentSuiteJudgeConfig,
 }: GoalCompletionCardProps) {
   const completedRun = run.status === "completed";
 
@@ -102,16 +91,8 @@ export function GoalCompletionCard({
     (goalCompletion?.modelUsed && goalCompletion.modelUsed !== "n/a"
       ? goalCompletion.modelUsed
       : DEFAULT_JUDGE_MODEL);
-  const initialThreshold =
-    run.judgeConfigOverride?.goalCompletion?.threshold ??
-    run.configSnapshot?.judgeConfig?.goalCompletion?.threshold ??
-    goalCompletion?.threshold ??
-    DEFAULT_THRESHOLD;
   const [selectedModelId, setSelectedModelId] =
     useState<string>(initialModel);
-  const [thresholdInput, setThresholdInput] = useState<string>(
-    String(initialThreshold),
-  );
 
   // Always keep the managed default + the current selection selectable, even
   // before the async model catalog loads (or when BYOK has none configured).
@@ -152,14 +133,18 @@ export function GoalCompletionCard({
   const suiteConfig = run.configSnapshot?.judgeConfig?.goalCompletion;
   const suiteModel = suiteConfig?.judgeModel ?? DEFAULT_JUDGE_MODEL;
   const suiteThreshold = suiteConfig?.threshold ?? DEFAULT_THRESHOLD;
-  // Treat "no explicit choice" as enabled (matches GOAL_COMPLETION_DEFAULTS
-  // on the backend: `enabled: true`). Only an explicit `enabled: false` on
-  // the suite snapshot hides the run controls behind the "Configure on
-  // suite" CTA. This keeps the judge discoverable on every suite by default
-  // while still respecting an owner who actively turned it off.
-  // Cost remains gated by the explicit Run judge click + `autoRun: false`
-  // default — an enabled-but-un-clicked judge spends nothing.
-  const isJudgeConfigured = suiteConfig?.enabled !== false;
+  // Backend default is `enabled: true` (see GOAL_COMPLETION_DEFAULTS in
+  // convex/lib/judgeConfig.ts) — only an explicit `enabled: false` turns
+  // the judge off. The current suite config takes precedence over the
+  // snapshot when provided, so flipping the toggle on today re-opens the
+  // controls for older runs whose snapshot didn't have it set.
+  // Cost is gated by `autoRun: false` (default) + the explicit Run judge
+  // click, so an unconfigured/enabled-by-default suite still spends nothing
+  // until a click.
+  const currentSuiteGoalCompletion = currentSuiteJudgeConfig?.goalCompletion;
+  const resolvedEnabled =
+    currentSuiteGoalCompletion?.enabled ?? suiteConfig?.enabled;
+  const isJudgeConfigured = resolvedEnabled !== false;
   // The persisted run override (`run.judgeConfigOverride.goalCompletion`)
   // tells the trend story (this data point isn't graded against the suite
   // contract). Surfacing it prominently is how the comparability promise
@@ -178,24 +163,16 @@ export function GoalCompletionCard({
     overrideModel !== undefined || overrideThresholdValue !== undefined;
 
   const handleRun = (force: boolean) => {
-    // Only send a runOverride when the user's inputs DIFFER from the suite
-    // config. Otherwise pass `{}` so the backend clears any previously
-    // persisted override and grades against the suite contract — the
-    // override-clearing semantic the plan + tests require.
+    // Only send a runOverride when the user's model selection DIFFERS from the
+    // suite config. Threshold is no longer adjustable from this card — it
+    // always inherits the suite default.
     const overrideModel =
       selectedModelId && selectedModelId !== suiteModel
         ? selectedModelId
         : undefined;
-    const parsedThreshold = parseThreshold(thresholdInput);
-    const overrideThreshold =
-      parsedThreshold !== suiteThreshold ? parsedThreshold : undefined;
-    const runOverride =
-      overrideModel || overrideThreshold !== undefined
-        ? {
-            judgeModel: overrideModel,
-            threshold: overrideThreshold,
-          }
-        : undefined;
+    const runOverride = overrideModel
+      ? { judgeModel: overrideModel }
+      : undefined;
     onRun({ runOverride }, force);
   };
 
@@ -210,6 +187,7 @@ export function GoalCompletionCard({
     if (pending) return "Grading…";
     if (requested) return "Requesting…";
     if (error || failedGeneration) return "Grading failed";
+    if (!isJudgeConfigured) return "Disabled";
     if (!goalCompletion) return "Not run yet";
     if (cases.length === 0) return "Summary only";
     return `${advisoryPassed}/${cases.length} meet goal (advisory)`;
@@ -221,12 +199,8 @@ export function GoalCompletionCard({
     <section className="rounded-lg border border-border bg-card text-card-foreground">
       <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="text-sm font-medium text-foreground">
-            Goal completion
-          </span>
-          <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            advisory · LLM judge
+            LLM as Judge
           </span>
           <span className="truncate text-sm text-muted-foreground">
             {headerSubtitle}
@@ -278,25 +252,6 @@ export function GoalCompletionCard({
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex w-24 flex-col gap-1">
-              <Label htmlFor="goal-threshold" className="text-xs">
-                Threshold
-              </Label>
-              <Input
-                id="goal-threshold"
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={thresholdInput}
-                onChange={(e) => setThresholdInput(e.target.value)}
-                onBlur={() =>
-                  setThresholdInput(String(parseThreshold(thresholdInput)))
-                }
-                disabled={inFlight}
-                className="h-8 text-sm"
-              />
-            </div>
             <Button
               type="button"
               size="sm"
@@ -311,25 +266,15 @@ export function GoalCompletionCard({
               // a second judge call.
               disabled={!completedRun || inFlight}
             >
-              {inFlight ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="h-3.5 w-3.5" />
-              )}
+              {inFlight ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               {runLabel}
             </Button>
           </div>
 
-          <p className="px-3 pb-3 text-[11px] text-muted-foreground/70">
-            Threshold is the advisory pass cutoff (score ≥ threshold).
-            Calibrate it per suite against a labeled set — LLM-judge scores
-            are not comparable across domains.
-          </p>
-
           {hasMeaningfulOverride ? (
             <div className="mx-3 mb-3 rounded-md border border-warning/50 bg-warning/50 px-3 py-2 text-[12px]">
               <div className="font-medium text-foreground">
-                ⚙ This run used an override
+                This run used an override
               </div>
               <div className="mt-0.5 text-muted-foreground">
                 Suite default:{" "}
@@ -351,28 +296,27 @@ export function GoalCompletionCard({
           ) : null}
         </>
       ) : (
-        // Suite hasn't enabled the judge. Don't render run controls —
-        // clicking them on an unconfigured run would spend an LLM call to
-        // grade zero cases. Direct the user to the right surface instead.
-        <div className="border-t border-border/50 px-3 py-4 text-sm">
-          <p className="text-foreground/90">
-            Goal completion isn't enabled for this suite.
-          </p>
-          <p className="mt-1 text-[12px] text-muted-foreground">
-            Open suite settings (the <strong>⚙</strong> button next to the
-            suite name) and enable Goal completion under{" "}
-            <strong>Judges</strong> to start grading runs against each case's{" "}
-            <code className="font-mono text-[11px]">expectedOutput</code>.
-            Cases without an expected output are skipped (anchored-only).
-          </p>
+        // Suite explicitly disabled the judge. Don't render run controls —
+        // clicking them would spend an LLM call to grade nothing. The
+        // suite settings toggle is the path back on.
+        <div className="border-t border-border/50 px-3 py-3 text-[12px] text-muted-foreground">
+          Disabled in suite settings. Turn it on to grade this run.
         </div>
       )}
 
+      {/* Skip the bottom body band entirely in the quiet "disabled, no
+          prior result" state — the CTA above is the whole story, no need
+          for an empty bordered strip below it. */}
+      {!isJudgeConfigured &&
+      !goalCompletion &&
+      !inFlight &&
+      !error &&
+      !failedGeneration ? null : (
       <div className="border-t border-border/50">
         {inFlight ? (
           <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Grading final answers against expected output…
+            Grading final answers…
           </div>
         ) : error ? (
           <div className="px-3 py-4 text-sm text-destructive">{error}</div>
@@ -383,14 +327,13 @@ export function GoalCompletionCard({
           </div>
         ) : !goalCompletion ? (
           <div className="px-3 py-4 text-sm text-muted-foreground">
-            Grade whether each case's final answer satisfied its expected
-            output. Pick a judge model and threshold, then run — this is
-            advisory and never changes the run's pass/fail.
+            Advisory grading against each case&apos;s objective. Never
+            changes the run&apos;s pass/fail.
           </div>
         ) : cases.length === 0 ? (
           <div className="px-3 py-4 text-sm text-muted-foreground">
-            {goalCompletion.summary?.trim() ||
-              "No anchored cases to grade (cases need an expected output)."}
+            This run wasn&apos;t graded — no completed cases were available to
+            judge. Re-run the judge to grade against the current suite config.
           </div>
         ) : (
           <>
@@ -447,6 +390,7 @@ export function GoalCompletionCard({
           </>
         )}
       </div>
+      )}
     </section>
   );
 }

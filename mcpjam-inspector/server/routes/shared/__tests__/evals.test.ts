@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   MAX_TOTAL_LLM_CALLS,
   RunEvalsRequestSchema,
   RunTestCaseRequestSchema,
   assertSuiteRunWithinCap,
   assertTestCaseRunWithinCap,
+  buildManagerKeyToDisplayNameMap,
   filterAndRemapReplayConfigs,
+  remapSnapshotServerIdsForAttachment,
 } from "../evals";
 import { WebRouteError } from "../../web/errors";
+import { SERVER_TOOL_SNAPSHOT_VERSION } from "../../../utils/export-helpers";
 
 function buildSuiteRequest(overrides?: {
   testCount?: number;
@@ -222,6 +226,95 @@ describe("assertTestCaseRunWithinCap", () => {
     expect(() =>
       assertTestCaseRunWithinCap(req, 1, { promptTurnsLength: 999 }),
     ).not.toThrow();
+  });
+});
+
+function makeManagerStub(serverIds: string[]): MCPClientManager {
+  return { listServers: () => serverIds } as unknown as MCPClientManager;
+}
+
+describe("buildManagerKeyToDisplayNameMap", () => {
+  it("maps each manager key to its parallel display name", () => {
+    const manager = makeManagerStub(["p170sbx_convex_id"]);
+    const map = buildManagerKeyToDisplayNameMap(
+      manager,
+      ["p170sbx_convex_id"],
+      ["Excalidraw (App)"],
+    );
+    expect(map.get("p170sbx_convex_id")).toBe("Excalidraw (App)");
+  });
+
+  it("returns an empty map when serverNames is absent or length-mismatched", () => {
+    const manager = makeManagerStub(["srv_1", "srv_2"]);
+    expect(
+      buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], undefined)
+        .size,
+    ).toBe(0);
+    expect(
+      buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], ["A"]).size,
+    ).toBe(0);
+  });
+
+  it("falls back to case-insensitive manager key match", () => {
+    const manager = makeManagerStub(["Excalidraw"]);
+    const map = buildManagerKeyToDisplayNameMap(
+      manager,
+      ["EXCALIDRAW"],
+      ["Excalidraw (App)"],
+    );
+    expect(map.get("Excalidraw")).toBe("Excalidraw (App)");
+  });
+
+  it("skips entries whose manager key is not currently connected", () => {
+    const manager = makeManagerStub(["srv_present"]);
+    const map = buildManagerKeyToDisplayNameMap(
+      manager,
+      ["srv_present", "srv_disconnected"],
+      ["Present", "Missing"],
+    );
+    expect(map.size).toBe(1);
+    expect(map.get("srv_present")).toBe("Present");
+  });
+});
+
+describe("remapSnapshotServerIdsForAttachment", () => {
+  const snapshot = {
+    version: SERVER_TOOL_SNAPSHOT_VERSION,
+    capturedAt: 1_700_000_000_000,
+    servers: [
+      { serverId: "manager-key-1", tools: [] },
+      { serverId: "manager-key-2", tools: [] },
+    ],
+  };
+
+  it("rewrites snapshot.serverId from manager key to display name", () => {
+    const remapped = remapSnapshotServerIdsForAttachment(
+      snapshot,
+      new Map([
+        ["manager-key-1", "Excalidraw (App)"],
+        ["manager-key-2", "Notion"],
+      ]),
+    );
+    expect(remapped.servers.map((s) => s.serverId)).toEqual([
+      "Excalidraw (App)",
+      "Notion",
+    ]);
+  });
+
+  it("is a no-op when the map is empty (standalone path)", () => {
+    const remapped = remapSnapshotServerIdsForAttachment(snapshot, new Map());
+    expect(remapped).toBe(snapshot);
+  });
+
+  it("leaves unmapped servers untouched", () => {
+    const remapped = remapSnapshotServerIdsForAttachment(
+      snapshot,
+      new Map([["manager-key-1", "Excalidraw (App)"]]),
+    );
+    expect(remapped.servers.map((s) => s.serverId)).toEqual([
+      "Excalidraw (App)",
+      "manager-key-2",
+    ]);
   });
 });
 

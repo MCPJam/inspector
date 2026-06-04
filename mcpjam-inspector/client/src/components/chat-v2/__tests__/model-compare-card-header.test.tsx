@@ -500,23 +500,4 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByTitle("Trace")).toBeInTheDocument();
     expect(screen.queryByText("Results")).not.toBeInTheDocument();
   });
-
-  it("renders footerNote content below the metric bars", () => {
-    render(
-      <ModelCompareCardHeader
-        model={model}
-        summary={idleSummary}
-        allSummaries={[]}
-        mode="chat"
-        onModeChange={vi.fn()}
-        showTraceTabs={false}
-        showComparisonChrome={true}
-        footerNote={<>2 mismatches across expected tool calls.</>}
-      />,
-    );
-
-    expect(
-      screen.getByText("2 mismatches across expected tool calls."),
-    ).toBeInTheDocument();
-  });
 });

@@ -63,10 +63,9 @@ const baseProps = {
 };
 
 describe("GoalCompletionCard", () => {
-  it("labels itself advisory and offers a Run judge control before any run", () => {
+  it("offers a Run judge control before any run", () => {
     render(<GoalCompletionCard {...baseProps} onRun={vi.fn()} />);
-    expect(screen.getByText("Goal completion")).toBeInTheDocument();
-    expect(screen.getByText(/advisory · LLM judge/i)).toBeInTheDocument();
+    expect(screen.getByText("LLM as Judge")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Run judge/i })).toBeEnabled();
     expect(screen.getByText("Not run yet")).toBeInTheDocument();
   });
@@ -84,39 +83,6 @@ describe("GoalCompletionCard", () => {
     // override. This is the "re-running without re-confirming exploration
     // returns to the suite contract" property the plan requires.
     expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, false);
-  });
-
-  it("falls back to the default threshold when the field is left blank", async () => {
-    const onRun = vi.fn();
-    const user = userEvent.setup();
-    render(<GoalCompletionCard {...baseProps} onRun={onRun} />);
-
-    // Blank input must NOT send threshold 0 (which would pass every score).
-    await user.clear(screen.getByLabelText("Threshold"));
-    await user.click(screen.getByRole("button", { name: /Run judge/i }));
-
-    // Parsed 0.7 == suite-config default, so no override is sent (the
-    // backend clears any persisted override and uses the suite contract).
-    expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, false);
-  });
-
-  it("sends a runOverride when the user picks a non-default threshold", async () => {
-    const onRun = vi.fn();
-    const user = userEvent.setup();
-    render(<GoalCompletionCard {...baseProps} onRun={onRun} />);
-
-    const thresholdInput = screen.getByLabelText("Threshold");
-    await user.clear(thresholdInput);
-    await user.type(thresholdInput, "0.85");
-    await user.click(screen.getByRole("button", { name: /Run judge/i }));
-
-    // The user's value differs from the suite-config default (0.7) → the
-    // card sends a runOverride. The judge model still matches the suite
-    // default so only `threshold` flows through.
-    expect(onRun).toHaveBeenCalledWith(
-      { runOverride: { threshold: 0.85 } },
-      false,
-    );
   });
 
   it("renders per-case score, advisory verdict and reason once graded", () => {
@@ -175,7 +141,7 @@ describe("GoalCompletionCard", () => {
     render(<GoalCompletionCard {...baseProps} pending onRun={vi.fn()} />);
     expect(screen.getByRole("button", { name: /Run judge/i })).toBeDisabled();
     expect(
-      screen.getByText(/Grading final answers against expected output/i),
+      screen.getByText(/Grading final answers/i),
     ).toBeInTheDocument();
   });
 
@@ -213,7 +179,7 @@ describe("GoalCompletionCard", () => {
       />,
     );
     expect(
-      screen.getByText(/Grading final answers against expected output/i),
+      screen.getByText(/Grading final answers/i),
     ).toBeInTheDocument();
     expect(screen.getByText("Requesting…")).toBeInTheDocument();
     // Stale score / reason from the previous run must not be displayed.
@@ -237,12 +203,10 @@ describe("GoalCompletionCard", () => {
     expect(onRun).toHaveBeenCalledWith({ runOverride: undefined }, true);
   });
 
-  it("renders run controls by default when the snapshot says nothing (judge is on by default)", () => {
-    // V2 default: GOAL_COMPLETION_DEFAULTS.enabled = true. A snapshot
-    // without `judgeConfig.goalCompletion.enabled` (older runs, or a
-    // suite the owner never touched) resolves to enabled and surfaces
-    // the run controls — NOT the "Configure on suite" CTA. Cost is
-    // still gated by the explicit click + autoRun: false default.
+  it("shows run controls by default when the snapshot has no explicit enable", () => {
+    // Default-on semantics matching GOAL_COMPLETION_DEFAULTS (`enabled: true`):
+    // an unconfigured snapshot resolves to enabled and surfaces controls.
+    // Cost is gated by autoRun: false + the explicit click.
     const unconfiguredRun = makeRun({
       configSnapshot: { tests: [], environment: { servers: [] } },
     });
@@ -257,14 +221,11 @@ describe("GoalCompletionCard", () => {
       screen.getByRole("button", { name: /Run judge/i }),
     ).toBeEnabled();
     expect(
-      screen.queryByText(/Goal completion isn't enabled for this suite/i),
+      screen.queryByText(/Disabled in suite settings/i),
     ).not.toBeInTheDocument();
   });
 
-  it("hides run controls and shows a Configure-on-suite CTA only when the suite explicitly disabled the judge", () => {
-    // The CTA path is now reserved for an explicit `enabled: false` on
-    // the snapshot — the owner actively turned the judge off. Older
-    // runs without any judgeConfig get the default-on path above.
+  it("hides run controls when the snapshot explicitly disabled the judge", () => {
     const disabledRun = makeRun({
       configSnapshot: {
         tests: [],
@@ -279,14 +240,35 @@ describe("GoalCompletionCard", () => {
       screen.queryByRole("button", { name: /Run judge/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Goal completion isn't enabled for this suite/i),
+      screen.getByText(/Disabled in suite settings/i),
     ).toBeInTheDocument();
-    // CTA points at the actual UI affordance (the gear button on the suite
-    // header) — not just generic "Suite settings", which had no visible
-    // entry point in the inspector until the gear shipped.
+  });
+
+  it("re-enables run controls when the current suite is enabled, even if the snapshot disabled it", () => {
+    // Real-world fix: user ran a suite when the judge was off, then
+    // enabled it later. The snapshot says off, but currentSuiteJudgeConfig
+    // says on — let the user trigger a re-run instead of locking them out.
+    const oldRun = makeRun({
+      configSnapshot: {
+        tests: [],
+        environment: { servers: [] },
+        judgeConfig: { goalCompletion: { enabled: false } },
+      },
+    });
+    render(
+      <GoalCompletionCard
+        {...baseProps}
+        run={oldRun}
+        onRun={vi.fn()}
+        currentSuiteJudgeConfig={{ goalCompletion: { enabled: true } }}
+      />,
+    );
     expect(
-      screen.getByText(/Open suite settings.*button next to the suite name/i),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: /Run judge/i }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(/Disabled in suite settings/i),
+    ).not.toBeInTheDocument();
   });
 
   it("renders a prominent override banner when the run carries a judge override", () => {

@@ -55,6 +55,27 @@ export function parseErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Explicit connection-error patterns. The previous implementation matched the
+// bare substring `"connect"`, which also catches the word `"Reconnect"` —
+// causing actionable upstream errors like "Reconnect the missing server(s)"
+// to surface as 502 SERVER_UNREACHABLE instead of being passed through as
+// 500/4xx. Match Node's ECONN* errno family, the standard "connection X"
+// phrases, and a few well-known fetch/socket failures.
+// Each pattern starts with `\b` so the "econn" and "connect" substrings
+// inside the word `Reconnect` don't slip through — that exact bug is what
+// caused upstream attachment errors to surface as 502 SERVER_UNREACHABLE.
+// The errno branch requires the full `econn` prefix (Node's ECONN* family)
+// rather than `econ` so server/tool names like "Economics" don't slip
+// through and re-introduce the same class of false positive.
+const CONNECTION_ERROR_PATTERNS: readonly RegExp[] = [
+  /\beconn[a-z]*/i,
+  /\bconnection\s+(?:refused|reset|closed|timed?\s*out|aborted|error|failed)\b/i,
+  /\b(?:failed|unable)\s+to\s+connect\b/i,
+  /\bfetch\s+failed\b/i,
+  /\bsocket\s+hang\s+up\b/i,
+  /\bgetaddrinfo\b/i,
+];
+
 export function mapRuntimeError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
 
@@ -65,12 +86,7 @@ export function mapRuntimeError(error: unknown): WebRouteError {
     return new WebRouteError(504, ErrorCode.TIMEOUT, message);
   }
 
-  if (
-    lower.includes("connect") ||
-    lower.includes("connection") ||
-    lower.includes("refused") ||
-    lower.includes("econn")
-  ) {
+  if (CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message))) {
     return new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, message);
   }
 

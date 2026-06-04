@@ -1,114 +1,53 @@
-diff --git a/.changeset/inspector-evals-ui-release.md b/.changeset/inspector-evals-ui-release.md
+diff --git a/.changeset/sdk-host-config-public-api.md b/.changeset/sdk-host-config-public-api.md
 deleted file mode 100644
-index fdedc043a..000000000
---- a/.changeset/inspector-evals-ui-release.md
+index 70d6348ef..000000000
+--- a/.changeset/sdk-host-config-public-api.md
 +++ /dev/null
-@@ -1,10 +0,0 @@
+@@ -1,22 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
--"@mcpjam/inspector": minor
 ----
 -
--Workspace release rollup:
+-SDK: add public `Host` builder + portable HostConfig v2 core (`@mcpjam/sdk/host-config`).
 -
--- Add the advisory Goal Completion judge panel for eval test-case iterations
--- Surface partial-state visibility and insight error details in eval run views
-diff --git a/cli/package.json b/cli/package.json
-index cd4b71a07..1a156bd33 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "3.3.5",
-+  "version": "3.4.0",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
-@@ -17,7 +17,7 @@
-     "prepublishOnly": "npm run build"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^1.9.0",
-+    "@mcpjam/sdk": "^1.10.0",
-     "commander": "^12.1.0",
-     "posthog-node": "^5.24.10"
-   },
-diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 7b2de073c..03fe84aee 100644
---- a/mcpjam-inspector/package.json
-+++ b/mcpjam-inspector/package.json
-@@ -1,7 +1,7 @@
- {
-   "name": "@mcpjam/inspector",
-   "productName": "MCPJam Inspector",
--  "version": "2.8.1",
-+  "version": "2.9.0",
-   "type": "module",
-   "engines": {
-     "node": ">=22.0.0"
-@@ -117,7 +117,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.9.0",
-+    "@mcpjam/sdk": "^1.10.0",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
-     "@ngrok/ngrok": "^1.6.0",
+-Construct a host with MCP-vocabulary fields and serialize a normalized JSON shape:
+-
+-```ts
+-import { Host } from "@mcpjam/sdk";
+-
+-const host = new Host({ style: "mcpjam", model: "anthropic/claude-sonnet-4-6" });
+-host.mcp.protocolVersion = "2025-11-25";
+-host.mcp.apps = { sandbox: { csp: { mode: "declared" } } };
+-host.addServer("srv_abc");
+-
+-const json = host.toJSON();
+-```
+-
+-New public exports (from `@mcpjam/sdk` and `@mcpjam/sdk/host-config`): `Host`, `HostInit`, `HostJson`, `HostMcp`, `HostServerOverride`, `HostConnectionDefaults`, `HostStyleId`, `ServerId`, `CspDomainSet`, `OpenAiAppsCapabilities`, `McpAppsCapabilities`.
+-
+-Also publishes `@mcpjam/sdk/host-config/internal` — a first-party, non-semver-stable subpath exposing `canonicalizeHostConfigV2`, `computeHostConfigHashV2`, and storage-row types. Intended for first-party consumers (the MCPJam backend, parity-fixture tooling); external SDK users should stay on the `Host` builder.
 diff --git a/package-lock.json b/package-lock.json
-index b2de25fef..89cfcadb8 100644
+index 143fc1940..5252980ee 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -24,9 +24,9 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "3.3.5",
-+      "version": "3.4.0",
-       "dependencies": {
--        "@mcpjam/sdk": "^1.9.0",
-+        "@mcpjam/sdk": "^1.10.0",
-         "commander": "^12.1.0",
-         "posthog-node": "^5.24.10"
-       },
-@@ -289,7 +289,7 @@
-     },
-     "mcpjam-inspector": {
-       "name": "@mcpjam/inspector",
--      "version": "2.8.1",
-+      "version": "2.9.0",
-       "license": "Apache-2.0",
-       "dependencies": {
-         "@ai-sdk/anthropic": "^3.0.36",
-@@ -317,7 +317,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.9.0",
-+        "@mcpjam/sdk": "^1.10.0",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
-         "@ngrok/ngrok": "^1.6.0",
 @@ -36114,7 +36114,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.9.0",
-+      "version": "1.10.0",
+-      "version": "1.10.1",
++      "version": "1.11.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/anthropic": "^2.0.17",
 diff --git a/sdk/package.json b/sdk/package.json
-index 46032f37b..f5028a95a 100644
+index 64de7c80a..cfae63519 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.9.0",
-+  "version": "1.10.0",
+-  "version": "1.10.1",
++  "version": "1.11.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

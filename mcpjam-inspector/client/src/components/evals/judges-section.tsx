@@ -1,6 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import { Sparkles } from "lucide-react";
-import { Input } from "@mcpjam/design-system/input";
+import { useMemo } from "react";
 import { Label } from "@mcpjam/design-system/label";
 import {
   Select,
@@ -27,7 +25,6 @@ import type { EvalJudgeConfig } from "./types";
  */
 
 const MANAGED_DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
-const DEFAULT_THRESHOLD = 0.7;
 
 interface JudgesSectionProps {
   value: EvalJudgeConfig | undefined;
@@ -35,6 +32,13 @@ interface JudgesSectionProps {
   availableModels: ModelDefinition[];
   title?: string;
   description?: string;
+  /**
+   * "panel" (default) renders the full card with title block + nested
+   * sub-card chrome. "bare" strips all framing and produces a flat row
+   * sequence suitable for hosts that provide their own section header
+   * (e.g. the suite settings sheet).
+   */
+  chrome?: "panel" | "bare";
 }
 
 function pruneEmpty(value: EvalJudgeConfig): EvalJudgeConfig | undefined {
@@ -53,17 +57,18 @@ export function JudgesSection({
   value,
   onChange,
   availableModels,
-  title = "Judges",
-  description = "Advisory LLM-as-judge scorers that grade run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
+  title = "LLM as Judge",
+  description = "Advisory grading of run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
+  chrome = "panel",
 }: JudgesSectionProps) {
+  const isBare = chrome === "bare";
   const gc = value?.goalCompletion;
-  // Treat absence as "enabled" to mirror GOAL_COMPLETION_DEFAULTS
-  // (`enabled: true`). Only an explicit `enabled: false` switches the
-  // suite to off; otherwise the toggle reads as on by default so users
-  // see the configuration affordance instead of an opt-in gate.
+  // Default-on: GOAL_COMPLETION_DEFAULTS.enabled = true. Only an explicit
+  // `enabled: false` flips the toggle off, matching what the resolver
+  // does at run time. Cost stays gated by `autoRun: false` + the explicit
+  // Run judge click on the run-detail card.
   const enabled = gc?.enabled !== false;
   const judgeModel = gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL;
-  const threshold = gc?.threshold ?? DEFAULT_THRESHOLD;
   const autoRun = gc?.autoRun === true;
 
   const modelOptions = useMemo(() => {
@@ -91,30 +96,107 @@ export function JudgesSection({
     onChange(pruneEmpty(nextConfig));
   };
 
-  // The threshold field keeps a local draft so typing doesn't fight the
-  // persisted prop: `onChange` here drives an async `updateSuite`, and feeding
-  // the input straight from the round-tripped prop snaps a half-typed decimal
-  // back mid-edit. Type into the draft, commit (clamp / default) on blur, and
-  // re-sync the draft whenever the persisted value changes from elsewhere.
-  const [thresholdDraft, setThresholdDraft] = useState(String(threshold));
-  useEffect(() => {
-    setThresholdDraft(String(threshold));
-  }, [threshold]);
+  const body = (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          {isBare ? (
+            // Parent `SettingsSection` already labels "LLM as Judge" and
+            // describes it; surfacing the same name + blurb here would just
+            // repeat the section header. In `panel` chrome there's no outer
+            // label, so we keep the sub-heading + description.
+            <p className="text-[12px] text-muted-foreground">
+              Grade each case&apos;s final answer against its objective.
+            </p>
+          ) : (
+            <>
+              <span className="text-sm font-medium text-foreground">
+                LLM as Judge
+              </span>
+              <p className="mt-0.5 text-[11px] text-muted-foreground/80">
+                Grades each case&apos;s final answer against its objective.
+              </p>
+            </>
+          )}
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked: boolean) =>
+            // Persist EXPLICIT true/false. `undefined` means "inherit the
+            // default" — which is `enabled: true` — so writing
+            // `enabled: undefined` here would silently re-enable a suite
+            // the user just disabled.
+            update({ enabled: checked })
+          }
+          aria-label="Enable LLM as Judge for this suite"
+        />
+      </div>
 
-  const commitThreshold = () => {
-    const raw = thresholdDraft.trim();
-    if (raw === "") {
-      update({ threshold: undefined });
-      return;
-    }
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) {
-      setThresholdDraft(String(threshold));
-      return;
-    }
-    const clamped = Math.min(1, Math.max(0, parsed));
-    update({ threshold: clamped === DEFAULT_THRESHOLD ? undefined : clamped });
-  };
+      {enabled ? (
+        <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 pt-1">
+          <Label
+            htmlFor="suite-goal-judge-model"
+            className="text-sm text-muted-foreground"
+          >
+            Judge model
+          </Label>
+          <Select
+            value={judgeModel}
+            onValueChange={(next) =>
+              update({
+                judgeModel:
+                  next === MANAGED_DEFAULT_JUDGE_MODEL ? undefined : next,
+              })
+            }
+          >
+            <SelectTrigger
+              id="suite-goal-judge-model"
+              className="h-8 w-[14rem] text-sm"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {modelOptions.map((opt) => (
+                <SelectItem key={opt.id} value={opt.id}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Threshold is hidden from the suite UI — runs grade against a
+              fixed default and surface only the model choice. Auto-run is
+              still configurable in the full panel chrome. */}
+          {!isBare ? (
+            <>
+              <Label
+                htmlFor="suite-goal-auto-run"
+                className="text-sm text-muted-foreground"
+              >
+                Auto-run on every run
+              </Label>
+              <Switch
+                id="suite-goal-auto-run"
+                checked={autoRun}
+                onCheckedChange={(checked: boolean) =>
+                  update({ autoRun: checked || undefined })
+                }
+                aria-label="Auto-run the LLM as Judge on every new completed run"
+              />
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (isBare) {
+    return (
+      <div aria-label={title} className="space-y-3">
+        {body}
+      </div>
+    );
+  }
 
   return (
     <section
@@ -122,130 +204,21 @@ export function JudgesSection({
       className="rounded-lg border border-border/40 bg-card/30 p-4 space-y-4"
     >
       <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">{title}</h3>
-        </div>
+        <h3 className="text-sm font-semibold">{title}</h3>
         {description ? (
           <p className="text-[12px] text-muted-foreground">{description}</p>
         ) : null}
       </div>
 
       <div className="space-y-3 rounded-md border border-border/30 bg-background/60 p-3">
-        {/* Goal Completion — V1 only judge */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Goal completion</span>
-              <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                advisory · LLM judge
-              </span>
-            </div>
-            <p className="text-[11px] text-muted-foreground/80">
-              Grades whether each case's final answer satisfied its{" "}
-              <code className="font-mono">expectedOutput</code>. Cases without
-              an expected output are skipped (anchored-only).
-            </p>
-          </div>
-          <Switch
-            checked={enabled}
-            onCheckedChange={(checked: boolean) =>
-              // Persist EXPLICIT true/false. `undefined` means "inherit the
-              // default" — which is `enabled: true` — so writing
-              // `enabled: undefined` here would silently re-enable a suite
-              // the user just disabled. Write `false` to disable, `true` to
-              // re-enable; let `pruneEmpty` decide later when to drop the
-              // record entirely.
-              update({ enabled: checked })
-            }
-            aria-label="Enable Goal Completion judge for this suite"
-          />
-        </div>
-
-        {enabled ? (
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-            <div className="space-y-1">
-              <Label htmlFor="suite-goal-judge-model" className="text-xs">
-                Judge model
-              </Label>
-              <Select
-                value={judgeModel}
-                onValueChange={(next) =>
-                  update({
-                    judgeModel:
-                      next === MANAGED_DEFAULT_JUDGE_MODEL ? undefined : next,
-                  })
-                }
-              >
-                <SelectTrigger
-                  id="suite-goal-judge-model"
-                  className="h-8 w-full text-sm"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelOptions.map((opt) => (
-                    <SelectItem key={opt.id} value={opt.id}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 sm:w-28">
-              <Label htmlFor="suite-goal-threshold" className="text-xs">
-                Threshold
-              </Label>
-              <Input
-                id="suite-goal-threshold"
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={thresholdDraft}
-                onChange={(e) => setThresholdDraft(e.target.value)}
-                onBlur={commitThreshold}
-                className="h-8 text-sm"
-              />
-            </div>
-          </div>
-        ) : null}
-
-        {enabled ? (
-          <div className="space-y-2 rounded-md border border-border/20 bg-muted/10 p-2.5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 space-y-0.5">
-                <Label
-                  htmlFor="suite-goal-auto-run"
-                  className="text-xs font-medium"
-                >
-                  Run automatically on every completed run
-                </Label>
-                <p className="text-[11px] text-muted-foreground/80">
-                  When on, the judge fires the moment each run completes — no
-                  need to click <strong>Run judge</strong> per run. Off by
-                  default so each grading is an explicit choice (each one
-                  spends an LLM call).
-                </p>
-              </div>
-              <Switch
-                id="suite-goal-auto-run"
-                checked={autoRun}
-                onCheckedChange={(checked: boolean) =>
-                  update({ autoRun: checked || undefined })
-                }
-                aria-label="Auto-run the Goal Completion judge on every new completed run"
-              />
-            </div>
-          </div>
-        ) : null}
+        {body}
 
         {enabled ? (
           <p className="text-[11px] text-muted-foreground/70">
             Runs grade against this config. Individual runs can apply a one-off
             override from the run detail page — overridden runs show a banner
-            on the run card so their scores aren't mistaken for suite-contract
-            calibration.
+            on the run card so their scores aren&apos;t mistaken for
+            suite-contract calibration.
           </p>
         ) : null}
       </div>

@@ -1,22 +1,19 @@
 import { cn } from "@/lib/utils";
 
-/** Lifted eval card shell — rounded, gradient, inset ring, visible shadow. */
+/** Flat eval card shell — single surface, hairline border, no gradient/ring/shadow. */
 export const evalSurfaceCardClass = cn(
-  "rounded-2xl border border-border bg-card text-card-foreground",
-  "bg-gradient-to-b from-card via-card to-muted/35",
-  "shadow-md ring-1 ring-inset ring-foreground/[0.08]",
-  "dark:border-border/90 dark:from-card dark:via-card dark:to-muted/25",
-  "dark:shadow-md dark:ring-foreground/[0.1]",
+  "rounded-2xl border border-border/50 bg-card text-card-foreground",
+  "dark:border-border/40",
 );
 
-/** Card header / column-header band — reads as a control strip atop the surface. */
+/** Card header / column-header band — same surface as the body, divider only. */
 export const evalSurfaceHeaderClass = cn(
-  "border-b border-border/80 bg-muted/60 backdrop-blur-sm",
-  "dark:border-border/70 dark:bg-muted/50",
+  "border-b border-border/40",
+  "dark:border-border/30",
 );
 
-/** Matrix / table body cells sitting on the page background. */
-export const evalSurfaceCellClass = "bg-muted/15 dark:bg-muted/20";
+/** Matrix / table body cells — transparent so they inherit card surface. */
+export const evalSurfaceCellClass = "bg-transparent";
 
 /** Row hover inside eval tables and lists. */
 export const evalSurfaceRowHoverClass = cn(

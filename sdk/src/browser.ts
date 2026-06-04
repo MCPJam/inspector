@@ -190,3 +190,20 @@ export {
   isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
+
+// HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).
+// Browser-safe: the class wraps the pure canonicalizer + Web Crypto hash.
+// `McpProtocolVersion` is omitted here — already exported just above.
+export { Host } from "./host-config/index.js";
+export type {
+  HostInit,
+  HostJson,
+  HostMcp,
+  HostServerOverride,
+  HostConnectionDefaults,
+  HostStyleId,
+  ServerId,
+  CspDomainSet,
+  OpenAiAppsCapabilities,
+  McpAppsCapabilities,
+} from "./host-config/index.js";

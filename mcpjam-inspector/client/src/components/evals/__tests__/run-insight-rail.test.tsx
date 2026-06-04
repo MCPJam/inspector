@@ -67,7 +67,7 @@ const trendFixture = [
 ];
 
 describe("RunAccuracyHeroBand", () => {
-  it("renders large accuracy with recent run cards and delta", () => {
+  it("renders large accuracy with recent run cards (delta + compare button intentionally suppressed in the header)", () => {
     render(
       <RunAccuracyHeroBand
         run={makeRun()}
@@ -83,7 +83,10 @@ describe("RunAccuracyHeroBand", () => {
     );
 
     expect(screen.getByText("Accuracy")).toBeInTheDocument();
-    expect(screen.getByText(/-10pp vs run #1/)).toBeInTheDocument();
+    expect(screen.queryByText(/pp vs run #/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Compare to previous run/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Recent runs")).toBeInTheDocument();
     expect(
       screen.getByLabelText("Accuracy across recent suite runs"),
@@ -107,7 +110,6 @@ describe("RunAccuracyHeroBand", () => {
       />,
     );
 
-    expect(screen.getByText("Client")).toBeInTheDocument();
     expect(screen.getByText("ChatGPT")).toBeInTheDocument();
   });
 

@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Loader2, ChevronDown } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
+import posthog from "posthog-js";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
@@ -29,17 +31,14 @@ export interface SuiteInsightsCollapsibleProps {
 function runInsightsHeaderSubtitle({
   pending,
   failedGeneration,
-  summary,
   requested,
 }: {
   pending: boolean;
   failedGeneration: boolean;
-  summary: string | null;
   requested: boolean;
 }): string {
   if (pending) return "Generating…";
   if (failedGeneration) return "Summary unavailable";
-  if (summary) return "Compared to your previous completed run";
   if (requested) return "Requesting…";
   return "Compared to your previous completed run";
 }
@@ -75,9 +74,28 @@ export function SuiteInsightsCollapsible({
   runs,
   title = "Run insights",
 }: SuiteInsightsCollapsibleProps) {
-  const [open, setOpen] = useState(true);
+  // Default closed so the surface starts compact: the first sentence of the
+  // summary is surfaced inline as the header subtitle (see
+  // `runInsightsHeaderSubtitle`); users click to expand for the full text.
+  const [open, setOpen] = useState(false);
   const shouldReduceMotion = useReducedMotion();
   const latestCompleted = useMemo(() => pickLatestCompletedRun(runs), [runs]);
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (next && !open) {
+        posthog.capture("eval_run_insights_opened", {
+          location: "suite_insights_collapsible",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          title,
+          run_id: latestCompleted?._id ?? null,
+        });
+      }
+      setOpen(next);
+    },
+    [latestCompleted, open, title],
+  );
 
   const {
     summary,
@@ -96,7 +114,6 @@ export function SuiteInsightsCollapsible({
   const headerSubtitle = runInsightsHeaderSubtitle({
     pending,
     failedGeneration,
-    summary,
     requested,
   });
 
@@ -113,7 +130,7 @@ export function SuiteInsightsCollapsible({
   return (
     <Collapsible
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={handleOpenChange}
       className={insightHighlightSectionClass}
     >
       <div className={insightHighlightAccentClass} aria-hidden />
@@ -130,7 +147,7 @@ export function SuiteInsightsCollapsible({
             transition={{ type: "spring", stiffness: 520, damping: 32 }}
           >
             <motion.span
-              className="inline-flex shrink-0 text-primary/70"
+              className="inline-flex shrink-0 text-muted-foreground"
               aria-hidden
               initial={false}
               animate={{ rotate: open ? 0 : -90 }}
