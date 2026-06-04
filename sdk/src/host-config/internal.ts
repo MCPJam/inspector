@@ -50,6 +50,7 @@ export type { ToolMetadataSource } from "./tool-visibility.js";
 export {
   extractHostExecutionPolicy,
   buildHostIterationMetadata,
+  buildHostSnapshotMetadata,
 } from "./host-policy.js";
 export type {
   HostExecutionPolicy,

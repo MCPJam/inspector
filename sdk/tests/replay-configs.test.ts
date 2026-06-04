@@ -9,7 +9,7 @@ vi.mock("../src/report-eval-results.js", () => ({
 import { EvalSuite } from "../src/EvalSuite";
 import { EvalTest } from "../src/EvalTest";
 import { PromptResult } from "../src/PromptResult";
-import { TestAgent } from "../src/TestAgent";
+import { HostRunner } from "../src/HostRunner";
 
 function createPromptResult(): PromptResult {
   return PromptResult.from({
@@ -44,7 +44,7 @@ function createReplayAwareAgent() {
   ];
 
   return {
-    prompt: vi.fn().mockResolvedValue(createPromptResult()),
+    run: vi.fn().mockResolvedValue(createPromptResult()),
     withOptions() {
       return this;
     },
@@ -60,7 +60,7 @@ describe("server replay config auto-save wiring", () => {
     reportEvalResultsMocks.reportEvalResultsSafely.mockResolvedValue(null);
   });
 
-  it("exposes replay configs from TestAgent when a client manager is attached", () => {
+  it("exposes replay configs from HostRunner when a client manager is attached", () => {
     const replayConfigs = [
       {
         serverId: "asana",
@@ -68,7 +68,7 @@ describe("server replay config auto-save wiring", () => {
         accessToken: "at_123",
       },
     ];
-    const agent = new TestAgent({
+    const agent = new HostRunner({
       tools: {},
       model: "openai/gpt-4o",
       apiKey: "test-api-key",
@@ -85,7 +85,7 @@ describe("server replay config auto-save wiring", () => {
     const test = new EvalTest({
       name: "list-projects",
       test: async (evalAgent) => {
-        await evalAgent.prompt("Show me my projects");
+        await evalAgent.run("Show me my projects");
         return true;
       },
     });
@@ -118,7 +118,7 @@ describe("server replay config auto-save wiring", () => {
       new EvalTest({
         name: "asana-get-user",
         test: async (evalAgent) => {
-          await evalAgent.prompt("Who am I in Asana?");
+          await evalAgent.run("Who am I in Asana?");
           return true;
         },
       })
@@ -153,7 +153,7 @@ describe("server replay config auto-save wiring", () => {
     const test = new EvalTest({
       name: "list-projects",
       test: async (evalAgent) => {
-        await evalAgent.prompt("Show me my projects");
+        await evalAgent.run("Show me my projects");
         return true;
       },
     });

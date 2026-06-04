@@ -139,6 +139,18 @@ export type MCPJamReportingConfig = {
   ci?: EvalCiMetadata;
   expectedIterations?: number;
   tags?: string[];
+  /**
+   * Host configuration that drove this eval run. When provided, the
+   * reporter computes a content-addressed hash internally and attaches it
+   * to the upload so the backend can dedupe / link to a stored
+   * `hostConfigsV2` row. The hash is never set by the caller — supply the
+   * raw `Host` and let the SDK fingerprint it.
+   *
+   * Wire-level send (the `hostConfigHash` field on each `EvalResultInput`)
+   * is implemented in a follow-up stage; in this SDK release the field is
+   * accepted but not yet propagated to `/sdk/v1/evals/*` ingestion.
+   */
+  host?: import("./host-config/host.js").Host;
 };
 
 export type ReportEvalResultsInput = MCPJamReportingConfig & {

@@ -1,4 +1,4 @@
-import type { EvalAgent } from "./EvalAgent.js";
+import type { HostExecutor } from "./HostExecutor.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import type {
@@ -11,15 +11,18 @@ import { posthog } from "./telemetry.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 
 /**
  * Configuration for an EvalTest
  *
- * All tests use the multi-turn pattern with a test function that receives an EvalAgent.
+ * All tests use the multi-turn pattern with a test function that receives a
+ * `HostExecutor` (implemented by `HostRunner`, `HostRuntime`, and any custom
+ * executor that mirrors the interface).
  */
 export interface EvalTestConfig {
   name: string;
-  test: (agent: EvalAgent) => boolean | Promise<boolean>;
+  test: (executor: HostExecutor) => boolean | Promise<boolean>;
   expectedToolCalls?: EvalExpectedToolCall[];
 }
 
@@ -178,12 +181,12 @@ function collectPromptMetrics(
 }
 
 function wrapAgentWithAbortSignal(
-  agent: EvalAgent,
+  agent: HostExecutor,
   abortSignal: AbortSignal
-): EvalAgent {
+): HostExecutor {
   return {
-    prompt: (message, options) =>
-      agent.prompt(message, {
+    run: (message, options) =>
+      agent.run(message, {
         ...options,
         abortSignal: mergeAbortSignals(options?.abortSignal, abortSignal),
       }),
@@ -203,12 +206,12 @@ function wrapAgentWithAbortSignal(
  * ```ts
  * const test = new EvalTest({
  *   name: "addition",
- *   test: async (agent) => {
- *     const result = await agent.prompt("Add 2+3");
+ *   test: async (executor) => {
+ *     const result = await executor.run("Add 2+3");
  *     return result.hasToolCall("add");
  *   },
  * });
- * await test.run(agent, { iterations: 30 });
+ * await test.run(executor, { iterations: 30 });
  * console.log(test.accuracy()); // 0.97
  * ```
  */
@@ -224,12 +227,13 @@ export class EvalTest {
   }
 
   /**
-   * Run this test with the given agent and options
+   * Run this test with the given executor and options.
    */
   async run(
-    agent: EvalAgent,
+    executor: HostExecutor,
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
+    const agent = executor;
     posthog.capture({
       distinctId: "anonymous",
       event: "eval_test_run_triggered",
@@ -254,7 +258,7 @@ export class EvalTest {
       await semaphore.acquire();
       try {
         let lastError: string | undefined;
-        let iterationAgent: EvalAgent | undefined;
+        let iterationAgent: HostExecutor | undefined;
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           const abortController = new AbortController();
@@ -353,8 +357,9 @@ export class EvalTest {
   private async autoSaveRunIfConfigured(
     runResult: EvalRunResult,
     options: EvalTestRunOptions,
-    agent: EvalAgent
+    executor: HostExecutor
   ): Promise<void> {
+    const agent = executor;
     if (options.__suppressMcpjamAutoSave) {
       return;
     }
@@ -369,9 +374,16 @@ export class EvalTest {
       return;
     }
 
+    const hostSnapshot = executor.getHostSnapshot?.();
+    const hostExtras = hostSnapshot
+      ? buildHostSnapshotMetadata(
+          hostSnapshot as unknown as Record<string, unknown>,
+        )
+      : undefined;
     const results = this.buildEvalResultInputs(
       runResult.iterationDetails,
-      config
+      config,
+      hostExtras,
     );
     if (results.length === 0) {
       return;
@@ -400,13 +412,15 @@ export class EvalTest {
 
   private buildEvalResultInputs(
     iterations: IterationResult[],
-    reporting?: MCPJamReportingConfig
+    reporting?: MCPJamReportingConfig,
+    hostExtras?: Record<string, string | number | boolean>,
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
       iterations,
       this.config.expectedToolCalls,
-      reporting?.failOnToolError
+      reporting?.failOnToolError,
+      hostExtras,
     );
   }
 

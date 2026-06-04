@@ -1,4 +1,4 @@
-import { TestAgent } from "../src/TestAgent";
+import { HostRunner } from "../src/HostRunner";
 import { PromptResult } from "../src/PromptResult";
 import type { ToolSet } from "ai";
 import type { Tool } from "../src/mcp-client-manager/types";
@@ -94,7 +94,7 @@ const mockCreateModel = createModelFromString as jest.MockedFunction<
   typeof createModelFromString
 >;
 
-describe("TestAgent", () => {
+describe("HostRunner", () => {
   // Create a mock ToolSet for testing
   const mockToolSet: ToolSet = {
     add: {
@@ -151,17 +151,17 @@ describe("TestAgent", () => {
 
   describe("constructor", () => {
     it("should create an instance with config", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      expect(agent).toBeInstanceOf(TestAgent);
+      expect(agent).toBeInstanceOf(HostRunner);
     });
 
     it("should accept optional parameters", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
@@ -170,14 +170,14 @@ describe("TestAgent", () => {
         maxSteps: 5,
       });
 
-      expect(agent).toBeInstanceOf(TestAgent);
+      expect(agent).toBeInstanceOf(HostRunner);
       expect(agent.getSystemPrompt()).toBe("You are a test assistant.");
       expect(agent.getTemperature()).toBe(0.5);
       expect(agent.getMaxSteps()).toBe(5);
     });
 
     it("should use default values for optional parameters", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
@@ -191,7 +191,7 @@ describe("TestAgent", () => {
 
   describe("configuration", () => {
     it("should return the configured tools", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
@@ -201,7 +201,7 @@ describe("TestAgent", () => {
     });
 
     it("should return the configured LLM", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "anthropic/claude-3-5-sonnet-20241022",
         apiKey: "test-api-key",
@@ -211,7 +211,7 @@ describe("TestAgent", () => {
     });
 
     it("should return the configured API key", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "my-secret-key",
@@ -221,7 +221,7 @@ describe("TestAgent", () => {
     });
 
     it("should update system prompt", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
@@ -232,7 +232,7 @@ describe("TestAgent", () => {
     });
 
     it("should validate temperature range", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
@@ -272,13 +272,13 @@ describe("TestAgent", () => {
         },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Add 2 and 3");
+      const result = await agent.run("Add 2 and 3");
 
       expect(result).toBeInstanceOf(PromptResult);
       expect(result.text).toBe("The result is 5");
@@ -326,13 +326,13 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Say hello");
+      const result = await agent.run("Say hello");
       const spans = result.getSpans();
 
       expect(spans.some((span) => span.category === "step")).toBe(true);
@@ -411,13 +411,13 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Add 2 and 3");
+      const result = await agent.run("Add 2 and 3");
       const spans = result.getSpans();
       const stepSpan = spans.find((span) => span.category === "step");
       const toolSpan = spans.find(
@@ -471,13 +471,13 @@ describe("TestAgent", () => {
         throw new Error("tool path failed");
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Add 2 and 3");
+      const result = await agent.run("Add 2 and 3");
       const spans = result.getSpans();
 
       expect(result.hasError()).toBe(true);
@@ -514,13 +514,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Do some math");
+      const result = await agent.run("Do some math");
 
       expect(result.toolsCalled()).toEqual(["add", "subtract"]);
       expect(result.getToolCalls()).toHaveLength(2);
@@ -617,7 +617,7 @@ describe("TestAgent", () => {
       // asserting the shim presence — the default is now `false`
       // (SEP-1865 honest behavior) and snapshots without the flag
       // come back without `openai-compat-config`.
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
@@ -625,7 +625,7 @@ describe("TestAgent", () => {
         injectOpenAiCompat: true,
       });
 
-      const result = await agent.prompt("Create two views");
+      const result = await agent.run("Create two views");
 
       expect(result.getWidgetSnapshots()).toHaveLength(2);
 
@@ -702,7 +702,7 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
@@ -710,7 +710,7 @@ describe("TestAgent", () => {
         // injectOpenAiCompat omitted — defaults to false.
       });
 
-      const result = await agent.prompt("Create a view");
+      const result = await agent.run("Create a view");
       const snap = result.getWidgetSnapshots()[0];
       expect(snap.widgetHtml).not.toContain('id="openai-compat-config"');
       expect(snap.widgetHtml).toContain("Default widget");
@@ -751,14 +751,14 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
         mcpClientManager: mockManager as any,
       });
 
-      const result = await agent.prompt("Create a view");
+      const result = await agent.run("Create a view");
 
       expect(result.hasError()).toBe(false);
       expect(result.getWidgetSnapshots()).toEqual([]);
@@ -773,13 +773,13 @@ describe("TestAgent", () => {
         new Error("API rate limit exceeded")
       );
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Test prompt");
+      const result = await agent.run("Test prompt");
 
       expect(result).toBeInstanceOf(PromptResult);
       expect(result.hasError()).toBe(true);
@@ -797,13 +797,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Test");
+      const result = await agent.run("Test");
 
       const latency = result.getLatency();
       expect(latency).toHaveProperty("e2eMs");
@@ -817,13 +817,13 @@ describe("TestAgent", () => {
     it("should handle non-Error exceptions", async () => {
       mockGenerateText.mockRejectedValueOnce("String error");
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      const result = await agent.prompt("Test prompt");
+      const result = await agent.run("Test prompt");
 
       expect(result.hasError()).toBe(true);
       expect(result.getError()).toBe("String error");
@@ -874,13 +874,13 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: abortableToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
       const abortController = new AbortController();
-      const promptPromise = agent.prompt("Add 2 and 3", {
+      const promptPromise = agent.run("Add 2 and 3", {
         abortSignal: abortController.signal,
       });
 
@@ -916,13 +916,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "anthropic/claude-3-5-sonnet-20241022",
         apiKey: "my-api-key",
       });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       expect(mockCreateModel).toHaveBeenCalledWith(
         "anthropic/claude-3-5-sonnet-20241022",
@@ -942,7 +942,7 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
@@ -951,7 +951,7 @@ describe("TestAgent", () => {
         maxSteps: 15,
       });
 
-      await agent.prompt("What is 2+2?");
+      await agent.run("What is 2+2?");
 
       expect(mockStepCountIs).toHaveBeenCalledWith(15);
       expect(mockGenerateText).toHaveBeenCalledWith(
@@ -979,13 +979,13 @@ describe("TestAgent", () => {
         // No usage data
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      const result = await agent.prompt("Test");
+      const result = await agent.run("Test");
 
       expect(result.inputTokens()).toBe(0);
       expect(result.outputTokens()).toBe(0);
@@ -995,7 +995,7 @@ describe("TestAgent", () => {
 
   describe("toolsCalled()", () => {
     it("should return empty array if no prompt has been run", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-key",
@@ -1011,13 +1011,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Add numbers");
+      await agent.run("Add numbers");
 
       expect(agent.toolsCalled()).toEqual(["add"]);
     });
@@ -1035,16 +1035,16 @@ describe("TestAgent", () => {
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Add");
+      await agent.run("Add");
       expect(agent.toolsCalled()).toEqual(["add"]);
 
-      await agent.prompt("Subtract");
+      await agent.run("Subtract");
       expect(agent.toolsCalled()).toEqual(["subtract"]);
     });
 
@@ -1055,13 +1055,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Add numbers");
+      await agent.run("Add numbers");
       expect(agent.toolsCalled()).toEqual(["add"]);
       expect(agent.getLastResult()).toBeDefined();
       expect(agent.getPromptHistory()).toHaveLength(1);
@@ -1076,7 +1076,7 @@ describe("TestAgent", () => {
 
   describe("withOptions()", () => {
     it("should create a new agent with merged options", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "original-key",
@@ -1112,7 +1112,7 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "key",
@@ -1120,7 +1120,7 @@ describe("TestAgent", () => {
 
       const newAgent = agent.withOptions({ temperature: 0.5 });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       // Original agent has the result
       expect(agent.toolsCalled()).toEqual(["add"]);
@@ -1131,7 +1131,7 @@ describe("TestAgent", () => {
 
   describe("getLastResult()", () => {
     it("should return undefined if no prompt has been run", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-key",
@@ -1147,13 +1147,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      const promptResult = await agent.prompt("Question");
+      const promptResult = await agent.run("Question");
       const lastResult = agent.getLastResult();
 
       expect(lastResult).toBe(promptResult);
@@ -1163,7 +1163,7 @@ describe("TestAgent", () => {
 
   describe("provider/model metadata", () => {
     it("should parse builtin provider/model from model string", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-key",
@@ -1174,7 +1174,7 @@ describe("TestAgent", () => {
     });
 
     it("should parse multi-segment model names", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openrouter/openai/gpt-5-mini",
         apiKey: "test-key",
@@ -1185,7 +1185,7 @@ describe("TestAgent", () => {
     });
 
     it("should handle unparseable model strings gracefully", () => {
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "just-a-model",
         apiKey: "test-key",
@@ -1202,13 +1202,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      const result = await agent.prompt("Test");
+      const result = await agent.run("Test");
       expect(result.getProvider()).toBe("openai");
       expect(result.getModel()).toBe("gpt-4o");
     });
@@ -1216,13 +1216,13 @@ describe("TestAgent", () => {
     it("should inject provider/model into PromptResult on error", async () => {
       mockGenerateText.mockRejectedValueOnce(new Error("fail"));
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: {},
         model: "anthropic/claude-3-5-sonnet-20241022",
         apiKey: "test-key",
       });
 
-      const result = await agent.prompt("Test");
+      const result = await agent.run("Test");
       expect(result.getProvider()).toBe("anthropic");
       expect(result.getModel()).toBe("claude-3-5-sonnet-20241022");
     });
@@ -1230,7 +1230,7 @@ describe("TestAgent", () => {
 
   describe("mock()", () => {
     it("should create a mock agent that calls promptFn", async () => {
-      const agent = TestAgent.mock(async (message) =>
+      const agent = HostRunner.mock(async (message) =>
         PromptResult.from({
           prompt: message,
           messages: [{ role: "user", content: message }],
@@ -1241,14 +1241,14 @@ describe("TestAgent", () => {
         })
       );
 
-      const result = await agent.prompt("hello");
+      const result = await agent.run("hello");
       expect(result.text).toBe("mocked");
       expect(result.toolsCalled()).toEqual(["test_tool"]);
       expect(result.prompt).toBe("hello");
     });
 
     it("should track prompt history", async () => {
-      const agent = TestAgent.mock(async (message) =>
+      const agent = HostRunner.mock(async (message) =>
         PromptResult.from({
           prompt: message,
           messages: [],
@@ -1259,13 +1259,13 @@ describe("TestAgent", () => {
         })
       );
 
-      await agent.prompt("first");
-      await agent.prompt("second");
+      await agent.run("first");
+      await agent.run("second");
       expect(agent.getPromptHistory()).toHaveLength(2);
     });
 
     it("should reset prompt history", async () => {
-      const agent = TestAgent.mock(async (message) =>
+      const agent = HostRunner.mock(async (message) =>
         PromptResult.from({
           prompt: message,
           messages: [],
@@ -1276,13 +1276,13 @@ describe("TestAgent", () => {
         })
       );
 
-      await agent.prompt("test");
+      await agent.run("test");
       agent.resetPromptHistory();
       expect(agent.getPromptHistory()).toHaveLength(0);
     });
 
     it("should create independent clones via withOptions", async () => {
-      const agent = TestAgent.mock(async (message) =>
+      const agent = HostRunner.mock(async (message) =>
         PromptResult.from({
           prompt: message,
           messages: [],
@@ -1294,7 +1294,7 @@ describe("TestAgent", () => {
       );
 
       const clone = agent.withOptions({});
-      await agent.prompt("original");
+      await agent.run("original");
       expect(agent.getPromptHistory()).toHaveLength(1);
       expect(clone.getPromptHistory()).toHaveLength(0);
     });
@@ -1331,13 +1331,13 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      const result = await agent.prompt("Add 2 and 3", {
+      const result = await agent.run("Add 2 and 3", {
         stopWhen: stopCondition as any,
       });
 
@@ -1361,13 +1361,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Do math", {
+      await agent.run("Do math", {
         stopWhen: [stopA as any, stopB as any],
       });
 
@@ -1386,13 +1386,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       expect(mockStepCountIs).toHaveBeenCalledWith(10);
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
@@ -1412,13 +1412,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Add 2 and 3", {
+      await agent.run("Add 2 and 3", {
         stopAfterToolCall: "add",
       });
 
@@ -1506,12 +1506,12 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
-      const result = await agent.prompt("Do some math", {
+      const result = await agent.run("Do some math", {
         stopAfterToolCall: "add",
       });
 
@@ -1556,13 +1556,13 @@ describe("TestAgent", () => {
         } as any;
       });
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-key",
         mcpClientManager: mockManager as any,
       });
-      const result = await agent.prompt("Create a view", {
+      const result = await agent.run("Create a view", {
         stopAfterToolCall: "create_view",
       });
 
@@ -1581,13 +1581,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test", { timeout: 5000 });
+      await agent.run("Test", { timeout: 5000 });
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       expect(callArgs.timeout).toBe(5000);
@@ -1600,13 +1600,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test", {
+      await agent.run("Test", {
         timeout: { totalMs: 5000, stepMs: 1000, chunkMs: 250 },
       });
 
@@ -1625,13 +1625,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test", { timeoutMs: 2500 });
+      await agent.run("Test", { timeoutMs: 2500 });
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       expect(callArgs.timeout).toBe(2500);
@@ -1644,13 +1644,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test", {
+      await agent.run("Test", {
         timeout: { totalMs: 5000, stepMs: 1000 },
         timeoutMs: 2500,
       });
@@ -1666,14 +1666,14 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
       const abortController = new AbortController();
 
-      await agent.prompt("Test", { abortSignal: abortController.signal });
+      await agent.run("Test", { abortSignal: abortController.signal });
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       expect(callArgs.abortSignal).toBe(abortController.signal);
@@ -1686,13 +1686,13 @@ describe("TestAgent", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools: mockToolSet,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       expect(callArgs).not.toHaveProperty("timeout");
@@ -1727,13 +1727,13 @@ describe("TestAgent", () => {
         createMockTool("noVisibilityTool"),
       ];
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       // Verify the tools passed to generateText
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
@@ -1756,13 +1756,13 @@ describe("TestAgent", () => {
         createMockTool("appOnlyTool", ["app"]),
       ];
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       const toolNames = Object.keys(callArgs.tools);
@@ -1780,13 +1780,13 @@ describe("TestAgent", () => {
 
       const tools: Tool[] = [createMockTool("modelOnlyTool", ["model"])];
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       const toolNames = Object.keys(callArgs.tools);
@@ -1803,13 +1803,13 @@ describe("TestAgent", () => {
 
       const tools: Tool[] = [createMockTool("noVisibilityTool")];
 
-      const agent = new TestAgent({
+      const agent = new HostRunner({
         tools,
         model: "openai/gpt-4o",
         apiKey: "test-key",
       });
 
-      await agent.prompt("Test");
+      await agent.run("Test");
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       const toolNames = Object.keys(callArgs.tools);

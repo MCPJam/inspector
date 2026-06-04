@@ -562,7 +562,7 @@ export class MCPClientManager {
    * @example
    * ```typescript
    * const tools = await manager.getTools(["asana"]);
-   * const agent = new TestAgent({ tools, model: "openai/gpt-4o", apiKey });
+   * const agent = new HostRunner({ tools, model: "openai/gpt-4o", apiKey });
    * ```
    */
   async getTools(serverIds?: string[]): Promise<Tool[]> {

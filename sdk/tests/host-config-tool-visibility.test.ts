@@ -177,16 +177,16 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
     expect(signals.toolsDroppedVisibility).toBe(0);
   });
 
-  // Stage 4: the private raw-`Tool[]` conversion in `sdk/src/TestAgent.ts:90`
+  // Stage 4: the private raw-`Tool[]` conversion in `sdk/src/HostRunner.ts:90`
   // drops app-only tools unconditionally — before this function runs. We
   // can't recover a tool that path already dropped, so a passing test here
   // would be misleading. Stage 4 single-gates the filter (rename
-  // `TestAgent` → `HostRunner`, route both `Tool[]` and `AiSdkTool` paths
+  // `HostRunner` → `HostRunner`, route both `Tool[]` and `AiSdkTool` paths
   // through `applyVisibilityPolicyAndCountSignals`) and converts this skip
   // into a real assertion.
   // eslint-disable-next-line vitest/no-disabled-tests
   it.skip(
-    "preserves raw Tool[] app-only when respectToolVisibility=false — fix at TestAgent.ts:90 (Stage 4)",
+    "preserves raw Tool[] app-only when respectToolVisibility=false — fix at HostRunner.ts:90 (Stage 4)",
     () => {
       // TODO(Stage 4): mock raw Tool[] input + assert post-filter preservation.
     },

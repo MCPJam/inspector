@@ -1,5 +1,5 @@
 /**
- * PromptResult class - wraps the result of a TestAgent prompt
+ * PromptResult class - wraps the result of a HostRunner prompt
  */
 
 import type {
@@ -20,7 +20,7 @@ import type {
 import { finalizePassedForEval } from "./eval-tool-execution.js";
 
 /**
- * Represents the result of a TestAgent prompt.
+ * Represents the result of a HostRunner prompt.
  * Provides convenient methods to inspect tool calls, token usage, and errors.
  */
 export class PromptResult {

@@ -1,6 +1,6 @@
 import { dynamicTool, hasToolCall, jsonSchema } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
-import { TestAgent } from "../src/TestAgent";
+import { HostRunner } from "../src/HostRunner";
 
 let currentModel: MockLanguageModelV3;
 const mockCreateModelFromString = vi.fn(() => currentModel);
@@ -14,7 +14,7 @@ vi.mock("../src/model-factory", async () => {
   };
 });
 
-describe("TestAgent stopWhen integration", () => {
+describe("HostRunner stopWhen integration", () => {
   beforeEach(() => {
     mockCreateModelFromString.mockClear();
   });
@@ -52,7 +52,7 @@ describe("TestAgent stopWhen integration", () => {
       },
     });
 
-    const agent = new TestAgent({
+    const agent = new HostRunner({
       tools: {
         add: dynamicTool({
           description: "Add two numbers",
@@ -75,7 +75,7 @@ describe("TestAgent stopWhen integration", () => {
       apiKey: "test-key",
     });
 
-    const result = await agent.prompt("Add 2 and 3", {
+    const result = await agent.run("Add 2 and 3", {
       stopWhen: hasToolCall("add"),
     });
 

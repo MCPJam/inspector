@@ -11,7 +11,7 @@
  * host.mcp.protocolVersion = "2025-11-25";
  * host.mcp.initialize = { clientInfo: { name: "my-app", version: "1.0" } };
  * host.mcp.apps = { sandbox: { csp: { mode: "declared" } } };
- * host.addServer("srv_abc");
+ * host.requireServer("srv_abc");
  *
  * const json = host.toJSON(); // normalized public shape (clean vocab)
  * ```
@@ -22,7 +22,7 @@
  * snapshotted at `toJSON()` time and projected through the canonicalizer to
  * the public shape.
  *
- * Convenience methods (`addServer`, `setServerOverride`, `clearMcp`, …) are
+ * Convenience methods (`requireServer`, `setServerOverride`, `clearMcp`, …) are
  * provided where they read more naturally than raw property mutation and
  * where enforcing invariants (e.g. server-id dedup) is helpful. All methods
  * return `this` for chaining.
@@ -47,6 +47,11 @@ import type {
   HostStyleId,
   ServerId,
 } from "./public-types.js";
+import {
+  HostRuntime,
+  type HostRuntimeDefaults,
+  type HostRuntimeManager,
+} from "./host-runtime.js";
 
 // No default `style` or `model` — both are required to produce a valid host
 // and must be supplied by the caller (constructor `init` or by assigning to
@@ -236,7 +241,7 @@ export class Host {
    */
   respectToolVisibility?: boolean;
 
-  /** Required servers. Mutable — `addServer`/`removeServer` are sugar. */
+  /** Required servers. Mutable — `requireServer`/`removeRequiredServer` are sugar. */
   servers: ServerId[];
 
   /** Optional (auto-connect-if-available) servers. */
@@ -372,14 +377,18 @@ export class Host {
 
   // ── Server list mutations (deduped). ──────────────────────────────────────
 
-  /** Append a required server; no-op if `id` is already in the list. */
-  addServer(id: ServerId): this {
+  /**
+   * Mark a server id as required for this host; no-op if `id` is already in
+   * the list. Required ids must resolve to a known server at execution
+   * time; see {@link assertHostServersKnown}.
+   */
+  requireServer(id: ServerId): this {
     pushUnique(this.servers, id);
     return this;
   }
 
-  /** Remove a required server; no-op if absent. */
-  removeServer(id: ServerId): this {
+  /** Drop a required server id; no-op if absent. */
+  removeRequiredServer(id: ServerId): this {
     removeFrom(this.servers, id);
     return this;
   }
@@ -517,6 +526,146 @@ export class Host {
     this.requireConfigured();
     return canonicalToPublic(canonicalizeHostConfigV2(this.toInternalInput()));
   }
+
+  /**
+   * Bind this `Host` to a live MCP client manager and return a `HostRuntime`
+   * — the ergonomic execution surface for hosts.
+   *
+   * `defaults.apiKey` is required because every `.run()` constructs a fresh
+   * runner internally. The remaining fields override host-snapshot-derived
+   * values (model / systemPrompt / temperature / injectOpenAiCompat) per call.
+   *
+   * The runtime holds a live reference to this `Host`, so mutations made
+   * between `.run()` invocations (e.g. `host.requireServer(...)`) are
+   * reflected on the next run. `.run()` snapshots the host each time.
+   */
+  withManager(
+    manager: HostRuntimeManager,
+    defaults: HostRuntimeDefaults,
+  ): HostRuntime {
+    return new HostRuntime(this, manager, defaults);
+  }
+
+  /**
+   * One-shot convenience: bind a manager, run once, discard the runtime.
+   *
+   * Equivalent to `host.withManager(mcpClientManager, rest).run(input)`.
+   * The throwaway runtime carries no prompt history across calls — each
+   * `host.run(...)` starts fresh. For multi-turn or accumulating
+   * inspection state, prefer `host.withManager(...)` and reuse the runtime.
+   */
+  async run(
+    input: string,
+    runtime: HostRuntimeDefaults & { mcpClientManager: HostRuntimeManager },
+  ): Promise<import("../PromptResult.js").PromptResult> {
+    const { mcpClientManager, ...defaults } = runtime;
+    return this.withManager(mcpClientManager, defaults).run(input);
+  }
+}
+
+// ── Host snapshot normalization ──────────────────────────────────────────
+
+/**
+ * Accepted shapes anywhere `HostRunner` / `HostRuntime` take a host:
+ *
+ * - `Host` — a live, mutable builder (snapshotted via `.toJSON()`).
+ * - `HostInit` — the constructor-init shape (instantiated then snapshotted).
+ * - `HostJson` — an already-snapshotted, immutable value (passed through).
+ */
+export type HostSource = Host | HostInit | HostJson;
+
+/**
+ * Structural predicate for "is this already a `HostJson` snapshot?"
+ *
+ * Used by {@link snapshotHostSource} so callers that already snapshotted
+ * (e.g. `HostRuntime.run()` calling `this.host.toJSON()` once per turn)
+ * can pass the result straight through without double-snapshotting. Avoids
+ * `instanceof Host` for the positive branch so a snapshot can safely cross
+ * bundle / package boundaries.
+ *
+ * Explicitly rejects `Host` instances so a configured `Host` (whose
+ * `style`/`model`/`servers` properties also satisfy the shape) takes the
+ * `.toJSON()` path.
+ */
+export function isHostJson(value: unknown): value is HostJson {
+  if (!value || typeof value !== "object") return false;
+  if (value instanceof Host) return false;
+  const candidate = value as Partial<HostJson>;
+  return (
+    typeof candidate.style === "string" &&
+    typeof candidate.model === "string" &&
+    Array.isArray(candidate.servers)
+  );
+}
+
+/**
+ * Normalize any `HostSource` to an immutable `HostJson` snapshot. Idempotent:
+ * an already-snapshotted `HostJson` is returned unchanged (same reference),
+ * so `HostRunner` constructed with a pre-snapshotted host does NOT re-snapshot.
+ */
+export function snapshotHostSource(host: HostSource): HostJson {
+  if (isHostJson(host)) return host;
+  if (host instanceof Host) return host.toJSON();
+  return new Host(host).toJSON();
+}
+
+// ── Server-id validation against a live registry ─────────────────────────
+
+/**
+ * Minimal structural shape for "something that knows which server ids exist
+ * at runtime." Both `MCPClientManager` and lightweight test fakes satisfy
+ * this without dragging the concrete class into the bundle-safe
+ * `host-config` module.
+ *
+ * `listServers` is optional but enables a better error message when the
+ * registry can enumerate its ids cheaply.
+ */
+export type HostServerRegistry = {
+  hasServer(id: string): boolean;
+  listServers?(): string[];
+};
+
+/**
+ * Validate that every required server id in `host.servers` exists in the
+ * registry. Unknown required ids throw before tool resolution; unknown
+ * `optionalServers` are silently skipped (they are "auto-connect-if-available"
+ * by contract). A known server that returns zero tools is NOT a validation
+ * failure — that's a legitimate tool-less server.
+ */
+export function assertHostServersKnown(
+  host: HostJson,
+  registry: HostServerRegistry,
+): void {
+  const missing = host.servers.filter((id) => !registry.hasServer(id));
+  if (missing.length === 0) return;
+  const known = registry.listServers?.();
+  const knownSuffix =
+    known && known.length > 0 ? ` Known servers: ${known.join(", ")}.` : "";
+  throw new Error(
+    `Host requires server id(s) not registered with the manager: ${missing.join(
+      ", ",
+    )}.${knownSuffix}`,
+  );
+}
+
+/**
+ * Return the subset of `host.servers` + `host.optionalServers` that the
+ * registry actually knows about. Caller is responsible for asserting
+ * required ids first; this only filters.
+ */
+export function resolveKnownServerIds(
+  host: HostJson,
+  registry: HostServerRegistry,
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of [...host.servers, ...host.optionalServers]) {
+    if (seen.has(id)) continue;
+    if (!registry.hasServer(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
 }
 
 export type {

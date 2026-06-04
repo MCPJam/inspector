@@ -62,7 +62,7 @@ Then:
 - If neither is present, default to Vitest.
 - If the developer prefers **no test framework**, the `@mcpjam/sdk` classes (`EvalTest`, `EvalSuite`) can run standalone — call `.run()` directly and check results in a plain script without Jest/Vitest.
 
-In all cases, use `@mcpjam/sdk` for the eval harness (`TestAgent`, `EvalTest`, `EvalSuite`, validators).
+In all cases, use `@mcpjam/sdk` for the eval harness (`HostRunner`, `EvalTest`, `EvalSuite`, validators).
 
 ---
 
@@ -172,7 +172,7 @@ await manager.connectToServer("server-id", {
   env: { API_KEY: "..." },
 });
 
-// Get tools for TestAgent
+// Get tools for HostRunner
 const tools = await manager.getToolsForAiSdk(["server-id"]);
 
 // Cleanup
@@ -181,13 +181,13 @@ await manager.disconnectAllServers();
 
 > **Tool names:** `getToolsForAiSdk()` uses the exact tool names from the MCP server — no server-id prefix is added. Use these names directly in `hasToolCall()` and validators. For example, if the server exposes `read_me`, use `result.hasToolCall("read_me")`, not `result.hasToolCall("myserver__read_me")`.
 
-### TestAgent — LLM-Powered Agent
+### HostRunner — LLM-Powered Agent
 
 ```typescript
-import { TestAgent } from "@mcpjam/sdk";
+import { HostRunner } from "@mcpjam/sdk";
 import { hasToolCall } from "@mcpjam/sdk";
 
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,                              // from manager.getToolsForAiSdk()
   model: "{LLM_MODEL}",                     // LLM model string
   apiKey: process.env.{LLM_ENV_VAR}!,       // API key for the provider
@@ -195,26 +195,26 @@ const agent = new TestAgent({
 });
 
 // Single prompt
-const result = await agent.prompt("List all projects");
+const result = await agent.run("List all projects");
 
 // Multi-turn with context
-const r1 = await agent.prompt("Get my user profile");
-const r2 = await agent.prompt("List workspaces for that user", { context: r1 });
+const r1 = await agent.run("Get my user profile");
+const r2 = await agent.run("List workspaces for that user", { context: r1 });
 
 // Stop the loop after the step where a tool is called
-const r3 = await agent.prompt("Search tasks", {
+const r3 = await agent.run("Search tasks", {
   stopWhen: hasToolCall("search_tasks"),
 });
 r3.hasToolCall("search_tasks");          // true
 
 // Bound prompt runtime
-const r4 = await agent.prompt("Run a long workflow", {
+const r4 = await agent.run("Run a long workflow", {
   timeout: { totalMs: 10_000, stepMs: 2_500 },
 });
 r4.hasError();                           // true if the prompt timed out
 
 // Mock agent for deterministic tests (no LLM needed)
-const mockAgent = TestAgent.mock(async (message) =>
+const mockAgent = HostRunner.mock(async (message) =>
   PromptResult.from({
     prompt: message,
     messages: [
@@ -229,7 +229,7 @@ const mockAgent = TestAgent.mock(async (message) =>
 );
 ```
 
-`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `HostRunner` also applies `stepCountIs(maxSteps)` as a safety guard.
 
 `timeout` bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` is accepted for parity but mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
 
@@ -238,8 +238,8 @@ const mockAgent = TestAgent.mock(async (message) =>
 ```typescript
 import { PromptResult } from "@mcpjam/sdk";
 
-// Returned by agent.prompt()
-const result: PromptResult = await agent.prompt("...");
+// Returned by agent.run()
+const result: PromptResult = await agent.run("...");
 
 // Tool inspection
 result.toolsCalled();                    // string[] — names of all tools called
@@ -279,7 +279,7 @@ import { EvalTest } from "@mcpjam/sdk";
 const test = new EvalTest({
   name: "get-user-tool-selection",
   test: async (agent) => {
-    const r = await agent.prompt("Get my user profile");
+    const r = await agent.run("Get my user profile");
     return r.hasToolCall("get_user");  // return boolean
   },
 });
@@ -309,7 +309,7 @@ const suite = new EvalSuite({ name: "my-server-evals" });
 suite.add(new EvalTest({
   name: "get-user",
   test: async (a) => {
-    const r = await a.prompt("Get my user profile");
+    const r = await a.run("Get my user profile");
     return r.hasToolCall("get_user");
   },
 }));
@@ -317,7 +317,7 @@ suite.add(new EvalTest({
 suite.add(new EvalTest({
   name: "list-projects",
   test: async (a) => {
-    const r = await a.prompt("List all projects");
+    const r = await a.run("List all projects");
     return r.hasToolCall("list_projects");
   },
 }));
@@ -503,7 +503,7 @@ const agentConfigs = [
 
 for (const { name, suffix, getAgent } of agentConfigs) {
   it(`selects correct tool (${name})`, async () => {
-    const result = await getAgent().prompt("Get my profile");
+    const result = await getAgent().run("Get my profile");
     expect(result.hasToolCall("get_user")).toBe(true);
   }, 90_000);
 }
@@ -513,7 +513,7 @@ for (const { name, suffix, getAgent } of agentConfigs) {
 
 ```typescript
 // Style 1: Manual toEvalResult + record
-const result = await agent.prompt("Get user");
+const result = await agent.run("Get user");
 await reporter.record(result.toEvalResult({
   caseTitle: "get-user",
   passed: result.hasToolCall("get_user"),
@@ -551,7 +551,7 @@ Split your test file into deterministic (no LLM/server needed) and LLM sections:
 // ─── Deterministic (always runs) ─────────────────────────────────
 describe("Deterministic", () => {
   it("mock agent returns expected structure", async () => {
-    const mock = TestAgent.mock(async (msg) =>
+    const mock = HostRunner.mock(async (msg) =>
       PromptResult.from({
         prompt: msg,
         messages: [{ role: "user", content: msg }, { role: "assistant", content: "ok" }],
@@ -563,7 +563,7 @@ describe("Deterministic", () => {
     );
     const test = new EvalTest({
       name: "mock-test",
-      test: async (a) => (await a.prompt("test")).hasToolCall("get_user"),
+      test: async (a) => (await a.run("test")).hasToolCall("get_user"),
     });
     const run = await test.run(mock, { iterations: 3, mcpjam: { enabled: false } });
     expect(run.successes).toBe(3);
@@ -582,8 +582,8 @@ Test workflows that require conversation context:
 
 ```typescript
 it("multi-turn: get user then list workspaces", async () => {
-  const r1 = await agent.prompt("Get my user profile");
-  const r2 = await agent.prompt(
+  const r1 = await agent.run("Get my user profile");
+  const r2 = await agent.run(
     "Based on the profile, list my workspaces",
     { context: r1 }  // passes r1's conversation history
   );
@@ -599,7 +599,7 @@ Use validators for precise tool-call assertions:
 
 ```typescript
 it("validates tool calls comprehensively", async () => {
-  const result = await agent.prompt("Get user profile");
+  const result = await agent.run("Get user profile");
   const toolNames = result.toolsCalled();
   const toolCalls = result.getToolCalls();
 
@@ -624,11 +624,11 @@ it("validates tool calls comprehensively", async () => {
 
 Follow these rules when generating eval test files:
 
-1. **Deterministic suite first** — always include a deterministic test section using `TestAgent.mock()` that validates the test structure itself without requiring LLM calls or server connections.
+1. **Deterministic suite first** — always include a deterministic test section using `HostRunner.mock()` that validates the test structure itself without requiring LLM calls or server connections.
 
 2. **One EvalTest per tool** — create a separate `EvalTest` for each tool you want to evaluate. Each test should prompt the agent with a natural-language request and assert the correct tool was selected.
 
-3. **Single-shot LLM tests are non-deterministic** — a single `agent.prompt()` may not select the expected tool every time. For single-shot tests, prefer saving results to MCPJam without hard-asserting (`expect(...).toBe(true)`). Use `EvalTest` with `iterations >= 3` and assert on `accuracy()` for reliable pass/fail gates. Reserve hard asserts for high-confidence cases (negative tests, multi-turn with clear context).
+3. **Single-shot LLM tests are non-deterministic** — a single `agent.run()` may not select the expected tool every time. For single-shot tests, prefer saving results to MCPJam without hard-asserting (`expect(...).toBe(true)`). Use `EvalTest` with `iterations >= 3` and assert on `accuracy()` for reliable pass/fail gates. Reserve hard asserts for high-confidence cases (negative tests, multi-turn with clear context).
 
 4. **Write unambiguous prompts for similar tools** — when a server has tools with overlapping descriptions (e.g., `create_view` vs `export_to_excalidraw`), prompts must reference the tool's *unique* action. Mention specific verbs, targets, or outcomes. Bad: "Share my diagram". Good: "Export and upload my diagram to excalidraw.com so I can open it in a browser".
 
@@ -639,13 +639,13 @@ Follow these rules when generating eval test files:
 7. **Reasonable defaults**:
    - `iterations: 5` for EvalTest runs
    - `timeoutMs: 60_000` for LLM tests
-   - `maxSteps: 8` for TestAgent
+   - `maxSteps: 8` for HostRunner
    - `retries: 1` for flaky network tolerance
    - `concurrency: 5` (default, no need to set explicitly)
 
 8. **Timeout on test cases** — set explicit timeouts on `it()` blocks: `90_000` for single-turn, `120_000` for multi-turn and suite tests.
 
-9. **Always `await`** — every `agent.prompt()`, `test.run()`, `suite.run()`, `reporter.record*()`, and `reporter.finalize()` is async. Never forget `await`.
+9. **Always `await`** — every `agent.run()`, `test.run()`, `suite.run()`, `reporter.record*()`, and `reporter.finalize()` is async. Never forget `await`.
 
 10. **One reporter per file** — create the reporter at module level to save results to MCPJam, and finalize in `afterAll`. Never create multiple reporters in the same file.
 
@@ -665,7 +665,7 @@ Copy-pasteable test file skeleton. Replace `{placeholders}` with your server-spe
 import { describe, it, expect, beforeAll, afterAll } from "vitest"; // For Jest: remove this line
 import {
   MCPClientManager,
-  TestAgent,
+  HostRunner,
   PromptResult,
   EvalTest,
   EvalSuite,
@@ -719,7 +719,7 @@ afterAll(async () => {
 // ─── Deterministic Tests ────────────────────────────────────────────────────
 describe("{server_name} evals – deterministic", () => {
   it("mock agent produces valid EvalTest results", async () => {
-    const mock = TestAgent.mock(async (msg) =>
+    const mock = HostRunner.mock(async (msg) =>
       PromptResult.from({
         prompt: msg,
         messages: [
@@ -736,7 +736,7 @@ describe("{server_name} evals – deterministic", () => {
     const test = new EvalTest({
       name: "det-mock-tool-selection",
       test: async (a) => {
-        const r = await a.prompt("test prompt");
+        const r = await a.run("test prompt");
         return r.hasToolCall("{expected_tool}");
       },
     });
@@ -757,7 +757,7 @@ describe("{server_name} evals – deterministic", () => {
 // ─── LLM Tests ──────────────────────────────────────────────────────────────
 (RUN_LLM_TESTS ? describe : describe.skip)("{server_name} evals – LLM", () => {
   let manager: MCPClientManager;
-  let agent: TestAgent;
+  let agent: HostRunner;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -769,7 +769,7 @@ describe("{server_name} evals – deterministic", () => {
     });
 
     const tools = await manager.getToolsForAiSdk([SERVER_ID]);
-    agent = new TestAgent({
+    agent = new HostRunner({
       tools,
       model: MODEL,
       apiKey: LLM_API_KEY,
@@ -784,7 +784,7 @@ describe("{server_name} evals – deterministic", () => {
   // ── Single-tool selection tests ──
 
   // it("selects {tool_name}", async () => {
-  //   const result = await agent.prompt(PROMPTS.{TOOL_KEY});
+  //   const result = await agent.run(PROMPTS.{TOOL_KEY});
   //   expect(result.hasToolCall("{tool_name}")).toBe(true);
   //
   //   if (reporter) {
@@ -799,8 +799,8 @@ describe("{server_name} evals – deterministic", () => {
   // ── Multi-turn test ──
 
   // it("multi-turn: {tool_a} then {tool_b}", async () => {
-  //   const r1 = await agent.prompt(PROMPTS.{TOOL_A});
-  //   const r2 = await agent.prompt(PROMPTS.{TOOL_B_FOLLOWUP}, { context: r1 });
+  //   const r1 = await agent.run(PROMPTS.{TOOL_A});
+  //   const r2 = await agent.run(PROMPTS.{TOOL_B_FOLLOWUP}, { context: r1 });
   //   expect(r1.hasToolCall("{tool_a}")).toBe(true);
   //   expect(r2.toolsCalled().length).toBeGreaterThan(0);
   // }, 120_000);
@@ -808,7 +808,7 @@ describe("{server_name} evals – deterministic", () => {
   // ── Negative test ──
 
   it("does not call tools for irrelevant prompt", async () => {
-    const result = await agent.prompt("What is the capital of France?");
+    const result = await agent.run("What is the capital of France?");
     expect(matchNoToolCalls(result.toolsCalled())).toBe(true);
 
     if (reporter) {
@@ -826,7 +826,7 @@ describe("{server_name} evals – deterministic", () => {
   //   const test = new EvalTest({
   //     name: "{tool_name}-accuracy",
   //     test: async (a) => {
-  //       const r = await a.prompt(PROMPTS.{TOOL_KEY});
+  //       const r = await a.run(PROMPTS.{TOOL_KEY});
   //       return r.hasToolCall("{tool_name}");
   //     },
   //   });
@@ -908,7 +908,7 @@ reporter.recordFromPrompt(result, { ... });
 await reporter.recordFromPrompt(result, { ... });
 ```
 
-### Low `maxSteps` on TestAgent
+### Low `maxSteps` on HostRunner
 If the agent needs multiple tool calls to answer a prompt, a low `maxSteps` causes incomplete responses. Default to `8` for most servers, increase to `12-15` for complex workflows.
 
 ### Mixing save modes
@@ -1011,7 +1011,7 @@ const PROMPTS = {
 } as const;
 
 it("selects search_tasks", async () => {
-  const result = await agent.prompt(PROMPTS.SEARCH_TASKS);
+  const result = await agent.run(PROMPTS.SEARCH_TASKS);
   expect(result.hasToolCall("search_tasks")).toBe(true);
 }, 90_000);
 ```

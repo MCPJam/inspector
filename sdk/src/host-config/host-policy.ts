@@ -79,6 +79,34 @@ export function extractHostExecutionPolicy(
  * under the host's `requireToolApproval` policy. Evals do not block on
  * approval prompts — this is a "would prompt N times" signal only.
  */
+/**
+ * Snapshot-only host metadata for SDK eval reports. Subset of
+ * {@link buildHostIterationMetadata} that needs no per-iteration counters
+ * (signals / approvalsWouldRequire / injectOpenAiCompat) and can be
+ * derived from `Host.toJSON()` alone.
+ *
+ * Used by SDK eval result mapping to stamp executor-derived host context
+ * onto each iteration's metadata. Per-iteration signal counts (tools
+ * exposed / dropped, approvals required) are added by callers that have
+ * runtime access (inspector eval runner, future `HostRuntime` plumbing).
+ */
+export function buildHostSnapshotMetadata(
+  hostConfig: Record<string, unknown> | null,
+): Record<string, string | number | boolean> {
+  const policy = extractHostExecutionPolicy(hostConfig);
+  const meta: Record<string, string | number | boolean> = {};
+  if (policy.progressiveDiscoveryEnabled) {
+    meta.progressive_discovery_enabled = true;
+  }
+  if (policy.namedHostId) {
+    meta.host_id = policy.namedHostId;
+  }
+  if (policy.hostStyle) {
+    meta.host_style = policy.hostStyle;
+  }
+  return meta;
+}
+
 export function buildHostIterationMetadata(
   policy: HostExecutionPolicy,
   signals: ToolExposureSignals,

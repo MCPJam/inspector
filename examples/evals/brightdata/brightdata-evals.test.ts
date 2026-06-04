@@ -1,10 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalTest } from "@mcpjam/sdk";
 import "dotenv/config";
 
 describe("Bright Data MCP Evals", () => {
   let clientManager: MCPClientManager;
-  let testAgent: TestAgent;
+  let testAgent: HostRunner;
 
   beforeAll(async () => {
     if (!process.env.BRIGHTDATA_API_TOKEN) throw new Error("BRIGHTDATA_API_TOKEN required");
@@ -16,7 +16,7 @@ describe("Bright Data MCP Evals", () => {
     });
 
     const tools = await clientManager.getToolsForAiSdk(["brightdata-ecommerce"]);
-    testAgent = new TestAgent({
+    testAgent = new HostRunner({
       tools,
       model: "anthropic/claude-sonnet-4-20250514",
       apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -34,8 +34,8 @@ describe("Bright Data MCP Evals", () => {
   test("hasToolCall() - verifies correct tool selection", async () => {
     const evalTest = new EvalTest({
       name: "hasToolCall-test",
-      test: async (agent: TestAgent) => {
-        const result = await agent.prompt("Search for wireless headphones on Amazon");
+      test: async (agent: HostRunner) => {
+        const result = await agent.run("Search for wireless headphones on Amazon");
         return result.hasToolCall("web_data_amazon_product_search");
       },
     });
@@ -47,8 +47,8 @@ describe("Bright Data MCP Evals", () => {
   test("getToolCalls() - retrieves all tool calls array", async () => {
     const evalTest = new EvalTest({
       name: "getToolCalls-test",
-      test: async (agent: TestAgent) => {
-        const result = await agent.prompt("Find laptops on Amazon");
+      test: async (agent: HostRunner) => {
+        const result = await agent.run("Find laptops on Amazon");
         const toolCalls = result.getToolCalls();
         return Array.isArray(toolCalls) && toolCalls.some((tc) => tc.toolName === "web_data_amazon_product_search");
       },
@@ -61,8 +61,8 @@ describe("Bright Data MCP Evals", () => {
   test("getToolArguments() + averageTokenUse() - validates arguments and tracks tokens", async () => {
     const evalTest = new EvalTest({
       name: "getToolArguments-tokenUse-test",
-      test: async (agent: TestAgent) => {
-        const result = await agent.prompt("Search Amazon for gaming keyboards");
+      test: async (agent: HostRunner) => {
+        const result = await agent.run("Search Amazon for gaming keyboards");
         const args = result.getToolArguments("web_data_amazon_product_search");
         return args !== null && typeof args === "object" && "keyword" in args;
       },
@@ -82,10 +82,10 @@ describe("Bright Data MCP Evals", () => {
   test("context option - two-turn conversation", async () => {
     const evalTest = new EvalTest({
       name: "context-two-turn",
-      test: async (agent: TestAgent) => {
-        const r1 = await agent.prompt("Search for wireless earbuds on Amazon");
+      test: async (agent: HostRunner) => {
+        const r1 = await agent.run("Search for wireless earbuds on Amazon");
         if (!r1.hasToolCall("web_data_amazon_product_search")) return false;
-        const r2 = await agent.prompt("Get details for the first product", { context: [r1] });
+        const r2 = await agent.run("Get details for the first product", { context: [r1] });
         return r2.hasToolCall("web_data_amazon_product");
       },
     });

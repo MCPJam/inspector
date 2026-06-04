@@ -1,12 +1,12 @@
 import {
   MCPClientManager,
-  TestAgent,
+  HostRunner,
   EvalTest,
 } from "@mcpjam/sdk";
 
 describe("Asana MCP Evals", () => {
   let clientManager: MCPClientManager;
-  let testAgent: TestAgent;
+  let testAgent: HostRunner;
 
   beforeAll(async () => {
     if (!process.env.ASANA_TOKEN) {
@@ -27,8 +27,8 @@ describe("Asana MCP Evals", () => {
       },
     });
 
-    // Create TestAgent with Asana tools
-    testAgent = new TestAgent({
+    // Create HostRunner with Asana tools
+    testAgent = new HostRunner({
       tools: await clientManager.getToolsForAiSdk(["asana"]),
       model: "openai/gpt-5-mini",
       apiKey: process.env.OPENAI_API_KEY!,
@@ -47,8 +47,8 @@ describe("Asana MCP Evals", () => {
     test("list-workspaces accuracy > 80%", async () => {
       const test = new EvalTest({
         name: "list-workspaces",
-        test: async (agent: TestAgent) => {
-          const runResult = await agent.prompt("Show me all my Asana workspaces");
+        test: async (agent: HostRunner) => {
+          const runResult = await agent.run("Show me all my Asana workspaces");
           return runResult.hasToolCall("asana_list_workspaces");
         },
       });
@@ -68,8 +68,8 @@ describe("Asana MCP Evals", () => {
     test("asana_get_user accuracy > 80%", async () => {
       const test = new EvalTest({
         name: "asana-get-user",
-        test: async (agent: TestAgent) => {
-          const runResult = await agent.prompt("Who am I in Asana?");
+        test: async (agent: HostRunner) => {
+          const runResult = await agent.run("Who am I in Asana?");
           return runResult.hasToolCall("asana_get_user");
         },
       });
@@ -89,8 +89,8 @@ describe("Asana MCP Evals", () => {
     test("get_workspace_users accuracy > 80%", async () => {
       const test = new EvalTest({
         name: "get_workspace_users",
-        test: async (agent: TestAgent) => {
-          const runResult = await agent.prompt("Can you get me the users in my workspace?");
+        test: async (agent: HostRunner) => {
+          const runResult = await agent.run("Can you get me the users in my workspace?");
           const getToolCallArguments = runResult.getToolArguments("asana_get_workspace_users");
           return runResult.hasToolCall("asana_get_workspace_users") && typeof getToolCallArguments?.workspace_gid === "string";
         },
@@ -111,13 +111,13 @@ describe("Asana MCP Evals", () => {
     test("identify who I am in Asana, then list projects in my workspace", async () => {
       const test = new EvalTest({
         name: "user-projects-tasks-flow",
-        test: async (agent: TestAgent) => {
+        test: async (agent: HostRunner) => {
           // Turn 1: Get current user info
-          const r1 = await agent.prompt("Who am I in Asana? What's my user ID?");
+          const r1 = await agent.run("Who am I in Asana? What's my user ID?");
           if (!r1.hasToolCall("asana_get_user")) return false;
 
           // Turn 2: List projects in workspace (with context from turn 1)
-          const r2 = await agent.prompt(
+          const r2 = await agent.run(
             "Now list the projects in my workspace",
             { context: [r1] }
           );

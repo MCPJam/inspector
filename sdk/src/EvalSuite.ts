@@ -1,4 +1,4 @@
-import type { EvalAgent } from "./EvalAgent.js";
+import type { HostExecutor } from "./HostExecutor.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import type {
@@ -15,6 +15,7 @@ import type {
 import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 
 /**
  * Configuration for an EvalSuite
@@ -63,14 +64,14 @@ export interface EvalSuiteResult {
  * suite.add(new EvalTest({
  *   name: "addition",
  *   test: async (agent) => {
- *     const r = await agent.prompt("Add 2+3");
+ *     const r = await agent.run("Add 2+3");
  *     return r.hasToolCall("add");
  *   },
  * }));
  * suite.add(new EvalTest({
  *   name: "multiply",
  *   test: async (agent) => {
- *     const r = await agent.prompt("Multiply 4*5");
+ *     const r = await agent.run("Multiply 4*5");
  *     return r.hasToolCall("multiply");
  *   },
  * }));
@@ -117,12 +118,13 @@ export class EvalSuite {
   }
 
   /**
-   * Run all tests in the suite with the given agent and options
+   * Run all tests in the suite with the given executor and options.
    */
   async run(
-    agent: EvalAgent,
+    executor: HostExecutor,
     options: EvalTestRunOptions
   ): Promise<EvalSuiteResult> {
+    const agent = executor;
     const testResults = new Map<string, EvalRunResult>();
     const suiteReportingConfig = options.mcpjam ?? this.mcpjamConfig;
 
@@ -168,8 +170,9 @@ export class EvalSuite {
   private async autoSaveSuiteRunIfConfigured(
     testResults: Map<string, EvalRunResult>,
     config: MCPJamReportingConfig | undefined,
-    agent: EvalAgent
+    executor: HostExecutor
   ): Promise<void> {
+    const agent = executor;
     if (config?.enabled === false) {
       return;
     }
@@ -178,7 +181,13 @@ export class EvalSuite {
       return;
     }
 
-    const results = this.buildEvalResultInputs(testResults, config);
+    const hostSnapshot = executor.getHostSnapshot?.();
+    const hostExtras = hostSnapshot
+      ? buildHostSnapshotMetadata(
+          hostSnapshot as unknown as Record<string, unknown>,
+        )
+      : undefined;
+    const results = this.buildEvalResultInputs(testResults, config, hostExtras);
     if (results.length === 0) {
       return;
     }
@@ -206,7 +215,8 @@ export class EvalSuite {
 
   private buildEvalResultInputs(
     testResults: Map<string, EvalRunResult>,
-    reporting?: MCPJamReportingConfig
+    reporting?: MCPJamReportingConfig,
+    hostExtras?: Record<string, string | number | boolean>,
   ): EvalResultInput[] {
     const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
     for (const [name, test] of this.tests) {
@@ -220,7 +230,8 @@ export class EvalSuite {
       Object.keys(expectedToolCallsByTest).length > 0
         ? expectedToolCallsByTest
         : undefined,
-      reporting?.failOnToolError
+      reporting?.failOnToolError,
+      hostExtras,
     );
   }
 
