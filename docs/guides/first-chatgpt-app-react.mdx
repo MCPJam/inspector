@@ -162,6 +162,8 @@ window.openai.setOpenInAppUrl({ href: "https://app.example.com/item/42" });
 
 Only `http` and `https` URLs are accepted. The link opens in a new tab with `noopener,noreferrer`.
 
+This capability is optional — hosts can turn it off, in which case `window.openai.setOpenInAppUrl` won't be defined. Guard for it before calling, for example `window.openai.setOpenInAppUrl?.({ href: "https://app.example.com/item/42" })`.
+
 ### Content Security Policy (CSP)
 
 Widgets run in a sandboxed iframe, so you need to declare which external domains your widget can interact with. Set `openai/widgetCSP` in your resource's `_meta` to configure these permissions:
