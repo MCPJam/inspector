@@ -95,6 +95,34 @@ This is an expected quota state, not an error with your MCP server.
 
 **To wait for the limit to reset:** The warning includes the retry window. Free quota resets daily.
 
+## Desktop app startup failures
+
+### App bounces in the dock and disappears (macOS) or closes immediately
+
+If the desktop app fails to start, it now shows a recovery dialog instead of quitting silently. The dialog offers three options:
+
+- **Reset app data and quit** — removes cached data (`Cache`, `Code Cache`, `GPUCache`, `Local Storage`) from the app's user data folder and relaunches. Use this when the app crashes consistently after an update or when local data appears corrupted.
+- **Open logs folder** — opens the folder containing `electron-log` output, then quits. Use this to inspect the error before deciding whether to reset.
+- **Quit** — exits without making any changes.
+
+### Port 6274 is already in use
+
+The desktop app defaults to port **6274**. If another process holds that port, the app automatically tries the next available port up to port **6283**. A warning is written to the app logs when a fallback port is used. No action is required — the app starts normally on the fallback port.
+
+If you need to free port 6274 manually, find and stop the process occupying it:
+
+```bash
+# macOS / Linux
+lsof -ti :6274 | xargs kill -9
+
+# Windows (PowerShell)
+Get-Process -Id (Get-NetTCPConnection -LocalPort 6274).OwningProcess | Stop-Process
+```
+
+### App crashes after an automatic update
+
+The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, use the **Reset app data and quit** option in the recovery dialog.
+
 ## Getting Help
 
 If you're still experiencing issues:
