@@ -44,7 +44,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "predev": "npm run sdk:build",
+    "predev": "npm run sdk:build && npm run bundle:sandbox-proxies",
     "dev": "run-script-os",
     "dev:default": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\"",
