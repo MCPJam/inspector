@@ -72,7 +72,12 @@ function isNormalizedError(value: unknown): value is NormalizedError {
 
 function resolveNormalized(input: unknown): NormalizedError {
   if (isNormalizedError(input)) return input;
-  if (input instanceof WebApiError && input.normalized) {
+  // Re-validate the WebApiError-attached block with the same shape guard
+  // before trusting it. `webPost` populates `WebApiError.normalized` from
+  // any `typeof === "object"` value in the response body, so a partial
+  // payload (older server, future schema drift, proxy mangling) would
+  // otherwise crash the render at `docsAnchor.startsWith` / `severity`.
+  if (input instanceof WebApiError && isNormalizedError(input.normalized)) {
     return input.normalized;
   }
   return describeError(input);
