@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   appState,
@@ -93,10 +93,14 @@ function emitAutoUpdaterEvent(event: string, ...args: any[]) {
   }
 }
 
+type UpdateListenersModule = typeof import("../../src/ipc/update/update-listeners.js");
+let lastLoadedModule: UpdateListenersModule | null = null;
+
 async function loadUpdateListeners() {
   vi.resetModules();
   const mod = await import("../../src/ipc/update/update-listeners.js");
   mod.setupAutoUpdaterEvents();
+  lastLoadedModule = mod;
   return mod;
 }
 
@@ -107,6 +111,18 @@ describe("update-listeners", () => {
     ipcHandlers.clear();
     ipcListeners.clear();
     windows.splice(0, windows.length);
+    checkForUpdatesMock.mockReset();
+    quitAndInstallMock.mockReset();
+    logErrorMock.mockReset();
+    logInfoMock.mockReset();
+    logWarnMock.mockReset();
+  });
+
+  afterEach(() => {
+    // Clear any pending watchdog timer from the previously loaded module
+    // so a real 60s setTimeout doesn't leak between tests.
+    lastLoadedModule?.__resetUpdateStateForTests();
+    lastLoadedModule = null;
   });
 
   it("keeps the update button visible when update-not-available follows an available update", async () => {
@@ -197,5 +213,113 @@ describe("update-listeners", () => {
 
     expect(installUpdateOnQuit()).toBe(false);
     expect(quitAndInstallMock).not.toHaveBeenCalled();
+  });
+
+  it("fires update-error broadcast when stuck in pending+installRequested past the watchdog", async () => {
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledInstallTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      // Before timeout: no error broadcast yet.
+      expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+
+      vi.advanceTimersByTime(1_000);
+
+      // Watchdog should have reset installRequested and broadcast the error.
+      expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+      expect(window.webContents.send).toHaveBeenCalledWith("update-status", {
+        kind: "pending",
+        installRequested: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the watchdog when update-downloaded fires before timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledInstallTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      // Download completes well before the watchdog deadline.
+      vi.advanceTimersByTime(200);
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+      // Now let the original deadline pass — nothing extra should happen.
+      vi.advanceTimersByTime(2_000);
+
+      expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+      // quitAndInstall ran (installRequested was true).
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("broadcasts update-error in packaged mode even when the user has not clicked", async () => {
+    appState.isPackaged = true;
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    // No app:restart-for-update click here — installRequested stays false.
+    emitAutoUpdaterEvent("error", new Error("network died"));
+
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+  });
+
+  it("does not broadcast update-error in dev when nothing was user-requested", async () => {
+    // Sanity: dev simulation path should still respect its tighter rule
+    // (the broadcast for plain `error` only fires in packaged mode now).
+    appState.isPackaged = false;
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("error", new Error("network died"));
+
+    expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+  });
+
+  it("catches quitAndInstall throws and surfaces an error broadcast", async () => {
+    const window = createWindow();
+    windows.push(window);
+    const { registerUpdateListeners } = await loadUpdateListeners();
+
+    quitAndInstallMock.mockImplementationOnce(() => {
+      throw new Error("squirrel: staging dir missing");
+    });
+
+    registerUpdateListeners(window as any);
+    // Drive into `downloaded` state, then click Update.
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+    expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+
+    // isQuittingForUpdate should not be stuck — a subsequent click should
+    // attempt quitAndInstall again (mock no longer throws).
+    ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+    expect(quitAndInstallMock).toHaveBeenCalledTimes(2);
   });
 });
