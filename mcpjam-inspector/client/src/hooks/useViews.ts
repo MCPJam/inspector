@@ -8,11 +8,17 @@ export type ViewProtocol = "mcp-apps" | "openai-apps";
 
 // Re-exported from the shared module so the playground hook, eval
 // fanout, and synthetic runner all reference the same definitions.
-// See `shared/widget-snapshot.ts` for the source of truth.
-export type {
+// See `shared/widget-snapshot.ts` for the source of truth. The
+// `import type` brings the names into local scope so type references
+// below (`defaultContext: DisplayContext`, `widgetCsp?: WidgetCsp`)
+// resolve — `export type { ... }` alone is a pure re-export and does
+// not create a local binding.
+import type {
   SharedChatWidgetDisplayContext as DisplayContext,
   SharedChatWidgetCsp as WidgetCsp,
 } from "@/shared/widget-snapshot";
+
+export type { DisplayContext, WidgetCsp };
 
 export type ServerInfo = {
   name: string;
