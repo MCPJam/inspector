@@ -339,6 +339,8 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 };
 ```
 
+`executor` is an optional fallback for host-config pickup. Any object that exposes `getHostSnapshot()` (for example a `HostRunner` or `HostRuntime`) qualifies. The reporter reads the snapshot once and does not hold a reference to the executor. When `MCPJamReportingConfig.host` is also supplied, `executor.getHostSnapshot()` takes precedence over it; per-iteration `hostSnapshot` values take precedence over both.
+
 ### MCPJamReportingConfig
 
 | Property | Type | Required | Description |
