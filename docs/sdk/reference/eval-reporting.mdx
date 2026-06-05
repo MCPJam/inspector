@@ -356,6 +356,7 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
 | `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
 | `tags` | `string[]` | No | Free-form tags attached to the run for filtering in the MCPJam dashboard |
+| `host` | `Host` | No | Host configuration that drove this eval run. When provided (and the backend supports it), the SDK computes a content hash and attaches `{ hostConfig, hostConfigHash }` to the upload. Per-iteration `hostSnapshot` values take precedence; this field is the fallback for runs without per-iteration capture. Do not set `hostConfigHash` manually — the SDK fingerprints the `Host` internally. |
 | `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an agent created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result) |
 | `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
 
