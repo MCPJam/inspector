@@ -59,14 +59,14 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
  * Acceptable trade-off for a process-scoped feature flag; document
  * this in the deploy runbook before flipping the flag in prod.
  *
- * Widgets: PR-2 drops widgets from the forwarded payload for the same
- * reason PR-1's W1 path did — `EvalTraceWidgetSnapshot.serverId` is
- * `string` (could be a friendly server name from older runs), but
- * `appendEvalTurnTrace`'s validator requires `serverId: v.id('servers')`.
- * The legacy `testIteration.blob` fallback (when flag is off) still
- * carries widgets. A follow-up PR that resolves serverIds at the runner
- * layer (where the MCPClientManager is in scope) will repopulate
- * `sharedChatWidgetSnapshots` for eval rows.
+ * Widgets: forwarded on the LAST turn call so they persist once at
+ * finalize. Inspector capture (`captureMcpAppWidgetSnapshots`) supplies
+ * the friendly MCP server name as `serverId`; the backend resolves it
+ * to a Convex `Id<'servers'>` via `resolveEvalWidgetServerIds` before
+ * writing `sharedChatWidgetSnapshots`. Widgets whose serverId can't be
+ * resolved against the iteration's project/workspace, or whose HTML
+ * blob upload failed, are dropped — the persist call must not fail
+ * over a single bad widget.
  */
 
 let cachedFlagEnabled: boolean | null = null;
@@ -186,6 +186,94 @@ function sliceTraceIntoTurns(args: {
   });
 }
 
+/**
+ * Backend `appendEvalTurnTrace` widget shape (after renames). Kept inline
+ * rather than imported from `@convex` to avoid pulling generated types
+ * into the inspector server bundle. Mirror of
+ * `appendEvalTurnTraceWidgetValidator` in
+ * `mcpjam-backend/convex/testSuites.ts`.
+ */
+type BackendEvalWidget = {
+  toolCallId: string;
+  toolName: string;
+  /** Friendly MCP server name; backend resolves to Id<'servers'>. */
+  serverId: string;
+  widgetHtmlBlobId: string;
+  uiType: "mcp-apps" | "openai-apps";
+  resourceUri?: string;
+  widgetCsp?: {
+    connectDomains?: string[];
+    resourceDomains?: string[];
+    frameDomains?: string[];
+    baseUriDomains?: string[];
+  };
+  widgetPermissions?: unknown;
+  widgetPermissive?: boolean;
+  prefersBorder?: boolean;
+};
+
+function toStringArrayOrUndefined(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item === "string") out.push(item);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function normalizeWidgetCsp(
+  v: unknown,
+): BackendEvalWidget["widgetCsp"] | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const rec = v as Record<string, unknown>;
+  const out: BackendEvalWidget["widgetCsp"] = {};
+  const connect = toStringArrayOrUndefined(rec.connectDomains);
+  const resource = toStringArrayOrUndefined(rec.resourceDomains);
+  const frame = toStringArrayOrUndefined(rec.frameDomains);
+  const base = toStringArrayOrUndefined(rec.baseUriDomains);
+  if (connect) out.connectDomains = connect;
+  if (resource) out.resourceDomains = resource;
+  if (frame) out.frameDomains = frame;
+  if (base) out.baseUriDomains = base;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function serializeWidgetsForBackend(
+  snapshots: EvalTraceWidgetSnapshot[] | undefined,
+): BackendEvalWidget[] {
+  if (!snapshots || snapshots.length === 0) return [];
+  const out: BackendEvalWidget[] = [];
+  for (const snap of snapshots) {
+    if (!snap.widgetHtmlBlobId) {
+      // Required by `sharedChatWidgetSnapshots.widgetHtmlBlobId`. The
+      // capture path uploads when it can; widgets without an uploaded
+      // blob are unusable to the reader and dropped here.
+      continue;
+    }
+    const widget: BackendEvalWidget = {
+      toolCallId: snap.toolCallId,
+      toolName: snap.toolName,
+      serverId: snap.serverId,
+      widgetHtmlBlobId: snap.widgetHtmlBlobId,
+      uiType: snap.protocol,
+    };
+    if (snap.resourceUri) widget.resourceUri = snap.resourceUri;
+    const csp = normalizeWidgetCsp(snap.widgetCsp);
+    if (csp) widget.widgetCsp = csp;
+    if (snap.widgetPermissions !== undefined && snap.widgetPermissions !== null) {
+      widget.widgetPermissions = snap.widgetPermissions;
+    }
+    if (typeof snap.widgetPermissive === "boolean") {
+      widget.widgetPermissive = snap.widgetPermissive;
+    }
+    if (typeof snap.prefersBorder === "boolean") {
+      widget.prefersBorder = snap.prefersBorder;
+    }
+    out.push(widget);
+  }
+  return out;
+}
+
 type FanoutResult =
   | null
   | { persisted: true }
@@ -207,21 +295,32 @@ export async function persistEvalTraceFanout(args: {
   messages: ModelMessage[];
   spans: EvalTraceSpan[] | undefined;
   prompts: PromptTraceSummary[] | undefined;
-  /** Currently unused — see file header note about widgets. */
+  /**
+   * Eval widget snapshots captured via `captureMcpAppWidgetSnapshots`.
+   * Attached to the LAST turn call so they persist once, at finalize.
+   * The backend resolves the friendly `serverId` to a Convex doc id
+   * (`resolveEvalWidgetServerIds`); unresolved widgets are dropped
+   * server-side, not here.
+   */
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
 }): Promise<FanoutResult> {
   const enabled = await isEvalChatSessionsWriterEnabled(args.convexClient);
   if (!enabled) return null;
-
-  // Avoid touching the widgetSnapshots param so linters don't flag it.
-  // Documented in the file header why widgets are PR-2-deferred.
-  void args.widgetSnapshots;
 
   const turns = sliceTraceIntoTurns({
     messages: args.messages,
     spans: args.spans ?? [],
     prompts: args.prompts ?? [],
   });
+
+  // Convert inspector-shape widgets to the backend `appendEvalTurnTrace`
+  // shape. Inspector snapshots optionally carry the HTML blob id;
+  // `sharedChatWidgetSnapshots.widgetHtmlBlobId` is required so widgets
+  // without an uploaded blob are dropped here. Field renames:
+  // `protocol` → `uiType`. Free-form `toolMetadata` is dropped — the
+  // backend persists tool input/output as separately-uploaded blobs,
+  // not the inline metadata object.
+  const lastTurnWidgets = serializeWidgetsForBackend(args.widgetSnapshots);
 
   const startedAt = args.iterationStartedAt ?? Date.now();
   const modelId = args.modelId ?? "eval/unknown";
@@ -237,7 +336,13 @@ export async function persistEvalTraceFanout(args: {
   try {
     for (let i = 0; i < turns.length; i++) {
       const turn = turns[i]!;
+      const isLastTurn = i === turns.length - 1;
       const now = Date.now();
+      // Widgets are session-scoped (`sharedChatWidgetSnapshots` keys on
+      // sessionId + toolCallId) and capture happens once per iteration at
+      // finalize, so we attach the full set to the last turn call. Earlier
+      // turns send `widgets: []` to keep per-turn payloads light.
+      const widgetsForThisTurn = isLastTurn ? lastTurnWidgets : [];
       const result = (await args.convexClient.action(
         "testSuites:appendEvalTurnTrace" as any,
         {
@@ -256,7 +361,7 @@ export async function persistEvalTraceFanout(args: {
             ...(turn.prompts.length > 0
               ? { prompts: sanitizeForConvexTransport(turn.prompts) }
               : {}),
-            widgets: [],
+            widgets: widgetsForThisTurn,
           },
         },
       )) as { skipped?: boolean } | undefined;

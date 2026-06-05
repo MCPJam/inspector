@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
 import type { ModelMessage } from "ai";
-import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
+import type {
+  EvalTraceSpan,
+  EvalTraceWidgetSnapshot,
+  PromptTraceSummary,
+} from "@/shared/eval-trace";
 import {
   __resetEvalChatSessionsWriterFlagCacheForTests,
   isEvalChatSessionsWriterEnabled,
@@ -457,5 +461,149 @@ describe("lockEvalSessionAfterUpdate", () => {
         reason: "eval_completed",
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("persistEvalTraceFanout — widget serialization", () => {
+  const makeSnapshot = (
+    overrides: Partial<EvalTraceWidgetSnapshot> = {},
+  ): EvalTraceWidgetSnapshot => ({
+    toolCallId: "call-1",
+    toolName: "create_view",
+    protocol: "mcp-apps",
+    serverId: "excalidraw",
+    toolMetadata: {},
+    widgetHtmlBlobId: "storage-id-1",
+    ...overrides,
+  });
+
+  test("widgets are attached to the LAST turn call only", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    const prompts: PromptTraceSummary[] = [
+      {
+        promptIndex: 0,
+        prompt: "p0",
+        expectedToolCalls: [],
+        actualToolCalls: [],
+        passed: true,
+        missing: [],
+        unexpected: [],
+        argumentMismatches: [],
+      },
+      {
+        promptIndex: 1,
+        prompt: "p1",
+        expectedToolCalls: [],
+        actualToolCalls: [],
+        passed: true,
+        missing: [],
+        unexpected: [],
+        argumentMismatches: [],
+      },
+    ];
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [
+        { role: "user", content: "q0" } as ModelMessage,
+        { role: "assistant", content: "a0" } as ModelMessage,
+        { role: "user", content: "q1" } as ModelMessage,
+        { role: "assistant", content: "a1" } as ModelMessage,
+      ],
+      spans: undefined,
+      prompts,
+      widgetSnapshots: [makeSnapshot()],
+    });
+
+    const appendCalls = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    expect(appendCalls).toHaveLength(2);
+    const firstTurn = appendCalls[0]!.args.turn as { widgets: unknown[] };
+    const lastTurn = appendCalls[1]!.args.turn as { widgets: unknown[] };
+    expect(firstTurn.widgets).toEqual([]);
+    expect(lastTurn.widgets).toHaveLength(1);
+  });
+
+  test("renames protocol → uiType and forwards friendly serverId verbatim", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [{ role: "user", content: "q" } as ModelMessage],
+      spans: undefined,
+      prompts: undefined,
+      widgetSnapshots: [
+        makeSnapshot({ protocol: "openai-apps", serverId: "my-server" }),
+      ],
+    });
+
+    const appendCalls = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    const widget = (appendCalls[0]!.args.turn as { widgets: any[] }).widgets[0];
+    expect(widget.uiType).toBe("openai-apps");
+    expect(widget.serverId).toBe("my-server");
+    // protocol is the inspector field name; backend never sees it.
+    expect(widget.protocol).toBeUndefined();
+  });
+
+  test("drops widgets without widgetHtmlBlobId; other widgets pass through", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [{ role: "user", content: "q" } as ModelMessage],
+      spans: undefined,
+      prompts: undefined,
+      widgetSnapshots: [
+        makeSnapshot({ toolCallId: "good", widgetHtmlBlobId: "blob-good" }),
+        makeSnapshot({ toolCallId: "missing-blob", widgetHtmlBlobId: undefined }),
+      ],
+    });
+
+    const appendCalls = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    const widgets = (appendCalls[0]!.args.turn as { widgets: any[] }).widgets;
+    expect(widgets).toHaveLength(1);
+    expect(widgets[0].toolCallId).toBe("good");
+  });
+
+  test("normalizes widgetCsp to backend shape, drops unknown keys", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [{ role: "user", content: "q" } as ModelMessage],
+      spans: undefined,
+      prompts: undefined,
+      widgetSnapshots: [
+        makeSnapshot({
+          widgetCsp: {
+            connectDomains: ["a.com", "b.com"],
+            // Non-string entries filtered out.
+            resourceDomains: ["good.com", 123 as unknown as string, null],
+            unrelatedField: "ignored",
+          },
+        }),
+      ],
+    });
+
+    const appendCalls = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    const csp = ((appendCalls[0]!.args.turn as { widgets: any[] }).widgets[0])
+      .widgetCsp;
+    expect(csp).toEqual({
+      connectDomains: ["a.com", "b.com"],
+      resourceDomains: ["good.com"],
+    });
+    expect(csp.unrelatedField).toBeUndefined();
   });
 });
