@@ -47,7 +47,15 @@ export default defineConfig({
         ...builtinModules.map((m) => `node:${m}`),
       ],
       output: {
-        inlineDynamicImports: true,
+        // Do NOT inline dynamic imports. main.ts uses `await import(...)`
+        // for `../server/app.js` so that `process.env.SERVER_PORT` (set
+        // after the port probe) is picked up by `server/config.ts` at
+        // module evaluation. With `inlineDynamicImports: true`, Rollup
+        // hoists that module to the top of the bundle and evaluates it
+        // eagerly at startup — defeating the fix for PR #2418's
+        // fallback-port-not-synced regression. Keeping dynamic imports
+        // as separate chunks preserves the deferral semantics.
+        inlineDynamicImports: false,
       },
     },
   },
