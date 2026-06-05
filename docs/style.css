@@ -1,0 +1,261 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+ * MCPJam docs — warm paper theme
+ *
+ * Mirrors the product's OKLCH design tokens (design-system/src/tokens.css)
+ * into Mintlify's content-injected stylesheet. Mintlify auto-loads any .css
+ * file in /docs, so this layers on top of the maple theme.
+ *
+ * Direction: refined minimalism. Cream paper + brown ink + one sharp orange.
+ * No glassy backdrops, no floaty shadows, sharp warm borders, generous space.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* BEGIN GENERATED — sync via `npm run docs:sync-tokens` */
+/* Mirrors design-system/src/tokens.css — edits here will be overwritten. */
+:root {
+  --mcj-paper:        oklch(0.9818 0.0054 95.0986);
+  --mcj-paper-2:      oklch(0.9341 0.0153 90.239);
+  --mcj-paper-3:      oklch(0.9245 0.0138 92.9892);
+  --mcj-ink:          oklch(0.3438 0.0269 95.7226);
+  --mcj-ink-strong:   oklch(0.1908 0.002 106.5859);
+  --mcj-ink-muted:    oklch(0.6059 0.0075 97.4233);
+  --mcj-rule:         oklch(0.8847 0.0069 97.3627);
+  --mcj-rule-strong:  oklch(0.7621 0.0156 98.3528);
+  --mcj-orange:       oklch(0.6832 0.1382 38.744);
+  --mcj-orange-edge:  oklch(0.6171 0.1375 39.0427);
+  --mcj-radius:       0.5rem;
+  --mcj-orange-soft:  oklch(0.6832 0.1382 38.744 / 0.10);
+}
+
+.dark, [data-theme="dark"] {
+  --mcj-paper:        oklch(0.2679 0.0036 106.6427);
+  --mcj-paper-2:      oklch(0.2213 0.0038 106.707);
+  --mcj-paper-3:      oklch(0.213 0.0078 95.4245);
+  --mcj-ink:          oklch(0.8074 0.0142 93.0137);
+  --mcj-ink-strong:   oklch(0.9818 0.0054 95.0986);
+  --mcj-ink-muted:    oklch(0.7713 0.0169 99.0657);
+  --mcj-rule:         oklch(0.3618 0.0101 106.8928);
+  --mcj-rule-strong:  oklch(0.4336 0.0113 100.2195);
+  --mcj-orange:       oklch(0.6724 0.1308 38.7559);
+  --mcj-orange-edge:  oklch(0.6724 0.1308 38.7559);
+  --mcj-radius:       0.5rem;
+  --mcj-orange-soft:  oklch(0.6724 0.1308 38.7559 / 0.14);
+}
+/* END GENERATED */
+
+/* ── Page chrome ────────────────────────────────────────────────────────── */
+
+body {
+  background: var(--mcj-paper);
+  color: var(--mcj-ink);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#navbar {
+  background: var(--mcj-paper);
+  border-bottom: 1px solid var(--mcj-rule);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+#sidebar,
+aside[aria-label="sidebar"] {
+  background: var(--mcj-paper);
+  border-right: 1px solid var(--mcj-rule);
+}
+
+footer {
+  background: var(--mcj-paper);
+  border-top: 1px solid var(--mcj-rule);
+}
+
+/* ── Typography ─────────────────────────────────────────────────────────── */
+
+h1, h2, h3, h4 {
+  color: var(--mcj-ink-strong);
+  letter-spacing: -0.012em;
+  font-weight: 500;
+}
+
+h1 { letter-spacing: -0.022em; font-weight: 600; }
+h2 { letter-spacing: -0.018em; }
+
+p, li {
+  color: var(--mcj-ink);
+}
+
+a {
+  color: var(--mcj-orange-edge);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: color 120ms ease-out;
+}
+a:hover {
+  color: var(--mcj-orange);
+  text-decoration: underline;
+}
+
+/* Sidebar nav links — quieter resting state, ink on hover, orange when active */
+#sidebar a,
+aside[aria-label="sidebar"] a {
+  color: var(--mcj-ink-muted);
+  border-radius: 6px;
+  transition: background 100ms ease-out, color 100ms ease-out;
+}
+#sidebar a:hover,
+aside[aria-label="sidebar"] a:hover {
+  color: var(--mcj-ink-strong);
+  background: var(--mcj-paper-2);
+}
+#sidebar a[aria-current="page"],
+aside[aria-label="sidebar"] a[aria-current="page"] {
+  color: var(--mcj-orange);
+  background: var(--mcj-orange-soft);
+  font-weight: 500;
+}
+
+/* ── Code & inline mono ─────────────────────────────────────────────────── */
+
+code, pre, kbd, samp {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+code:not(pre code) {
+  background: var(--mcj-paper-2);
+  border: 1px solid var(--mcj-rule);
+  color: var(--mcj-ink-strong);
+  padding: 0.12em 0.38em;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+code-block,
+pre {
+  background: var(--mcj-paper-2) !important;
+  border: 1px solid var(--mcj-rule);
+  border-radius: var(--mcj-radius);
+  box-shadow: none !important;
+}
+
+/* ── Callouts (Note / Tip / Warning / Info) ─────────────────────────────── */
+
+callout,
+.callout,
+note,
+tip,
+warning,
+info {
+  background: var(--mcj-paper-2);
+  border: 1px solid var(--mcj-rule);
+  border-left: 3px solid var(--mcj-orange);
+  border-radius: var(--mcj-radius);
+  box-shadow: none;
+  padding: 0.9rem 1rem;
+}
+
+warning {
+  border-left-color: oklch(0.627 0.208 25.331); /* destructive */
+}
+
+tip {
+  border-left-color: oklch(0.696 0.17 152.5);   /* success */
+}
+
+info {
+  border-left-color: oklch(0.623 0.214 259);    /* info */
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+
+card,
+.card {
+  background: var(--mcj-paper);
+  border: 1px solid var(--mcj-rule);
+  border-radius: var(--mcj-radius);
+  box-shadow: none !important;
+  transition: border-color 140ms ease-out, transform 140ms ease-out;
+}
+
+card:hover,
+.card:hover {
+  border-color: var(--mcj-orange);
+  transform: none; /* kill maple's lift */
+}
+
+/* ── Buttons / CTAs — match product's Add Server button ─────────────────── */
+
+button[data-variant="primary"],
+.button-primary,
+a.button-primary {
+  background: var(--mcj-orange);
+  color: #ffffff;
+  border: 1px solid var(--mcj-orange-edge);
+  border-radius: var(--mcj-radius);
+  box-shadow: none;
+  font-weight: 500;
+}
+
+button[data-variant="primary"]:hover,
+.button-primary:hover,
+a.button-primary:hover {
+  background: var(--mcj-orange-edge);
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+
+table {
+  border: 1px solid var(--mcj-rule);
+  border-radius: var(--mcj-radius);
+  overflow: hidden;
+}
+
+th {
+  background: var(--mcj-paper-2);
+  color: var(--mcj-ink-strong);
+  font-weight: 500;
+  text-align: left;
+  border-bottom: 1px solid var(--mcj-rule);
+}
+
+td {
+  border-bottom: 1px solid var(--mcj-rule);
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Misc polish ────────────────────────────────────────────────────────── */
+
+hr {
+  border: none;
+  border-top: 1px solid var(--mcj-rule);
+  margin: 2rem 0;
+}
+
+blockquote {
+  border-left: 2px solid var(--mcj-rule-strong);
+  color: var(--mcj-ink-muted);
+  padding-left: 1rem;
+  font-style: normal;
+}
+
+::selection {
+  background: var(--mcj-orange-soft);
+  color: var(--mcj-ink-strong);
+}
+
+/* Scrollbars — match product's thin warm rail */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--mcj-rule-strong);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mcj-ink-muted);
+}
