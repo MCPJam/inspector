@@ -31,58 +31,87 @@
   },
   "favicon": "/mcp_jam.svg",
   "navigation": {
-    "groups": [
+    "tabs": [
       {
-        "group": "Overview",
-        "icon": "book-open",
+        "tab": "Get Started",
+        "icon": "rocket",
         "pages": [
           "index",
           "getting-started",
           "installation",
-          "inspector/launch-from-code",
-          "hosted/overview"
+          "hosted/overview",
+          "troubleshooting/common-errors"
         ]
       },
       {
-        "group": "Inspector Features",
-        "icon": "star",
-        "pages": [
-          "inspector/home",
-          "inspector/playground",
-          "inspector/clients",
-          "inspector/protocol-versions",
-          "inspector/guided-oauth",
-          "inspector/xaa-debugger",
-          "inspector/tools-prompts-resources",
-          "inspector/evals",
-          "inspector/projects",
-          "inspector/views",
-          "inspector/skills"
+        "tab": "Inspector",
+        "icon": "binoculars",
+        "groups": [
+          {
+            "group": "Features",
+            "icon": "star",
+            "pages": [
+              "inspector/home",
+              "inspector/playground",
+              "inspector/clients",
+              "inspector/protocol-versions",
+              "inspector/guided-oauth",
+              "inspector/xaa-debugger",
+              "inspector/tools-prompts-resources",
+              "inspector/evals",
+              "inspector/projects",
+              "inspector/views",
+              "inspector/skills"
+            ]
+          },
+          {
+            "group": "Embedding",
+            "icon": "code",
+            "pages": ["inspector/launch-from-code"]
+          },
+          {
+            "group": "Recipes",
+            "icon": "map",
+            "pages": ["guides/first-mcp-app", "guides/first-chatgpt-app-react"]
+          }
         ]
       },
       {
-        "group": "CLI",
+        "tab": "CLI",
         "icon": "terminal",
-        "pages": [
-          "cli/overview",
-          "cli/server-inspection",
-          "cli/oauth-conformance",
-          "cli/oauth-login",
-          "cli/apps-conformance",
-          "cli/tools-resources-prompts",
-          "cli/ci",
-          "cli/telemetry",
-          "cli/reference"
-        ]
-      },
-      {
-        "group": "SDK",
-        "icon": "code",
-        "pages": [
-          "sdk/index",
-          "sdk/quickstart",
+        "groups": [
           {
             "group": "Guides",
+            "icon": "map",
+            "pages": [
+              "cli/overview",
+              "cli/server-inspection",
+              "cli/oauth-conformance",
+              "cli/oauth-login",
+              "cli/apps-conformance",
+              "cli/tools-resources-prompts",
+              "cli/ci",
+              "cli/telemetry"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "book",
+            "pages": ["cli/reference"]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
+        "icon": "code",
+        "groups": [
+          {
+            "group": "Get Started",
+            "icon": "rocket",
+            "pages": ["sdk/index", "sdk/quickstart"]
+          },
+          {
+            "group": "Concepts",
             "icon": "map",
             "pages": [
               "sdk/concepts/connecting-servers",
@@ -110,16 +139,6 @@
             ]
           }
         ]
-      },
-      {
-        "group": "Guides",
-        "icon": "map",
-        "pages": ["guides/first-mcp-app", "guides/first-chatgpt-app-react"]
-      },
-      {
-        "group": "Troubleshooting",
-        "icon": "wrench",
-        "pages": ["troubleshooting/common-errors"]
       }
     ],
     "global": {
