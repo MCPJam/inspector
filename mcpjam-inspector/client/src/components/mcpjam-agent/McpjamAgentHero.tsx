@@ -48,6 +48,14 @@ export interface McpjamAgentHeroProps {
   onResumeSession?: (sessionId: string) => void;
   /** Override the hardcoded suggestion chips. */
   suggestedPrompts?: ReadonlyArray<string>;
+  /**
+   * When `false`, the submit affordances (Send button, Enter key) are
+   * disabled. Suggested-prompt chips still fill the input — only the
+   * actual submit is gated. Use this while project/model resolution is
+   * in flight to prevent the backend from receiving an empty `model`
+   * or `projectId`.
+   */
+  ready?: boolean;
   className?: string;
 }
 
@@ -56,6 +64,7 @@ export function McpjamAgentHero({
   onSessionStart,
   onResumeSession,
   suggestedPrompts = DEFAULT_SUGGESTED_PROMPTS,
+  ready = true,
   className,
 }: McpjamAgentHeroProps) {
   const posthog = usePostHog();
@@ -79,6 +88,10 @@ export function McpjamAgentHero({
     (text: string, source: "input" | "suggestion") => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // Block submit while project/model resolution is in flight — the
+      // backend route requires both fields, and Enter/click would otherwise
+      // race ahead of the cold-load hydration.
+      if (!ready) return;
       const sessionId = generateId();
       const title = trimmed.length > 50 ? `${trimmed.slice(0, 50)}…` : trimmed;
       appendRecentMcpjamAgentSession({
@@ -94,7 +107,7 @@ export function McpjamAgentHero({
       setValue("");
       onSessionStart(sessionId, trimmed);
     },
-    [onSessionStart, posthog, surface]
+    [onSessionStart, posthog, ready, surface]
   );
 
   const onFormSubmit = useCallback(
@@ -140,7 +153,7 @@ export function McpjamAgentHero({
     onResumeSession(latestRecent.id);
   }, [latestRecent, onResumeSession, posthog, surface]);
 
-  const canSubmit = value.trim().length > 0;
+  const canSubmit = value.trim().length > 0 && ready;
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
@@ -170,7 +183,7 @@ export function McpjamAgentHero({
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Ask anything…"
+          placeholder={ready ? "Ask anything…" : "Loading…"}
           minRows={2}
           maxRows={10}
           className="min-h-[3.25rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
@@ -180,6 +193,7 @@ export function McpjamAgentHero({
             type="submit"
             size="sm"
             disabled={!canSubmit}
+            title={ready ? undefined : "Loading project and model…"}
             className="h-8 gap-1.5 rounded-full px-3"
           >
             <ArrowUp className="h-3.5 w-3.5" aria-hidden />

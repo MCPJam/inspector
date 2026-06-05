@@ -48,11 +48,17 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
       // mount — without this, the hero would lose the message in the
       // hero-to-thread swap. sessionStorage (not localStorage) so a stale
       // pending message can't leak across browser sessions.
+      //
+      // The `fresh: true` flag distinguishes "user just minted this id and
+      // hit submit" from "user landed on /home?session=<id> via the Recent
+      // Chat pill". Without it, the thread can't tell the two apart and
+      // would replay the prompt against an already-hydrated transcript if
+      // hydration hadn't committed yet on the first effect pass.
       try {
         if (typeof window !== "undefined") {
           window.sessionStorage.setItem(
             `mcpjam:agent-pending:${id}`,
-            firstMessage
+            JSON.stringify({ text: firstMessage, fresh: true })
           );
         }
       } catch {
@@ -191,6 +197,12 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
             surface="home"
             onSessionStart={handleSessionStart}
             onResumeSession={handleResumeSession}
+            // The backend route requires `projectId`; without it, submit
+            // would 400. The hero's own model gate runs inside
+            // `useMcpjamAgentSession` on the thread side — the hero itself
+            // doesn't see the model, but `projectId` is the gate that
+            // matters at mint time.
+            ready={Boolean(projectId)}
           />
         )}
 

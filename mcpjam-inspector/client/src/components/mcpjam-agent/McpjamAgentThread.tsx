@@ -56,10 +56,16 @@ export function McpjamAgentThread({
   const isStreaming =
     session.status === "submitted" || session.status === "streaming";
 
+  // Both the backend route and the persistence path require a resolved
+  // model + projectId. On cold load either can be undefined for a few
+  // frames; gate every submit affordance on both being present.
+  const isReady = session.model != null && projectId != null;
+
   const handleSubmit = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      if (!isReady) return;
       session.submit(trimmed);
       setDraft("");
       // Refresh the local registry so the title reflects the most recent
@@ -75,7 +81,7 @@ export function McpjamAgentThread({
         ts: Date.now(),
       });
     },
-    [session, sessionId]
+    [isReady, session, sessionId]
   );
 
   const onFormSubmit = useCallback(
@@ -112,29 +118,56 @@ export function McpjamAgentThread({
   // Consume a hero-stashed pending prompt exactly once per session id —
   // the hero captured the user's first message before swapping us in via
   // the URL param. Without this, the prompt would be lost in the swap.
+  //
+  // The stored value is `{ text, fresh: true }` JSON written by the hero's
+  // mint path. Resume from the Recent Chat pill never writes a pending
+  // value at all, so `fresh` is the only authoritative "this is a brand
+  // new session id" signal — we used to rely on `messages.length === 0`,
+  // but `setMessages(initialMessages)` from hydration may not have
+  // committed yet on the first effect pass, so an already-hydrated
+  // session could see length 0 for one frame and replay the prompt. The
+  // `fresh` flag dodges that race entirely.
+  //
+  // Tolerates the legacy plain-string shape (no `fresh` field) by
+  // refusing to autosubmit it — better to lose one in-flight prompt than
+  // replay against a hydrated transcript.
   const consumedPendingRef = useRef<string | null>(null);
   useEffect(() => {
     if (session.hydrating) return;
+    if (!isReady) return;
     if (consumedPendingRef.current === sessionId) return;
     if (typeof window === "undefined") return;
-    let pending: string | null = null;
+    let raw: string | null = null;
     try {
-      pending = window.sessionStorage.getItem(
-        `mcpjam:agent-pending:${sessionId}`
-      );
+      raw = window.sessionStorage.getItem(`mcpjam:agent-pending:${sessionId}`);
       window.sessionStorage.removeItem(`mcpjam:agent-pending:${sessionId}`);
     } catch {
-      pending = null;
+      raw = null;
     }
     consumedPendingRef.current = sessionId;
-    if (pending && pending.trim()) {
-      // Only autosubmit on a fresh thread — never replay onto a hydrated
-      // historical transcript.
-      if (session.messages.length === 0) {
-        handleSubmit(pending);
+    if (!raw) return;
+    let pendingText = "";
+    let isFresh = false;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        typeof (parsed as { text?: unknown }).text === "string"
+      ) {
+        pendingText = (parsed as { text: string }).text;
+        isFresh = (parsed as { fresh?: unknown }).fresh === true;
       }
+    } catch {
+      // Legacy plain-string payload — refuse to autosubmit (see comment
+      // above).
+      pendingText = "";
+      isFresh = false;
     }
-  }, [handleSubmit, session.hydrating, session.messages.length, sessionId]);
+    if (isFresh && pendingText.trim()) {
+      handleSubmit(pendingText);
+    }
+  }, [handleSubmit, isReady, session.hydrating, sessionId]);
 
   return (
     <div
@@ -179,7 +212,7 @@ export function McpjamAgentThread({
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Continue the conversation…"
+          placeholder={isReady ? "Continue the conversation…" : "Loading…"}
           minRows={2}
           maxRows={8}
           className="min-h-[3rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
@@ -200,7 +233,8 @@ export function McpjamAgentThread({
             <Button
               type="submit"
               size="sm"
-              disabled={draft.trim().length === 0}
+              disabled={draft.trim().length === 0 || !isReady}
+              title={isReady ? undefined : "Loading project and model…"}
               className="h-8 gap-1.5 rounded-full px-3"
             >
               <ArrowUp className="h-3.5 w-3.5" aria-hidden />
