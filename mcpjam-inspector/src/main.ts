@@ -251,6 +251,17 @@ function openSafeOAuthWindow(
 const DEFAULT_SERVER_PORT = 6274;
 const SERVER_PORT_FALLBACK_ATTEMPTS = 10;
 
+// Cache the port we successfully probed on first launch so subsequent
+// startHonoServer() invocations (macOS dock activation after
+// window-all-closed) reuse it. The server/config.ts module is in Node's
+// module cache after the first dynamic import, so its SERVER_PORT /
+// LOCAL_SERVER_ADDR / CORS_ORIGINS were frozen to the first effective
+// port. If we probed again and the result differed, the renderer would
+// load from the new port while origin-validation/CORS/ngrok all still
+// reference the old one — same fallback-port-not-synced class of bug we
+// fixed at first launch.
+let cachedProbedPort: number | null = null;
+
 async function startHonoServer(): Promise<number> {
   try {
     // Set environment variables to tell the server it's running in Electron
@@ -265,28 +276,43 @@ async function startHonoServer(): Promise<number> {
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
     const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
 
-    // Probe for a free port BEFORE loading server modules. server/config.ts
-    // reads SERVER_PORT from process.env once, at module-init time, and that
-    // value flows into LOCAL_SERVER_ADDR, CORS_ORIGINS, and the
-    // origin-validation allowlist. If we bound the server before setting
-    // this, the renderer (loading from the fallback port) would 403 on its
-    // own API calls and ngrok would target the wrong local address.
-    const port = await probeFreePort(
-      hostname,
-      DEFAULT_SERVER_PORT,
-      SERVER_PORT_FALLBACK_ATTEMPTS,
-      {
-        onAttemptFailed: (failedPort, err) => {
-          log.warn(
-            `Port ${failedPort} unavailable (${err.code ?? err.message}); trying next port`,
-          );
+    let port: number;
+    if (cachedProbedPort !== null) {
+      // Re-use the port from first launch — server/config.ts is already
+      // module-cached against this value; probing again would risk
+      // picking a different free port and silently desyncing CORS,
+      // origin validation, and LOCAL_SERVER_ADDR from the bound port.
+      port = cachedProbedPort;
+      log.info(
+        `Reusing previously-probed port ${port} for server restart`,
+      );
+    } else {
+      // Probe for a free port BEFORE loading server modules. server/config.ts
+      // reads SERVER_PORT from process.env once, at module-init time, and that
+      // value flows into LOCAL_SERVER_ADDR, CORS_ORIGINS, and the
+      // origin-validation allowlist. If we bound the server before setting
+      // this, the renderer (loading from the fallback port) would 403 on its
+      // own API calls and ngrok would target the wrong local address.
+      port = await probeFreePort(
+        hostname,
+        DEFAULT_SERVER_PORT,
+        SERVER_PORT_FALLBACK_ATTEMPTS,
+        {
+          onAttemptFailed: (failedPort, err) => {
+            log.warn(
+              `Port ${failedPort} unavailable (${err.code ?? err.message}); trying next port`,
+            );
+          },
         },
-      },
-    );
-    process.env.SERVER_PORT = String(port);
+      );
+      process.env.SERVER_PORT = String(port);
+      cachedProbedPort = port;
+    }
 
     // Dynamic import so server/config.ts evaluates with the env var we just
-    // set, not the build-time default.
+    // set, not the build-time default. After the first call the module is in
+    // Node's cache; subsequent calls just return the cached exports, which
+    // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
     const honoApp = createHonoApp();
 
@@ -651,6 +677,19 @@ function showStartupFailureDialog(error: unknown): void {
         log.warn(`Failed to remove ${sub} during recovery reset:`, rmErr);
       }
     }
+    // Also clear the version marker so the next launch always re-runs
+    // pruneStaleCachesOnVersionChange(). Otherwise a partial reset (some
+    // rmSync above failed and threw) plus an unchanged version string
+    // means the version-based prune is skipped — the next launch sees
+    // exactly the broken state that brought us here.
+    try {
+      fs.rmSync(path.join(userData, ".last-launched-version"), { force: true });
+    } catch (rmErr) {
+      log.warn(
+        "Failed to remove .last-launched-version during recovery reset:",
+        rmErr,
+      );
+    }
     app.relaunch();
     app.quit();
     return;
@@ -660,8 +699,16 @@ function showStartupFailureDialog(error: unknown): void {
     // Don't fire-and-forget: shutdown can finish before Finder/Explorer
     // gets the openPath message, making the recovery action appear to do
     // nothing. Chain the quit so it runs only after openPath settles.
+    // Electron's shell.openPath resolves with an empty string on success
+    // and a non-empty error message on logical failure — `.catch()` only
+    // catches sync/promise throws, so check the resolved value too.
     shell
       .openPath(app.getPath("logs"))
+      .then((result) => {
+        if (result) {
+          log.warn(`shell.openPath reported error opening logs folder: ${result}`);
+        }
+      })
       .catch((openErr) => log.warn("Failed to open logs folder:", openErr))
       .finally(() => app.quit());
     return;
