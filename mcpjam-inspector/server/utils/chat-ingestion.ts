@@ -145,7 +145,7 @@ interface PersistChatSessionOptions {
   modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
   projectId?: string;
-  sourceType?: "chatbox" | "direct";
+  sourceType?: "chatbox" | "direct" | "eval";
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   chatboxId?: string;
