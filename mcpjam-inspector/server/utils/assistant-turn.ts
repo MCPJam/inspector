@@ -85,7 +85,7 @@ export interface RunAssistantTurnOptions {
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
    */
-  sourceType: "direct" | "chatbox";
+  sourceType: "direct" | "chatbox" | "eval";
   /**
    * Surface marker forwarded into chat-ingestion. Stage 1 only wires
    * the type-narrow union; existing callers still send the string
