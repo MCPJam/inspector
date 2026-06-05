@@ -1,4 +1,8 @@
-export { describeError, type NormalizedError } from "./describe.js";
+export {
+  describeError,
+  describeAsSlug,
+  type NormalizedError,
+} from "./describe.js";
 export {
   ERROR_CATALOG,
   type ErrorCatalogEntry,

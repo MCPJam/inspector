@@ -753,7 +753,11 @@ export function ServerConnectionCard({
                 // Prefer the rich block; fall back to the message string
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
-                defaultOpen={isErrorExpanded}
+                // Controlled — the Error badge above toggles
+                // `isErrorExpanded`; the card must reflect that on every
+                // change, not just at mount.
+                open={isErrorExpanded}
+                onOpenChange={setIsErrorExpanded}
               />
               {server.retryCount > 0 && (
                 <div className="mt-1 text-xs text-muted-foreground">

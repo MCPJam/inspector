@@ -27,7 +27,22 @@ export type ErrorCardProps = {
   onRetry?: () => void;
   onDismiss?: () => void;
   variant?: "inline" | "banner" | "toast";
+  /**
+   * Uncontrolled initial state for the details disclosure. Ignored when
+   * `open` is provided (controlled mode).
+   */
   defaultOpen?: boolean;
+  /**
+   * Controlled details-disclosure state. When set, the card renders this
+   * value instead of its internal state and forwards toggles to
+   * `onOpenChange`. Pair with `onOpenChange` to keep the toggle reactive.
+   */
+  open?: boolean;
+  /**
+   * Fired whenever the user toggles the details disclosure. Called in
+   * both controlled and uncontrolled modes.
+   */
+  onOpenChange?: (open: boolean) => void;
   /**
    * Optional extra class to merge into the root container. Lets callers
    * tighten spacing without re-styling the whole card.
@@ -88,10 +103,23 @@ export function ErrorCard({
   onDismiss,
   variant = "inline",
   defaultOpen = false,
+  open,
+  onOpenChange,
   className,
 }: ErrorCardProps) {
   const normalized = useMemo(() => resolveNormalized(error), [error]);
-  const [open, setOpen] = useState<boolean>(defaultOpen);
+  // Support both controlled (`open` provided) and uncontrolled (`defaultOpen`)
+  // modes. `useState` only reads `defaultOpen` once at mount, so callers that
+  // need the toggle to react to outside state must use the controlled form.
+  const [uncontrolledOpen, setUncontrolledOpen] =
+    useState<boolean>(defaultOpen);
+  const isControlled = open !== undefined;
+  const isOpen = isControlled ? open : uncontrolledOpen;
+  const handleToggle = () => {
+    const next = !isOpen;
+    if (!isControlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const styles = severityStyles(normalized.severity);
   const Icon = styles.icon;
 
@@ -131,15 +159,15 @@ export function ErrorCard({
           <div className="flex items-center gap-3 pt-1">
             <button
               type="button"
-              onClick={() => setOpen((prev) => !prev)}
+              onClick={handleToggle}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground/70 hover:text-foreground"
             >
-              {open ? (
+              {isOpen ? (
                 <ChevronDown className="h-3 w-3" />
               ) : (
                 <ChevronRight className="h-3 w-3" />
               )}
-              {open ? "Hide details" : "Show details"}
+              {isOpen ? "Hide details" : "Show details"}
             </button>
             <a
               href={docsHref}
@@ -162,7 +190,7 @@ export function ErrorCard({
             ) : null}
           </div>
 
-          {open ? (
+          {isOpen ? (
             <div className="mt-2 space-y-2 rounded border border-foreground/10 bg-background/40 p-2 text-foreground/80">
               {normalized.likelyCauses.length > 0 ? (
                 <div>

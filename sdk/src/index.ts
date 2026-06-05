@@ -421,6 +421,7 @@ export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 // dragging in Node-only deps.
 export {
   describeError,
+  describeAsSlug,
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,

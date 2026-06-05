@@ -77,7 +77,7 @@ import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
-import { describeError } from "@mcpjam/sdk";
+import { describeError, describeAsSlug } from "@mcpjam/sdk";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -132,12 +132,16 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 
   if (isAuthStatus || isAuthBody) {
     const providerName = provider || "your AI provider";
+    // The generic describer would tag this as `auth/http_401` (MCP server
+    // re-auth). We have provider context the describer doesn't, so override
+    // the slug to point at LLM-provider-key guidance + docs anchor.
+    const providerNormalized = describeAsSlug("provider/auth_error", error);
 
     return JSON.stringify({
       code: "auth_error",
       message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
       statusCode,
-      normalized,
+      normalized: providerNormalized,
     });
   }
 

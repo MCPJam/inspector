@@ -358,3 +358,37 @@ export function describeError(error: unknown): NormalizedError {
     };
   }
 }
+
+/**
+ * Build a `NormalizedError` from an explicit catalog slug, wrapping the
+ * raw error for `rawMessage` / `cause` capture. Use this when the caller
+ * has context the generic `describeError` resolver does not — e.g. a chat
+ * route that knows an HTTP 401 is from an LLM provider, not an MCP server,
+ * and wants to attach `provider/auth_error` instead of the resolver's
+ * `auth/http_401`.
+ *
+ * Unknown slugs fall back to `internal/unknown` (never throws).
+ */
+export function describeAsSlug(
+  slug: string,
+  error?: unknown,
+): NormalizedError {
+  try {
+    const entry = lookupCatalog(slug);
+    const rawMessage =
+      error !== undefined ? redactString(getErrorMessage(error)) : "";
+    const cause = captureCause(error);
+    return {
+      ...entry,
+      rawMessage,
+      ...(cause ? { cause } : {}),
+    };
+  } catch {
+    const fallback = ERROR_CATALOG["internal/unknown"];
+    return {
+      ...fallback,
+      rawMessage:
+        error instanceof Error ? error.message : String(error ?? ""),
+    };
+  }
+}

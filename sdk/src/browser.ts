@@ -19,6 +19,7 @@ export { redactSensitiveValue } from "./redaction.js";
 // to avoid pulling Node-only deps via root `@mcpjam/sdk`.
 export {
   describeError,
+  describeAsSlug,
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,
