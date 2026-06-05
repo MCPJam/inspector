@@ -390,6 +390,44 @@ tbody tr:hover td {
   text-decoration-color: var(--mcj-orange) !important;
 }
 
+/* ── Top-nav tabs (Get Started / Inspector / CLI / SDK) ─────────────────── */
+
+/* Brand-orange underline + ink-strong text on the active tab. Selector net
+   covers Mintlify Maple's likely tab shapes — tablist role, aria-selected,
+   data-state="active", or a direct anchor in a tablist container. */
+:is([role="tablist"], nav[aria-label*="tab" i], [data-slot="tabs"]) :is(a, button)[aria-selected="true"],
+:is([role="tablist"], nav[aria-label*="tab" i], [data-slot="tabs"]) :is(a, button)[data-state="active"] {
+  color: var(--mcj-ink-strong) !important;
+  font-weight: 500 !important;
+  border-bottom: 2px solid var(--mcj-orange) !important;
+  margin-bottom: -1px;
+}
+
+:is([role="tablist"], nav[aria-label*="tab" i], [data-slot="tabs"]) :is(a, button):not([aria-selected="true"]):not([data-state="active"]) {
+  color: var(--mcj-ink-muted);
+  transition: color 120ms ease-out;
+}
+:is([role="tablist"], nav[aria-label*="tab" i], [data-slot="tabs"]) :is(a, button):not([aria-selected="true"]):not([data-state="active"]):hover {
+  color: var(--mcj-ink-strong);
+}
+
+/* SDK version pill — visible interim signal that the docs describe v1.x of
+   @mcpjam/sdk. Lives at the top of sdk/index.mdx. Native Mintlify tab tags
+   aren't a thing (`tag` is only on `navigation.versions[]`), so we mark
+   the version in MDX and brand-tint it here. */
+.sdk-version-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.55rem;
+  border-radius: 9999px;
+  background: var(--mcj-orange-soft);
+  color: var(--mcj-orange-edge);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.75rem;
+}
+
 /* ── Misc polish ────────────────────────────────────────────────────────── */
 
 hr {
