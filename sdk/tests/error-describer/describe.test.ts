@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  describeAsSlug,
   describeError,
   ERROR_CATALOG,
+  extractNodeErrno,
   type NormalizedError,
 } from "../../src/error-describer/index.js";
 import { MCPAuthError } from "../../src/mcp-client-manager/errors.js";
@@ -283,5 +285,77 @@ describe("describeError — redaction", () => {
 
   it("never throws on truly unusual input", () => {
     expect(() => describeError({ get code() { throw new Error("nope"); } })).not.toThrow();
+  });
+});
+
+describe("extractNodeErrno — cause walking", () => {
+  it("returns top-level code when present", () => {
+    expect(extractNodeErrno({ code: "ECONNREFUSED" })).toBe("ECONNREFUSED");
+  });
+
+  it("walks one level of cause (undici fetch wrapping)", () => {
+    // Reproduces Node's typical fetch-failed shape:
+    // TypeError("fetch failed") with cause = SystemError carrying the errno.
+    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9999"), {
+      code: "ECONNREFUSED",
+    });
+    const wrapper = Object.assign(new TypeError("fetch failed"), { cause });
+    expect(extractNodeErrno(wrapper)).toBe("ECONNREFUSED");
+  });
+
+  it("walks multiple cause levels but stops at the depth bound", () => {
+    const deep = Object.assign(new Error("inner"), { code: "ENOTFOUND" });
+    const mid = Object.assign(new Error("mid"), { cause: deep });
+    const outer = Object.assign(new TypeError("fetch failed"), { cause: mid });
+    expect(extractNodeErrno(outer)).toBe("ENOTFOUND");
+  });
+
+  it("tolerates a self-referential cause without looping forever", () => {
+    const err: { cause?: unknown } = {};
+    err.cause = err;
+    expect(() => extractNodeErrno(err)).not.toThrow();
+    expect(extractNodeErrno(err)).toBeUndefined();
+  });
+});
+
+describe("describeError — fetch failed surfaces specific transport slug", () => {
+  it("classifies undici-wrapped ECONNREFUSED as transport/econnrefused", () => {
+    // Before the cause-walking fix this fell through to the message-regex
+    // fallback and produced the generic "fetch failed" slug, defeating the
+    // entire point of the transport catalog for the #1 docs-chat query.
+    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9999"), {
+      code: "ECONNREFUSED",
+    });
+    const wrapper = Object.assign(new TypeError("fetch failed"), { cause });
+    const out = describeError(wrapper);
+    expect(out.slug).toBe("transport/econnrefused");
+    expect(out.rawCode).toBe("ECONNREFUSED");
+  });
+});
+
+describe("describeAsSlug — explicit catalog pinning", () => {
+  it("uses the requested slug when the caller has more context than the resolver", () => {
+    // chat-v2's use case: an HTTP 401 from an LLM provider, where the
+    // generic resolver would pick auth/http_401 (MCP server re-auth) but
+    // the route knows it's a provider-key issue.
+    const out = describeAsSlug(
+      "provider/auth_error",
+      Object.assign(new Error("Invalid API key"), { statusCode: 401 }),
+    );
+    expect(out.slug).toBe("provider/auth_error");
+    expect(out.title).toBe(ERROR_CATALOG["provider/auth_error"].title);
+    expect(out.rawMessage).toContain("Invalid API key");
+  });
+
+  it("falls back to internal/unknown for an unknown slug instead of throwing", () => {
+    const out = describeAsSlug("not/in/catalog", new Error("nope"));
+    expect(out.slug).toBe("internal/unknown");
+    expect(out.rawMessage).toContain("nope");
+  });
+
+  it("accepts a missing error argument", () => {
+    const out = describeAsSlug("provider/quota");
+    expect(out.slug).toBe("provider/quota");
+    expect(out.rawMessage).toBe("");
   });
 });

@@ -2564,6 +2564,11 @@ export function useServerState({
             type: "CONNECT_FAILURE",
             name: formData.name,
             error: result.error || "Connection test failed",
+            // Thread the backend-attached rich block through. Without this
+            // the reducer's auto-derive would re-classify from just the
+            // message string and lose the slug the backend already pinned
+            // (e.g. `transport/econnrefused` from a Node errno match).
+            ...(result.normalized ? { normalized: result.normalized } : {}),
           });
           logger.error("Connection failed", {
             serverName: formData.name,
@@ -3702,6 +3707,10 @@ export function useServerState({
           name: serverName,
           error: errorMessage,
           oauthTrace: authResult.oauthTrace,
+          // Preserve the backend-attached normalized block so the reducer
+          // doesn't have to re-derive a (less specific) slug from just
+          // the message string.
+          ...(result.normalized ? { normalized: result.normalized } : {}),
         });
         logger.error("Reconnection failed", { serverName, result });
         reportError(errorMessage || `Failed to reconnect: ${serverName}`);

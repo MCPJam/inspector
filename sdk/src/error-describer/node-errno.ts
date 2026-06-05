@@ -3,15 +3,31 @@
  * imports, browser-safe. Originally lived inline at `sdk/src/retry.ts`
  * (extractNodeErrorCode); hoisted here so the error describer can share
  * the exact same surface as `isRetryableTransientError`.
+ *
+ * Walks `error.cause` because Node's `fetch` (undici) typically wraps
+ * connection failures as `TypeError("fetch failed")` whose `.cause` is
+ * the real `SystemError` carrying `code: "ECONNREFUSED"` (or similar).
+ * Without the walk, every fetch-side errno would classify as the generic
+ * "fetch failed" slug instead of the specific transport slug.
+ *
+ * Bounded depth to avoid pathological cyclic-cause structures.
  */
-export function extractNodeErrno(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") {
+export function extractNodeErrno(
+  error: unknown,
+  depth = 0,
+): string | undefined {
+  if (!error || typeof error !== "object" || depth > 3) {
     return undefined;
   }
 
   const code = (error as { code?: unknown }).code;
   if (typeof code === "string") {
     return code;
+  }
+
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause !== undefined && cause !== error) {
+    return extractNodeErrno(cause, depth + 1);
   }
   return undefined;
 }
