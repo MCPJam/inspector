@@ -88,19 +88,6 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         team: x,
         enterprise: c,
       },
-      {
-        label: "Eval iteration cap",
-        free: t("500 iter. / mo"),
-        team: t("10,000 iter. / mo", true),
-        enterprise: t("Custom", true),
-      },
-      {
-        label: "Eval iteration overage",
-        tooltipKey: "Eval iteration overage",
-        free: x,
-        team: t("$0.02 / iter.", true),
-        enterprise: t("Custom", true),
-      },
     ],
   },
   {
