@@ -1,0 +1,63 @@
+name: Mintlify PR Triage
+
+# Auto-triages documentation PRs opened by the Mintlify bot. A Claude classifier
+# verifies each PR against the actual code, then takes exactly ONE action:
+#   - MERGE (enable auto-merge; it lands only after CI passes) when it can
+#     positively confirm the docs are accurate, user-facing, and apply cleanly.
+#   - CLOSE in every other case — stale / backend-internal / inaccurate /
+#     duplicate, or anything it cannot confidently verify (bias to close).
+# Replaces the previous "auto-merge every bot PR" workflow.
+
+on:
+  pull_request:
+    types: [opened]
+
+concurrency:
+  group: mintlify-triage-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    # Gate on the PR author, not github.actor (which is spoofable and is the
+    # human, not the bot, on reopen).
+    if: github.event.pull_request.user.login == 'mintlify[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # enable auto-merge
+      pull-requests: write # close / comment
+      id-token: write # claude-code-action auth
+      actions: read # read CI status
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1 # full file tree (code + docs) so feature greps work
+          persist-credentials: false # job has write perms; Claude uses gh, not git auth
+
+      - name: Classify and act
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          claude_args: >-
+            --model claude-sonnet-4-6
+            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr comment:*),Bash(git grep:*),Bash(git log:*),Bash(git show:*),Bash(git ls-files:*),Grep,Glob,Read"
+          prompt: |
+            You are the documentation-PR triager for ${{ github.repository }}. PR #${{ github.event.pull_request.number }} was opened by the Mintlify docs bot. Decide and execute EXACTLY ONE outcome: MERGE or CLOSE. Bias toward CLOSE — only MERGE when you can positively verify the PR is good. Everything published must be user-facing, accurate, and free of backend/internal detail. Do not ask questions; take the action yourself with the gh CLI.
+
+            Investigate first (read-only):
+            - Diff + metadata: `gh pr diff ${{ github.event.pull_request.number }}` and `gh pr view ${{ github.event.pull_request.number }} --json files,mergeable,mergeStateStatus,title,body`. A non-mergeable / conflicting PR usually means it targets a page that was renamed or deleted (stale).
+            - Confirm any feature the PR documents actually exists in the code: `git grep -i "<symbol or exact UI string>" -- mcpjam-inspector/ sdk/`. If you cannot find it, treat the feature as non-existent.
+            - Check whether the content is already documented: `git grep -i "<phrase>" -- docs/`.
+
+            MERGE only if you can confirm ALL of: the PR is mergeable; every target page still exists; the feature is present in the code; the content is user-facing and accurate; and it is not a duplicate or editing anything under `docs/contributing/**`.
+
+            CLOSE in every other case — stale (deleted/renamed page or not mergeable); backend/internal content (Convex, internal HTTP endpoints/routes, environment variables, secrets/keys, server-side persistence or runtime, internal source-file paths); a feature you cannot find in the code; a duplicate; a clear factual error versus the code; OR anything you are not confident enough to merge. Closing is safe and cheap — the bot regenerates a fresh PR when the code changes again.
+
+            Execute exactly one, then stop:
+            - MERGE → `gh pr merge ${{ github.event.pull_request.number }} --auto --squash`
+            - CLOSE → `gh pr close ${{ github.event.pull_request.number }} --comment "<one concise sentence on why>"`
+
+            Keep the comment to a single sentence.

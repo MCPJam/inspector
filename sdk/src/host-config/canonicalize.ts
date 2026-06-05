@@ -101,6 +101,28 @@ function sortStringKeys<T extends Record<string, unknown>>(input: T): T {
   return out as T;
 }
 
+// Fail-fast guard for fields the HostConfigInputV2 type marks required
+// but the canonicalizer historically coalesced via `?? {}`. The empty-object
+// fallback hides a real write-path bug: a caller passing undefined silently
+// dedupes into whichever existing row also happens to have empty caps.
+// Plain-object check defends against arrays/primitives slipping past
+// upstream `v.any()` validators. Returns a deep-sorted copy so nested key
+// order doesn't leak into the hash.
+function requireRecord(value: unknown, fieldName: string): Record<string, unknown> {
+  if (value === undefined) {
+    throw new Error(`hostConfigV2: ${fieldName} is required`);
+  }
+  // Reuses the shared isPlainObject predicate (now prototype-guarded), so
+  // Date / class instance / Map / Set inputs hit a hard error here instead
+  // of silently canonicalizing to `{}` and merging with the empty-record
+  // dedupe pool. Only `{}` literals and Object.create(null) records are
+  // accepted — both are valid JSON-serializable plain objects.
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  return deepSortStringKeys(value);
+}
+
 // Deep variant: recursively sorts keys at every object level so nested
 // records hash the same regardless of original key order.
 function deepSortStringKeys<T>(input: T): T {
@@ -126,7 +148,16 @@ function sortUniqueServerIds(ids: Array<ServerId> | undefined): Array<ServerId> 
 // Arrays/null satisfy `typeof === 'object'`; the canonicalizer is the
 // chokepoint.
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  // Reject Date, Map, Set, class instances, etc. — `Object.keys` returns
+  // `[]` on most of these, so without this guard they'd canonicalize to
+  // `{}` and silently merge with the empty-record dedupe pool. Plain
+  // objects have a prototype of either `Object.prototype` (literal `{}`)
+  // or `null` (Object.create(null)).
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 // Canonicalize a CSP domain list as a SET: trim, drop empty, dedupe, sort.
@@ -234,6 +265,10 @@ function canonicalizeAllowFeatures(
     }
     out[k] = v;
   }
+  // Collapse to absent when every key was dropped (input was `{}` or only
+  // contained spec-feature keys). Matches the sibling `openaiAppsOverrides`
+  // behavior so an empty allowlist doesn't hash distinctly from "no entries".
+  if (Object.keys(out).length === 0) return undefined;
   return out;
 }
 
@@ -678,7 +713,14 @@ function canonicalizeMcpProfile(
           }
         }
         // Empty `{}` collapses to absent (same runtime behavior as absent).
-        if (Object.keys(overridesOut).length > 0) {
+        // Also drop when injection is explicitly disabled: the resolver
+        // ignores per-method overrides when `openaiApps: false`, so letting
+        // them affect the hash would mint distinct rows that resolve to
+        // identical runtime behavior.
+        if (
+          Object.keys(overridesOut).length > 0 &&
+          compatRuntimeOut.openaiApps !== false
+        ) {
           const sortedOverrides = {} as OpenAiAppsCapabilities;
           for (const k of Object.keys(overridesOut).sort()) {
             (sortedOverrides as Record<string, unknown>)[k] = (
@@ -935,8 +977,14 @@ export function canonicalizeHostConfigV2(
       headers: sortStringKeys(input.connectionDefaults.headers),
       requestTimeout: input.connectionDefaults.requestTimeout,
     },
-    clientCapabilities: sortStringKeys(input.clientCapabilities ?? {}),
-    hostContext: sortStringKeys(input.hostContext ?? {}),
+    // Deep-sort: nested key order shouldn't leak into the hash. Shallow
+    // sort would let `{ extensions: { ui: { a, b } } }` and the same with
+    // `{ b, a }` produce distinct hashes for identical capabilities.
+    // Fail-fast on missing: HostConfigInputV2 requires both fields; a
+    // `?? {}` fallback hides write-path bugs that would silently dedupe
+    // distinct callers' configs into a stray empty-capability row.
+    clientCapabilities: requireRecord(input.clientCapabilities, "clientCapabilities"),
+    hostContext: requireRecord(input.hostContext, "hostContext"),
     // Preserve undefined (omitted → dedupes with preset) vs {} (explicit empty
     // → hashes distinctly).
     hostCapabilitiesOverride:

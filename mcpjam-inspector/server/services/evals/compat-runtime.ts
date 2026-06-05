@@ -1,56 +1,20 @@
+/**
+ * Inspector-side suite hostConfig loader.
+ *
+ * The OpenAI Apps compat resolution helpers live in
+ * `@mcpjam/sdk/host-config/internal` — callers import them directly from
+ * the SDK. This file used to re-export them for back-compat; that shim
+ * was removed as part of the Stage 4 cleanup.
+ *
+ * `loadSuiteHostConfig` stays inspector-side because it takes a
+ * `ConvexHttpClient` and does Convex queries, which can't move into the
+ * pure SDK module.
+ */
+
 import type { ConvexHttpClient } from "convex/browser";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function readOpenAiCompatOverride(value: unknown): boolean | undefined {
-  if (!isRecord(value)) return undefined;
-  const profile = isRecord(value.mcpProfile) ? value.mcpProfile : undefined;
-  const apps = isRecord(profile?.apps) ? profile.apps : undefined;
-  const compatRuntime = isRecord(apps?.compatRuntime)
-    ? apps.compatRuntime
-    : undefined;
-  return typeof compatRuntime?.openaiApps === "boolean"
-    ? compatRuntime.openaiApps
-    : undefined;
-}
-
-function compatPresetForHostStyle(hostStyle: unknown): boolean | undefined {
-  switch (hostStyle) {
-    case "chatgpt":
-    case "copilot":
-    case "mcpjam":
-      return true;
-    case "claude":
-    case "cursor":
-    case "codex":
-      return false;
-    default:
-      return undefined;
-  }
-}
-
-export function resolveOpenAiCompatForHostConfig(
-  hostConfig: unknown,
-  hostConfigOverride?: Record<string, unknown>,
-): boolean {
-  const explicitOverride = readOpenAiCompatOverride(hostConfigOverride);
-  if (explicitOverride !== undefined) return explicitOverride;
-
-  const overridePreset = compatPresetForHostStyle(
-    hostConfigOverride?.hostStyle,
-  );
-  if (overridePreset !== undefined) return overridePreset;
-
-  const explicitBase = readOpenAiCompatOverride(hostConfig);
-  if (explicitBase !== undefined) return explicitBase;
-
-  return (
-    compatPresetForHostStyle(
-      isRecord(hostConfig) ? hostConfig.hostStyle : undefined,
-    ) ?? false
-  );
 }
 
 export async function loadSuiteHostConfig(

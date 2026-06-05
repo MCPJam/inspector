@@ -1,5 +1,5 @@
 /**
- * TestAgent - Runs LLM prompts with tool calling for evals
+ * HostRunner - Runs LLM prompts with tool calling for evals
  */
 
 import {
@@ -21,7 +21,7 @@ import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
-import type { EvalAgent, PromptOptions } from "./EvalAgent.js";
+import type { HostExecutor, PromptOptions } from "./HostExecutor.js";
 import type { Tool, AiSdkTool } from "./mcp-client-manager/types.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import type {
@@ -39,21 +39,30 @@ import {
   createEvalSpanIntegration,
   patchEvalSpansMessageRangesFromSteps,
 } from "./eval-trace-spans.js";
+import { snapshotHostSource } from "./host-config/host.js";
+import type { HostSource } from "./host-config/host.js";
+import type { HostJson } from "./host-config/public-types.js";
+import {
+  extractHostExecutionPolicy,
+  resolveOpenAiCompatForHostConfig,
+  type HostExecutionPolicy,
+} from "./host-config/internal.js";
 
 
 /**
- * Configuration for creating a TestAgent
+ * Common fields for {@link HostRunnerConfig}. See the discriminated union
+ * below for the `host` / `model` requirement: callers supply either a
+ * `Host` (model + defaults come from the snapshot) or an explicit `model`
+ * string (legacy path with no host-derived defaults).
  */
-export interface TestAgentConfig {
+interface HostRunnerBaseConfig {
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
-  /** LLM provider and model string (e.g., "openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022") */
-  model: string;
   /** API key for the LLM provider */
   apiKey: string;
-  /** System prompt for the LLM (default: "You are a helpful assistant.") */
+  /** System prompt for the LLM. Overrides the host-derived value when both are present. Defaults to "You are a helpful assistant." if neither is set. */
   systemPrompt?: string;
-  /** Temperature for LLM responses (0-2). If undefined, uses model default. Some models (e.g., reasoning models) don't support temperature. */
+  /** Temperature for LLM responses (0-2). Overrides the host-derived value. Some models (e.g., reasoning models) don't support temperature. */
   temperature?: number;
   /** Maximum number of agentic steps/tool calls (default: 10) */
   maxSteps?: number;
@@ -64,18 +73,37 @@ export interface TestAgentConfig {
   /** Optional MCP client manager for capturing MCP App replay snapshots */
   mcpClientManager?: MCPClientManager;
   /**
-   * When true, the agent injects the OpenAI Apps SDK `window.openai`
+   * When true, the runner injects the OpenAI Apps SDK `window.openai`
    * shim into captured widget HTML so replays under hosts that expect
    * that surface (ChatGPT/Copilot or MCPJam's dev surface) render
-   * unchanged. Defaults to `false` — Claude/Cursor/Codex-style hosts
-   * don't expose `window.openai`, and snapshots should match what the
-   * live host would have produced. Tests that need the shim must opt in.
+   * unchanged. When a `host` is supplied, this defaults to the value
+   * resolved from `resolveOpenAiCompatForHostConfig(hostSnapshot)`;
+   * setting this field explicitly overrides that decision. Without a
+   * host the default is `false` — Claude/Cursor/Codex-style hosts don't
+   * expose `window.openai`, and snapshots should match what the live
+   * host would have produced.
    */
   injectOpenAiCompat?: boolean;
 }
 
+/**
+ * Configuration for creating a `HostRunner`. Discriminated on `host`:
+ *
+ * - With `host`: model / systemPrompt / temperature / injectOpenAiCompat
+ *   default to host-snapshot-derived values; explicit fields override.
+ *   `model` becomes optional (host snapshot supplies it).
+ * - Without `host`: `model` is required and there are no host-derived
+ *   defaults (legacy path, preserved for callers that don't yet have a
+ *   `Host` to hand in).
+ *
+ * A config with neither `host` nor `model` is a compile-time error.
+ */
+export type HostRunnerConfig =
+  | (HostRunnerBaseConfig & { host: HostSource; model?: string })
+  | (HostRunnerBaseConfig & { host?: undefined; model: string });
+
 // Re-export PromptOptions for backward compatibility
-export type { PromptOptions } from "./EvalAgent.js";
+export type { PromptOptions } from "./HostExecutor.js";
 
 /**
  * Type guard to check if tools is Tool[] (from getTools())
@@ -85,16 +113,27 @@ function isToolArray(tools: Tool[] | AiSdkTool): tools is Tool[] {
 }
 
 /**
- * Converts Tool[] to AI SDK ToolSet format
+ * Drop SEP-1865 app-only tools (`_meta.ui.visibility = ["app"]`) from a
+ * `Tool[]` before conversion. Mirror of the Stage 3 `filterAppOnlyTools`
+ * for AI SDK records but operating on `Tool[]` directly, since each
+ * `Tool` already carries its own `_meta` (no external metadata source
+ * needed).
+ */
+function dropAppOnlyTools(tools: Tool[]): Tool[] {
+  return tools.filter(
+    (tool) =>
+      !isAppOnlyTool(tool._meta as Record<string, unknown> | undefined),
+  );
+}
+
+/**
+ * Pure converter from `Tool[]` to AI SDK `ToolSet`. Visibility filtering is
+ * handled at the HostRunner prep step (single-gated by host policy), not
+ * inside this converter.
  */
 function convertToToolSet(tools: Tool[]): ToolSet {
   const toolSet: ToolSet = {};
   for (const tool of tools) {
-    // Filter out app-only tools (visibility: ["app"]) per SEP-1865
-    if (isAppOnlyTool(tool._meta as Record<string, unknown> | undefined)) {
-      continue;
-    }
-
     const converted = dynamicTool({
       description: tool.description,
       inputSchema: jsonSchema(ensureJsonSchemaObject(tool.inputSchema)),
@@ -124,8 +163,12 @@ type StartedToolCall = {
 
 
 /**
- * Agent for running LLM prompts with tool calling.
- * Wraps the AI SDK generateText function with proper tool integration.
+ * Synchronous executor that runs LLM prompts with tool calling. Wraps the
+ * AI SDK `generateText` and applies the host-derived execution policy
+ * (visibility filtering, OpenAI compat injection) at construction time.
+ *
+ * Implements {@link HostExecutor} so it plugs into `EvalTest.run(...)` /
+ * `EvalSuite.run(...)` interchangeably with `HostRuntime`.
  *
  * @example
  * ```typescript
@@ -134,19 +177,29 @@ type StartedToolCall = {
  * });
  * await manager.connectToServer("everything");
  *
- * const agent = new TestAgent({
+ * const runner = new HostRunner({
  *   tools: await manager.getToolsForAiSdk(["everything"]),
  *   model: "openai/gpt-4o",
  *   apiKey: process.env.OPENAI_API_KEY!,
  * });
  *
- * const result = await agent.prompt("Add 2 and 3");
+ * const result = await runner.run("Add 2 and 3");
  * console.log(result.toolsCalled()); // ["add"]
  * console.log(result.text); // "The result of adding 2 and 3 is 5."
  * ```
  */
-export class TestAgent implements EvalAgent {
+export class HostRunner implements HostExecutor {
   private readonly tools: ToolSet;
+  /**
+   * The original `config.tools` input as supplied to the constructor.
+   * Preserved (pre-filter, pre-conversion) so `withOptions({ host: newHost })`
+   * can hand the raw set back to the new constructor for re-filtering
+   * under the replacement host's `respectToolVisibility` policy. Without
+   * this, a clone with a stricter host would silently inherit the
+   * parent's already-filtered/converted `AiSdkTool` and run with the
+   * wrong visibility set.
+   */
+  private readonly rawTools: Tool[] | AiSdkTool;
   private readonly model: string;
   private readonly apiKey: string;
   private systemPrompt: string;
@@ -157,6 +210,21 @@ export class TestAgent implements EvalAgent {
     | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
   private readonly injectOpenAiCompat: boolean;
+
+  /**
+   * Immutable host snapshot driving this runner, if constructed with a
+   * `host`. Taken once at construction (via {@link snapshotHostSource}, which
+   * passes a pre-snapshotted `HostJson` through unchanged so `HostRuntime`
+   * does not double-snapshot). Post-construction mutations to the original
+   * `Host` instance do NOT affect this runner.
+   */
+  private readonly hostSnapshot: HostJson | undefined;
+
+  /**
+   * Cached execution policy derived from {@link hostSnapshot}. `undefined`
+   * when no host was supplied (legacy explicit-model path).
+   */
+  private readonly hostPolicy: HostExecutionPolicy | undefined;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -170,35 +238,92 @@ export class TestAgent implements EvalAgent {
   private promptHistory: PromptResult[] = [];
 
   /**
-   * Create a new TestAgent
-   * @param config - Agent configuration
+   * Construct a new `HostRunner`.
+   *
+   * @param config - Runner configuration (see {@link HostRunnerConfig}).
    */
-  constructor(config: TestAgentConfig) {
-    // Convert Tool[] to ToolSet if needed
-    this.tools = isToolArray(config.tools)
-      ? convertToToolSet(config.tools)
+  constructor(config: HostRunnerConfig) {
+    // Snapshot the host once if provided. `snapshotHostSource` is idempotent
+    // — a pre-snapshotted `HostJson` (e.g. from `HostRuntime.run()`) passes
+    // through without re-snapshotting.
+    this.hostSnapshot = config.host
+      ? snapshotHostSource(config.host)
+      : undefined;
+    this.hostPolicy = this.hostSnapshot
+      ? extractHostExecutionPolicy(
+          this.hostSnapshot as unknown as Record<string, unknown>,
+        )
+      : undefined;
+
+    // Resolve the model: explicit field wins; otherwise pull from host
+    // snapshot; if neither, the discriminated-union types should have
+    // rejected this at compile time — runtime throw as a defense in depth.
+    const resolvedModel = config.model ?? this.hostSnapshot?.model;
+    if (!resolvedModel) {
+      throw new Error(
+        "HostRunner requires either `host` (with a configured model) or an explicit `model` string.",
+      );
+    }
+
+    // Single-gate SEP-1865 app-only visibility filtering. Default behavior
+    // (no host / undefined respectToolVisibility) is to drop app-only tools,
+    // matching pre-Stage-4 semantics. `host.respectToolVisibility = false`
+    // is the explicit opt-out for hosts that don't implement visibility.
+    //
+    // The `AiSdkTool` branch is intentionally pass-through: callers obtain
+    // it via `MCPClientManager.getToolsForAiSdk(...)`, which applies its
+    // own `includeAppOnly` flag at construction. `HostRuntime` plumbs the
+    // host policy into that flag, so by the time tools land here they have
+    // already been gated correctly — re-filtering would be a double-gate.
+    const respectVisibility =
+      this.hostPolicy?.respectToolVisibility !== false;
+    const preparedTools = isToolArray(config.tools)
+      ? respectVisibility
+        ? dropAppOnlyTools(config.tools)
+        : config.tools
       : config.tools;
-    this.model = config.model;
+
+    this.tools = isToolArray(preparedTools)
+      ? convertToToolSet(preparedTools)
+      : preparedTools;
+    // Stash the original (unfiltered) input so withOptions can re-run the
+    // prep step under a replacement host's policy. Tool[] inputs are
+    // shallow-copied so an external mutation can't desync `rawTools` from
+    // what the parent ran with; AiSdkTool inputs are reference-shared
+    // (no re-filter is possible at this layer anyway).
+    this.rawTools = Array.isArray(config.tools)
+      ? [...config.tools]
+      : config.tools;
+    this.model = resolvedModel;
     this.apiKey = config.apiKey;
-    this.systemPrompt = config.systemPrompt ?? "You are a helpful assistant.";
-    this.temperature = config.temperature;
+    this.systemPrompt =
+      config.systemPrompt ??
+      (this.hostSnapshot?.systemPrompt && this.hostSnapshot.systemPrompt !== ""
+        ? this.hostSnapshot.systemPrompt
+        : "You are a helpful assistant.");
+    this.temperature =
+      config.temperature ?? this.hostSnapshot?.temperature;
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
     this.mcpClientManager = config.mcpClientManager;
-    this.injectOpenAiCompat = config.injectOpenAiCompat === true;
+    this.injectOpenAiCompat =
+      config.injectOpenAiCompat ??
+      (this.hostSnapshot
+        ? resolveOpenAiCompatForHostConfig(this.hostSnapshot) === true
+        : false);
 
     // Parse the model string once to extract provider/model metadata
     try {
-      const parsed = parseLLMString(config.model);
+      const parsed = parseLLMString(resolvedModel);
       this._parsedProvider =
         parsed.type === "builtin" ? parsed.provider : parsed.providerName;
       this._parsedModel = parsed.model;
     } catch {
       // Fallback for unparseable model strings (e.g., mock agents)
-      const parts = config.model.split("/");
+      const parts = resolvedModel.split("/");
       this._parsedProvider = parts.length > 1 ? parts[0] : "";
       this._parsedModel =
-        parts.length > 1 ? parts.slice(1).join("/") : config.model;
+        parts.length > 1 ? parts.slice(1).join("/") : resolvedModel;
     }
   }
 
@@ -234,6 +359,25 @@ export class TestAgent implements EvalAgent {
     if (!this.mcpClientManager) {
       return;
     }
+    // The HostRuntime path accepts a structural `HostRuntimeManager`
+    // that only requires `hasServer` + `getToolsForAiSdk`. Widget
+    // snapshot capture additionally needs `getToolMetadata` and
+    // `readResource` — defensively skip capture for managers that
+    // don't expose them rather than crash an otherwise-successful run.
+    // The concrete `MCPClientManager` always satisfies this; custom
+    // structural managers that don't implement the metadata/resource
+    // pair just fall through silently, matching the "no manager"
+    // semantics above.
+    const manager = this.mcpClientManager as MCPClientManager & {
+      getToolMetadata?: MCPClientManager["getToolMetadata"];
+      readResource?: MCPClientManager["readResource"];
+    };
+    if (
+      typeof manager.getToolMetadata !== "function" ||
+      typeof manager.readResource !== "function"
+    ) {
+      return;
+    }
 
     const toolCallId =
       typeof params.options?.toolCallId === "string"
@@ -248,7 +392,7 @@ export class TestAgent implements EvalAgent {
       return;
     }
 
-    const toolMetadata = this.mcpClientManager.getToolMetadata(
+    const toolMetadata = manager.getToolMetadata(
       serverId,
       params.toolName
     );
@@ -264,7 +408,7 @@ export class TestAgent implements EvalAgent {
     }
 
     try {
-      const resourceResult = await this.mcpClientManager.readResource(
+      const resourceResult = await manager.readResource(
         serverId,
         {
           uri: resourceUri,
@@ -301,7 +445,7 @@ export class TestAgent implements EvalAgent {
       // Optionally inject the OpenAI Apps SDK `window.openai` shim into
       // the captured HTML. Default off so snapshots match SEP-1865
       // honest behavior; callers emulating ChatGPT/Copilot or MCPJam's
-      // dev surface opt in via `TestAgentConfig.injectOpenAiCompat`.
+      // dev surface opt in via `HostRunnerConfig.injectOpenAiCompat`.
       if (this.injectOpenAiCompat) {
         snapshot.widgetHtml = injectOpenAICompat(snapshot.widgetHtml ?? "", {
           toolId: toolCallId,
@@ -468,20 +612,20 @@ export class TestAgent implements EvalAgent {
    *
    * @example
    * // Single-turn (default)
-   * const result = await agent.prompt("Show me projects");
+   * const result = await runner.run("Show me projects");
    *
    * @example
    * // Multi-turn with context
-   * const r1 = await agent.prompt("Show me projects");
-   * const r2 = await agent.prompt("Now show tasks", { context: r1 });
+   * const r1 = await runner.run("Show me projects");
+   * const r2 = await runner.run("Now show tasks", { context: r1 });
    *
    * @example
    * // Multi-turn with multiple context results
-   * const r1 = await agent.prompt("Show projects");
-   * const r2 = await agent.prompt("Pick the first", { context: r1 });
-   * const r3 = await agent.prompt("Show tasks", { context: [r1, r2] });
+   * const r1 = await runner.run("Show projects");
+   * const r2 = await runner.run("Pick the first", { context: r1 });
+   * const r3 = await runner.run("Show tasks", { context: [r1, r2] });
    */
-  async prompt(
+  async run(
     message: string,
     options?: PromptOptions
   ): Promise<PromptResult> {
@@ -708,25 +852,77 @@ export class TestAgent implements EvalAgent {
   }
 
   /**
-   * Create a new TestAgent with modified options.
+   * Create a new HostRunner with modified options.
    * Useful for creating variants for different test scenarios.
    *
    * @param options - Partial config to override
-   * @returns A new TestAgent instance with the merged configuration
+   * @returns A new HostRunner instance with the merged configuration
    */
-  withOptions(options: Partial<TestAgentConfig>): TestAgent {
-    return new TestAgent({
-      tools: options.tools ?? this.tools,
-      model: options.model ?? this.model,
+  withOptions(options: Partial<HostRunnerConfig>): HostRunner {
+    // Two modes:
+    //
+    //   1. `withOptions({})` / `withOptions({ apiKey, ... })` — no host
+    //      change. Preserve the parent's resolved `model`,
+    //      `systemPrompt`, `temperature`, and `injectOpenAiCompat` so
+    //      `EvalTest`'s per-iteration `executor.withOptions({})` clone
+    //      does NOT silently revert an explicit override applied via
+    //      the parent's ctor (e.g. `new HostRunner({ host, model: "X" })`
+    //      would otherwise clone with `model: undefined` and resolve
+    //      back to `host.model`).
+    //
+    //   2. `withOptions({ host: newHost, ... })` — host is being
+    //      REPLACED. The new host is meant to drive defaults, so do NOT
+    //      carry the parent's resolved values; let the new host's
+    //      snapshot supply `model` / `systemPrompt` / `temperature` /
+    //      `injectOpenAiCompat`. Explicit `options.*` still wins.
+    //      Otherwise `withOptions({ host: newHost })` would surprise
+    //      with `getHostSnapshot().model === newHost.model` but the
+    //      runner actually executing against the parent's old model.
+    const replacingHost = options.host !== undefined;
+    const carryParent = !replacingHost;
+    const nextHost = options.host ?? this.hostSnapshot;
+
+    const nextModel =
+      options.model ?? (carryParent ? this.model : undefined);
+    const nextSystemPrompt =
+      options.systemPrompt ?? (carryParent ? this.systemPrompt : undefined);
+    const nextTemperature =
+      options.temperature ?? (carryParent ? this.temperature : undefined);
+    const nextInjectOpenAiCompat =
+      options.injectOpenAiCompat ??
+      (carryParent ? this.injectOpenAiCompat : undefined);
+
+    // Use raw tool input (pre-filter, pre-conversion) so the new
+    // constructor re-runs the visibility filter under whatever host
+    // policy applies after this clone. Critical when `options.host`
+    // replaces a parent that ran with a looser `respectToolVisibility`
+    // — without this, the stricter clone would inherit the parent's
+    // already-converted ToolSet and silently expose app-only tools.
+    const base = {
+      tools: options.tools ?? this.rawTools,
       apiKey: options.apiKey ?? this.apiKey,
-      systemPrompt: options.systemPrompt ?? this.systemPrompt,
-      temperature: options.temperature ?? this.temperature,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
       mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
-      injectOpenAiCompat:
-        options.injectOpenAiCompat ?? this.injectOpenAiCompat,
-    });
+      systemPrompt: nextSystemPrompt,
+      temperature: nextTemperature,
+      injectOpenAiCompat: nextInjectOpenAiCompat,
+    };
+
+    if (nextHost) {
+      return new HostRunner({ ...base, host: nextHost, model: nextModel });
+    }
+    if (!nextModel) {
+      // Unreachable in normal use: the parent runner already had a model
+      // (constructor guarantees one) and `carryParent` is true here
+      // (since `replacingHost` is false). Belt-and-braces for the
+      // hypothetical case where a caller tries to drop the host and
+      // model simultaneously.
+      throw new Error(
+        "HostRunner.withOptions: cannot drop both `host` and `model` from a host-backed runner.",
+      );
+    }
+    return new HostRunner({ ...base, model: nextModel });
   }
 
   /**
@@ -820,6 +1016,25 @@ export class TestAgent implements EvalAgent {
   }
 
   /**
+   * Return the immutable `HostJson` snapshot driving this runner, or
+   * `undefined` if the runner was constructed with an explicit `model`
+   * rather than a `host`. The snapshot is taken at construction and
+   * post-construction mutations to the original `Host` are not reflected.
+   */
+  getHostSnapshot(): HostJson | undefined {
+    return this.hostSnapshot;
+  }
+
+  /**
+   * Return the resolved execution policy (visibility, progressive discovery,
+   * tool-exposure signals) derived from the host snapshot at construction
+   * time. `undefined` when constructed without a `host`.
+   */
+  getHostPolicy(): HostExecutionPolicy | undefined {
+    return this.hostPolicy;
+  }
+
+  /**
    * Get the normalized provider name parsed from the model string.
    */
   getParsedProvider(): string {
@@ -834,15 +1049,17 @@ export class TestAgent implements EvalAgent {
   }
 
   /**
-   * Create a mock TestAgent for deterministic eval tests.
-   * The mock agent calls the provided function instead of making real LLM calls.
+   * Create a mock executor for deterministic eval tests. The mock calls
+   * the provided function instead of making real LLM calls, and satisfies
+   * {@link HostExecutor} so it can be passed to `EvalTest.run` /
+   * `EvalSuite.run` directly.
    *
    * @param promptFn - Function that returns a PromptResult for a given message
-   * @returns A TestAgent-compatible object for use in EvalTest/EvalSuite
+   * @returns A HostExecutor compatible with EvalTest / EvalSuite
    *
    * @example
    * ```typescript
-   * const agent = TestAgent.mock(async (message) =>
+   * const runner = HostRunner.mock(async (message) =>
    *   PromptResult.from({
    *     prompt: message,
    *     messages: [{ role: "user", content: message }],
@@ -855,12 +1072,12 @@ export class TestAgent implements EvalAgent {
    *
    * const test = new EvalTest({
    *   name: "my-test",
-   *   test: async (a) => {
-   *     const r = await a.prompt("test");
+   *   test: async (executor) => {
+   *     const r = await executor.run("test");
    *     return r.hasToolCall("my_tool");
    *   },
    * });
-   * await test.run(agent, { iterations: 3 });
+   * await test.run(runner, { iterations: 3 });
    * ```
    */
   static mock(
@@ -868,12 +1085,12 @@ export class TestAgent implements EvalAgent {
       message: string,
       options?: PromptOptions
     ) => PromptResult | Promise<PromptResult>
-  ): EvalAgent {
-    const createAgent = (): EvalAgent => {
+  ): HostExecutor {
+    const createAgent = (): HostExecutor => {
       let promptHistory: PromptResult[] = [];
 
       return {
-        prompt: async (message: string, options?: PromptOptions) => {
+        run: async (message: string, options?: PromptOptions) => {
           const result = await promptFn(message, options);
           promptHistory.push(result);
           return result;

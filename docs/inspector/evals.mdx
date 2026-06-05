@@ -6,6 +6,10 @@ icon: "flask-conical"
 
 A benchmark score doesn't tell you whether your server holds up in production. Evaluate lets you pin down the behaviors you care about — which tools fire, with what arguments, what the final answer looks like — and run them across the models your users actually use.
 
+## Requirements
+
+Evals require a signed-in MCPJam account. As a guest you'll see a sign-in prompt instead of the testing interface.
+
 ## How it's organized
 
 <Steps>
@@ -64,6 +68,18 @@ Tool-call argument comparison runs in one of three modes, configured at the suit
 
 Type placeholders (`"string"`, `"number"`, `"boolean"`) match any value of that type, which lets you assert shape without locking in a literal.
 
+### Validator settings
+
+Each suite has default validator settings controlling how tool calls are matched. Override them at three levels:
+
+| Level | Where | Persists? |
+|-------|-------|-----------|
+| Suite default | Suite settings → Default validators | Yes |
+| Case override | Test case editor → Validators | Yes |
+| Run override | Suite header → validators (sliders) icon | No — one run |
+
+A run override shows an **override** badge; click **Reset** in the popover to clear it.
+
 ## LLM as judge
 
 For cases where "did the right tools fire" isn't enough — anything graded on the quality of the final answer — the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
@@ -71,6 +87,8 @@ For cases where "did the right tools fire" isn't enough — anything graded on t
 - **On by default** at the suite level. The cost is gated by an explicit **Run judge** click on the run-detail page — it won't run for every iteration unless you turn auto-run on.
 - **Calibrate per suite.** Judge scores aren't comparable across domains; a 0.7 on one suite isn't a 0.7 on another.
 - When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
+
+Open a completed run and find the **Goal completion** panel. Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
 
 ## Running
 
@@ -84,6 +102,21 @@ A run needs three things, all picked from the suite header:
   If **Run all** is disabled, a connected server is missing or no models are selected. The header pickers will tell you which.
 </Tip>
 
+### Frozen execution snapshots
+
+The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
+
+## Suite execution config
+
+Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
+
+- **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite.
+- **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
+- **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
+- **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
+
+Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
+
 ## Reading results
 
 ### Suite view
@@ -92,13 +125,32 @@ A run needs three things, all picked from the suite header:
 - **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
 - **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown.
 - **Cases tab** — every case with its latest verdict and a quick replay button.
+- **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
+
+When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
+
+The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
+
+#### Cross-host matrix
+
+When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
 
 ### Run view
 
 - **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened.
-- **Expected vs actual** tool calls side-by-side when an iteration fails.
+- **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
+  - **Missing** — expected tool calls that were never made
+  - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
+  - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
+  - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here.
 - **Per-model breakdown** to compare how the same case behaves across models.
+- **AI Triage** — after a run completes, an AI Triage panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top 3** copies the top three combined.
+- **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
+
+#### Comparing two runs
+
+Select any two completed runs and click **Compare**. The diff view shows per-case status changes: **Passed**, **Still failing**, **Regressed** (pass→fail), **Fixed** (fail→pass), **New**, **Removed**, and **Changed** (config differed). Summary metrics show deltas for tokens, cost, and duration.
 
 ### Case view
 
@@ -109,6 +161,8 @@ A run needs three things, all picked from the suite header:
 ## Generating cases from your tools
 
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
+
+When the suite has a saved server attachment spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved attachment treat all available servers as a single pool.
 
 ## What to author first
 

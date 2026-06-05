@@ -1,18 +1,36 @@
 /**
- * Extracts host execution policy from a hostConfig snapshot and provides
- * helpers to compute tool exposure signals and stamp scalar iteration metadata.
+ * Host execution policy extraction + iteration-metadata stamping.
  *
- * Uses the same policy switches as chat-v2 (`requireToolApproval`,
- * `respectToolVisibility`, `progressiveToolDiscovery`) without duplicating
- * their semantics. The visibility filter itself is imported from
- * `chat-v2-orchestration` so the filtering logic stays authoritative.
+ * Pure — derived from a hostConfig snapshot. Used by both the live chat
+ * runtime (via `prepareChatV2`'s `respectToolVisibility` gate) and the eval
+ * runtime (via `applyVisibilityPolicyAndCountSignals` + `buildHostIterationMetadata`).
+ *
+ * `extractHostExecutionPolicy` accepts the dual progressiveToolDiscovery
+ * shape because HostConfigV2 stores it as a plain boolean while chat-v2
+ * wire payloads wrap it as `{ enabled, threshold }`. Both flow through here.
  */
 
-import type { MCPClientManager } from "@mcpjam/sdk";
-import { filterAppOnlyTools } from "../../utils/chat-v2-orchestration.js";
+import type { ToolExposureSignals } from "./tool-visibility.js";
+
+export type { ToolExposureSignals } from "./tool-visibility.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Read the host style from either shape:
+ *   - canonical / internal storage (`hostStyle`)
+ *   - public `HostJson` from `Host.toJSON()` (`style`)
+ *
+ * Both helpers in this module operate on either shape because callers
+ * span: inspector eval runners (canonical, via Convex), SDK `HostRunner`
+ * (public, via `Host.toJSON()`), and unit tests on both.
+ */
+function readHostStyle(hostConfig: Record<string, unknown>): string | undefined {
+  if (typeof hostConfig.hostStyle === "string") return hostConfig.hostStyle;
+  if (typeof hostConfig.style === "string") return hostConfig.style;
+  return undefined;
 }
 
 export type HostExecutionPolicy = {
@@ -22,12 +40,6 @@ export type HostExecutionPolicy = {
   progressiveDiscoveryEnabled: boolean;
   hostStyle: string | undefined;
   namedHostId: string | undefined;
-};
-
-export type ToolExposureSignals = {
-  toolsTotalBefore: number;
-  toolsExposed: number;
-  toolsDroppedVisibility: number;
 };
 
 export function extractHostExecutionPolicy(
@@ -54,17 +66,13 @@ export function extractHostExecutionPolicy(
       ? hostConfig.respectToolVisibility
       : undefined;
 
-  // HostConfigV2 stores this as a plain boolean; chat-v2 wire payloads wrap
-  // it as `{ enabled, threshold }`. Accept both shapes so iteration metadata
-  // is stamped regardless of which form the snapshot was built from.
   const discoveryRaw = hostConfig.progressiveToolDiscovery;
   const progressiveDiscoveryEnabled =
     typeof discoveryRaw === "boolean"
       ? discoveryRaw
       : isRecord(discoveryRaw) && discoveryRaw.enabled === true;
 
-  const hostStyle =
-    typeof hostConfig.hostStyle === "string" ? hostConfig.hostStyle : undefined;
+  const hostStyle = readHostStyle(hostConfig);
 
   return {
     requireToolApproval,
@@ -72,29 +80,6 @@ export function extractHostExecutionPolicy(
     progressiveDiscoveryEnabled,
     hostStyle,
     namedHostId,
-  };
-}
-
-/**
- * Applies the host visibility policy to `tools` (mutates in place, same as
- * `prepareChatV2`) and returns tool exposure counts for metadata stamping.
- *
- * Call this AFTER loading the full tool set so `toolsTotalBefore` is accurate.
- */
-export function applyVisibilityPolicyAndCountSignals(
-  tools: Record<string, unknown>,
-  manager: InstanceType<typeof MCPClientManager>,
-  policy: HostExecutionPolicy,
-): ToolExposureSignals {
-  const toolsTotalBefore = Object.keys(tools).length;
-  if (policy.respectToolVisibility !== false) {
-    filterAppOnlyTools(tools as Parameters<typeof filterAppOnlyTools>[0], manager);
-  }
-  const toolsExposed = Object.keys(tools).length;
-  return {
-    toolsTotalBefore,
-    toolsExposed,
-    toolsDroppedVisibility: toolsTotalBefore - toolsExposed,
   };
 }
 
@@ -108,6 +93,34 @@ export function applyVisibilityPolicyAndCountSignals(
  * under the host's `requireToolApproval` policy. Evals do not block on
  * approval prompts — this is a "would prompt N times" signal only.
  */
+/**
+ * Snapshot-only host metadata for SDK eval reports. Subset of
+ * {@link buildHostIterationMetadata} that needs no per-iteration counters
+ * (signals / approvalsWouldRequire / injectOpenAiCompat) and can be
+ * derived from `Host.toJSON()` alone.
+ *
+ * Used by SDK eval result mapping to stamp executor-derived host context
+ * onto each iteration's metadata. Per-iteration signal counts (tools
+ * exposed / dropped, approvals required) are added by callers that have
+ * runtime access (inspector eval runner, future `HostRuntime` plumbing).
+ */
+export function buildHostSnapshotMetadata(
+  hostConfig: Record<string, unknown> | null,
+): Record<string, string | number | boolean> {
+  const policy = extractHostExecutionPolicy(hostConfig);
+  const meta: Record<string, string | number | boolean> = {};
+  if (policy.progressiveDiscoveryEnabled) {
+    meta.progressive_discovery_enabled = true;
+  }
+  if (policy.namedHostId) {
+    meta.host_id = policy.namedHostId;
+  }
+  if (policy.hostStyle) {
+    meta.host_style = policy.hostStyle;
+  }
+  return meta;
+}
+
 export function buildHostIterationMetadata(
   policy: HostExecutionPolicy,
   signals: ToolExposureSignals,

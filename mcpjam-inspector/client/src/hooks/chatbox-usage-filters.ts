@@ -11,7 +11,8 @@ export type UsageDimensionKey =
   | "visitorSegment"
   | "language"
   | "modelId"
-  | "feedbackBucket";
+  | "feedbackBucket"
+  | "synthetic";
 
 export type UsageFilterChip =
   | { kind: "cluster"; clusterId: string; label?: string }
@@ -100,6 +101,12 @@ export function threadMatchesChip(
       return thread.modelId === chip.value;
     case "feedbackBucket":
       return threadFeedbackBucket(thread) === chip.value;
+    case "synthetic":
+      // "hide" chip: thread matches the filter only when it's NOT synthetic.
+      // "show" chip: thread matches when it IS synthetic.
+      if (chip.value === "hide") return thread.synthetic !== true;
+      if (chip.value === "show") return thread.synthetic === true;
+      return true;
     default:
       return false;
   }

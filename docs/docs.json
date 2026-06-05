@@ -7,8 +7,27 @@
   "name": "MCPJam Inspector",
   "colors": {
     "primary": "#EF5B25",
-    "light": "#FF7A4D",
-    "dark": "#D44A1A"
+    "light": "#FF8B5C",
+    "dark": "#C94818"
+  },
+  "background": {
+    "color": {
+      "light": "#FAF9F5",
+      "dark": "#2D2A23"
+    }
+  },
+  "appearance": {
+    "default": "light",
+    "strict": false
+  },
+  "fonts": {
+    "heading": { "family": "Geist", "weight": 500 },
+    "body": { "family": "Geist", "weight": 400 }
+  },
+  "styling": {
+    "codeblocks": {
+      "theme": "css-variables"
+    }
   },
   "favicon": "/mcp_jam.svg",
   "navigation": {
@@ -28,10 +47,12 @@
         "group": "Inspector Features",
         "icon": "star",
         "pages": [
+          "inspector/home",
           "inspector/playground",
           "inspector/clients",
           "inspector/protocol-versions",
           "inspector/guided-oauth",
+          "inspector/xaa-debugger",
           "inspector/tools-prompts-resources",
           "inspector/evals",
           "inspector/projects",
@@ -158,6 +179,13 @@
       "website": "https://mcpjam.com",
       "linkedin": "https://www.linkedin.com/company/109011364/",
       "x": "https://x.com/mcpjams"
+    }
+  },
+  "errors": {
+    "404": {
+      "redirect": false,
+      "title": "Lost in the inspector?",
+      "description": "Try the [getting started guide](/getting-started), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
     }
   }
 }

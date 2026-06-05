@@ -50,12 +50,50 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
   process and identify where things might be going wrong.
 </Info>
 
+### OAuth connection failures
+
+When an OAuth flow fails, Inspector surfaces the failure directly in the connection UI so you can diagnose the problem without leaving the Servers tab.
+
+**Connection card** — a banner above the error message identifies the exact OAuth step that failed (for example, "OAuth failed during Token Request").
+
+**Server detail panel** — open the server's detail view to see the full **Last OAuth Trace**, which includes:
+
+- Each OAuth step with its status (pending / success / error) and a short message
+- The specific error for any failed step
+- An **HTTP History** log of every request and response made during the flow, with sensitive values automatically redacted
+
+Use the trace to pinpoint whether the failure occurred during discovery, client registration, PKCE generation, the authorization redirect, or the token exchange, then cross-reference with the OAuth Debugger for a guided walkthrough of the same steps.
+
+### Toggle shows a re-authentication error for an OAuth server
+
+The enable/connect toggle on a server card or detail modal reuses existing credentials only. If your tokens are expired or missing, the toggle will report a re-authentication error rather than opening the OAuth consent screen.
+
+**Solution:** Use the **Reconnect** button on the server card or detail modal to start a full OAuth flow and obtain new credentials. The toggle is intentionally non-interactive for OAuth to avoid unexpected browser redirects.
+
 ### Common Configuration Mistakes
 
 - Missing required environment variables
 - Incorrect transport type selection
 - Typos in server URLs or commands
 - Missing file permissions or executable flags
+
+## Chat Model Limit
+
+### "MCPJam model limit reached" warning
+
+MCPJam provides free frontier models for chat. When you hit the daily usage limit, the chat surface shows a warning:
+
+> **MCPJam model limit reached.** Add your own API key under LLM Providers in Settings to continue now, or try again in _N_ minutes.
+
+This is an expected quota state, not an error with your MCP server.
+
+**To continue immediately:**
+
+1. Go to **Settings → LLM Providers**
+2. Add an API key for any supported provider (OpenAI, Anthropic, Gemini, etc.)
+3. Select that provider's model in the chat model picker
+
+**To wait for the limit to reset:** The warning includes the retry window. Free quota resets daily.
 
 ## Getting Help
 

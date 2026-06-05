@@ -1,0 +1,438 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`handleMCPJamFreeChatModel SSE byte-equivalence snapshot > emits a stable SSE chunk sequence for a single-tool-call turn 1`] = `
+[
+  {
+    "data": {
+      "promptIndex": 0,
+      "startedAtMs": "<timestamp>",
+      "turnId": "<id>",
+      "type": "turn_start",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "data": {
+      "payload": {
+        "messages": [
+          {
+            "content": "Fetch doc abc.",
+            "role": "user",
+          },
+        ],
+        "system": "You are helpful",
+        "tools": {
+          "fetch_doc": {
+            "description": "Fetch a doc",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+            },
+            "name": "fetch_doc",
+          },
+        },
+      },
+      "promptIndex": 0,
+      "stepIndex": 0,
+      "turnId": "<id>",
+      "type": "request_payload",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "input": {
+      "id": "abc",
+    },
+    "toolCallId": "call-1",
+    "toolName": "fetch_doc",
+    "type": "tool-input-available",
+  },
+  {
+    "data": {
+      "input": {
+        "id": "abc",
+      },
+      "promptIndex": 0,
+      "stepIndex": 0,
+      "toolCallId": "call-1",
+      "toolName": "fetch_doc",
+      "turnId": "<id>",
+      "type": "tool_call",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "output": {
+      "_meta": {},
+      "type": "json",
+      "value": {
+        "ok": true,
+      },
+    },
+    "toolCallId": "call-1",
+    "type": "tool-output-available",
+  },
+  {
+    "data": {
+      "output": {
+        "_meta": {},
+        "type": "json",
+        "value": {
+          "ok": true,
+        },
+      },
+      "promptIndex": 0,
+      "stepIndex": 0,
+      "toolCallId": "call-1",
+      "toolName": "fetch_doc",
+      "turnId": "<id>",
+      "type": "tool_result",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "data": {
+      "promptIndex": 0,
+      "snapshot": {
+        "actualToolCalls": [
+          {
+            "arguments": {
+              "id": "abc",
+            },
+            "toolCallId": "call-1",
+            "toolName": "fetch_doc",
+          },
+        ],
+        "messages": [
+          {
+            "content": "Fetch doc abc.",
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "input": {
+                  "id": "abc",
+                },
+                "toolCallId": "call-1",
+                "toolName": "fetch_doc",
+                "type": "tool-call",
+              },
+            ],
+            "role": "assistant",
+          },
+        ],
+        "promptIndex": 0,
+        "spans": [
+          "<span>",
+          "<span>",
+        ],
+        "traceVersion": 1,
+        "usage": {
+          "inputTokens": 5,
+          "outputTokens": 3,
+          "totalTokens": 8,
+        },
+      },
+      "turnId": "<id>",
+      "type": "trace_snapshot",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "data": {
+      "payload": {
+        "messages": [
+          {
+            "content": "Fetch doc abc.",
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "input": {
+                  "id": "abc",
+                },
+                "toolCallId": "call-1",
+                "toolName": "fetch_doc",
+                "type": "tool-call",
+              },
+            ],
+            "role": "assistant",
+          },
+        ],
+        "system": "You are helpful",
+        "tools": {
+          "fetch_doc": {
+            "description": "Fetch a doc",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+            },
+            "name": "fetch_doc",
+          },
+        },
+      },
+      "promptIndex": 0,
+      "stepIndex": 1,
+      "turnId": "<id>",
+      "type": "request_payload",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "id": "text-2",
+    "type": "text-start",
+  },
+  {
+    "delta": "Got it.",
+    "id": "text-2",
+    "type": "text-delta",
+  },
+  {
+    "data": {
+      "delta": "Got it.",
+      "promptIndex": 0,
+      "stepIndex": 1,
+      "turnId": "<id>",
+      "type": "text_delta",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "id": "text-2",
+    "type": "text-end",
+  },
+  {
+    "data": {
+      "promptIndex": 0,
+      "snapshot": {
+        "actualToolCalls": [
+          {
+            "arguments": {
+              "id": "abc",
+            },
+            "toolCallId": "call-1",
+            "toolName": "fetch_doc",
+          },
+        ],
+        "messages": [
+          {
+            "content": "Fetch doc abc.",
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "input": {
+                  "id": "abc",
+                },
+                "toolCallId": "call-1",
+                "toolName": "fetch_doc",
+                "type": "tool-call",
+              },
+            ],
+            "role": "assistant",
+          },
+          {
+            "content": [
+              {
+                "text": "Got it.",
+                "type": "text",
+              },
+            ],
+            "role": "assistant",
+          },
+        ],
+        "promptIndex": 0,
+        "spans": [
+          "<span>",
+          "<span>",
+          "<span>",
+          "<span>",
+        ],
+        "traceVersion": 1,
+        "usage": {
+          "inputTokens": 14,
+          "outputTokens": 5,
+          "totalTokens": 19,
+        },
+      },
+      "turnId": "<id>",
+      "type": "trace_snapshot",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "finishReason": "stop",
+    "messageMetadata": {
+      "inputTokens": 14,
+      "outputTokens": 5,
+      "totalTokens": 19,
+    },
+    "type": "finish",
+  },
+  {
+    "data": {
+      "finishReason": "stop",
+      "promptIndex": 0,
+      "turnId": "<id>",
+      "type": "turn_finish",
+      "usage": {
+        "inputTokens": 14,
+        "outputTokens": 5,
+        "totalTokens": 19,
+      },
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+]
+`;
+
+exports[`handleMCPJamFreeChatModel SSE byte-equivalence snapshot > emits a stable SSE chunk sequence for a text-only turn 1`] = `
+[
+  {
+    "data": {
+      "promptIndex": 0,
+      "startedAtMs": "<timestamp>",
+      "turnId": "<id>",
+      "type": "turn_start",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "data": {
+      "payload": {
+        "messages": [
+          {
+            "content": "Greet me.",
+            "role": "user",
+          },
+        ],
+        "system": "You are helpful",
+        "tools": {},
+      },
+      "promptIndex": 0,
+      "stepIndex": 0,
+      "turnId": "<id>",
+      "type": "request_payload",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "id": "text-1",
+    "type": "text-start",
+  },
+  {
+    "delta": "Hello ",
+    "id": "text-1",
+    "type": "text-delta",
+  },
+  {
+    "data": {
+      "delta": "Hello ",
+      "promptIndex": 0,
+      "stepIndex": 0,
+      "turnId": "<id>",
+      "type": "text_delta",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "delta": "world.",
+    "id": "text-1",
+    "type": "text-delta",
+  },
+  {
+    "data": {
+      "delta": "world.",
+      "promptIndex": 0,
+      "stepIndex": 0,
+      "turnId": "<id>",
+      "type": "text_delta",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "id": "text-1",
+    "type": "text-end",
+  },
+  {
+    "data": {
+      "promptIndex": 0,
+      "snapshot": {
+        "actualToolCalls": [],
+        "messages": [
+          {
+            "content": "Greet me.",
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "text": "Hello world.",
+                "type": "text",
+              },
+            ],
+            "role": "assistant",
+          },
+        ],
+        "promptIndex": 0,
+        "spans": [
+          "<span>",
+          "<span>",
+        ],
+        "traceVersion": 1,
+        "usage": {
+          "inputTokens": 4,
+          "outputTokens": 2,
+          "totalTokens": 6,
+        },
+      },
+      "turnId": "<id>",
+      "type": "trace_snapshot",
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+  {
+    "finishReason": "stop",
+    "messageMetadata": {
+      "inputTokens": 4,
+      "outputTokens": 2,
+      "totalTokens": 6,
+    },
+    "type": "finish",
+  },
+  {
+    "data": {
+      "finishReason": "stop",
+      "promptIndex": 0,
+      "turnId": "<id>",
+      "type": "turn_finish",
+      "usage": {
+        "inputTokens": 4,
+        "outputTokens": 2,
+        "totalTokens": 6,
+      },
+    },
+    "transient": true,
+    "type": "data-trace-event",
+  },
+]
+`;

@@ -1,6 +1,6 @@
 import { dynamicTool, jsonSchema } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
-import { TestAgent } from "../src/TestAgent";
+import { HostRunner } from "../src/HostRunner";
 
 let currentModel: MockLanguageModelV3;
 const mockCreateModelFromString = vi.fn(() => currentModel);
@@ -22,7 +22,7 @@ function toError(reason: unknown): Error {
   return new Error(String(reason ?? "aborted"));
 }
 
-describe("TestAgent timeout integration", () => {
+describe("HostRunner timeout integration", () => {
   beforeEach(() => {
     mockCreateModelFromString.mockClear();
   });
@@ -65,7 +65,7 @@ describe("TestAgent timeout integration", () => {
       },
     });
 
-    const agent = new TestAgent({
+    const agent = new HostRunner({
       tools: {
         wait: dynamicTool({
           description: "Wait until the abort signal fires",
@@ -105,7 +105,7 @@ describe("TestAgent timeout integration", () => {
     });
 
     const startedAt = Date.now();
-    const result = await agent.prompt("Run the long tool", { timeout: 25 });
+    const result = await agent.run("Run the long tool", { timeout: 25 });
     const elapsedMs = Date.now() - startedAt;
 
     expect(sawAbortSignal).toBe(true);

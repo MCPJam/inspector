@@ -32,19 +32,48 @@ These map directly to fields the inspector sends during the standard MCP `initia
 
 ### Per-server connection overrides
 
-You can override the request timeout and headers **per server attached to the Client**. This lets a single Client talk to one server with a long timeout and an auth header while keeping defaults for the others.
+You can override the request timeout and headers **per server** from the project-wide server list. This lets a single project connect to one server with a long timeout and an auth header while keeping defaults for the others.
+
+### Agent behavior
+
+These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Client focus panel.
+
+- **Require tool approval** — When on, the model pauses before each tool call so you can approve or deny it manually.
+- **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
+- **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
 
 ### MCP App settings (SEP-1865)
 
 When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
 
-- **Host capabilities** — Toggle which app-facing features the inspector advertises: `openLinks`, `serverTools`, `serverResources`, `logging`. Use this to simulate hosts that don't support all of them and confirm your app degrades gracefully.
+- **Host capabilities** — The set of `HostCapabilities` keys the inspector advertises in the `ui/initialize` handshake. Each host preset reflects that host's published capability subset: for example, the **Copilot** preset advertises only `openLinks`, `serverTools`, `updateModelContext`, and `message` — matching Microsoft 365 Copilot's published Component-bridge table — and omits `serverResources` and `logging`. Use this to verify your app degrades gracefully when a capability it relies on is absent.
 - **Sandbox CSP mode** — `host-default`, `declared`, or `relaxed`. Controls the baseline Content Security Policy the inspector applies to your app's iframe.
 - **CSP restrictTo** — Per-directive intersections (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`) that further narrow what the app is allowed to fetch, embed, or set as a base URI. Restrict-only — the inspector never adds an undeclared domain.
 - **Custom CSP directives** — Verbatim source-expression overrides (e.g. `script-src: 'unsafe-eval' 'wasm-unsafe-eval'`) for cases where you need to model exactly what a particular host emits at the browser layer.
 - **Permission Policy** — Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
 - **Display modes** — Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
 - **Theme and styles** — The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
+- **`window.openai` injection** — Toggle whether the inspector injects the OpenAI Apps SDK `window.openai` shim into widget HTML before sandboxing. ChatGPT, Copilot, and MCPJam host presets enable this by default; Claude, Cursor, and Codex presets leave it off. You can override the preset per host using the toggle in the **Apps Extension** tab. The chip in the host capability matrix shows the current state and whether it comes from the preset or a manual override.
+
+#### Apps Extension tab
+
+The Apps Extension tab contains two independent capability matrices that never cross-gate — toggling a row in one has no effect on the other.
+
+**`window.openai` matrix (ChatGPT compat shim)** — Controls the `window.openai.*` surface advertised to apps using the ChatGPT compatibility shim. A master **Inject window.openai** toggle enables or disables injection entirely; a collapsed per-method disclosure lets you activate individual methods to build an exact subset from scratch. Switching on any single method turns injection on with only that method enabled; turning the last method off disables injection again.
+
+**`app.*` matrix (SEP-1865 spec bridge)** — Controls the `app.*` surface advertised to apps using the primary MCP Apps protocol. A master **MCP App support** switch advertises the MCP UI client extension (`io.modelcontextprotocol/ui`). The matrix rows include:
+- **`availableDisplayModes`** — multi-checkbox cluster (`inline`, `fullscreen`, `pip`); unchecking the last mode force-enables `inline`.
+- **`widgetDisplayModeRequests`** — tri-state host policy (`accept`, `user-initiated-only`, `decline`) for widget-initiated display-mode requests.
+- **Boolean dimensions** — a flat list of all `app.*` capability flags (e.g. `toolInputPartial`, `toolCancelled`, `serverResources`, `logging`, `toolInfo`, `openLinks`, `serverTools`, `updateModelContext`, `message`). Rows that diverge from the selected host preset are stored as sparse overrides.
+
+<Note>
+  Widget iframes are only rendered when the effective `clientCapabilities` advertise
+  `io.modelcontextprotocol/ui` with a `mimeTypes` array that includes
+  `text/html;profile=mcp-app`. Custom capability configs with a bare
+  `{ extensions: { "io.modelcontextprotocol/ui": {} } }` entry (no `mimeTypes`
+  array) will not render widgets. SDK-default host shapes (Claude, ChatGPT,
+  Copilot, MCPJam) include the correct `mimeTypes` and are unaffected.
+</Note>
 
 <Note>
   All MCP App settings only take effect when the connected server actually
@@ -57,9 +86,15 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
 1. Open the **Clients** tab in the inspector.
 2. Click **New Client**.
 3. Give it a name (e.g. `Claude Desktop`, `ChatGPT`, `Strict CSP`).
-4. Pick the servers it should attach to.
-5. Open the focus panel to drill into protocol or MCP App settings.
-6. Click **Save**.
+4. Open the focus panel to drill into protocol or MCP App settings.
+5. Click **Save**.
+
+<Note>
+  Server selection is project-wide, not per-client. Use the **Auto-connect**
+  toggle in the Servers tab header to enroll all project servers for
+  auto-connection. Per-server overrides (headers, timeout) are also configured
+  there.
+</Note>
 
 The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
 
@@ -72,6 +107,31 @@ Once saved, a Client shows up in the picker at the top of every consumer:
 - **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
+
+## Server attachments
+
+A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple *which servers are active* from the Client configuration itself, so you can swap the server set without touching the model or prompt settings.
+
+### Eval suites
+
+When you create an eval suite, you can pick a server attachment in the **Servers** section of the create dialog. All hosts attached to the suite run against that same server set. You can also change the attachment later from the suite header.
+
+- If no attachment is selected, the suite header shows an amber indicator. Runs will be rejected at start until an attachment is picked.
+- Click the attachment pill in the suite header to open the picker and switch to a different attachment or create a new one inline.
+
+**Creating an attachment inline:**
+
+1. Open the server attachment picker (suite create dialog or suite header).
+2. Click **Create new attachment…** in the dropdown.
+3. Enter a name (e.g. `Production servers`) and check the servers to include.
+4. Click **Create**. The new attachment is selected immediately.
+
+### Chatboxes
+
+The **Servers** section on the chatbox Publish tab shows which project servers the chatbox connects to. Click **Edit servers** to open the attachment editor and update the selection.
+
+- If no servers are picked, the chatbox displays an amber warning. Chat sessions started from that chatbox will have no tools until at least one server is selected.
+- The server pick is sticky — editing the client's model or system prompt does not change it.
 
 ## Managing Clients
 
@@ -90,9 +150,32 @@ From the Clients index page:
 
 Clients are scoped to the project, like servers and views. Every member of a shared project sees the same Client list and any saves sync automatically. This means a teammate can reproduce your exact test conditions by selecting the same Client from the picker — no copy-pasting settings.
 
+## Comparing hosts
+
+The **Compare** view lets you see how multiple host configurations stack up side by side — useful for spotting differences in capabilities, sandbox policies, or protocol settings before you ship to a specific host.
+
+### Opening Compare
+
+Compare is the third tab in the Connect section of the sidebar (`Servers | Client | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
+
+### Deep-linking to a specific selection
+
+Append `?hosts=<id1>,<id2>` to the `/host-compare` URL to pre-select a specific set of hosts on load:
+
+```
+/host-compare?hosts=host-abc,host-def
+```
+
+The URL updates automatically as you toggle hosts on or off. When all live hosts are selected (the default), the `?hosts` parameter is omitted so shared links stay clean.
+
+### Compare from the Eval Playground
+
+In the Eval Playground, the **Hosts** row next to **+ Attach host** includes a **Compare** button. When two or more hosts are attached to the suite, clicking **Compare** opens the Compare view with exactly those hosts pre-selected. The button is disabled (with a tooltip) when fewer than two hosts are attached.
+
 ## Best practices
 
 - **Mirror your target hosts.** Create one Client per real host you care about (`Claude Desktop`, `ChatGPT`, your own product) and keep its `clientInfo`, capabilities, and sandbox settings aligned with what that host actually advertises.
 - **Test the negative paths.** Build a "minimal" Client with most capabilities disabled and a strict CSP — running your server against it surfaces assumptions that won't hold on more restrictive hosts.
 - **Pin Evals to a Client.** Always select a Client before running an eval suite so the results are reproducible. Evals run against ambient settings drift the moment someone toggles something elsewhere.
 - **Duplicate before debugging.** When you're chasing a bug, duplicate the Client first and tweak the copy. Your baseline stays intact for comparison.
+- **Share Compare links.** Toggle down to the hosts you care about and copy the URL — the `?hosts=` parameter preserves your selection for teammates.

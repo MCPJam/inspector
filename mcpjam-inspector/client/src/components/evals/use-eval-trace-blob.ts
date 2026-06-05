@@ -13,7 +13,7 @@ export function useEvalTraceBlob({
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
-  ) as unknown as (args: { blobId: string }) => Promise<any>;
+  ) as unknown as (args: { iterationId: string }) => Promise<any>;
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +46,10 @@ export function useEvalTraceBlob({
       setError(null);
 
       try {
-        const data = await getBlob({ blobId: iteration.blob });
+        // Backend authorizes via the iteration's testSuite and derives the
+        // blob id server-side. We still gate on `iteration.blob` above to
+        // skip the roundtrip for blobless iterations.
+        const data = await getBlob({ iterationId: iteration._id });
         if (!cancelled) {
           setBlob(data);
           onTraceLoadedRef.current?.();

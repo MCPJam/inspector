@@ -10,6 +10,16 @@ const sdkSkillReferenceEntry = path.resolve(
   "../sdk/src/skill-reference.ts",
 );
 const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
+// Same rationale as sdkBrowserEntry: the workspace-linked @mcpjam/sdk advertises
+// ./host-config/internal via its package exports, but a clean checkout has no
+// dist/host-config/internal.* until `npm run build -w @mcpjam/sdk` runs. The
+// inspector's pretest doesn't build the SDK (root-level `npm test` does), so
+// without this alias, `npm test -w @mcpjam/inspector` fails to resolve the
+// import in client-config-v2.ts → Failed to resolve import "@mcpjam/sdk/host-config/internal".
+const sdkHostConfigInternalEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-config/internal.ts",
+);
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -66,6 +76,10 @@ export default defineConfig({
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
+      {
+        find: "@mcpjam/sdk/host-config/internal",
+        replacement: sdkHostConfigInternalEntry,
+      },
       {
         find: "@modelcontextprotocol/sdk/client/auth.js",
         replacement: mcpSdkClientAuthEntry,

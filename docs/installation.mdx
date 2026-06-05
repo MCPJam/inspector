@@ -121,6 +121,8 @@ This will start the MCPJam inspector with a custom port number. The default port
 npx @mcpjam/inspector@latest --port 4000
 ```
 
+The port must be a valid integer between 1 and 65535. Passing an invalid value (e.g. a string or out-of-range number) exits immediately with an error.
+
 ## Start with Ollama
 
 This will open the MCPJam inspector and start an Ollama model with the `ollama serve <model>` command. Make sure you have Ollama installed.

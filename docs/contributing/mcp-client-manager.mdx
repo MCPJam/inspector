@@ -391,13 +391,21 @@ await mcpClientManager.disconnectAllServers();
   type="(serverIds?: string[] | string, options?) => Promise<ToolSet>"
 >
   Get tools in Vercel AI SDK format. Automatically wires up tool execution. Each
-  tool has `_serverId` metadata attached.
+  tool has `_serverId` metadata attached. App-only tools (`_meta.ui.visibility =
+  ["app"]`) are excluded by default per SEP-1865.
 </ResponseField>
 
 Options:
 
 <ResponseField name="schemas" type="ToolSchemaOverrides | 'automatic'">
   - `schemas?: ToolSchemaOverrides | "automatic"` - Control schema conversion
+</ResponseField>
+
+<ResponseField name="includeAppOnly" type="boolean">
+  - `includeAppOnly?: boolean` - When `true`, includes SEP-1865 app-only tools
+    (`_meta.ui.visibility = ["app"]`) in the returned tool set. Defaults to
+    `false`. Use only when intentionally mirroring a host that does not
+    implement visibility filtering.
 </ResponseField>
 
 <ResponseField
