@@ -47,8 +47,8 @@ describe("Asana MCP Evals", () => {
     test("list-workspaces accuracy > 80%", async () => {
       const test = new EvalTest({
         name: "list-workspaces",
-        test: async (agent: HostRunner) => {
-          const runResult = await agent.run("Show me all my Asana workspaces");
+        test: async (runner: HostRunner) => {
+          const runResult = await runner.run("Show me all my Asana workspaces");
           return runResult.hasToolCall("asana_list_workspaces");
         },
       });
@@ -68,8 +68,8 @@ describe("Asana MCP Evals", () => {
     test("asana_get_user accuracy > 80%", async () => {
       const test = new EvalTest({
         name: "asana-get-user",
-        test: async (agent: HostRunner) => {
-          const runResult = await agent.run("Who am I in Asana?");
+        test: async (runner: HostRunner) => {
+          const runResult = await runner.run("Who am I in Asana?");
           return runResult.hasToolCall("asana_get_user");
         },
       });
@@ -89,8 +89,8 @@ describe("Asana MCP Evals", () => {
     test("get_workspace_users accuracy > 80%", async () => {
       const test = new EvalTest({
         name: "get_workspace_users",
-        test: async (agent: HostRunner) => {
-          const runResult = await agent.run("Can you get me the users in my workspace?");
+        test: async (runner: HostRunner) => {
+          const runResult = await runner.run("Can you get me the users in my workspace?");
           const getToolCallArguments = runResult.getToolArguments("asana_get_workspace_users");
           return runResult.hasToolCall("asana_get_workspace_users") && typeof getToolCallArguments?.workspace_gid === "string";
         },
@@ -111,13 +111,13 @@ describe("Asana MCP Evals", () => {
     test("identify who I am in Asana, then list projects in my workspace", async () => {
       const test = new EvalTest({
         name: "user-projects-tasks-flow",
-        test: async (agent: HostRunner) => {
+        test: async (runner: HostRunner) => {
           // Turn 1: Get current user info
-          const r1 = await agent.run("Who am I in Asana? What's my user ID?");
+          const r1 = await runner.run("Who am I in Asana? What's my user ID?");
           if (!r1.hasToolCall("asana_get_user")) return false;
 
           // Turn 2: List projects in workspace (with context from turn 1)
-          const r2 = await agent.run(
+          const r2 = await runner.run(
             "Now list the projects in my workspace",
             { context: [r1] }
           );

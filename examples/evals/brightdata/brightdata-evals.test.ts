@@ -34,8 +34,8 @@ describe("Bright Data MCP Evals", () => {
   test("hasToolCall() - verifies correct tool selection", async () => {
     const evalTest = new EvalTest({
       name: "hasToolCall-test",
-      test: async (agent: HostRunner) => {
-        const result = await agent.run("Search for wireless headphones on Amazon");
+      test: async (runner: HostRunner) => {
+        const result = await runner.run("Search for wireless headphones on Amazon");
         return result.hasToolCall("web_data_amazon_product_search");
       },
     });
@@ -47,8 +47,8 @@ describe("Bright Data MCP Evals", () => {
   test("getToolCalls() - retrieves all tool calls array", async () => {
     const evalTest = new EvalTest({
       name: "getToolCalls-test",
-      test: async (agent: HostRunner) => {
-        const result = await agent.run("Find laptops on Amazon");
+      test: async (runner: HostRunner) => {
+        const result = await runner.run("Find laptops on Amazon");
         const toolCalls = result.getToolCalls();
         return Array.isArray(toolCalls) && toolCalls.some((tc) => tc.toolName === "web_data_amazon_product_search");
       },
@@ -61,8 +61,8 @@ describe("Bright Data MCP Evals", () => {
   test("getToolArguments() + averageTokenUse() - validates arguments and tracks tokens", async () => {
     const evalTest = new EvalTest({
       name: "getToolArguments-tokenUse-test",
-      test: async (agent: HostRunner) => {
-        const result = await agent.run("Search Amazon for gaming keyboards");
+      test: async (runner: HostRunner) => {
+        const result = await runner.run("Search Amazon for gaming keyboards");
         const args = result.getToolArguments("web_data_amazon_product_search");
         return args !== null && typeof args === "object" && "keyword" in args;
       },
@@ -82,10 +82,10 @@ describe("Bright Data MCP Evals", () => {
   test("context option - two-turn conversation", async () => {
     const evalTest = new EvalTest({
       name: "context-two-turn",
-      test: async (agent: HostRunner) => {
-        const r1 = await agent.run("Search for wireless earbuds on Amazon");
+      test: async (runner: HostRunner) => {
+        const r1 = await runner.run("Search for wireless earbuds on Amazon");
         if (!r1.hasToolCall("web_data_amazon_product_search")) return false;
-        const r2 = await agent.run("Get details for the first product", { context: [r1] });
+        const r2 = await runner.run("Get details for the first product", { context: [r1] });
         return r2.hasToolCall("web_data_amazon_product");
       },
     });

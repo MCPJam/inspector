@@ -190,6 +190,16 @@ type StartedToolCall = {
  */
 export class HostRunner implements HostExecutor {
   private readonly tools: ToolSet;
+  /**
+   * The original `config.tools` input as supplied to the constructor.
+   * Preserved (pre-filter, pre-conversion) so `withOptions({ host: newHost })`
+   * can hand the raw set back to the new constructor for re-filtering
+   * under the replacement host's `respectToolVisibility` policy. Without
+   * this, a clone with a stricter host would silently inherit the
+   * parent's already-filtered/converted `AiSdkTool` and run with the
+   * wrong visibility set.
+   */
+  private readonly rawTools: Tool[] | AiSdkTool;
   private readonly model: string;
   private readonly apiKey: string;
   private systemPrompt: string;
@@ -228,8 +238,9 @@ export class HostRunner implements HostExecutor {
   private promptHistory: PromptResult[] = [];
 
   /**
-   * Create a new HostRunner
-   * @param config - Agent configuration
+   * Construct a new `HostRunner`.
+   *
+   * @param config - Runner configuration (see {@link HostRunnerConfig}).
    */
   constructor(config: HostRunnerConfig) {
     // Snapshot the host once if provided. `snapshotHostSource` is idempotent
@@ -275,6 +286,14 @@ export class HostRunner implements HostExecutor {
     this.tools = isToolArray(preparedTools)
       ? convertToToolSet(preparedTools)
       : preparedTools;
+    // Stash the original (unfiltered) input so withOptions can re-run the
+    // prep step under a replacement host's policy. Tool[] inputs are
+    // shallow-copied so an external mutation can't desync `rawTools` from
+    // what the parent ran with; AiSdkTool inputs are reference-shared
+    // (no re-filter is possible at this layer anyway).
+    this.rawTools = Array.isArray(config.tools)
+      ? [...config.tools]
+      : config.tools;
     this.model = resolvedModel;
     this.apiKey = config.apiKey;
     this.systemPrompt =
@@ -873,8 +892,14 @@ export class HostRunner implements HostExecutor {
       options.injectOpenAiCompat ??
       (carryParent ? this.injectOpenAiCompat : undefined);
 
+    // Use raw tool input (pre-filter, pre-conversion) so the new
+    // constructor re-runs the visibility filter under whatever host
+    // policy applies after this clone. Critical when `options.host`
+    // replaces a parent that ran with a looser `respectToolVisibility`
+    // — without this, the stricter clone would inherit the parent's
+    // already-converted ToolSet and silently expose app-only tools.
     const base = {
-      tools: options.tools ?? this.tools,
+      tools: options.tools ?? this.rawTools,
       apiKey: options.apiKey ?? this.apiKey,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,

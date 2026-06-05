@@ -254,6 +254,78 @@ describe("HostRunner host integration", () => {
       expect(clone.getHostPolicy()?.hostStyle).toBe("mcpjam");
     });
 
+    it("withOptions({ host: newHost }) re-applies the visibility filter to the raw tool input", () => {
+      // Regression: previously the clone reused `this.tools` (the
+      // already-filtered, already-converted `ToolSet`), so replacing
+      // the host with a stricter `respectToolVisibility` left app-only
+      // tools that the parent had retained sitting in the new runner.
+      // Now `rawTools` is preserved and the new constructor re-runs the
+      // prep step under the replacement host's policy.
+      const appOnlyTool = {
+        name: "secret_app_only",
+        description: "app-only widget tool",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({
+          content: [{ type: "text", text: "ok" }],
+        }),
+        _meta: { ui: { visibility: ["app"] } },
+      } as any;
+      const visibleTool = {
+        name: "visible_tool",
+        description: "regular tool",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({
+          content: [{ type: "text", text: "ok" }],
+        }),
+        _meta: {},
+      } as any;
+
+      // Loose parent host — keeps app-only tools.
+      const looseHost = new Host({
+        style: "mcpjam",
+        model: "openai/gpt-4o",
+        respectToolVisibility: false,
+      });
+      const looseRunner = new HostRunner({
+        host: looseHost,
+        tools: [appOnlyTool, visibleTool],
+        apiKey: "k",
+      });
+      // Both tools are in the parent's prepared set.
+      expect(Object.keys(looseRunner.getTools()).sort()).toEqual([
+        "secret_app_only",
+        "visible_tool",
+      ]);
+
+      // Strict replacement host — drops app-only tools.
+      const strictHost = new Host({
+        style: "claude",
+        model: "anthropic/claude-3",
+        // respectToolVisibility undefined → spec default → filter
+      });
+      const strictClone = looseRunner.withOptions({ host: strictHost });
+
+      // The clone must re-filter; `secret_app_only` should be gone.
+      expect(Object.keys(strictClone.getTools())).toEqual(["visible_tool"]);
+    });
+
+    it("withOptions({}) without host change preserves the parent's prepared tools (no re-prep regression)", () => {
+      const tool = {
+        name: "t",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({
+          content: [{ type: "text", text: "ok" }],
+        }),
+        _meta: {},
+      } as any;
+      const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+      const runner = new HostRunner({ host, tools: [tool], apiKey: "k" });
+
+      const clone = runner.withOptions({});
+      expect(Object.keys(clone.getTools())).toEqual(["t"]);
+    });
+
     it("withOptions({ host: newHost, model: 'X' }) still honors explicit model override", () => {
       const hostA = new Host({ style: "claude", model: "anthropic/claude-3" });
       const runnerA = new HostRunner({ host: hostA, tools: [], apiKey: "k" });
