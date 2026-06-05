@@ -6,8 +6,9 @@ on:
 
 jobs:
   update-docs:
-    # Only run if PR was actually merged (not just closed)
-    if: github.event.pull_request.merged == true
+    # Only run when a non-bot PR is actually merged. Skipping mintlify[bot]'s own
+    # merged docs PRs prevents a generate -> auto-merge -> generate loop.
+    if: github.event.pull_request.merged == true && github.event.pull_request.user.login != 'mintlify[bot]'
     runs-on: ubuntu-latest
 
     steps:
@@ -70,13 +71,15 @@ jobs:
               '```',
               ``,
               `## Instructions`,
-              `First, review the merged diff and the repository's \`docs/\` directory to assess whether documentation changes are actually needed. If no relevant updates are needed, make no file changes and do not open a PR.`,
+              `First, review the merged diff and the repository's \`docs/\` directory to decide whether USER-FACING documentation actually needs to change. If not, make no changes and do not open a PR.`,
               ``,
-              `If updates are needed, categorize the change and update only the appropriate docs under \`docs/\`. We have two main types of docs:`,
-              `1. **Feature docs** (how users use features)`,
-              `2. **Contributing docs** (engineering concepts for technical contributors) live under \`docs/contributing/\` and \`docs/evals/\``,
+              `Hard rules:`,
+              `- Only edit user-facing feature docs. NEVER create or modify anything under \`docs/contributing/**\` — that directory is internal and off-limits to this agent.`,
+              `- NEVER document backend or internal implementation details: Convex, internal HTTP endpoints or routes, environment variables, secrets or keys, server-side persistence/runtime mechanics, or internal source-file paths.`,
+              `- Ground every statement in the provided diff and the current code/docs. Do NOT invent features, flags, tools, defaults, or numbers; if you cannot confirm a detail from the diff or the repository, omit it.`,
+              `- Target the CURRENT docs structure. If the relevant page appears to have been renamed or removed, update the current equivalent page instead of recreating the old one; check \`docs/docs.json\` for the live page list.`,
               ``,
-              `Keep edits minimal, precise, and user-focused. When adding/moving pages, update \`docs/docs.json\` to keep navigation accurate. Use concise commit messages and open a focused PR only when changes are required. Use .mmd files for diagrams and other visual content if needed.`,
+              `Keep edits minimal, precise, and user-focused. When adding or moving pages, update \`docs/docs.json\` so navigation stays accurate. Use concise commit messages and open a single focused PR only when user-facing changes are required. Use .mmd files for diagrams and other visual content if needed.`,
             ].join('\n');
 
             const url = `https://api.mintlify.com/v1/agent/${projectId}/job`;
