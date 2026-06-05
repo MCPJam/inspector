@@ -1,10 +1,10 @@
 ---
 title: "Home"
-description: "Org-scoped dashboard with activity stats, recommended servers, and quick-start clients"
+description: "Org-scoped dashboard with the MCPJam Agent, activity stats, recommended servers, and quick-start clients"
 icon: "house"
 ---
 
-The Home dashboard is the default landing page for authenticated users with an active organization. It gives you a snapshot of your org's activity and lets you connect recommended MCP servers or spin up sandbox clients without leaving the page.
+The Home dashboard is the default landing page for authenticated users with an active organization. It gives you a snapshot of your org's activity, lets you connect recommended MCP servers or spin up sandbox clients, and surfaces the **MCPJam Agent** — a chat interface connected to MCPJam's documentation.
 
 <Note>
 The Home dashboard is available in the hosted app at [app.mcpjam.com](https://app.mcpjam.com) and requires you to be signed in with an active organization.
@@ -16,11 +16,37 @@ When you open MCPJam, the Home tab loads at `/home` (also the root `/`). If you 
 
 With an organization selected, the dashboard shows:
 
+- **MCPJam Agent** — a chat composer connected to MCPJam's documentation. Ask questions about features, get help with configuration, and continue previous conversations.
 - **Greeting** — a time-aware greeting and today's date.
 - **Org stats strip** — live counts for teammates, projects, servers, eval suites, tool executions (last 30 days), and messages sent (last 30 days).
 - **Recommended servers** — a curated list of MCP servers you can connect to your active project with one click.
 - **Recommended clients** — sandbox client templates (Claude, ChatGPT, Cursor) you can create directly from the dashboard.
 - **What's new** — a feed of recent platform releases and changes.
+
+## MCPJam Agent
+
+The MCPJam Agent is a chat interface on the Home page that answers questions about MCPJam using the hosted documentation MCP server at `https://docs.mcpjam.com/mcp`.
+
+### Starting a conversation
+
+The agent hero shows a text input with suggested prompts below it:
+
+1. Type a question in the **Ask anything…** input, or click one of the suggested prompt chips to fill the input.
+2. Press **Enter** or click **Send** to submit.
+
+The hero swaps to an inline conversation thread and the URL updates to `/home?session=<id>`. You can continue the conversation by typing in the input at the bottom of the thread.
+
+### Resuming a recent conversation
+
+After you start a conversation, a **Recent chat** pill appears above the input on subsequent visits to the Home page. Click it to reload the previous conversation thread, including the full message history.
+
+### Stopping a response
+
+While the agent is generating a response, the **Send** button changes to a **Stop** button. Click it to cancel the in-progress response.
+
+### Chat history
+
+Agent conversations appear in your chat history alongside other direct sessions. You can access them from the chat history rail in the Playground.
 
 ## Org stats strip
 
