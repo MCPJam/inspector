@@ -129,7 +129,7 @@ describe("MCPJamLimitDialog", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: /you've hit the org free credit limit/i,
+        name: /your org is out of credits/i,
       })
     ).toBeInTheDocument();
     expect(

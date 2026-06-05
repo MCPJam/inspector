@@ -13,10 +13,16 @@ let balanceState:
       freeDailyCreditsTotal: number;
       freeDailyResetAt: number;
       walletLocked: boolean;
+      billingModel?: "daily" | "monthly_per_seat";
+      monthlyAllowanceTotal?: number;
+      monthlyAllowanceRemaining?: number;
+      monthlyResetAt?: number | null;
+      paidCreditsRemaining?: number;
     }
   | undefined = undefined;
 let isLoadingState = false;
-let creditsFlagState = true;
+let creditTopupsFlagState = true;
+let teamCreditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -26,7 +32,11 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 }));
 
 vi.mock("@/lib/team-credits-flag", () => ({
-  useTeamCreditsUiEnabled: () => creditsFlagState,
+  useTeamCreditsUiEnabled: () => teamCreditsFlagState,
+}));
+
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditTopupsFlagState,
 }));
 
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
@@ -62,12 +72,13 @@ describe("CreditBalanceCard", () => {
       walletLocked: false,
     };
     isLoadingState = false;
-    creditsFlagState = true;
+    creditTopupsFlagState = true;
+    teamCreditsFlagState = true;
     window.location.hash = "";
   });
 
-  it("renders nothing when the credits UI flag is off", () => {
-    creditsFlagState = false;
+  it("renders nothing when the top-ups UI flag is off", () => {
+    creditTopupsFlagState = false;
     const { container } = render(<CreditBalanceCard organizationId="org-1" />);
 
     expect(container).toBeEmptyDOMElement();
@@ -230,5 +241,70 @@ describe("CreditBalanceCard", () => {
         /Shared credits are available to everyone in this organization/
       )
     ).toBeInTheDocument();
+  });
+
+  describe("team monthly model", () => {
+    beforeEach(() => {
+      balanceState = {
+        availableCredits: 19_500,
+        hasPurchaseHistory: true,
+        freeDailyPercentUsed: 0,
+        freeDailyCreditsRemaining: 0,
+        freeDailyCreditsTotal: 0,
+        freeDailyResetAt: 0,
+        walletLocked: false,
+        billingModel: "monthly_per_seat",
+        monthlyAllowanceTotal: 18_000,
+        monthlyAllowanceRemaining: 13_950,
+        monthlyResetAt: Date.now() + 12 * 24 * 60 * 60 * 1000,
+        paidCreditsRemaining: 1_500,
+      };
+    });
+
+    it("renders the monthly allowance row instead of the daily row", () => {
+      render(<CreditBalanceCard />);
+      const row = screen.getByTestId("usage-monthly");
+      expect(within(row).getByText(/Monthly team credits/)).toBeInTheDocument();
+      expect(within(row).getByText(/13,950 \/ 18,000/)).toBeInTheDocument();
+      expect(within(row).getByText(/resets in 12 days/)).toBeInTheDocument();
+      expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
+    });
+
+    it("shows paid top-ups separately from the allowance", () => {
+      render(<CreditBalanceCard />);
+      const paid = screen.getByTestId("usage-paid");
+      expect(within(paid).getByText(/1,500 credits/)).toBeInTheDocument();
+    });
+
+    it("surfaces an exhausted notice when allowance and paid are both spent", () => {
+      balanceState = {
+        ...balanceState!,
+        monthlyAllowanceRemaining: 0,
+        paidCreditsRemaining: 0,
+        hasPurchaseHistory: false,
+      };
+      render(<CreditBalanceCard canManageCredits />);
+      expect(
+        screen.getByTestId("usage-monthly-exhausted")
+      ).toHaveTextContent(/Monthly credits used/);
+    });
+
+    it("keeps the existing daily and top-up UI when only the team flag is off", async () => {
+      const user = userEvent.setup();
+      teamCreditsFlagState = false;
+
+      render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+
+      expect(screen.queryByTestId("usage-monthly")).not.toBeInTheDocument();
+      expect(screen.getByTestId("usage-daily")).toHaveTextContent(
+        /Free daily credits/
+      );
+      expect(screen.getByTestId("usage-paid")).toHaveTextContent(
+        /19,500 credits/
+      );
+
+      await user.click(screen.getByRole("button", { name: /Buy credits/i }));
+      expect(screen.getByTestId("topup-dialog")).toBeInTheDocument();
+    });
   });
 });

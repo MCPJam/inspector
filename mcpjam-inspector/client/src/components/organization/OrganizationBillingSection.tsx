@@ -64,6 +64,7 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
+  scheduledCancellationDate: string | null;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval
@@ -87,6 +88,7 @@ function getPlanColumnCta(params: {
     billingConfigured,
     canManageBilling,
     isBillingActionPending,
+    scheduledCancellationDate,
     onDowngradePlan,
     onStartPlanChange,
     billingInterval,
@@ -114,6 +116,16 @@ function getPlanColumnCta(params: {
   }
 
   if (isDowngrade) {
+    if (scheduledCancellationDate !== null) {
+      return {
+        label: "Downgrade scheduled",
+        disabled: true,
+        variant: "outline",
+        tooltip: scheduledCancellationDate
+          ? `Your plan is already scheduled to return to Free on ${scheduledCancellationDate}.`
+          : "Your plan is already scheduled to return to Free at the end of the current billing period.",
+      };
+    }
     return {
       label: "Downgrade",
       disabled:
@@ -836,6 +848,16 @@ export function OrganizationBillingSection({
                                   entry,
                                   billingInterval
                                 );
+                            const cancellationDateMs =
+                              billingStatus?.stripeCancelAt ??
+                              billingStatus?.stripeCurrentPeriodEnd ??
+                              null;
+                            const scheduledCancellationDate =
+                              billingStatus?.stripeCancelAtPeriodEnd
+                                ? cancellationDateMs != null
+                                  ? formatBillingDate(cancellationDateMs)
+                                  : ""
+                                : null;
                             const cta = getPlanColumnCta({
                               plan,
                               currentPlan,
@@ -843,6 +865,7 @@ export function OrganizationBillingSection({
                               billingConfigured,
                               canManageBilling,
                               isBillingActionPending,
+                              scheduledCancellationDate,
                               onDowngradePlan: (
                                 targetPlan,
                                 targetBillingInterval

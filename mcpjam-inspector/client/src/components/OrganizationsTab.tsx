@@ -1455,47 +1455,30 @@ function OrganizationPage({
               {pendingDowngradeConfirmation?.targetPlan === "free" ? (
                 <>
                   <span className="block">
-                    This cancellation takes effect at renewal, not now.
-                  </span>
-                  <span className="block">
+                    This cancellation takes effect at renewal, not now.{" "}
                     {pendingDowngradeCurrentLabel ?? "Your paid plan"} remains
                     active until{" "}
                     {pendingDowngradeEffectiveDate ??
                       "the end of the current billing period"}
-                    .
+                    , after which the organization returns to Free.
                   </span>
                   <span className="block">
-                    After that, the organization returns to Free.
+                    Once cancellation is scheduled, you can't change your billing
+                    interval (monthly or annual) until you reactivate.
                   </span>
                 </>
               ) : (
-                <>
-                  <span className="block">
-                    This downgrade takes effect at renewal, not now.
-                  </span>
-                  <span className="block">
-                    {pendingDowngradeTargetLabel ?? "Team"} begins{" "}
-                    {pendingDowngradeEffectiveDate ??
-                      "at the end of the current billing period"}
-                    .
-                  </span>
-                  <span className="block">
-                    {pendingDowngradeCurrentLabel ?? "Your current plan"}{" "}
-                    remains active until then.
-                  </span>
-                </>
+                <span className="block">
+                  This downgrade takes effect at renewal, not now.{" "}
+                  {pendingDowngradeTargetLabel ?? "Team"} begins{" "}
+                  {pendingDowngradeEffectiveDate ??
+                    "at the end of the current billing period"}
+                  , and {pendingDowngradeCurrentLabel ?? "your current plan"}{" "}
+                  remains active until then.
+                </span>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
-            <span className="font-medium text-foreground">
-              {pendingDowngradeConfirmation?.targetPlan === "free"
-                ? "Stripe will open a cancellation flow that keeps paid access active until renewal."
-                : `${pendingDowngradeTargetLabel ?? "Team"} will replace ${
-                    pendingDowngradeCurrentLabel ?? "the current plan"
-                  } at renewal.`}
-            </span>
-          </div>
           <AlertDialogFooter>
             <AlertDialogCancel
               disabled={isStartingPlanChange || isOpeningPortal}

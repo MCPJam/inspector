@@ -129,7 +129,7 @@ export function MCPJamLimitDialog() {
         >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>You've hit the org free credit limit</DialogTitle>
+              <DialogTitle>Your org is out of credits</DialogTitle>
               <DialogDescription data-testid="limit-dialog-description">
                 {creditsUiEnabled && isKnownNonManager
                   ? "Ask your org admin to top up credits."
