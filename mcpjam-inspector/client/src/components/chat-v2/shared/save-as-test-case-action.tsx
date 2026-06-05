@@ -35,8 +35,6 @@ import {
   type HostAttachmentDraft,
 } from "@/components/evals/client-attachments-editor";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
-import { HOSTED_MODE } from "@/lib/config";
-import { computeHostsHubFlagEnabled } from "@/components/mcp-sidebar";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -93,13 +91,13 @@ export function SaveAsTestCaseAction({
     [],
   );
 
+  // Intentionally tied to the raw PostHog flag, not the desktop-default-on
+  // helper: `attachmentPickersEnabled` also gates the "new suite requires
+  // both a server and a host attachment" requirement (see
+  // `newSuiteRequirementsMet` below). Flipping it on for desktop blocks the
+  // empty-skeleton-then-attach-later flow.
   const attachmentPickersEnabled =
-    computeHostsHubFlagEnabled({
-      hostsFlag: hostsFlagEnabled,
-      hostedMode: HOSTED_MODE,
-    }) &&
-    convexAuthed &&
-    Boolean(projectId);
+    hostsFlagEnabled === true && convexAuthed && Boolean(projectId);
 
   const { serverAttachments: projectServerAttachments } =
     useProjectServerAttachments({

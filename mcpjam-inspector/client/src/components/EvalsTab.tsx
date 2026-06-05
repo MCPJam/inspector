@@ -44,8 +44,6 @@ import { CreateSuiteDialog, type CreateSuitePayload } from "./evals/create-suite
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { HOSTED_MODE } from "@/lib/config";
-import { computeHostsHubFlagEnabled } from "@/components/mcp-sidebar";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
@@ -113,12 +111,15 @@ function EvalsTabContent({
 }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
-  const hostsHubFlag = useFeatureFlagEnabled("hosts-enabled");
+  // Note: intentionally NOT routed through computeHostsHubFlagEnabled.
+  // create-suite-dialog uses `hostsEnabled` as both a feature gate AND a
+  // "skeleton suite creation requires attachments" gate (attachmentsRequired
+  // = hostsEnabled && projectId). Defaulting it on for desktop blocks the
+  // empty-suite-then-attach-later flow that fresh/local projects rely on.
+  // We surface the new Connect/Clients UI via the sidebar + App routing
+  // changes; eval-dialog requirements stay on the PostHog rollout.
   const hostsEnabled =
-    computeHostsHubFlagEnabled({
-      hostsFlag: hostsHubFlag,
-      hostedMode: HOSTED_MODE,
-    }) && isAuthenticated;
+    useFeatureFlagEnabled("hosts-enabled") === true && isAuthenticated;
   const route = useEvalsRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
