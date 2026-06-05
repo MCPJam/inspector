@@ -272,7 +272,10 @@ export function OrganizationCurrentPlanPanel({
     canManageBilling;
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-border/70 bg-muted/20 p-5 md:p-6">
+    <div
+      data-testid="current-plan-panel"
+      className="flex flex-col gap-4 rounded-xl border border-border/70 bg-muted/20 p-5 md:p-6"
+    >
       <p className="text-xs text-muted-foreground">
         {isTrial ? (
           <>
