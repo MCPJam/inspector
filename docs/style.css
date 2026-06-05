@@ -9,6 +9,10 @@
  * No glassy backdrops, no floaty shadows, sharp warm borders, generous space.
  * ─────────────────────────────────────────────────────────────────────────── */
 
+/* Geist Mono — docs.json fonts only accepts heading+body, so the code face
+   is loaded here. */
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap");
+
 /* BEGIN GENERATED — sync via `npm run docs:sync-tokens` */
 /* Mirrors design-system/src/tokens.css — edits here will be overwritten. */
 :root {
@@ -124,22 +128,44 @@ code, pre, kbd, samp {
     Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-code:not(pre code) {
-  background: var(--mcj-paper-2);
-  border: 1px solid var(--mcj-rule);
-  color: var(--mcj-ink-strong);
-  padding: 0.12em 0.38em;
-  border-radius: 4px;
-  font-size: 0.92em;
+/* Inline code — defeat .prose code AND any deeper Mintlify selectors
+   like `.prose p code`. Tighter chip, no browser bold, sits on the
+   baseline of the surrounding sentence. */
+:is(article, .prose, main, body) :is(p, li, td, h1, h2, h3, h4, h5, h6, span) code:not(pre code),
+:is(article, .prose, main, body) > code:not(pre code) {
+  background: var(--mcj-paper-2) !important;
+  border: 1px solid var(--mcj-rule) !important;
+  color: var(--mcj-ink-strong) !important;
+  padding: 0.08em 0.36em !important;
+  border-radius: 4px !important;
+  font-size: 0.86em !important;
+  font-weight: 400 !important;
+  line-height: 1.45 !important;
 }
 
+/* Code block container — let the Shiki theme's own background and the
+   rounded corner do all the chrome. No border, no shadow. docs.json
+   sets theme to github-light (light) + vesper (dark): two curated
+   palettes that read against our warm-paper page without competing. */
 code-block,
 pre {
-  background: var(--mcj-paper-2) !important;
-  border: 1px solid var(--mcj-rule);
+  border: none !important;
   border-radius: var(--mcj-radius);
   box-shadow: none !important;
 }
+
+/* Thin warm scrollbar clipped inside the rounded corner. */
+pre {
+  scrollbar-width: thin;
+  scrollbar-color: var(--mcj-rule-strong) transparent;
+}
+pre::-webkit-scrollbar { height: 5px; width: 5px; }
+pre::-webkit-scrollbar-track { background: transparent; }
+pre::-webkit-scrollbar-thumb {
+  background: var(--mcj-rule-strong);
+  border-radius: 9999px;
+}
+pre::-webkit-scrollbar-thumb:hover { background: var(--mcj-ink-muted); }
 
 /* ── Callouts (Note / Tip / Warning / Info) ─────────────────────────────── */
 
@@ -205,28 +231,64 @@ a.button-primary:hover {
   background: var(--mcj-orange-edge);
 }
 
-/* ── Tables ─────────────────────────────────────────────────────────────── */
+/* ── Tables — bottom-hairline rows only, no header tint, generous padding.
+       Matches the Claude API docs treatment: flat, content-forward, no chrome.
+       Inline code chips inside table cells stay normal-sized; row links are
+       quieted to body color so they read as text first, link second. */
 
 table {
-  border: 1px solid var(--mcj-rule);
-  border-radius: var(--mcj-radius);
-  overflow: hidden;
+  border: none !important;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+thead tr,
+thead th {
+  background: transparent !important;
 }
 
 th {
-  background: var(--mcj-paper-2);
-  color: var(--mcj-ink-strong);
-  font-weight: 500;
+  color: var(--mcj-ink-strong) !important;
+  font-weight: 500 !important;
   text-align: left;
-  border-bottom: 1px solid var(--mcj-rule);
+  border-bottom: 1px solid var(--mcj-rule) !important;
+  padding: 0.55rem 0.9rem !important;
+  font-size: 0.92em;
 }
 
 td {
-  border-bottom: 1px solid var(--mcj-rule);
+  color: var(--mcj-ink) !important;
+  border-top: none !important;
+  border-bottom: 1px solid var(--mcj-rule) !important;
+  border-left: none !important;
+  border-right: none !important;
+  padding: 0.7rem 0.9rem !important;
+  vertical-align: top;
 }
 
-tr:last-child td {
-  border-bottom: none;
+tbody tr:last-child td {
+  border-bottom: none !important;
+}
+
+/* Row hover — minimal lift, matches Anthropic's subtle row treatment */
+tbody tr:hover td {
+  background: var(--mcj-paper-2);
+}
+
+/* In-table links — read as part of the sentence, accent on hover only.
+   This is the "Read more" treatment from image #5: was too loud. */
+:is(td, th) a:not(.button-primary) {
+  color: var(--mcj-ink-strong) !important;
+  text-decoration: underline !important;
+  text-decoration-color: var(--mcj-rule-strong) !important;
+  text-decoration-thickness: 1px !important;
+  text-underline-offset: 3px !important;
+  transition: text-decoration-color 120ms ease-out, color 120ms ease-out;
+}
+
+:is(td, th) a:not(.button-primary):hover {
+  color: var(--mcj-orange) !important;
+  text-decoration-color: var(--mcj-orange) !important;
 }
 
 /* ── Misc polish ────────────────────────────────────────────────────────── */
