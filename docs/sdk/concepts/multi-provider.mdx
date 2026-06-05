@@ -41,7 +41,7 @@ The SDK supports 9 providers out of the box:
 Create agents for each provider and run the same tests:
 
 ```typescript
-import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalTest } from "@mcpjam/sdk";
 
 const manager = new MCPClientManager({
   myServer: { command: "node", args: ["./server.js"] },
@@ -54,7 +54,7 @@ const tools = await manager.getTools();
 const additionTest = new EvalTest({
   name: "addition",
   test: async (agent) => {
-    const r = await agent.prompt("Add 2 and 3");
+    const r = await agent.run("Add 2 and 3");
     return r.hasToolCall("add");
   },
 });
@@ -71,7 +71,7 @@ for (const { model, key } of providers) {
   const apiKey = process.env[key];
   if (!apiKey) continue;
 
-  const agent = new TestAgent({ tools, model, apiKey });
+  const agent = new HostRunner({ tools, model, apiKey });
   await additionTest.run(agent, { iterations: 20 });
 
   console.log(`${model}: ${(additionTest.accuracy() * 100).toFixed(1)}%`);
@@ -83,7 +83,7 @@ for (const { model, key } of providers) {
 A complete script for benchmarking:
 
 ```typescript
-import { MCPClientManager, TestAgent, EvalSuite, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalSuite, EvalTest } from "@mcpjam/sdk";
 
 async function compareProviders() {
   // Setup
@@ -101,12 +101,12 @@ async function compareProviders() {
 
   suite.add(new EvalTest({
     name: "add",
-    test: async (a) => (await a.prompt("Add 2+3")).hasToolCall("add"),
+    test: async (a) => (await a.run("Add 2+3")).hasToolCall("add"),
   }));
 
   suite.add(new EvalTest({
     name: "echo",
-    test: async (a) => (await a.prompt("Echo 'hello'")).hasToolCall("echo"),
+    test: async (a) => (await a.run("Echo 'hello'")).hasToolCall("echo"),
   }));
 
   // Providers
@@ -125,7 +125,7 @@ async function compareProviders() {
       continue;
     }
 
-    const agent = new TestAgent({ tools, model, apiKey, temperature: 0.1 });
+    const agent = new HostRunner({ tools, model, apiKey, temperature: 0.1 });
 
     console.log(`🧪 Testing ${name}...`);
     await suite.run(agent, { iterations: 20, concurrency: 3 });
@@ -153,7 +153,7 @@ compareProviders();
 Add your own OpenAI or Anthropic-compatible endpoints:
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "my-provider/gpt-4",
   apiKey: process.env.MY_API_KEY,
@@ -173,7 +173,7 @@ const agent = new TestAgent({
 Test many models through a single proxy:
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "litellm/gpt-4",
   apiKey: process.env.LITELLM_API_KEY,

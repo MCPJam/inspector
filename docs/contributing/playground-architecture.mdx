@@ -4,6 +4,24 @@ description: "Technical deep-dive into the MCPJam Inspector Playground: LLM chat
 icon: "message-circle"
 ---
 
+<Note>
+**Heads up.** Some of the diagrams and file paths below predate the chat-v2 / hostConfig consolidation. The current architecture is summarized in the [HostConfig consolidation](#hostconfig-consolidation) section directly below; treat that as the canonical reference when it conflicts with the older sections.
+</Note>
+
+## HostConfig consolidation
+
+Playground (live chat) and Evals share a single, portable `hostConfig` core that lives in `@mcpjam/sdk/host-config/`. Both surfaces are wired onto the **same** canonicalizer, host-execution policy resolver, OpenAI-Apps compat resolver, and `filterAppOnlyTools` predicate — there is no playground fork.
+
+Key consumption points in the inspector server:
+
+- `server/utils/chat-v2-orchestration.ts:prepareChatV2` — the live playground entry point. Imports `filterAppOnlyTools` from `@mcpjam/sdk/host-config/internal` (Stage 3); the local copy is deleted. The `@modelcontextprotocol/ext-apps` dep stays only because three other server files still use it.
+- `server/services/evals/host-execution-policy.ts` — **deleted** after Stage 4. The eval path imports `extractHostExecutionPolicy` and `buildHostIterationMetadata` directly from `@mcpjam/sdk/host-config/internal`.
+- `server/services/evals/compat-runtime.ts` — slimmed to only `loadSuiteHostConfig` (Convex-bound). `resolveOpenAiCompatForHostConfig` and friends moved to the SDK.
+
+The MCPJam backend (`mcpjam-backend/convex/lib/hostConfigV2.ts`) imports the canonicalizer + hasher from the same `@mcpjam/sdk/host-config/internal` subpath — one source of truth, no hand-mirror. See [evals-architecture.mdx → HostConfig consolidation](./evals-architecture#hostconfig-consolidation) for the cross-surface picture.
+
+**Two distinct sandbox layers.** The persisted host-config sandbox shape (`mcpProfile.apps.sandbox.csp` + `.permissions`) is allowlist-only — no `deny`. The runtime CSP **resolver** in `sandbox-policy.ts` carries `deny` plus a hosted clamp. They share only leaf subtypes; do not reuse the resolver's policy types for persisted configs.
+
 ## Overview
 
 The **Playground** (Chat Tab) is MCPJam Inspector's interactive testing environment for MCP servers with LLM integration. It enables real-time conversation with AI models while automatically invoking MCP tools, handling elicitations, and streaming responses.

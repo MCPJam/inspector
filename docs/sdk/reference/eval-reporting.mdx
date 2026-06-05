@@ -15,7 +15,7 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
-`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result’s trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`TestAgent`](/sdk/reference/test-agent) was constructed with [`mcpClientManager`](/sdk/reference/test-agent#parameters).
+`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result’s trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
 
 ---
 
@@ -227,7 +227,7 @@ If you also provide `serverNames`, inferred replay configs are filtered to those
 Uploaded runs can show **Replay this run** / server-side MCP replay when the ingest payload includes derived **`serverReplayConfigs`** (stored as **`hasServerReplayConfig`** on the run). In practice:
 
 - **HTTP MCP (`url`)** — Replay configs are built for typical streamable HTTP connections. **Stdio** transports **do not** produce entries from [`MCPClientManager.getServerReplayConfigs()`](/sdk/reference/mcp-client-manager); use HTTP when you need dashboard replay.
-- **`TestAgent` vs reporter** — Putting `mcpClientManager` on [`TestAgent`](/sdk/reference/test-agent) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
+- **`HostRunner` vs reporter** — Putting `mcpClientManager` on [`HostRunner`](/sdk/reference/host-runner) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
 - **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
 
 **LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite’s models.
@@ -238,7 +238,7 @@ Uploaded runs can show **Replay this run** / server-side MCP replay when the ing
 // Pass `agent` or `mcpClientManager` when you need server replay metadata in MCPJam
 const reporter = createEvalRunReporter({ suiteName: "Prompt Tests", agent });
 
-const result = await agent.prompt("Add 2 and 3");
+const result = await agent.run("Add 2 and 3");
 reporter.addFromPrompt(result, {
   caseTitle: "addition",
   passed: result.hasToolCall("add"),
@@ -254,7 +254,7 @@ const reporter = createEvalRunReporter({ suiteName: "Full Suite" });
 
 const test = new EvalTest({
   name: "addition",
-  test: async (agent) => (await agent.prompt("Add 2+3")).hasToolCall("add"),
+  test: async (agent) => (await agent.run("Add 2+3")).hasToolCall("add"),
 });
 
 const run = await test.run(agent, { iterations: 10 });
@@ -356,8 +356,35 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
 | `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
 | `tags` | `string[]` | No | Free-form tags attached to the run for filtering in the MCPJam dashboard |
-| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an agent created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result) |
+| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an executor (HostRunner / HostRuntime) created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result). Field name predates the Stage 4 rename; any `HostExecutor` is accepted. |
 | `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
+| `host` | `Host` | No | Explicit host snapshot override. The reporter prefers `iteration.hostSnapshot` (per-iteration capture from `HostRuntime`) and falls back to `executor.getHostSnapshot?.()`; supply `host` only when neither source is available. See [Run-level host snapshot](#run-level-host-snapshot) below. |
+
+### Run-level host snapshot
+
+When the inspector backend advertises the `evalsHostConfig` capability at `GET /sdk/v1/info`, the reporter additionally includes a normalized + content-hashed host config alongside the run body:
+
+```jsonc
+POST /sdk/v1/evals/runs/start
+{
+  "suiteName": "...",
+  "results": [...],
+  "hostConfig":     {/* canonical HostConfigInputV2 with serverIds stripped */},
+  "hostConfigHash": "sha256(canonical)"
+}
+```
+
+**Source order (highest priority first):**
+
+1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime` (Stage 4). Reflects the bound `Host` state at the iteration's end.
+2. `executor.getHostSnapshot?.()` — fallback for executors that don't expose per-iteration snapshots.
+3. `MCPJamReportingConfig.host` — explicit override, compatibility path.
+
+**Pass-1 homogeneity gate.** The reporter only sends a run-level `{ hostConfig, hostConfigHash }` when all available iteration snapshots canonicalize to the same hash. Heterogeneous runs (e.g. mutating the bound `Host` between iterations) omit the run-level field — per-iteration wire support is a later stage.
+
+**Fail-safe to "no capability".** The lazy capability probe (`GET /sdk/v1/info`, cached per `baseUrl`) treats any error — network failure, 404, timeout, malformed JSON — as "no capability". The reporter then omits `hostConfig` rather than failing the eval upload. Old backends without the capability are unaffected; the body shape stays the same.
+
+**Server-id normalization.** Runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) are stripped by `normalizeSdkEvalHostConfigForWire` on both ends so SDK runtime ids like `"everything"` never reach the backend's `validateServerScope` as `Id<'servers'>`. The persisted `hostConfigsV2` row's hash will differ from the wire `hostConfigHash` because suite-resolved Convex server ids are layered on top at storage time — the wire hash is a transport-integrity check, not the storage id.
 
 ### MCPServerReplayConfig
 
@@ -406,7 +433,7 @@ Advanced replay override. Most users should not construct this manually.
 | `successPredicates` | `Predicate[]` | No | State-based predicate gate evaluated over the iteration transcript. See [Predicate gate](#predicate-gate). |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
 | `matchOptions` | `EvalMatchOptions` | No | Per-result match options. When present, the inspector snapshots these onto the iteration so historical pass/fail computation honors them. See [`EvalMatchOptions`](/sdk/reference/validators#evalmatchoptions) |
-| `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `TestAgent` had no `mcpClientManager` |
+| `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `HostRunner` had no `mcpClientManager` |
 
 ### Predicate gate
 
