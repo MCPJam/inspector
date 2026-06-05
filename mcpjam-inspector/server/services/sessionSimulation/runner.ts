@@ -17,6 +17,10 @@ import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/e
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
 import {
+  evalTraceSnapshotToPayload,
+  sanitizeWidgetForBackend,
+} from "@/shared/widget-snapshot";
+import {
   createRun,
   getRun,
   personaNextTurn,
@@ -725,9 +729,14 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
     snapshots.map(async (snap) => {
       // The capture helper short-circuits when readResource fails or the
       // resource is missing HTML, but it still emits a snapshot stub.
-      // The Convex mutation requires a `widgetHtmlBlobId`, so drop the
-      // stub instead of sending an invalid call.
-      if (!snap.widgetHtmlBlobId) return;
+      // `evalTraceSnapshotToPayload` returns null in that case so we
+      // drop the stub instead of sending an invalid call.
+      const widgetPayload = evalTraceSnapshotToPayload(snap);
+      if (!widgetPayload) return;
+      // Sanitize for Convex transport — `widgetPermissions` is free-form
+      // and JSON Schema fragments use $-prefixed keys (`$ref`, `$schema`)
+      // which Convex rejects at the argument-validator boundary.
+      const sanitized = sanitizeWidgetForBackend(widgetPayload);
       try {
         await convexClient.mutation(
           "chatSessions:createWidgetSnapshot" as any,
@@ -735,22 +744,7 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
             chatboxId,
             ...(accessVersion !== undefined ? { accessVersion } : {}),
             chatSessionId,
-            serverId: snap.serverId,
-            toolCallId: snap.toolCallId,
-            toolName: snap.toolName,
-            widgetHtmlBlobId: snap.widgetHtmlBlobId,
-            uiType: snap.protocol,
-            ...(snap.resourceUri ? { resourceUri: snap.resourceUri } : {}),
-            ...(snap.widgetCsp ? { widgetCsp: snap.widgetCsp } : {}),
-            ...(snap.widgetPermissions
-              ? { widgetPermissions: snap.widgetPermissions }
-              : {}),
-            ...(snap.widgetPermissive !== undefined
-              ? { widgetPermissive: snap.widgetPermissive }
-              : {}),
-            ...(snap.prefersBorder !== undefined
-              ? { prefersBorder: snap.prefersBorder }
-              : {}),
+            ...sanitized,
           },
         );
       } catch (err) {

@@ -11,6 +11,10 @@ import {
   useWidgetDebugStore,
   type WidgetDebugInfo,
 } from "@/stores/widget-debug-store";
+import {
+  sanitizeWidgetForBackend,
+  type SharedChatWidgetSnapshotPayload,
+} from "@/shared/widget-snapshot";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
@@ -484,12 +488,15 @@ export function useSharedChatWidgetCapture({
 
       if (!scopeStillValid()) return;
 
-      const snapshotPayload = {
-        ...(chatboxId ? { chatboxId } : {}),
-        ...(chatboxId && Number.isFinite(accessVersion)
-          ? { accessVersion }
-          : {}),
-        chatSessionId: sessionIdRef.current,
+      // Build the shared payload (the part every writer to
+      // `sharedChatWidgetSnapshots` produces), sanitize for Convex
+      // transport, then layer the playground/chatbox session context
+      // (chatboxId / accessVersion / chatSessionId) on top. The shared
+      // pipeline owns the $-key escaping inside `widgetPermissions`
+      // (JSON Schema fragments routinely use `$ref` / `$schema` which
+      // Convex's argument validator rejects raw) and any future
+      // normalization the table wants from every caller.
+      const widgetPayload: SharedChatWidgetSnapshotPayload = {
         ...(toolSource.serverId ? { serverId: toolSource.serverId } : {}),
         toolCallId,
         toolName: toolSource.toolName,
@@ -503,6 +510,14 @@ export function useSharedChatWidgetCapture({
         widgetPermissive: widget.csp?.mode === "permissive",
         prefersBorder: widget.prefersBorder,
         displayContext: toDisplayContext(widget.globals),
+      };
+      const snapshotPayload = {
+        ...(chatboxId ? { chatboxId } : {}),
+        ...(chatboxId && Number.isFinite(accessVersion)
+          ? { accessVersion }
+          : {}),
+        chatSessionId: sessionIdRef.current,
+        ...sanitizeWidgetForBackend(widgetPayload),
       };
       const snapshotResult = await createWidgetSnapshot(snapshotPayload);
 
