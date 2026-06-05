@@ -346,4 +346,41 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
     );
     expect(report!.body.hostConfigHash).toBe(expectedHash);
   });
+
+  it("fail-safe: a throwing executor.getHostSnapshot does NOT crash the report — wire pair is omitted with a warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).endsWith("/sdk/v1/info")) return capabilityResponse(1);
+      return okResponse({
+        suiteId: "s",
+        runId: "r",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      });
+    });
+    global.fetch = fetchMock as any;
+
+    const result = await reportEvalResults({
+      apiKey: "k",
+      baseUrl: "https://example.com",
+      suiteName: "S",
+      executor: {
+        getHostSnapshot: () => {
+          throw new Error("boom: malformed snapshot");
+        },
+      },
+      results: smallResults(),
+    });
+
+    expect(result.runId).toBeDefined();
+    const report = findRequestByUrl(fetchMock, "/sdk/v1/evals/report");
+    expect(report).toBeDefined();
+    expect(report!.body.hostConfig).toBeUndefined();
+    expect(report!.body.hostConfigHash).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("omitting hostConfig wire pair")
+    );
+    warn.mockRestore();
+  });
 });

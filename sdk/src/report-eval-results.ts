@@ -555,13 +555,24 @@ async function resolveWireHostConfigForRun(
     hostSnapshot?: HostJson | undefined;
   }[];
 
-  const snapshot = await resolveRunLevelHostSnapshot({
-    iterations,
-    executor: input.executor,
-    explicitHost: input.host,
-  });
-  if (!snapshot) return null;
-  return await buildSdkEvalsWireHostConfig(snapshot);
+  // Fail-safe: a malformed hostSnapshot, unexpected executor return, or
+  // non-canonicalizable host JSON must NOT fail the whole eval upload.
+  // Match the capability-probe fail-safe pattern — log + omit the wire pair.
+  try {
+    const snapshot = await resolveRunLevelHostSnapshot({
+      iterations,
+      executor: input.executor,
+      explicitHost: input.host,
+    });
+    if (!snapshot) return null;
+    return await buildSdkEvalsWireHostConfig(snapshot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[mcpjam/sdk] eval reporting: omitting hostConfig wire pair (${message})`
+    );
+    return null;
+  }
 }
 
 async function reportEvalResultsInternal(
