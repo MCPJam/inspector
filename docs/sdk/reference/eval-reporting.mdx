@@ -332,6 +332,9 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
   agent?: {
     getServerReplayConfigs?: () => MCPServerReplayConfig[] | undefined;
   };
+  executor?: {
+    getHostSnapshot?: () => HostJson | undefined;
+  };
   mcpClientManager?: MCPClientManager;
 };
 ```
