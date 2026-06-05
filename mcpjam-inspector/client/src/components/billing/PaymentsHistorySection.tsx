@@ -109,7 +109,7 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
             <TableRow>
               <TableHead>Date</TableHead>
               <TableHead>Amount</TableHead>
-              <TableHead>Credits</TableHead>
+              <TableHead>Item</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Receipt</TableHead>
             </TableRow>
@@ -120,11 +120,11 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
                 <TableCell className="whitespace-nowrap text-sm">
                   {formatDate(entry.occurredAt)}
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                  {formatUsd(entry.pricePaidCents)}
+                <TableCell className="whitespace-nowrap text-sm">
+                  <AmountCell entry={entry} />
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">
-                  {entry.displayCredits}
+                  <ItemCell entry={entry} />
                 </TableCell>
                 <TableCell>
                   <StatusBadge entry={entry} />
@@ -152,17 +152,48 @@ function MobileRow({ entry }: { entry: PaymentHistoryEntry }) {
     <div className="flex flex-col gap-1.5 rounded-md border border-border/60 p-3">
       <div className="flex items-center justify-between text-sm">
         <span>{formatDate(entry.occurredAt)}</span>
-        <span className="tabular-nums font-medium">
-          {formatUsd(entry.pricePaidCents)}
-        </span>
+        <AmountCell entry={entry} align="right" />
       </div>
       <div className="text-xs text-muted-foreground">
-        {entry.displayCredits}
+        {entry.description} · {entry.displayCredits}
       </div>
       <div className="flex items-center justify-between">
         <StatusBadge entry={entry} />
         <ReceiptCell entry={entry} />
       </div>
+    </div>
+  );
+}
+
+function AmountCell({
+  entry,
+  align = "left",
+}: {
+  entry: PaymentHistoryEntry;
+  align?: "left" | "right";
+}) {
+  const alignmentClass = align === "right" ? "items-end" : "items-start";
+  return (
+    <div className={`flex flex-col ${alignmentClass}`}>
+      <span className="tabular-nums font-medium">
+        {formatUsd(entry.pricePaidCents)}
+      </span>
+      {entry.amountSubtitle ? (
+        <span className="text-xs text-muted-foreground">
+          {entry.amountSubtitle}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function ItemCell({ entry }: { entry: PaymentHistoryEntry }) {
+  return (
+    <div className="flex flex-col">
+      <span>{entry.description}</span>
+      <span className="text-xs text-muted-foreground">
+        {entry.displayCredits}
+      </span>
     </div>
   );
 }

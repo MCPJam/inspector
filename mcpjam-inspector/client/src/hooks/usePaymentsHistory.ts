@@ -10,11 +10,16 @@ export type PaymentHistoryStatus =
   | "partially_refunded"
   | "disputed";
 
+export type PaymentHistoryKind = "credit_topup" | "team_plan";
+
 export interface PaymentHistoryEntry {
   id: string;
   sessionId: string;
+  kind: PaymentHistoryKind;
   pricePaidCents: number;
   displayCredits: string;
+  description: string;
+  amountSubtitle?: string;
   /** Paid cents handed back when refunded/charged back. Reversed rows only. */
   reversedPaidCents?: number;
   status: PaymentHistoryStatus;
@@ -25,8 +30,11 @@ export interface PaymentHistoryEntry {
 interface RawEntry {
   id?: unknown;
   sessionId?: unknown;
+  kind?: unknown;
   pricePaidCents?: unknown;
   displayCredits?: unknown;
+  description?: unknown;
+  amountSubtitle?: unknown;
   reversedPaidCents?: unknown;
   status?: unknown;
   occurredAt?: unknown;
@@ -45,6 +53,9 @@ const VALID_STATUSES = new Set<PaymentHistoryStatus>([
 const isValidStatus = (value: unknown): value is PaymentHistoryStatus =>
   typeof value === "string" &&
   VALID_STATUSES.has(value as PaymentHistoryStatus);
+
+const isValidKind = (value: unknown): value is PaymentHistoryKind =>
+  value === "credit_topup" || value === "team_plan";
 
 const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
   // Accept either a bare array or `{ items: [...] }`. Loose-shape parsing
@@ -68,11 +79,24 @@ const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
     ) {
       continue;
     }
+    const kind = isValidKind(item.kind) ? item.kind : "credit_topup";
+    const amountSubtitle =
+      typeof item.amountSubtitle === "string" && item.amountSubtitle.length > 0
+        ? item.amountSubtitle
+        : undefined;
     out.push({
       id: item.id,
       sessionId: item.sessionId,
+      kind,
       pricePaidCents: item.pricePaidCents,
       displayCredits: item.displayCredits,
+      description:
+        typeof item.description === "string" && item.description.length > 0
+          ? item.description
+          : kind === "team_plan"
+            ? "Team plan included credits"
+            : "Credit top-up",
+      ...(amountSubtitle ? { amountSubtitle } : {}),
       status: item.status,
       occurredAt: item.occurredAt,
       ...(typeof item.reversedPaidCents === "number"

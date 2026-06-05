@@ -30,8 +30,13 @@ function makeEntry(
   return {
     id: overrides.id,
     sessionId: overrides.sessionId ?? `cs_${overrides.id}`,
+    kind: overrides.kind ?? "credit_topup",
     pricePaidCents: overrides.pricePaidCents ?? 1000,
     displayCredits: overrides.displayCredits ?? "1,000 credits",
+    description: overrides.description ?? "Credit top-up",
+    ...(overrides.amountSubtitle !== undefined
+      ? { amountSubtitle: overrides.amountSubtitle }
+      : {}),
     status: overrides.status ?? "succeeded",
     occurredAt: overrides.occurredAt ?? Date.now(),
     ...(overrides.reversedPaidCents !== undefined
@@ -97,6 +102,17 @@ describe("PaymentsHistorySection", () => {
         occurredAt: Date.UTC(2026, 4, 14),
       }),
       makeEntry({
+        id: "team-plan",
+        sessionId: "org_1:period:team",
+        kind: "team_plan",
+        pricePaidCents: 7600,
+        displayCredits: "12,000 credits",
+        description: "Team plan included credits",
+        amountSubtitle: "Catalog amount",
+        status: "succeeded",
+        occurredAt: Date.UTC(2026, 4, 12),
+      }),
+      makeEntry({
         id: "3",
         sessionId: "cs_pending",
         pricePaidCents: 5000,
@@ -133,7 +149,7 @@ describe("PaymentsHistorySection", () => {
         screen.getAllByRole("link", { name: /View receipt/ })
       ).toHaveLength(2);
       // Succeeded + no URL → "Not available"
-      expect(screen.getAllByText(/Not available/)).toHaveLength(2);
+      expect(screen.getAllByText(/Not available/)).toHaveLength(4);
       // Pending → "Processing"
       expect(screen.getAllByText(/Processing/)).toHaveLength(2);
       // Failed → em-dash
@@ -167,6 +183,16 @@ describe("PaymentsHistorySection", () => {
       expect(props).not.toHaveProperty("receipt_url");
       expect(props).not.toHaveProperty("url");
       expect(typeof props.entry_age_days).toBe("number");
+    });
+
+    it("renders team plan rows with catalog amount context", () => {
+      render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
+      expect(screen.getAllByText("Team plan included credits")).toHaveLength(1);
+      expect(screen.getAllByText("Catalog amount")).toHaveLength(2);
+      expect(screen.getAllByText("$76")).toHaveLength(2);
+      expect(
+        screen.getByText(/Team plan included credits · 12,000 credits/)
+      ).toBeInTheDocument();
     });
 
     it("fires credit_topup_history_viewed once with bucketed entry_count", () => {

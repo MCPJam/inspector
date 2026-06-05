@@ -64,8 +64,11 @@ describe("usePaymentsHistory", () => {
           {
             id: "row_1",
             sessionId: "cs_1",
+            kind: "team_plan",
             pricePaidCents: 2500,
             displayCredits: "2,500 credits",
+            description: "Team plan included credits",
+            amountSubtitle: "Catalog amount",
             status: "succeeded",
             occurredAt: 100,
             receiptUrl: "https://pay.stripe.com/receipts/abc",
@@ -77,8 +80,11 @@ describe("usePaymentsHistory", () => {
       expect(result.current.entries?.[0]).toEqual({
         id: "row_1",
         sessionId: "cs_1",
+        kind: "team_plan",
         pricePaidCents: 2500,
         displayCredits: "2,500 credits",
+        description: "Team plan included credits",
+        amountSubtitle: "Catalog amount",
         status: "succeeded",
         occurredAt: 100,
         receiptUrl: "https://pay.stripe.com/receipts/abc",
@@ -99,6 +105,9 @@ describe("usePaymentsHistory", () => {
       const { result } = renderHook(() => usePaymentsHistory(ORG_ID));
       expect(result.current.entries).toHaveLength(1);
       expect(result.current.entries?.[0].status).toBe("pending");
+      expect(result.current.entries?.[0].kind).toBe("credit_topup");
+      expect(result.current.entries?.[0].description).toBe("Credit top-up");
+      expect(result.current.entries?.[0].amountSubtitle).toBeUndefined();
       expect(result.current.entries?.[0].receiptUrl).toBeUndefined();
     });
 
