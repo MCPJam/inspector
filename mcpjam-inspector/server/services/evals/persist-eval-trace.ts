@@ -269,7 +269,15 @@ function serializeWidgetsForBackend(
     if (typeof snap.prefersBorder === "boolean") {
       widget.prefersBorder = snap.prefersBorder;
     }
-    out.push(widget);
+    // `widgetPermissions` is free-form `Record<string, unknown>` on the
+    // wire (typed `v.any()` server-side). JSON Schema fragments commonly
+    // appear there and use `$`-prefixed keys (`$ref`, `$schema`), which
+    // Convex rejects at the argument validator boundary, failing the
+    // whole `appendEvalTurnTrace` call and killing the fanout. Sanitize
+    // the widget so any `$`-prefixed key is escaped to
+    // `__convexReserved__*` for transport — same protection
+    // `sessionMessages` / `spans` / `prompts` already get.
+    out.push(sanitizeForConvexTransport(widget));
   }
   return out;
 }

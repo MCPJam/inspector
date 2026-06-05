@@ -574,6 +574,47 @@ describe("persistEvalTraceFanout — widget serialization", () => {
     expect(widgets[0].toolCallId).toBe("good");
   });
 
+  test("sanitizes $-prefixed keys in widgetPermissions (Convex reserved-key protection)", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [{ role: "user", content: "q" } as ModelMessage],
+      spans: undefined,
+      prompts: undefined,
+      widgetSnapshots: [
+        makeSnapshot({
+          // JSON Schema-shaped permissions — `$ref` / `$schema` would
+          // otherwise be rejected by Convex's argument validator and
+          // collapse the entire `appendEvalTurnTrace` call.
+          widgetPermissions: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            properties: {
+              clipboard: {
+                $ref: "#/definitions/Capability",
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const appendCalls = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    const perms = ((appendCalls[0]!.args.turn as { widgets: any[] }).widgets[0])
+      .widgetPermissions;
+    expect(perms.$schema).toBeUndefined();
+    expect(perms.__convexReserved__schema).toBe(
+      "https://json-schema.org/draft/2020-12/schema",
+    );
+    expect(perms.properties.clipboard.$ref).toBeUndefined();
+    expect(perms.properties.clipboard.__convexReserved__ref).toBe(
+      "#/definitions/Capability",
+    );
+  });
+
   test("normalizes widgetCsp to backend shape, drops unknown keys", async () => {
     const { client, calls } = makeMockClient({ flagEnabled: true });
 
