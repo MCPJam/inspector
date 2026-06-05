@@ -29,6 +29,13 @@ function makeMockClient(opts: {
       if (opts.appendThrows) throw opts.appendThrows;
       return opts.appendResult ?? { skipped: false };
     }
+    if (ref === "testSuites:lockEvalSession") {
+      // Default success response so tests that exercise the lock
+      // helper's happy path don't accidentally take the swallowed-error
+      // branch. Tests that need the failure path stub a thrower client
+      // directly instead of going through this factory.
+      return { skipped: false, locked: true, alreadyLocked: false };
+    }
     throw new Error(`unexpected action ${ref}`);
   });
   return {
@@ -92,7 +99,7 @@ describe("persistEvalTraceFanout", () => {
     ).toHaveLength(0);
   });
 
-  test("fans out N per-turn calls and sets terminal only on the last", async () => {
+  test("fans out N per-turn calls without setting terminal (deferred to lockEvalSessionAfterUpdate)", async () => {
     const { client, calls } = makeMockClient({ flagEnabled: true });
 
     const spans: EvalTraceSpan[] = [
@@ -195,9 +202,12 @@ describe("persistEvalTraceFanout", () => {
       expect(turn.sessionMessages).toHaveLength((i + 1) * 2);
     }
 
-    // PR-2 review fix #2: the fanout no longer fires the terminal lock.
-    // None of the per-turn calls carry a `terminal` arg; callers fire
-    // `lockEvalSessionAfterUpdate` AFTER updateTestIteration succeeds.
+    // PR-2 review fix #2: the fanout no longer fires the terminal
+    // lock. None of the per-turn calls carry a `terminal` arg;
+    // callers fire `lockEvalSessionAfterUpdate` AFTER
+    // updateTestIteration succeeds. Test name was "sets terminal
+    // only on the last" pre-review; renamed to reflect actual
+    // behavior.
     for (const call of appendCalls) {
       expect(call.args.terminal).toBeUndefined();
     }
