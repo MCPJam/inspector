@@ -9,35 +9,38 @@
  * No glassy backdrops, no floaty shadows, sharp warm borders, generous space.
  * ─────────────────────────────────────────────────────────────────────────── */
 
+/* BEGIN GENERATED — sync via `npm run docs:sync-tokens` */
+/* Mirrors design-system/src/tokens.css — edits here will be overwritten. */
 :root {
-  /* product tokens, OKLCH → fixed for Mintlify's CSS scope */
-  --mcj-paper:        oklch(0.9818 0.0054 95.0986);   /* page bg */
-  --mcj-paper-2:      oklch(0.9341 0.0153 90.239);    /* muted surface */
-  --mcj-paper-3:      oklch(0.9245 0.0138 92.9892);   /* secondary surface */
-  --mcj-ink:          oklch(0.3438 0.0269 95.7226);   /* body */
-  --mcj-ink-strong:   oklch(0.1908 0.002  106.5859);  /* headings */
-  --mcj-ink-muted:    oklch(0.6059 0.0075 97.4233);   /* muted copy */
-  --mcj-rule:         oklch(0.8847 0.0069 97.3627);   /* hairlines */
+  --mcj-paper:        oklch(0.9818 0.0054 95.0986);
+  --mcj-paper-2:      oklch(0.9341 0.0153 90.239);
+  --mcj-paper-3:      oklch(0.9245 0.0138 92.9892);
+  --mcj-ink:          oklch(0.3438 0.0269 95.7226);
+  --mcj-ink-strong:   oklch(0.1908 0.002 106.5859);
+  --mcj-ink-muted:    oklch(0.6059 0.0075 97.4233);
+  --mcj-rule:         oklch(0.8847 0.0069 97.3627);
   --mcj-rule-strong:  oklch(0.7621 0.0156 98.3528);
-  --mcj-orange:       oklch(0.6832 0.1382 38.744);    /* #EF5B25 */
-  --mcj-orange-soft:  oklch(0.6832 0.1382 38.744 / 0.10);
+  --mcj-orange:       oklch(0.6832 0.1382 38.744);
   --mcj-orange-edge:  oklch(0.6171 0.1375 39.0427);
   --mcj-radius:       0.5rem;
+  --mcj-orange-soft:  oklch(0.6832 0.1382 38.744 / 0.10);
 }
 
 .dark, [data-theme="dark"] {
   --mcj-paper:        oklch(0.2679 0.0036 106.6427);
   --mcj-paper-2:      oklch(0.2213 0.0038 106.707);
-  --mcj-paper-3:      oklch(0.213  0.0078 95.4245);
+  --mcj-paper-3:      oklch(0.213 0.0078 95.4245);
   --mcj-ink:          oklch(0.8074 0.0142 93.0137);
   --mcj-ink-strong:   oklch(0.9818 0.0054 95.0986);
   --mcj-ink-muted:    oklch(0.7713 0.0169 99.0657);
   --mcj-rule:         oklch(0.3618 0.0101 106.8928);
   --mcj-rule-strong:  oklch(0.4336 0.0113 100.2195);
   --mcj-orange:       oklch(0.6724 0.1308 38.7559);
-  --mcj-orange-soft:  oklch(0.6724 0.1308 38.7559 / 0.14);
   --mcj-orange-edge:  oklch(0.6724 0.1308 38.7559);
+  --mcj-radius:       0.5rem;
+  --mcj-orange-soft:  oklch(0.6724 0.1308 38.7559 / 0.14);
 }
+/* END GENERATED */
 
 /* ── Page chrome ────────────────────────────────────────────────────────── */
 
