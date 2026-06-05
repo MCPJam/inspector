@@ -69,7 +69,11 @@
                 "tag": "NEW"
               },
               "inspector/views",
-              "inspector/evals"
+              "inspector/evals",
+              {
+                "page": "inspector/host-templates",
+                "tag": "NEW"
+              }
             ]
           },
           {
