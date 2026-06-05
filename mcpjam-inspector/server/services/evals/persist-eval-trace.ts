@@ -19,8 +19,10 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
  * readers (eval-diff, judge, server-quality, the unified Sessions
  * viewer) can address each turn individually. This helper slices the
  * trace by `promptIndex` and calls `api.testSuites.appendEvalTurnTrace`
- * per turn, with `terminal: { reason }` on the final call so the
- * chatSession lock fires once.
+ * per turn. **No `terminal` is set on the per-turn calls** — callers
+ * fire `lockEvalSessionAfterUpdate` AFTER `updateTestIteration`
+ * succeeds so a downstream iteration-row failure cannot leave a
+ * locked transcript without a finalized iteration (PR-2 review fix #2).
  *
  * Cadence-wise this is "per-turn data, single-call timing" — the
  * network round-trips happen at finishIteration time, not during the
@@ -41,10 +43,21 @@ import { sanitizeForConvexTransport } from "./convex-sanitize.js";
  *     against the now-locked session or, worse, EVAL_SESSION_LOCKED
  *     if any turn index doesn't match.
  *   - `{ persisted: false, error }`: the per-turn fanout failed mid-
- *     stream. Caller should fall back to today's legacy path. The
- *     chatSessions row may be partially populated; the row will be
- *     locked on the next iteration finalize attempt only if the
- *     caller retries.
+ *     stream. Caller should fall back to a forced-legacy-blob call by
+ *     passing `forceLegacyTraceBlob: true` to `updateTestIteration`,
+ *     which bypasses the backend's W1 chatSessions path even when the
+ *     flag is on. Without that escape hatch the legacy fallback would
+ *     re-enter the chatSessions writer with `promptIndex: 0` + full
+ *     transcript, overwriting any partially-fanned-out turn rows.
+ *
+ * Flag-cache caveat: the cached `enabled` value is process-latched.
+ * If the inspector starts before the backend deploys the
+ * `isEvalChatSessionsWriterEnabled` action it caches `false`
+ * permanently; a subsequent flag flip on the backend will not take
+ * effect until the inspector process restarts. Same for the opposite
+ * direction (cached `true` won't downgrade if the backend flips off).
+ * Acceptable trade-off for a process-scoped feature flag; document
+ * this in the deploy runbook before flipping the flag in prod.
  *
  * Widgets: PR-2 drops widgets from the forwarded payload for the same
  * reason PR-1's W1 path did — `EvalTraceWidgetSnapshot.serverId` is

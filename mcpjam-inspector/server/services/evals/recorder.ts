@@ -268,11 +268,21 @@ export const createSuiteRunRecorder = ({
       });
       if (fanout?.persisted === false) {
         logger.warn(
-          "[evals] persistEvalTraceFanout failed; falling back to legacy single-call path",
+          "[evals] persistEvalTraceFanout failed; falling back to forced-legacy-blob path",
           { iterationId, error: fanout.error.message },
         );
       }
       const sendTraceFieldsToUpdate = fanout?.persisted !== true;
+      // When the fanout failed mid-stream we MUST force the backend
+      // into the legacy blob path. Otherwise — with the writer flag
+      // still on — `updateTestIteration` re-enters the chatSessions
+      // W1 path with `promptIndex: 0` + full transcript, which would
+      // overwrite any partial turn rows the fanout already wrote
+      // and possibly fight an existing lock. The escape hatch makes
+      // the iteration replayable from `testIteration.blob` while the
+      // partial chatSessions data is left inert (source-aware reader
+      // tolerates absence).
+      const forceLegacyTraceBlob = fanout?.persisted === false;
 
       try {
         await convexClient.action("testSuites:updateTestIteration" as any, {
@@ -282,6 +292,7 @@ export const createSuiteRunRecorder = ({
           result,
           actualToolCalls: sanitizeForConvexTransport(toolsCalled),
           tokensUsed: usage.totalTokens ?? 0,
+          ...(forceLegacyTraceBlob ? { forceLegacyTraceBlob: true } : {}),
           ...(sendTraceFieldsToUpdate
             ? {
                 messages: sanitizeForConvexTransport(messages),

@@ -5,6 +5,7 @@ import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
 import {
   __resetEvalChatSessionsWriterFlagCacheForTests,
   isEvalChatSessionsWriterEnabled,
+  lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "../persist-eval-trace.js";
 
@@ -362,6 +363,30 @@ describe("persistEvalTraceFanout", () => {
     expect(appendCall!.args.startedAt).toBe(realIterationStart);
   });
 
+  test("PR-2 fallback escape hatch: helper does not invoke the lock action itself", async () => {
+    // Caller is responsible for firing lockEvalSessionAfterUpdate AFTER
+    // updateTestIteration succeeds. The fanout helper must NEVER make
+    // the lock call (the whole point of the split is to defer the lock
+    // past the iteration-row write).
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [
+        { role: "user", content: "q" } as ModelMessage,
+        { role: "assistant", content: "a" } as ModelMessage,
+      ],
+      spans: undefined,
+      prompts: undefined,
+    });
+
+    const lockCalls = calls.filter(
+      (c) => c.ref === "testSuites:lockEvalSession",
+    );
+    expect(lockCalls).toHaveLength(0);
+  });
+
   test("falls back to Date.now() for startedAt when iterationStartedAt is absent", async () => {
     const { client, calls } = makeMockClient({ flagEnabled: true });
     const before = Date.now();
@@ -380,5 +405,47 @@ describe("persistEvalTraceFanout", () => {
     );
     expect(appendCall!.args.startedAt).toBeGreaterThanOrEqual(before);
     expect(appendCall!.args.startedAt).toBeLessThanOrEqual(after);
+  });
+});
+
+describe("lockEvalSessionAfterUpdate", () => {
+  test("calls testSuites:lockEvalSession with the right iterationId + reason", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    await lockEvalSessionAfterUpdate({
+      convexClient: client,
+      iterationId: "iter-7",
+      reason: "eval_failed",
+    });
+
+    const lockCalls = calls.filter(
+      (c) => c.ref === "testSuites:lockEvalSession",
+    );
+    expect(lockCalls).toHaveLength(1);
+    expect(lockCalls[0]!.args).toEqual({
+      iterationId: "iter-7",
+      reason: "eval_failed",
+    });
+  });
+
+  test("swallows action errors so a missed lock doesn't fail a completed iteration", async () => {
+    const action = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:lockEvalSession") {
+        throw new Error("convex unreachable");
+      }
+      return undefined;
+    });
+    const client = { action } as unknown as ConvexHttpClient;
+
+    // Must not throw — the iteration is already finalized at the call
+    // site and the auto-lock inside internalUpdateTestIteration is the
+    // backstop (PR-2 review #4 defense-in-depth).
+    await expect(
+      lockEvalSessionAfterUpdate({
+        convexClient: client,
+        iterationId: "iter-7",
+        reason: "eval_completed",
+      }),
+    ).resolves.toBeUndefined();
   });
 });
