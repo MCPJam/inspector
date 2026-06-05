@@ -243,6 +243,45 @@ describe("update-listeners", () => {
     }
   });
 
+  it("still surfaces the download to the renderer when it completes AFTER the watchdog fired", async () => {
+    // Regression: bugbot flagged that legitimate slow downloads exceeding the
+    // watchdog window would be silently dropped. Watchdog should clear
+    // installRequested + toast the user, but a later update-downloaded must
+    // still flip the status to "downloaded" so the user can click Update
+    // again and install. We intentionally do NOT auto-quitAndInstall here,
+    // because the user already saw an error toast and may be mid-task.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledInstallTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      // Watchdog fires.
+      vi.advanceTimersByTime(1_000);
+      expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+      (window.webContents.send as any).mockClear();
+
+      // Download finishes much later.
+      vi.advanceTimersByTime(10_000);
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+      // Renderer sees the staged update so the Update button reappears.
+      expect(window.webContents.send).toHaveBeenCalledWith(
+        "update-status",
+        expect.objectContaining({ kind: "downloaded", version: "2.5.0" }),
+      );
+      // But we don't auto-install behind the user's back.
+      expect(quitAndInstallMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears the watchdog when update-downloaded fires before timeout", async () => {
     vi.useFakeTimers();
     try {

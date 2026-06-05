@@ -8,10 +8,15 @@ export type UpdateStatus =
 
 // Watchdog for a stuck `pending + installRequested` state. Squirrel.Mac can
 // stall silently (mismatched TeamID, dropped connection) without firing
-// `update-downloaded` or `error`. After this timeout we treat the install
-// request as failed so the UI unsticks. Exposed as a `let` so tests can
-// shorten it via __setStalledInstallTimeoutForTests().
-export const DEFAULT_STALLED_INSTALL_TIMEOUT_MS = 60_000;
+// `update-downloaded` or `error`. After this timeout we surface an error
+// toast and unstick the UI — but we DON'T clear `isCheckingOrDownloading`,
+// so if the download was just slow and `update-downloaded` arrives later,
+// the user still sees the Update button reappear and can install. Five
+// minutes is enough cover for a 100MB+ macOS update on a sluggish link;
+// anything longer than that is much more likely a real stall than slow
+// network. Exposed as a `let` so tests can shorten it via
+// __setStalledInstallTimeoutForTests().
+export const DEFAULT_STALLED_INSTALL_TIMEOUT_MS = 5 * 60_000;
 let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
 
 let currentStatus: UpdateStatus = { kind: "idle" };
@@ -38,9 +43,12 @@ function startStalledInstallWatchdog(): void {
       currentStatus.installRequested
     ) {
       log.error(
-        `Auto-updater stalled in pending+installRequested for ${stalledInstallTimeoutMs}ms — surfacing error`,
+        `Auto-updater stalled in pending+installRequested for ${stalledInstallTimeoutMs}ms — surfacing error (download may still be running)`,
       );
-      isCheckingOrDownloading = false;
+      // Intentionally do NOT clear `isCheckingOrDownloading`: the underlying
+      // Squirrel download may finish later, and we want the eventual
+      // `update-downloaded` event to flip status to "downloaded" so the
+      // user can still install. Just unstick the spinner and tell them.
       setStatus({ ...currentStatus, installRequested: false });
       broadcastUpdateError();
     }
