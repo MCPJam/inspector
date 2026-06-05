@@ -37,6 +37,54 @@ describe("pickTraceRepairCaseSourceIteration", () => {
     ).toBeNull();
   });
 
+  it("PR-4 R6: accepts iterations with only chatSessionId (no legacy blob)", () => {
+    // Post-flag-flip iterations may have only `chatSessionId` set when
+    // the per-turn fanout succeeded and the legacy blob path was
+    // skipped. The trace-repair source picker must consider these
+    // valid candidates — `getTestIterationBlob` is source-aware and
+    // synthesizes the envelope from chatSessions data.
+    const iters: EvalIteration[] = [
+      {
+        _id: "chatsessions-only",
+        testCaseId: "tc",
+        createdBy: "u",
+        createdAt: 2,
+        iterationNumber: 1,
+        updatedAt: 5,
+        status: "completed",
+        result: "failed",
+        suiteRunId: "run1",
+        chatSessionId: "sess-x",
+        actualToolCalls: [],
+        tokensUsed: 0,
+      },
+    ];
+    const picked = pickTraceRepairCaseSourceIteration("tc", iters, [baseRun]);
+    expect(picked?._id).toBe("chatsessions-only");
+  });
+
+  it("PR-4 R6: rejects iterations with neither blob nor chatSessionId", () => {
+    const iters: EvalIteration[] = [
+      {
+        _id: "no-trace",
+        testCaseId: "tc",
+        createdBy: "u",
+        createdAt: 2,
+        iterationNumber: 1,
+        updatedAt: 5,
+        status: "completed",
+        result: "failed",
+        suiteRunId: "run1",
+        // No blob, no chatSessionId — not a valid trace-repair source.
+        actualToolCalls: [],
+        tokensUsed: 0,
+      },
+    ];
+    expect(
+      pickTraceRepairCaseSourceIteration("tc", iters, [baseRun]),
+    ).toBeNull();
+  });
+
   it("picks latest failed traced iteration with replay config", () => {
     const iters: EvalIteration[] = [
       {
