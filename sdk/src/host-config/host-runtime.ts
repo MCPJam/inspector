@@ -134,8 +134,15 @@ export class HostRuntime implements HostExecutor {
       hostSnapshot as unknown as Record<string, unknown>,
     );
     const serverIds = resolveKnownServerIds(hostSnapshot, this.manager);
+    // Forward BOTH visibility and approval-required from the resolved
+    // host policy. The server chat path already does this; without
+    // `needsApproval`, `HostRuntime`-backed evals/runs against a host
+    // with `requireToolApproval: true` resolve tools that lack the AI
+    // SDK approval marker and execute silently — bypassing the host's
+    // declared approval policy.
     const tools = await this.manager.getToolsForAiSdk(serverIds, {
       includeAppOnly: policy.respectToolVisibility === false,
+      needsApproval: policy.requireToolApproval,
     });
 
     // Dynamic import keeps `host-config` browser-safe: `HostRunner` pulls

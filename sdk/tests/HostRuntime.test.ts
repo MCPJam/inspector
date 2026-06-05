@@ -276,4 +276,38 @@ describe("HostRuntime end-to-end run", () => {
     const options = lastCall[1];
     expect(options?.includeAppOnly).toBe(true);
   });
+
+  it("forwards needsApproval to the manager when host.requireToolApproval is true", async () => {
+    // Regression: HostRuntime previously only forwarded includeAppOnly,
+    // so HostRuntime-backed evals/runs against a host with
+    // requireToolApproval: true resolved AI SDK tools without the
+    // approval marker and executed them silently — bypassing the host's
+    // declared approval policy. The server chat path already passes
+    // needsApproval; HostRuntime must too.
+    const host = new Host({
+      style: "mcpjam",
+      model: "openai/gpt-4o",
+      requireToolApproval: true,
+    });
+    const manager = fakeManager([]);
+    const runtime = host.withManager(manager, baseDefaults);
+
+    await runtime.run("x");
+
+    const lastCall = manager.getToolsForAiSdkSpy.mock.calls.at(-1)!;
+    const options = lastCall[1];
+    expect(options?.needsApproval).toBe(true);
+  });
+
+  it("forwards needsApproval: false (default) when host does not require approval", async () => {
+    const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" });
+    const manager = fakeManager([]);
+    const runtime = host.withManager(manager, baseDefaults);
+
+    await runtime.run("x");
+
+    const lastCall = manager.getToolsForAiSdkSpy.mock.calls.at(-1)!;
+    const options = lastCall[1];
+    expect(options?.needsApproval).toBe(false);
+  });
 });
