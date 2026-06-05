@@ -7,6 +7,13 @@ import type {
 import { EvalReportingError } from "./errors.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
+import { resolveSdkEvalsCapabilities } from "./sdk-evals-capability.js";
+import {
+  buildSdkEvalsWireHostConfig,
+  type SdkEvalsWireHostConfig,
+} from "./sdk-evals-wire-host-config.js";
+import { resolveRunLevelHostSnapshot } from "./sdk-evals-host-config-source.js";
+import type { HostJson } from "./host-config/public-types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
@@ -281,6 +288,13 @@ async function startEvalRun(
   payload: Omit<ReportEvalResultsInput, "results" | "strict"> & {
     externalRunId: string;
     synthesizedTests?: unknown[];
+    /**
+     * Stage 5 Step 3 wire host-config pair. Sent only when the backend
+     * advertises capability `evalsHostConfig` AND a usable, homogeneous
+     * snapshot was resolved. Backend rejects partial pairs with 400.
+     */
+    hostConfig?: SdkEvalsWireHostConfig["hostConfig"];
+    hostConfigHash?: SdkEvalsWireHostConfig["hostConfigHash"];
   }
 ): Promise<StartRunResponse> {
   return await requestWithRetry<StartRunResponse>(
@@ -492,6 +506,75 @@ function shouldUseOneShotUpload(
   return bytes <= CHUNK_TARGET_BYTES && config.baseUrl.length >= 0;
 }
 
+/**
+ * Cheap check for whether ANY snapshot source could possibly contribute
+ * to the run-level wire pair. When false, we skip the capability probe
+ * entirely — there's nothing to ship even if the backend supports it,
+ * and we don't want a wasted `GET /sdk/v1/info` round-trip for legacy
+ * callers that never supply host info.
+ */
+function hasAnyHostSnapshotSource(input: ReportEvalResultsInput): boolean {
+  if (input.host) return true;
+  if (input.executor?.getHostSnapshot) return true;
+  for (const result of input.results) {
+    if ((result as { hostSnapshot?: unknown }).hostSnapshot) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve the per-run wire pair {hostConfig, hostConfigHash} when the
+ * backend advertises capability `evalsHostConfig`. Returns `null` when
+ * the capability is absent OR no usable snapshot source exists OR
+ * iteration snapshots are heterogeneous (pass-1 omit).
+ *
+ * The wire pair is per-RUN: it is injected only into one-shot `/report`
+ * and chunked `/runs/start` bodies, never into `/runs/iterations` or
+ * `/runs/finalize`.
+ */
+async function resolveWireHostConfigForRun(
+  input: ReportEvalResultsInput,
+  config: RuntimeConfig
+): Promise<SdkEvalsWireHostConfig | null> {
+  // Skip the probe when we have nothing to ship. This keeps legacy callers
+  // (no host, no executor, no per-iteration snapshot) on the original
+  // single-request flow — important for fetch-mock counts in existing
+  // tests and for avoiding a wasted probe round-trip.
+  if (!hasAnyHostSnapshotSource(input)) return null;
+
+  const capability = await resolveSdkEvalsCapabilities(config.baseUrl);
+  if (capability.evalsHostConfig < 1) return null;
+
+  // `input.results` are `EvalResultInput`s; the homogeneity gate treats
+  // each as a potential carrier of `hostSnapshot`. Today `EvalResultInput`
+  // does not carry that field, so this list is effectively snapshot-less
+  // and the resolver falls through to executor → explicitHost. Cast keeps
+  // the type surface forward-compatible for when per-iteration
+  // `hostSnapshot` is wired through `EvalResultInput`.
+  const iterations = input.results as readonly {
+    hostSnapshot?: HostJson | undefined;
+  }[];
+
+  // Fail-safe: a malformed hostSnapshot, unexpected executor return, or
+  // non-canonicalizable host JSON must NOT fail the whole eval upload.
+  // Match the capability-probe fail-safe pattern — log + omit the wire pair.
+  try {
+    const snapshot = await resolveRunLevelHostSnapshot({
+      iterations,
+      executor: input.executor,
+      explicitHost: input.host,
+    });
+    if (!snapshot) return null;
+    return await buildSdkEvalsWireHostConfig(snapshot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[mcpjam/sdk] eval reporting: omitting hostConfig wire pair (${message})`
+    );
+    return null;
+  }
+}
+
 async function reportEvalResultsInternal(
   input: ReportEvalResultsInput
 ): Promise<ReportEvalResultsOutput> {
@@ -510,6 +593,16 @@ async function reportEvalResultsInternal(
     uploadedResults,
     externalRunId
   );
+
+  // Resolved once per `reportEvalResultsInternal` call so both code paths
+  // (one-shot and chunked-start) attach the same byte-stable pair.
+  const wireHostConfig = await resolveWireHostConfigForRun(input, config);
+  const wireHostConfigBody = wireHostConfig
+    ? {
+        hostConfig: wireHostConfig.hostConfig,
+        hostConfigHash: wireHostConfig.hostConfigHash,
+      }
+    : {};
 
   if (
     shouldUseOneShotUpload(
@@ -538,6 +631,7 @@ async function reportEvalResultsInternal(
         expectedIterations: input.expectedIterations,
         tags: input.tags,
         results: resultsWithIterationIds,
+        ...wireHostConfigBody,
       }
     );
   }
@@ -554,6 +648,7 @@ async function reportEvalResultsInternal(
     ci: input.ci,
     expectedIterations: input.expectedIterations,
     tags: input.tags,
+    ...wireHostConfigBody,
   });
 
   if (
