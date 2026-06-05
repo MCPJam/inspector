@@ -284,6 +284,11 @@ export const createSuiteRunRecorder = ({
       // tolerates absence).
       const forceLegacyTraceBlob = fanout?.persisted === false;
 
+      // PR-2 review #5 (Cursor "Update failure after successful fanout"):
+      // track whether the iteration is gone so we don't waste a lock
+      // call on a deleted session, AND so the lock fires even when
+      // the iteration update threw a transient error.
+      let iterationGoneOrCancelled = false;
       try {
         await convexClient.action("testSuites:updateTestIteration" as any, {
           iterationId,
@@ -321,18 +326,6 @@ export const createSuiteRunRecorder = ({
             ...buildIterationUsageMetadata(usage),
           }),
         });
-
-        // updateTestIteration succeeded — now safe to set the lock.
-        // No-op when the fanout didn't persist (legacy path or
-        // fallback). Best-effort: lockEvalSessionAfterUpdate swallows
-        // transient failures because a missed lock is recoverable.
-        if (fanout?.persisted === true) {
-          await lockEvalSessionAfterUpdate({
-            convexClient,
-            iterationId,
-            reason: terminalReason,
-          });
-        }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
@@ -344,14 +337,36 @@ export const createSuiteRunRecorder = ({
           errorMessage.includes("cancelled")
         ) {
           runDeleted = true;
-          // Silently skip - run was likely cancelled/deleted
-          return;
+          iterationGoneOrCancelled = true;
+        } else {
+          logger.error(
+            "[evals] Failed to record iteration result:",
+            new Error(errorMessage),
+          );
+          // Transient (non-cancellation) failure: fall through to the
+          // lock step. The chatSessions transcript is complete from
+          // the fanout's perspective; locking prevents a retry from
+          // accumulating partial writes against a row whose data
+          // already represents the final state. The iteration row's
+          // terminal status remains stale until a retry/cron sweep
+          // finalizes it — that's acceptable because the data is
+          // consistent at the chatSessions layer.
         }
+      }
 
-        logger.error(
-          "[evals] Failed to record iteration result:",
-          new Error(errorMessage),
-        );
+      // Lock the chatSession when fanout succeeded — runs in BOTH the
+      // success branch (updateTestIteration succeeded → defense + UI
+      // hint) and the transient-failure branch (updateTestIteration
+      // threw a non-cancellation error → prevents partial writes on
+      // retry). Skipped only when the iteration is gone, where
+      // locking a deleted session is wasted work. Best-effort:
+      // lockEvalSessionAfterUpdate swallows its own failures.
+      if (fanout?.persisted === true && !iterationGoneOrCancelled) {
+        await lockEvalSessionAfterUpdate({
+          convexClient,
+          iterationId,
+          reason: terminalReason,
+        });
       }
     },
     async finalize({ status, summary, notes }) {

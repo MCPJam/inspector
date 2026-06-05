@@ -731,6 +731,10 @@ async function finishIterationDirectly(
   // See recorder.ts for the rationale — same fallback escape hatch.
   const forceLegacyTraceBlob = fanout?.persisted === false;
 
+  // PR-2 review #5 (Cursor "Update failure after successful fanout"):
+  // track iteration-gone state so the lock can fire even when the
+  // update throws a transient error. Mirrors recorder.finishIteration.
+  let iterationGoneOrCancelled = false;
   try {
     await convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId: params.iterationId,
@@ -768,16 +772,6 @@ async function finishIterationDirectly(
         ...buildIterationUsageMetadata(params.usage),
       }),
     });
-
-    // updateTestIteration succeeded — fire the lock now. No-op when
-    // the fanout didn't persist (legacy path or fallback).
-    if (fanout?.persisted === true && params.iterationId) {
-      await lockEvalSessionAfterUpdate({
-        convexClient,
-        iterationId: params.iterationId,
-        reason: terminalReason,
-      });
-    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -787,13 +781,35 @@ async function finishIterationDirectly(
       errorMessage.includes("unauthorized") ||
       errorMessage.includes("cancelled")
     ) {
-      return;
+      iterationGoneOrCancelled = true;
+    } else {
+      logger.error(
+        "[evals] Failed to finish iteration:",
+        new Error(errorMessage),
+      );
+      // Fall through to the lock step. See recorder.ts for the
+      // rationale: chatSessions transcript is complete from the
+      // fanout's perspective; locking prevents partial writes on a
+      // retry. Iteration row's terminal status may stay stale until
+      // a retry/cron sweep — acceptable because the chatSessions
+      // layer is consistent.
     }
+  }
 
-    logger.error(
-      "[evals] Failed to finish iteration:",
-      new Error(errorMessage),
-    );
+  // Lock the chatSession when fanout succeeded. Runs in BOTH the
+  // success branch and the transient-failure branch; skipped only
+  // when the iteration is gone. Mirrors recorder.finishIteration's
+  // pattern — see there for full rationale.
+  if (
+    fanout?.persisted === true &&
+    params.iterationId &&
+    !iterationGoneOrCancelled
+  ) {
+    await lockEvalSessionAfterUpdate({
+      convexClient,
+      iterationId: params.iterationId,
+      reason: terminalReason,
+    });
   }
 }
 
