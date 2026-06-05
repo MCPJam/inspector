@@ -71,6 +71,26 @@
   --json-boolean-false: oklch(0.55 0.18 25); /* Red/coral (for false) */
   --json-null: oklch(0.55 0.02 270); /* Gray */
   --json-punctuation: oklch(0.55 0.01 270); /* Muted gray */
+  /* General code-syntax palette (light) — consumed by surfaces that
+     render multi-language code: docs Mintlify code blocks, future
+     terminal/log viewers, in-app code editors. JSON-only viewer keeps
+     using the --json-* tokens above. Tuned for warm-paper backgrounds:
+     coral keyword + indigo class/key + muted forest string. */
+  --code-bg: oklch(0.9341 0.0153 90.239);              /* warm beige inset */
+  --code-text: oklch(0.1908 0.002 106.5859);           /* ink-strong */
+  --code-keyword: oklch(0.55 0.16 35);                 /* deep coral */
+  --code-function: oklch(0.1908 0.002 106.5859);       /* = text */
+  --code-class-name: oklch(0.48 0.13 250);             /* indigo */
+  --code-property: oklch(0.45 0.14 250);               /* indigo (JSON-key flavor) */
+  --code-variable: oklch(0.1908 0.002 106.5859);       /* = text */
+  --code-parameter: oklch(0.3438 0.0269 95.7226);      /* full ink */
+  --code-string: oklch(0.45 0.09 145);                 /* muted forest */
+  --code-number: oklch(0.52 0.08 60);                  /* warm sand */
+  --code-boolean: oklch(0.52 0.08 60);                 /* warm sand */
+  --code-comment: oklch(0.62 0.01 95);                 /* italic muted */
+  --code-punctuation: oklch(0.58 0.005 95);            /* dim ink */
+  --code-operator: oklch(0.55 0.16 35);                /* coral */
+  --code-link: oklch(0.6171 0.1375 39.0427);           /* brand orange */
   --radius: 0.5rem;
   --shadow-x: 0;
   --shadow-y: 1px;
@@ -105,6 +125,24 @@
   --json-boolean-false: oklch(0.68 0.16 25); /* Red/coral (for false) */
   --json-null: oklch(0.6 0.02 270); /* Gray */
   --json-punctuation: oklch(0.5 0.01 270); /* Muted gray */
+  /* General code-syntax palette (dark) — paired with the light values
+     above. Same hue family lifted in lightness/chroma for warm-dark
+     backgrounds. */
+  --code-bg: oklch(0.2213 0.0038 106.707);             /* warm-dark inset */
+  --code-text: oklch(0.92 0.01 95);                    /* near-white */
+  --code-keyword: oklch(0.75 0.13 35);                 /* lifted coral */
+  --code-function: oklch(0.92 0.01 95);                /* = text */
+  --code-class-name: oklch(0.70 0.13 250);             /* lifted indigo */
+  --code-property: oklch(0.72 0.14 250);               /* lifted indigo */
+  --code-variable: oklch(0.92 0.01 95);                /* = text */
+  --code-parameter: oklch(0.86 0.01 95);
+  --code-string: oklch(0.78 0.10 145);                 /* lifted forest */
+  --code-number: oklch(0.78 0.09 65);                  /* lifted sand */
+  --code-boolean: oklch(0.78 0.09 65);                 /* lifted sand */
+  --code-comment: oklch(0.55 0.01 95);
+  --code-punctuation: oklch(0.60 0.005 95);
+  --code-operator: oklch(0.75 0.13 35);                /* lifted coral */
+  --code-link: oklch(0.7400 0.1308 38.7559);           /* brand orange */
   --card: oklch(0.2679 0.0036 106.6427);
   --card-foreground: oklch(0.9818 0.0054 95.0986);
   --popover: oklch(0.3085 0.0035 106.6039);

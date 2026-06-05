@@ -26,10 +26,7 @@
   },
   "styling": {
     "codeblocks": {
-      "theme": {
-        "light": "github-light",
-        "dark": "vesper"
-      }
+      "theme": "css-variables"
     }
   },
   "favicon": "/mcp_jam.svg",

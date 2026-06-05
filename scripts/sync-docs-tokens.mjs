@@ -41,6 +41,26 @@ const MAP = {
   "--mcj-radius":      "--radius",
 };
 
+// Mintlify Shiki vars ← design-system code-syntax tokens. Activated by
+// docs.json `styling.codeblocks.theme = "css-variables"`. Mintlify maps
+// object-property names to `keyword`, so the property-key color is
+// effectively shared with keywords; we set `keyword` to --code-keyword
+// and accept that compromise (one accent for both is the Anthropic-ish
+// look anyway).
+const CODE_MAP = {
+  "--mint-color-text":              "--code-text",
+  "--mint-color-background":        "--code-bg",
+  "--mint-token-keyword":           "--code-keyword",
+  "--mint-token-function":          "--code-function",
+  "--mint-token-string":            "--code-string",
+  "--mint-token-string-expression": "--code-string",
+  "--mint-token-constant":          "--code-number",
+  "--mint-token-parameter":         "--code-parameter",
+  "--mint-token-punctuation":       "--code-punctuation",
+  "--mint-token-comment":           "--code-comment",
+  "--mint-token-link":              "--code-link",
+};
+
 // Soft-alpha overlay derived from --primary. Alpha differs per mode so the
 // orange wash reads at the same perceived weight on cream vs warm-dark.
 const ORANGE_SOFT_ALPHA = { light: "0.10", dark: "0.14" };
@@ -74,13 +94,28 @@ function deriveOrangeSoft(primaryValue, alpha) {
 
 function buildBlock(label, selectorChain, tokenVars, alpha) {
   const lines = [`${selectorChain} {`];
+
+  // Surface palette (page chrome, borders, etc.)
   for (const [alias, source] of Object.entries(MAP)) {
     const value = tokenVars.get(source);
     if (!value) throw new Error(`Token ${source} missing from tokens.css ${label}`);
-    lines.push(`  ${`${alias}:`.padEnd(19, " ")} ${value};`);
+    lines.push(`  ${`${alias}:`.padEnd(26, " ")} ${value};`);
   }
   const orange = tokenVars.get("--primary");
-  lines.push(`  --mcj-orange-soft:  ${deriveOrangeSoft(orange, alpha)};`);
+  lines.push(`  ${"--mcj-orange-soft:".padEnd(26, " ")} ${deriveOrangeSoft(orange, alpha)};`);
+
+  // Code-syntax palette — derived from --code-* tokens, exposed to
+  // Mintlify Shiki via --mint-* vars.
+  lines.push("");
+  lines.push("  /* code syntax (Mintlify Shiki) */");
+  for (const [mintVar, codeVar] of Object.entries(CODE_MAP)) {
+    const value = tokenVars.get(codeVar);
+    if (!value) {
+      throw new Error(`Token ${codeVar} missing from tokens.css ${label}`);
+    }
+    lines.push(`  ${`${mintVar}:`.padEnd(34, " ")} ${value};`);
+  }
+
   lines.push("}");
   return lines.join("\n");
 }
