@@ -110,6 +110,9 @@ export function ToolsTab({
   const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
+  const [normalizedError, setNormalizedError] = useState<
+    import("@mcpjam/sdk/browser").NormalizedError | null
+  >(null);
   const [responseDurationMs, setResponseDurationMs] = useState<number | null>(
     null,
   );
@@ -218,6 +221,7 @@ export function ToolsTab({
     setResult(null);
     setStructuredContentValid(undefined);
     setError("");
+    setNormalizedError(null);
     setResponseDurationMs(null);
     setActiveElicitation(null);
     if (clearTaskCapabilities) {
@@ -324,6 +328,7 @@ export function ToolsTab({
     }
 
     setError("");
+    setNormalizedError(null);
     setFetchingTools(true);
     if (reset) {
       resetLoadedToolState({
@@ -466,6 +471,14 @@ export function ToolsTab({
     if ("error" in response && response.error) {
       setResponseDurationMs(durationMs);
       setError(response.error as string);
+      // Preserve the rich describer block when the response carried one
+      // (server-side `jsonError` always populates `normalized` now).
+      const maybeNormalized = (response as { normalized?: unknown }).normalized;
+      setNormalizedError(
+        maybeNormalized && typeof maybeNormalized === "object"
+          ? (maybeNormalized as import("@mcpjam/sdk/browser").NormalizedError)
+          : null,
+      );
     }
   };
 
@@ -484,11 +497,13 @@ export function ToolsTab({
         connectionStatus: serverConnectionStatus,
       });
       setError("Connect this server before running tools.");
+      setNormalizedError(null);
       return;
     }
 
     setLoadingExecuteTool(true);
     setError("");
+    setNormalizedError(null);
     setResult(null);
     setStructuredContentValid(undefined);
     setResponseDurationMs(null);
@@ -711,6 +726,7 @@ export function ToolsTab({
   const centerContent = selectedTool ? (
     <ResultsPanel
       error={error}
+      normalizedError={normalizedError}
       result={result}
       structuredContentValid={structuredContentValid}
       toolMeta={getToolMeta(lastToolName)}

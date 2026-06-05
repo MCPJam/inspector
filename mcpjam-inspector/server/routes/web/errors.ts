@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { describeError, type NormalizedError } from "@mcpjam/sdk";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -18,17 +19,25 @@ export class WebRouteError extends Error {
   status: number;
   code: ErrorCode;
   details?: Record<string, unknown>;
+  /**
+   * Optional normalized describe-error block. When present, `webError`
+   * forwards it onto the JSON response body so the client can render a
+   * rich ErrorCard without re-classifying from the raw message.
+   */
+  normalized?: NormalizedError;
 
   constructor(
     status: number,
     code: ErrorCode,
     message: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
+    normalized?: NormalizedError
   ) {
     super(message);
     this.status = status;
     this.code = code;
     this.details = details;
+    this.normalized = normalized;
   }
 }
 
@@ -40,12 +49,20 @@ export function webError(
   details?: Record<string, unknown>,
   extras?: Record<string, unknown>
 ) {
+  // `extras` is permissive (rpc-log collectors, etc.). If it carries a
+  // `normalized` key, hoist it to the top-level response body — clients
+  // pluck the rich block off the JSON envelope without re-classifying.
+  const { normalized, ...restExtras } = (extras ?? {}) as Record<
+    string,
+    unknown
+  > & { normalized?: NormalizedError };
   return c.json(
     {
-      ...(extras ?? {}),
+      ...restExtras,
       code,
       message,
       ...(details ? { details } : {}),
+      ...(normalized ? { normalized } : {}),
     },
     status
   );
@@ -77,20 +94,41 @@ const CONNECTION_ERROR_PATTERNS: readonly RegExp[] = [
 ];
 
 export function mapRuntimeError(error: unknown): WebRouteError {
-  if (error instanceof WebRouteError) return error;
+  if (error instanceof WebRouteError) {
+    // Backfill normalized on existing WebRouteErrors so onError forwarding
+    // always has a rich block, even when the throwing site predates the
+    // describer wiring.
+    if (!error.normalized) {
+      error.normalized = describeError(error);
+    }
+    return error;
+  }
 
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
+  const normalized = describeError(error);
 
   if (lower.includes("timed out") || lower.includes("timeout")) {
-    return new WebRouteError(504, ErrorCode.TIMEOUT, message);
+    return new WebRouteError(504, ErrorCode.TIMEOUT, message, undefined, normalized);
   }
 
   if (CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message))) {
-    return new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, message);
+    return new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      message,
+      undefined,
+      normalized
+    );
   }
 
-  return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, message);
+  return new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    message,
+    undefined,
+    normalized
+  );
 }
 
 export function assertBearerToken(c: any): string {

@@ -190,6 +190,34 @@ Example configuration file structure:
 }
 ```
 
+### Mixing STDIO and HTTP/SHTTP servers
+
+You can mix STDIO and HTTP (Streamable HTTP / SHTTP) server entries in the same config. Each entry's transport is inferred from its fields: `command` + `args` means STDIO, `url` means HTTP/SHTTP.
+
+```json config.json
+{
+  "mcpServers": {
+    "local-everything": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "env": {
+        "HELLO": "Hello MCP!"
+      }
+    },
+    "hosted-weather": {
+      "url": "https://weather.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}
+```
+
+The terminal and desktop installs accept both shapes in the same file. The hosted web app accepts HTTP/SHTTP entries only — STDIO entries are ignored because the hosted runtime cannot spawn local processes.
+
+For per-server `Authorization` headers, see [API keys → Playground BYOK](/reference/api-keys#3-playground-byok-bring-your-own-key).
+
 ## Start with Verbose Logging
 
 Enable verbose HTTP request logging for debugging purposes. This is useful when troubleshooting connection issues with MCP servers.

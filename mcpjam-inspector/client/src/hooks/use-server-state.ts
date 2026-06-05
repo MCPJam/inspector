@@ -2053,6 +2053,8 @@ export function useServerState({
                 error:
                   connectionResult.error ||
                   "Connection test failed after OAuth",
+                normalized: (connectionResult as { normalized?: unknown })
+                  .normalized as any,
                 oauthTrace: result.oauthTrace,
               });
               logger.error("OAuth connection test failed", {

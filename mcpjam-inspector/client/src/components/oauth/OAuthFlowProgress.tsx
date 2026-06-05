@@ -21,6 +21,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { OAuthFlowState, OAuthStep } from "@/lib/types/oauth-flow-types";
 import { cn } from "@/lib/utils";
+import { ErrorCard } from "@/components/ui/error-card";
 
 type NodeStatus = "complete" | "current" | "pending";
 
@@ -338,13 +339,7 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
         </div>
 
         {/* Error */}
-        {action.error && (
-          <div className="rounded-md border-2 border-destructive/40 bg-destructive/10 p-3">
-            <p className="text-xs font-medium text-destructive leading-relaxed">
-              {action.error}
-            </p>
-          </div>
-        )}
+        {action.error && <ErrorCard error={action.error} />}
 
         {/* Details */}
         {action.details && action.details.length > 0 && (
@@ -506,13 +501,7 @@ const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
               </div>
             )}
 
-            {data.error && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2">
-                <p className="text-[10px] font-medium text-destructive">
-                  {data.error}
-                </p>
-              </div>
-            )}
+            {data.error && <ErrorCard error={data.error} />}
 
             {data.secondaryAction && (
               <div className="pt-2 border-t border-border/50">

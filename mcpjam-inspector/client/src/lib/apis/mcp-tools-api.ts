@@ -4,9 +4,14 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/client";
-import type { MCPTask, TaskOptions } from "@mcpjam/sdk/browser";
+import type {
+  MCPTask,
+  NormalizedError,
+  TaskOptions,
+} from "@mcpjam/sdk/browser";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { authFetch } from "@/lib/session-token";
+import { WebApiError } from "@/lib/apis/web/base";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 
@@ -83,6 +88,12 @@ export type ToolExecutionResponse =
     }
   | {
       error: string;
+      /**
+       * When the error originated from a hosted route that carried a
+       * describe-error block, surface it so consumers can render an
+       * ErrorCard directly without re-classifying from `error`.
+       */
+      normalized?: NormalizedError;
     };
 
 export async function listTools({
@@ -141,7 +152,9 @@ export async function executeToolApi(
         })) as ToolExecutionResponse;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { error: message };
+        const normalized =
+          error instanceof WebApiError ? error.normalized : undefined;
+        return { error: message, ...(normalized ? { normalized } : {}) };
       }
     },
     local: async () => {
@@ -155,9 +168,18 @@ export async function executeToolApi(
         body = await res.json();
       } catch {}
       if (!res.ok) {
-        // Surface server-provided error message if present
+        // Surface server-provided error message if present, plus the
+        // server-attached describe-error block if it came back (the
+        // jsonError helper in /api/mcp/tools/execute always populates it).
         const message = body?.error || `Execute tool failed (${res.status})`;
-        return { error: message } as ToolExecutionResponse;
+        const normalized =
+          body && typeof body.normalized === "object" && body.normalized
+            ? (body.normalized as NormalizedError)
+            : undefined;
+        return {
+          error: message,
+          ...(normalized ? { normalized } : {}),
+        } as ToolExecutionResponse;
       }
 
       // Server now returns { status: "task_created", task: { taskId, ... } } for task-augmented requests

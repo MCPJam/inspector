@@ -77,6 +77,7 @@ import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
+import { describeError } from "@mcpjam/sdk";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -94,6 +95,11 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
     return String(error);
   }
+
+  // Run the cross-stack describer first so every stream-error branch can
+  // attach a `normalized` block — clients pull this out for ErrorCard
+  // rendering without re-classifying from the raw message.
+  const normalized = describeError(error);
 
   // Duck-type statusCode/responseBody — APICallError.isInstance() can fail
   // when multiple copies of @ai-sdk/provider are bundled (symbol mismatch).
@@ -131,6 +137,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
       code: "auth_error",
       message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
       statusCode,
+      normalized,
     });
   }
 
@@ -139,10 +146,16 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
     return JSON.stringify({
       message: error.message,
       details: responseBody,
+      normalized,
     });
   }
 
-  return error.message;
+  // Even bare-message branches surface the normalized block so clients can
+  // render an ErrorCard for unclassified provider failures.
+  return JSON.stringify({
+    message: error.message,
+    normalized,
+  });
 }
 
 function toLiveChatTraceUsage(
