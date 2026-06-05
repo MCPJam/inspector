@@ -42,11 +42,16 @@ const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
 
 // Permissive schema — `messages` and `model` shapes are wide unions matched
-// further downstream by `convertToModelMessages` / model handlers. The
-// agent surface explicitly does NOT accept fields that would route the
-// turn through project servers or app tools — those are rejected via
-// `.strict()` so a tampered body can't pivot the agent into a different
-// host config.
+// further downstream by `convertToModelMessages` / model handlers.
+//
+// `DefaultChatTransport` from `@ai-sdk/react` posts extra top-level fields
+// (`id`, `trigger`, `messageId`, …) on every turn. `hostedChatSchema` in
+// `auth.ts` tolerates this via `.passthrough()`; we match that pattern so
+// the AI SDK extras are silently passed through instead of rejected as
+// validation errors. Server-side use of the parsed body still only reads
+// the explicitly-declared fields below — there's no path here that routes
+// a tampered selectedServerIds / appTools / chatbox field into the
+// streamWebChatTurn call because we don't read them at all.
 const mcpjamAgentSchema = z
   .object({
     messages: z.array(z.any()).min(1),
@@ -64,7 +69,7 @@ const mcpjamAgentSchema = z
     requireToolApproval: z.boolean().optional(),
     respectToolVisibility: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();
 
 const mcpjamAgent = new Hono();
 
@@ -122,6 +127,10 @@ mcpjamAgent.post("/", async (c) => {
           temperature: body.temperature,
           requireToolApproval: body.requireToolApproval,
           respectToolVisibility: body.respectToolVisibility,
+          // `mcpjam-docs` is a synthetic server id — the backend would
+          // discard a tool snapshot whose ids aren't on the project, so
+          // skip the export fanout entirely.
+          captureToolSnapshot: false,
         },
         runtime: {
           authHeader: c.req.header("authorization"),

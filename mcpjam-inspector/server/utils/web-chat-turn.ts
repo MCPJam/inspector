@@ -107,6 +107,15 @@ export interface WebChatTurnPersistContext {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  /**
+   * When `false`, skip the `exportConnectedServerToolSnapshotForEvalAuthoring`
+   * fanout on conversation complete. Used by surfaces whose
+   * `selectedServerIds` are synthetic (e.g. the mcpjam-docs agent) — the
+   * backend would discard the snapshot and the inspector would have done
+   * the work for no reason. Defaults to `true` to preserve chat-v2
+   * behavior.
+   */
+  captureToolSnapshot?: boolean;
 }
 
 /**
@@ -253,22 +262,26 @@ export async function streamWebChatTurn(
     ) => {
       const isDirectChat = !isChatboxSession;
       // Capture the live tool catalog. Failures must never block the persist.
+      // Surfaces with synthetic server ids (mcpjam-agent) opt out via
+      // `persist.captureToolSnapshot === false`.
       let toolSnapshot: unknown;
-      try {
-        const knownIds =
-          typeof manager.hasServer === "function"
-            ? persist.selectedServerIds.filter((id) => manager.hasServer(id))
-            : persist.selectedServerIds;
-        if (knownIds.length > 0) {
-          toolSnapshot =
-            await exportConnectedServerToolSnapshotForEvalAuthoring(
-              manager,
-              knownIds,
-              { logPrefix: "chat-v2.persist" }
-            );
+      if (persist.captureToolSnapshot !== false) {
+        try {
+          const knownIds =
+            typeof manager.hasServer === "function"
+              ? persist.selectedServerIds.filter((id) => manager.hasServer(id))
+              : persist.selectedServerIds;
+          if (knownIds.length > 0) {
+            toolSnapshot =
+              await exportConnectedServerToolSnapshotForEvalAuthoring(
+                manager,
+                knownIds,
+                { logPrefix: "chat-v2.persist" }
+              );
+          }
+        } catch {
+          toolSnapshot = undefined;
         }
-      } catch {
-        toolSnapshot = undefined;
       }
 
       await persistChatSessionToConvex({
