@@ -771,6 +771,71 @@ describe("iterationsToEvalResultInputs", () => {
 
     expect(results[0].expectedToolCalls).toBeUndefined();
   });
+
+  it("derives metadata host_style from each iteration's own hostSnapshot (not the global stamp)", () => {
+    // Regression: previously the mapper applied the same global
+    // hostExtras to every iteration, so a `HostRuntime` whose bound
+    // `Host` mutated between iterations would tag every iteration with
+    // the post-mutation state. Now: when an iteration carries its own
+    // `hostSnapshot`, it wins; the global fallback is only used when
+    // an iteration has no snapshot (legacy / non-host-backed executors).
+    const claudeIteration = makeIteration({
+      hostSnapshot: {
+        style: "claude",
+        model: "anthropic/claude-3",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        servers: ["a"],
+        optionalServers: [],
+        connectionDefaults: {} as any,
+        clientCapabilities: {},
+        hostContext: {},
+      } as any,
+    });
+    const mcpjamIteration = makeIteration({
+      hostSnapshot: {
+        style: "mcpjam",
+        model: "openai/gpt-4o",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        servers: ["b"],
+        optionalServers: [],
+        connectionDefaults: {} as any,
+        clientCapabilities: {},
+        hostContext: {},
+      } as any,
+    });
+
+    const results = iterationsToEvalResultInputs(
+      "t",
+      [claudeIteration, mcpjamIteration],
+      undefined,
+      undefined,
+      // Global fallback derived once from `executor.getHostSnapshot()` —
+      // this is what previously stamped every iteration.
+      { host_style: "should_be_ignored" },
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[0].metadata?.host_style).toBe("claude");
+    expect(results[1].metadata?.host_style).toBe("mcpjam");
+  });
+
+  it("falls back to the global hostExtras when an iteration has no hostSnapshot", () => {
+    const iteration = makeIteration({ prompts: [makePrompt({})] });
+
+    const results = iterationsToEvalResultInputs(
+      "t",
+      [iteration],
+      undefined,
+      undefined,
+      { host_style: "mcpjam" },
+    );
+
+    expect(results[0].metadata?.host_style).toBe("mcpjam");
+  });
 });
 
 // ---------------------------------------------------------------------------

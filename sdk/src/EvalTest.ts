@@ -53,6 +53,17 @@ export interface IterationResult {
   retryCount?: number;
   /** The prompt results from this iteration */
   prompts?: PromptResult[];
+  /**
+   * Host snapshot captured at the END of this iteration's execution.
+   * Populated when the executor exposes `getHostSnapshot()`. For
+   * `HostRunner`, this matches the construction-time snapshot (immutable).
+   * For `HostRuntime`, this captures the live `Host` state at iteration
+   * end so per-iteration metadata stamping reflects what THIS iteration
+   * ran with, not the global state at upload time. (Mid-iteration host
+   * mutations between turns are not separately captured — that would
+   * require threading the snapshot into `PromptResult`.)
+   */
+  hostSnapshot?: import("./host-config/public-types.js").HostJson;
 }
 
 /**
@@ -194,6 +205,14 @@ function wrapAgentWithAbortSignal(
       wrapAgentWithAbortSignal(agent.withOptions(options), abortSignal),
     getPromptHistory: () => agent.getPromptHistory(),
     resetPromptHistory: () => agent.resetPromptHistory(),
+    // Forward host-introspection methods so per-iteration metadata
+    // stamping can capture the live snapshot from a HostRuntime clone.
+    getHostSnapshot: agent.getHostSnapshot
+      ? () => agent.getHostSnapshot!()
+      : undefined,
+    getServerReplayConfigs: agent.getServerReplayConfigs
+      ? () => agent.getServerReplayConfigs!()
+      : undefined,
   };
 }
 
@@ -294,6 +313,12 @@ export class EvalTest {
             ]);
             const promptResults = iterationAgent.getPromptHistory();
             const promptMetrics = collectPromptMetrics(promptResults);
+            // Per-iteration host snapshot: for HostRuntime this captures
+            // the live Host state at iteration end, so the metadata
+            // stamp reflects what THIS iteration ran with — not the
+            // global state at upload time, which can drift if the user
+            // mutates the bound Host between iterations.
+            const iterationHostSnapshot = iterationAgent.getHostSnapshot?.();
 
             return {
               passed,
@@ -302,6 +327,7 @@ export class EvalTest {
                 ? { error: timeoutError.message }
                 : {}),
               retryCount: attempt,
+              hostSnapshot: iterationHostSnapshot,
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
@@ -322,12 +348,14 @@ export class EvalTest {
         const promptMetrics = collectPromptMetrics(
           iterationAgent?.getPromptHistory() ?? []
         );
+        const iterationHostSnapshot = iterationAgent?.getHostSnapshot?.();
 
         return {
           passed: false,
           ...promptMetrics,
           error: lastError,
           retryCount: retries,
+          hostSnapshot: iterationHostSnapshot,
         };
       } finally {
         semaphore.release();

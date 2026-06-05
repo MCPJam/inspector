@@ -12,6 +12,29 @@ import type {
 } from "./eval-reporting-types.js";
 import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
+import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+
+/**
+ * Per-iteration host-extras lookup:
+ *
+ *   - If the iteration captured its own `hostSnapshot` (HostRuntime path
+ *     where the live `Host` could differ between iterations), build the
+ *     stamp from that snapshot — the per-iteration value wins.
+ *   - Otherwise fall back to the global `hostExtras` derived once from
+ *     `executor.getHostSnapshot()` (HostRunner path, where the snapshot
+ *     is immutable across iterations).
+ */
+function resolveIterationHostExtras(
+  iteration: IterationResult,
+  fallback: Record<string, string | number | boolean> | undefined,
+): Record<string, string | number | boolean> | undefined {
+  if (iteration.hostSnapshot) {
+    return buildHostSnapshotMetadata(
+      iteration.hostSnapshot as unknown as Record<string, unknown>,
+    );
+  }
+  return fallback;
+}
 
 type PromptTurnLike = {
   prompt: string;
@@ -627,7 +650,7 @@ export function iterationsToEvalResultInputs(
           retryCount: iteration.retryCount ?? 0,
           iterationNumber: index + 1,
         },
-        hostExtras,
+        resolveIterationHostExtras(iteration, hostExtras),
       ),
     };
   });
@@ -698,7 +721,7 @@ export function suiteTestResultsToEvalResultInputs(
             iterationNumber: index + 1,
             retryCount: iteration.retryCount ?? 0,
           },
-          hostExtras,
+          resolveIterationHostExtras(iteration, hostExtras),
         ),
       });
     }
