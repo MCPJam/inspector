@@ -1,7 +1,7 @@
 /**
  * Marketing compare-plans table: product rows mirror `mcpjam_pricing_page.html`;
- * count-based usage is uncapped, while credits and enterprise security features
- * carry the remaining commercial distinctions.
+ * org/project counts are uncapped, while eval caps, credits, and enterprise
+ * security features carry the remaining commercial distinctions.
  */
 
 export type ComparePlanCell =
@@ -87,6 +87,19 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         free: x,
         team: x,
         enterprise: c,
+      },
+      {
+        label: "Eval iteration cap",
+        free: t("500 iter. / mo"),
+        team: t("10,000 iter. / mo", true),
+        enterprise: t("Custom", true),
+      },
+      {
+        label: "Eval iteration overage",
+        tooltipKey: "Eval iteration overage",
+        free: x,
+        team: t("$0.02 / iter.", true),
+        enterprise: t("Custom", true),
       },
     ],
   },

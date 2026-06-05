@@ -26,7 +26,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (n, s) => n + s.rows.length,
       0,
     );
-    expect(rowCount).toBe(22);
+    expect(rowCount).toBe(24);
 
     const standardFeatures = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Standard features",
@@ -44,12 +44,28 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     const evaluations = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Evaluations",
     );
-    expect(
-      evaluations?.rows.find((r) => r.label === "Eval iteration cap"),
-    ).toBeUndefined();
-    expect(
-      evaluations?.rows.find((r) => r.label === "Eval iteration overage"),
-    ).toBeUndefined();
+    const iterationCapRow = evaluations?.rows.find(
+      (r) => r.label === "Eval iteration cap",
+    );
+    expect(iterationCapRow?.free).toEqual({
+      kind: "text",
+      text: "500 iter. / mo",
+    });
+    expect(iterationCapRow?.team).toEqual({
+      kind: "text",
+      text: "10,000 iter. / mo",
+      emphasize: true,
+    });
+
+    const overageRow = evaluations?.rows.find(
+      (r) => r.label === "Eval iteration overage",
+    );
+    expect(overageRow?.free).toEqual({ kind: "x" });
+    expect(overageRow?.team).toEqual({
+      kind: "text",
+      text: "$0.02 / iter.",
+      emphasize: true,
+    });
     expect(
       evaluations?.rows.find((r) => r.label === "Triage Insights")?.free,
     ).toEqual({ kind: "check" });
