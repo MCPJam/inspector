@@ -82,7 +82,7 @@ function createPlanCatalog() {
           cicd: true,
           customDomains: true,
           auditLog: false,
-          sso: true,
+          sso: false,
           prioritySupport: true,
         },
         limits: {
