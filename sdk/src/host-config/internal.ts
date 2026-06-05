@@ -61,3 +61,10 @@ export {
   compatPresetForHostStyle,
   resolveOpenAiCompatForHostConfig,
 } from "./compat-runtime.js";
+
+// Stage 5 (Step 1): SDK→backend eval ingestion wire normalizer. Strips
+// runtime-manager identifiers (`serverIds`, `optionalServerIds`,
+// `serverConnectionOverrides`) so the SDK eval reporter (Step 3) and the
+// backend ingestion handler (Step 2) hash byte-identical wire shapes. Helper
+// only — no reporter changes ship with Step 1.
+export { normalizeSdkEvalHostConfigForWire } from "./sdk-evals-normalizer.js";
