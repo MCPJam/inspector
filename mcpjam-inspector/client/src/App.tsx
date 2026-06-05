@@ -1235,6 +1235,7 @@ export default function App() {
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
+  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   useEffect(() => {
@@ -1441,7 +1442,6 @@ export default function App() {
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
-  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug"
