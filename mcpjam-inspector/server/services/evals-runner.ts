@@ -88,7 +88,10 @@ import {
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
-import { persistEvalTraceFanout } from "./evals/persist-eval-trace.js";
+import {
+  lockEvalSessionAfterUpdate,
+  persistEvalTraceFanout,
+} from "./evals/persist-eval-trace.js";
 import type {
   EvalStreamEvent,
   EvalStreamToolCall,
@@ -699,9 +702,10 @@ async function finishIterationDirectly(
   const result = params.passed ? "passed" : "failed";
 
   // PR-2 eval→chatSessions fanout. Mirrors recorder.finishIteration —
-  // see persist-eval-trace.ts for the contract. When the flag is on,
-  // we persist N per-turn rows in chatSessions BEFORE the
-  // updateTestIteration call, then omit trace fields from the update.
+  // see persist-eval-trace.ts for the contract. Fanout writes per-turn
+  // rows BEFORE updateTestIteration; the chatSessions lock fires AFTER
+  // updateTestIteration succeeds (PR-2 review fix #2). When the
+  // backend flag is off, today's legacy behavior runs unchanged.
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"
@@ -711,7 +715,7 @@ async function finishIterationDirectly(
   const fanout = await persistEvalTraceFanout({
     convexClient,
     iterationId: params.iterationId,
-    terminalReason,
+    iterationStartedAt: params.startedAt,
     messages: params.messages,
     spans: params.spans,
     prompts: params.prompts,
@@ -761,6 +765,16 @@ async function finishIterationDirectly(
         ...buildIterationUsageMetadata(params.usage),
       }),
     });
+
+    // updateTestIteration succeeded — fire the lock now. No-op when
+    // the fanout didn't persist (legacy path or fallback).
+    if (fanout?.persisted === true && params.iterationId) {
+      await lockEvalSessionAfterUpdate({
+        convexClient,
+        iterationId: params.iterationId,
+        reason: terminalReason,
+      });
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 

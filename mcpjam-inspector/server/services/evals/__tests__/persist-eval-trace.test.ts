@@ -80,7 +80,6 @@ describe("persistEvalTraceFanout", () => {
     const result = await persistEvalTraceFanout({
       convexClient: client,
       iterationId: "iter1",
-      terminalReason: "eval_completed",
       messages: [{ role: "user", content: "hi" } as ModelMessage],
       spans: undefined,
       prompts: undefined,
@@ -165,7 +164,6 @@ describe("persistEvalTraceFanout", () => {
     const result = await persistEvalTraceFanout({
       convexClient: client,
       iterationId: "iter1",
-      terminalReason: "eval_completed",
       messages,
       spans,
       prompts,
@@ -196,10 +194,12 @@ describe("persistEvalTraceFanout", () => {
       expect(turn.sessionMessages).toHaveLength((i + 1) * 2);
     }
 
-    // Terminal only on the final call.
-    expect(appendCalls[0]!.args.terminal).toBeUndefined();
-    expect(appendCalls[1]!.args.terminal).toBeUndefined();
-    expect(appendCalls[2]!.args.terminal).toEqual({ reason: "eval_completed" });
+    // PR-2 review fix #2: the fanout no longer fires the terminal lock.
+    // None of the per-turn calls carry a `terminal` arg; callers fire
+    // `lockEvalSessionAfterUpdate` AFTER updateTestIteration succeeds.
+    for (const call of appendCalls) {
+      expect(call.args.terminal).toBeUndefined();
+    }
   });
 
   test("buckets unindexed spans onto the last turn (lossless)", async () => {
@@ -257,7 +257,6 @@ describe("persistEvalTraceFanout", () => {
     await persistEvalTraceFanout({
       convexClient: client,
       iterationId: "iter1",
-      terminalReason: "eval_completed",
       messages: [
         { role: "user", content: "q0" } as ModelMessage,
         { role: "assistant", content: "a0" } as ModelMessage,
@@ -285,7 +284,6 @@ describe("persistEvalTraceFanout", () => {
     const result = await persistEvalTraceFanout({
       convexClient: client,
       iterationId: "iter1",
-      terminalReason: "eval_completed",
       messages: [{ role: "user", content: "hi" } as ModelMessage],
       spans: undefined,
       prompts: undefined,
@@ -303,7 +301,6 @@ describe("persistEvalTraceFanout", () => {
     const result = await persistEvalTraceFanout({
       convexClient: client,
       iterationId: "iter1",
-      terminalReason: "eval_completed",
       messages: [{ role: "user", content: "hi" } as ModelMessage],
       spans: undefined,
       prompts: undefined,
@@ -323,7 +320,6 @@ describe("persistEvalTraceFanout", () => {
     const result = await persistEvalTraceFanout({
       convexClient: client,
       iterationId: "iter1",
-      terminalReason: "eval_completed",
       messages: [
         { role: "user", content: "hi" } as ModelMessage,
         { role: "assistant", content: "hello" } as ModelMessage,
@@ -340,8 +336,49 @@ describe("persistEvalTraceFanout", () => {
     expect(
       (appendCalls[0]!.args.turn as { promptIndex: number }).promptIndex,
     ).toBe(0);
-    expect(appendCalls[0]!.args.terminal).toEqual({
-      reason: "eval_completed",
+    // No terminal in fanout — caller fires lockEvalSessionAfterUpdate.
+    expect(appendCalls[0]!.args.terminal).toBeUndefined();
+  });
+
+  test("threads iterationStartedAt through to the per-turn call (PR-2 review fix #1)", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+
+    const realIterationStart = 1_700_000_000_000;
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      iterationStartedAt: realIterationStart,
+      messages: [{ role: "user", content: "hi" } as ModelMessage],
+      spans: undefined,
+      prompts: undefined,
     });
+
+    const appendCall = calls.find(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    expect(appendCall).toBeDefined();
+    // The chatSessions row's startedAt is sourced from this arg, not
+    // from Date.now() at finalize time.
+    expect(appendCall!.args.startedAt).toBe(realIterationStart);
+  });
+
+  test("falls back to Date.now() for startedAt when iterationStartedAt is absent", async () => {
+    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const before = Date.now();
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [{ role: "user", content: "hi" } as ModelMessage],
+      spans: undefined,
+      prompts: undefined,
+    });
+
+    const after = Date.now();
+    const appendCall = calls.find(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    expect(appendCall!.args.startedAt).toBeGreaterThanOrEqual(before);
+    expect(appendCall!.args.startedAt).toBeLessThanOrEqual(after);
   });
 });

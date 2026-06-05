@@ -183,11 +183,14 @@ export async function persistEvalTraceFanout(args: {
   iterationId: string;
   /** Used as `chatSessions.displayLabel`. */
   displayLabel?: string;
+  /** Real iteration start (ms epoch) — surfaces in `chatSessions.startedAt`.
+   *  Falls back to `Date.now()` only when absent. PR-2 review fix #1
+   *  (Cursor #a52700dd): the old default-to-finalize-time skewed Sessions
+   *  viewer timelines for long-running evals. */
+  iterationStartedAt?: number;
   modelId?: string;
   /** Maps to `chatSessions.modelSource`. Defaults to 'mcpjam'. */
   modelSource?: "mcpjam" | "byok" | "local_byok";
-  /** Terminal reason derived from iteration status/result. */
-  terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled";
   messages: ModelMessage[];
   spans: EvalTraceSpan[] | undefined;
   prompts: PromptTraceSummary[] | undefined;
@@ -207,14 +210,20 @@ export async function persistEvalTraceFanout(args: {
     prompts: args.prompts ?? [],
   });
 
-  const startedAt = Date.now();
+  const startedAt = args.iterationStartedAt ?? Date.now();
   const modelId = args.modelId ?? "eval/unknown";
   const modelSource = args.modelSource ?? "mcpjam";
 
+  // PR-2 review fix #2 (Cursor #ed44ef40): the fanout no longer fires
+  // the chatSessions terminal lock. Callers fire `lockEvalSessionAfterUpdate`
+  // explicitly AFTER `updateTestIteration` succeeds so a downstream
+  // iteration-row failure cannot leave a locked transcript without a
+  // finalized iteration. Idempotent on retry per PR-1 lock semantics
+  // (same-promptIndex re-write before lock = patch in place, no-op
+  // after lock).
   try {
     for (let i = 0; i < turns.length; i++) {
       const turn = turns[i]!;
-      const isLast = i === turns.length - 1;
       const now = Date.now();
       const result = (await args.convexClient.action(
         "testSuites:appendEvalTurnTrace" as any,
@@ -236,9 +245,6 @@ export async function persistEvalTraceFanout(args: {
               : {}),
             widgets: [],
           },
-          ...(isLast
-            ? { terminal: { reason: args.terminalReason } }
-            : {}),
         },
       )) as { skipped?: boolean } | undefined;
       // If the backend reports `skipped: true`, the flag flipped off
@@ -259,5 +265,34 @@ export async function persistEvalTraceFanout(args: {
       persisted: false,
       error: error instanceof Error ? error : new Error(String(error)),
     };
+  }
+}
+
+/**
+ * Fires the chatSessions lock via the backend after `updateTestIteration`
+ * has succeeded. Idempotent — silently no-ops if the session is already
+ * locked or if no chatSessions row was persisted (e.g. the fanout fell
+ * back). Best-effort: logs and swallows transient failures because the
+ * iteration row is already finalized at the call site and a missed lock
+ * is recoverable on the next finalize attempt.
+ */
+export async function lockEvalSessionAfterUpdate(args: {
+  convexClient: ConvexHttpClient;
+  iterationId: string;
+  reason: "eval_completed" | "eval_failed" | "eval_cancelled";
+}): Promise<void> {
+  try {
+    await args.convexClient.action(
+      "testSuites:lockEvalSession" as any,
+      { iterationId: args.iterationId, reason: args.reason },
+    );
+  } catch (error) {
+    logger.warn(
+      "[evals] lockEvalSession failed after updateTestIteration; transcript will remain unlocked",
+      {
+        iterationId: args.iterationId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
   }
 }

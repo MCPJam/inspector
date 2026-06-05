@@ -9,7 +9,10 @@ import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
-import { persistEvalTraceFanout } from "./persist-eval-trace.js";
+import {
+  lockEvalSessionAfterUpdate,
+  persistEvalTraceFanout,
+} from "./persist-eval-trace.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
@@ -201,6 +204,7 @@ export const createSuiteRunRecorder = ({
       prompts,
       widgetSnapshots,
       status,
+      startedAt,
       error,
       errorDetails,
       resultSource,
@@ -233,9 +237,14 @@ export const createSuiteRunRecorder = ({
 
       // PR-2 eval→chatSessions fanout: when the backend flag is on,
       // write the transcript as per-turn rows in the chatSessions path
-      // before calling updateTestIteration. The fanout result drives
-      // whether we still pass messages/spans/prompts/widgetSnapshots
-      // to updateTestIteration:
+      // BEFORE calling updateTestIteration. The fanout no longer fires
+      // the terminal lock — that happens AFTER updateTestIteration
+      // succeeds so a downstream iteration-row failure cannot leave a
+      // locked transcript without a finalized iteration (PR-2 review
+      // fix #2, Cursor #ed44ef40). Idempotent on retry.
+      //
+      // Fanout result drives whether we still pass trace fields to
+      // updateTestIteration:
       //   - null            → flag off; today's legacy behavior runs
       //   - persisted:true  → trace lives in chatSessions; updateTestIteration
       //                       called WITHOUT trace fields (no double-persist)
@@ -251,7 +260,7 @@ export const createSuiteRunRecorder = ({
       const fanout = await persistEvalTraceFanout({
         convexClient,
         iterationId,
-        terminalReason,
+        iterationStartedAt: startedAt,
         messages,
         spans,
         prompts,
@@ -301,6 +310,18 @@ export const createSuiteRunRecorder = ({
             ...buildIterationUsageMetadata(usage),
           }),
         });
+
+        // updateTestIteration succeeded — now safe to set the lock.
+        // No-op when the fanout didn't persist (legacy path or
+        // fallback). Best-effort: lockEvalSessionAfterUpdate swallows
+        // transient failures because a missed lock is recoverable.
+        if (fanout?.persisted === true) {
+          await lockEvalSessionAfterUpdate({
+            convexClient,
+            iterationId,
+            reason: terminalReason,
+          });
+        }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
