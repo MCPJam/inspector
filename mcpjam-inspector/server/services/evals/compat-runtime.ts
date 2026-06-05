@@ -1,17 +1,17 @@
 /**
- * OpenAI Apps compat resolution + Convex-bound suite hostConfig loader.
+ * Inspector-side suite hostConfig loader.
  *
- * As of Stage 3 of the hostConfig consolidation, `resolveOpenAiCompatForHostConfig`
- * lives in `@mcpjam/sdk/host-config/internal` (alongside the canonical
- * hostConfig model) and is re-exported here so call sites don't churn.
+ * The OpenAI Apps compat resolution helpers live in
+ * `@mcpjam/sdk/host-config/internal` — callers import them directly from
+ * the SDK. This file used to re-export them for back-compat; that shim
+ * was removed as part of the Stage 4 cleanup.
  *
- * `loadSuiteHostConfig` stays inspector-side — it takes a `ConvexHttpClient`
- * and does Convex queries, so it can't move into the pure SDK module.
+ * `loadSuiteHostConfig` stays inspector-side because it takes a
+ * `ConvexHttpClient` and does Convex queries, which can't move into the
+ * pure SDK module.
  */
 
 import type { ConvexHttpClient } from "convex/browser";
-
-export { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

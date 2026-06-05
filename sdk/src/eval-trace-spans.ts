@@ -60,7 +60,7 @@ function messageDedupeKey(message: ModelMessage): string {
 
 /**
  * Append messages skipping duplicates (by stable `id` or JSON identity),
- * matching PromptResult / TestAgent transcript semantics.
+ * matching PromptResult / HostRunner transcript semantics.
  */
 export function appendDedupedModelMessages(
   acc: ModelMessage[],
@@ -82,7 +82,7 @@ export function appendDedupedModelMessages(
  * so timeline rows and transcript slices align with stored trace messages.
  *
  * `baseMessagesLength` is the count of messages before the first step's response messages
- * in the stored trace (TestAgent uses `[userMessage, ...result.response.messages]` → 1).
+ * in the stored trace (HostRunner uses `[userMessage, ...result.response.messages]` → 1).
  */
 export function patchEvalSpansMessageRangesFromSteps(
   spans: EvalTraceSpanInput[],
@@ -148,7 +148,7 @@ export type EvalSpanSink = {
 };
 
 /**
- * Records eval timeline spans for a single TestAgent.prompt() run.
+ * Records eval timeline spans for a single HostRunner.run() run.
  * Times are relative to runStartedAt via rel().
  */
 /**

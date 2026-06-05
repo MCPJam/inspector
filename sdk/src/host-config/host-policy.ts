@@ -18,6 +18,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * Read the host style from either shape:
+ *   - canonical / internal storage (`hostStyle`)
+ *   - public `HostJson` from `Host.toJSON()` (`style`)
+ *
+ * Both helpers in this module operate on either shape because callers
+ * span: inspector eval runners (canonical, via Convex), SDK `HostRunner`
+ * (public, via `Host.toJSON()`), and unit tests on both.
+ */
+function readHostStyle(hostConfig: Record<string, unknown>): string | undefined {
+  if (typeof hostConfig.hostStyle === "string") return hostConfig.hostStyle;
+  if (typeof hostConfig.style === "string") return hostConfig.style;
+  return undefined;
+}
+
 export type HostExecutionPolicy = {
   requireToolApproval: boolean;
   /** undefined = spec default (filter app-only tools from model). false = opt out. */
@@ -57,8 +72,7 @@ export function extractHostExecutionPolicy(
       ? discoveryRaw
       : isRecord(discoveryRaw) && discoveryRaw.enabled === true;
 
-  const hostStyle =
-    typeof hostConfig.hostStyle === "string" ? hostConfig.hostStyle : undefined;
+  const hostStyle = readHostStyle(hostConfig);
 
   return {
     requireToolApproval,
@@ -79,6 +93,34 @@ export function extractHostExecutionPolicy(
  * under the host's `requireToolApproval` policy. Evals do not block on
  * approval prompts — this is a "would prompt N times" signal only.
  */
+/**
+ * Snapshot-only host metadata for SDK eval reports. Subset of
+ * {@link buildHostIterationMetadata} that needs no per-iteration counters
+ * (signals / approvalsWouldRequire / injectOpenAiCompat) and can be
+ * derived from `Host.toJSON()` alone.
+ *
+ * Used by SDK eval result mapping to stamp executor-derived host context
+ * onto each iteration's metadata. Per-iteration signal counts (tools
+ * exposed / dropped, approvals required) are added by callers that have
+ * runtime access (inspector eval runner, future `HostRuntime` plumbing).
+ */
+export function buildHostSnapshotMetadata(
+  hostConfig: Record<string, unknown> | null,
+): Record<string, string | number | boolean> {
+  const policy = extractHostExecutionPolicy(hostConfig);
+  const meta: Record<string, string | number | boolean> = {};
+  if (policy.progressiveDiscoveryEnabled) {
+    meta.progressive_discovery_enabled = true;
+  }
+  if (policy.namedHostId) {
+    meta.host_id = policy.namedHostId;
+  }
+  if (policy.hostStyle) {
+    meta.host_style = policy.hostStyle;
+  }
+  return meta;
+}
+
 export function buildHostIterationMetadata(
   policy: HostExecutionPolicy,
   signals: ToolExposureSignals,

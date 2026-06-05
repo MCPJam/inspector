@@ -19,7 +19,7 @@ import {
   buildHostIterationMetadata,
   type HostExecutionPolicy,
   type ToolExposureSignals,
-} from "./evals/host-execution-policy.js";
+} from "@mcpjam/sdk/host-config/internal";
 import {
   finalizePassedForEval,
   type MCPClientManager,

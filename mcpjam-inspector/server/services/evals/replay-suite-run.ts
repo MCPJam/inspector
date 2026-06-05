@@ -14,10 +14,8 @@ import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config.js";
-import {
-  loadSuiteHostConfig,
-  resolveOpenAiCompatForHostConfig,
-} from "./compat-runtime.js";
+import { loadSuiteHostConfig } from "./compat-runtime.js";
+import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;

@@ -3,6 +3,7 @@ import {
   compatPresetForHostStyle,
   resolveOpenAiCompatForHostConfig,
 } from "../src/host-config/internal";
+import { Host } from "../src/host-config/host";
 
 describe("readOpenAiCompatOverride", () => {
   it("returns undefined for non-record input", () => {
@@ -115,6 +116,74 @@ describe("resolveOpenAiCompatForHostConfig — resolution order", () => {
   it("treats override absent the same as no override", () => {
     expect(
       resolveOpenAiCompatForHostConfig({ hostStyle: "mcpjam" }, undefined),
+    ).toBe(true);
+  });
+});
+
+// Regression: the helpers historically only read the CANONICAL shape
+// (`hostStyle`, `mcpProfile`). `HostRunner` now feeds them the PUBLIC
+// shape produced by `Host.toJSON()` (`style`, `mcp`). Both shapes must
+// resolve identically — otherwise `new Host({ style: "mcpjam" })`
+// silently fails to opt into ChatGPT-style compat injection.
+describe("HostJson shape (public API) compatibility", () => {
+  it("readOpenAiCompatOverride accepts host.mcp.apps.compatRuntime.openaiApps", () => {
+    const cfg = {
+      mcp: { apps: { compatRuntime: { openaiApps: true } } },
+    };
+    expect(readOpenAiCompatOverride(cfg)).toBe(true);
+
+    const cfgFalse = {
+      mcp: { apps: { compatRuntime: { openaiApps: false } } },
+    };
+    expect(readOpenAiCompatOverride(cfgFalse)).toBe(false);
+  });
+
+  it("resolveOpenAiCompatForHostConfig accepts public `style` field", () => {
+    expect(resolveOpenAiCompatForHostConfig({ style: "mcpjam" })).toBe(true);
+    expect(resolveOpenAiCompatForHostConfig({ style: "chatgpt" })).toBe(true);
+    expect(resolveOpenAiCompatForHostConfig({ style: "claude" })).toBe(false);
+    expect(resolveOpenAiCompatForHostConfig({ style: "cursor" })).toBe(false);
+  });
+
+  it("resolveOpenAiCompatForHostConfig honors explicit override via host.mcp.* path", () => {
+    // Style preset would say false, but explicit override says true.
+    expect(
+      resolveOpenAiCompatForHostConfig({
+        style: "claude",
+        mcp: { apps: { compatRuntime: { openaiApps: true } } },
+      }),
+    ).toBe(true);
+  });
+
+  it("resolves correctly when fed a real Host.toJSON() snapshot", () => {
+    const mcpjamHost = new Host({
+      style: "mcpjam",
+      model: "openai/gpt-4o",
+    }).toJSON();
+    expect(resolveOpenAiCompatForHostConfig(mcpjamHost)).toBe(true);
+
+    const claudeHost = new Host({
+      style: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+    }).toJSON();
+    expect(resolveOpenAiCompatForHostConfig(claudeHost)).toBe(false);
+
+    // Claude style with explicit opt-in via host.mcp.apps.compatRuntime
+    const claudeOptIn = new Host({
+      style: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+      mcp: { apps: { compatRuntime: { openaiApps: true } } },
+    }).toJSON();
+    expect(resolveOpenAiCompatForHostConfig(claudeOptIn)).toBe(true);
+  });
+
+  it("override using public `style` short-circuits a base canonical config", () => {
+    // Base canonical config says claude (false); override says chatgpt (true).
+    expect(
+      resolveOpenAiCompatForHostConfig(
+        { hostStyle: "claude" },
+        { style: "chatgpt" },
+      ),
     ).toBe(true);
   });
 });

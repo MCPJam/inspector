@@ -6,7 +6,7 @@
  * ```ts
  * import { Host } from "@mcpjam/sdk/host-config"; // or from "@mcpjam/sdk"
  * const host = new Host({ style: "mcpjam", model: "anthropic/claude-sonnet-4-6" })
- *   .addServer("srv_abc");
+ *   .requireServer("srv_abc");
  * host.mcp.protocolVersion = "2025-11-25";
  * const json = host.toJSON();
  * ```
@@ -17,7 +17,19 @@
  * `@mcpjam/sdk/host-config/internal`; see `./types.ts`.
  */
 
-export { Host } from "./host.js";
+export {
+  Host,
+  isHostJson,
+  snapshotHostSource,
+  assertHostServersKnown,
+  resolveKnownServerIds,
+} from "./host.js";
+export type { HostServerRegistry, HostSource } from "./host.js";
+export { HostRuntime } from "./host-runtime.js";
+export type {
+  HostRuntimeDefaults,
+  HostRuntimeManager,
+} from "./host-runtime.js";
 export type {
   HostInit,
   HostJson,

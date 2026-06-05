@@ -1,4 +1,4 @@
-import type { EvalAgent } from "./EvalAgent.js";
+import type { HostExecutor } from "./HostExecutor.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import type {
@@ -15,6 +15,7 @@ import type {
 import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
+import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 
 /**
  * Configuration for an EvalSuite
@@ -62,20 +63,20 @@ export interface EvalSuiteResult {
  * const suite = new EvalSuite({ name: "Math" });
  * suite.add(new EvalTest({
  *   name: "addition",
- *   test: async (agent) => {
- *     const r = await agent.prompt("Add 2+3");
+ *   test: async (executor) => {
+ *     const r = await executor.run("Add 2+3");
  *     return r.hasToolCall("add");
  *   },
  * }));
  * suite.add(new EvalTest({
  *   name: "multiply",
- *   test: async (agent) => {
- *     const r = await agent.prompt("Multiply 4*5");
+ *   test: async (executor) => {
+ *     const r = await executor.run("Multiply 4*5");
  *     return r.hasToolCall("multiply");
  *   },
  * }));
  *
- * await suite.run(agent, { iterations: 30 });
+ * await suite.run(executor, { iterations: 30 });
  * console.log(suite.accuracy());                 // Aggregate: 0.95
  * console.log(suite.get("addition").accuracy()); // Individual: 0.97
  * ```
@@ -117,10 +118,10 @@ export class EvalSuite {
   }
 
   /**
-   * Run all tests in the suite with the given agent and options
+   * Run all tests in the suite with the given executor and options.
    */
   async run(
-    agent: EvalAgent,
+    executor: HostExecutor,
     options: EvalTestRunOptions
   ): Promise<EvalSuiteResult> {
     const testResults = new Map<string, EvalRunResult>();
@@ -150,7 +151,7 @@ export class EvalSuite {
           : undefined,
       };
 
-      const result = await test.run(agent, testOptions);
+      const result = await test.run(executor, testOptions);
       testResults.set(name, result);
       completedIterations += options.iterations;
     }
@@ -160,7 +161,7 @@ export class EvalSuite {
     await this.autoSaveSuiteRunIfConfigured(
       testResults,
       suiteReportingConfig,
-      agent
+      executor
     );
     return this.lastRunResult;
   }
@@ -168,7 +169,7 @@ export class EvalSuite {
   private async autoSaveSuiteRunIfConfigured(
     testResults: Map<string, EvalRunResult>,
     config: MCPJamReportingConfig | undefined,
-    agent: EvalAgent
+    executor: HostExecutor
   ): Promise<void> {
     if (config?.enabled === false) {
       return;
@@ -178,7 +179,13 @@ export class EvalSuite {
       return;
     }
 
-    const results = this.buildEvalResultInputs(testResults, config);
+    const hostSnapshot = executor.getHostSnapshot?.();
+    const hostExtras = hostSnapshot
+      ? buildHostSnapshotMetadata(
+          hostSnapshot as unknown as Record<string, unknown>,
+        )
+      : undefined;
+    const results = this.buildEvalResultInputs(testResults, config, hostExtras);
     if (results.length === 0) {
       return;
     }
@@ -190,7 +197,7 @@ export class EvalSuite {
       serverReplayConfigs: resolveServerReplayConfigs({
         serverReplayConfigs: config?.serverReplayConfigs,
         serverNames: config?.serverNames,
-        agent,
+        agent: executor,
       }),
       notes: config?.notes,
       passCriteria: config?.passCriteria,
@@ -206,7 +213,8 @@ export class EvalSuite {
 
   private buildEvalResultInputs(
     testResults: Map<string, EvalRunResult>,
-    reporting?: MCPJamReportingConfig
+    reporting?: MCPJamReportingConfig,
+    hostExtras?: Record<string, string | number | boolean>,
   ): EvalResultInput[] {
     const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
     for (const [name, test] of this.tests) {
@@ -220,7 +228,8 @@ export class EvalSuite {
       Object.keys(expectedToolCallsByTest).length > 0
         ? expectedToolCallsByTest
         : undefined,
-      reporting?.failOnToolError
+      reporting?.failOnToolError,
+      hostExtras,
     );
   }
 

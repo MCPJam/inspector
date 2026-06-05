@@ -12,6 +12,29 @@ import type {
 } from "./eval-reporting-types.js";
 import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
+import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+
+/**
+ * Per-iteration host-extras lookup:
+ *
+ *   - If the iteration captured its own `hostSnapshot` (HostRuntime path
+ *     where the live `Host` could differ between iterations), build the
+ *     stamp from that snapshot — the per-iteration value wins.
+ *   - Otherwise fall back to the global `hostExtras` derived once from
+ *     `executor.getHostSnapshot()` (HostRunner path, where the snapshot
+ *     is immutable across iterations).
+ */
+function resolveIterationHostExtras(
+  iteration: IterationResult,
+  fallback: Record<string, string | number | boolean> | undefined,
+): Record<string, string | number | boolean> | undefined {
+  if (iteration.hostSnapshot) {
+    return buildHostSnapshotMetadata(
+      iteration.hostSnapshot as unknown as Record<string, unknown>,
+    );
+  }
+  return fallback;
+}
 
 type PromptTurnLike = {
   prompt: string;
@@ -549,11 +572,33 @@ export function suiteRunToEvalResults(
 /**
  * Convert iterations for EvalTest internal auto-save (preserves existing behavior).
  */
+/**
+ * Additively merge host-derived metadata into a per-iteration metadata
+ * object. Existing keys (`retryCount`, `iterationNumber`, …) are NEVER
+ * overwritten — a conflicting host key is namespaced under `host.<key>`.
+ */
+function mergeHostExtrasIntoMetadata(
+  base: Record<string, string | number | boolean>,
+  hostExtras: Record<string, string | number | boolean> | undefined,
+): Record<string, string | number | boolean> {
+  if (!hostExtras) return base;
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(hostExtras)) {
+    if (key in merged) {
+      merged[`host.${key}`] = value;
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
   expectedToolCalls?: EvalExpectedToolCall[],
-  failOnToolError?: boolean
+  failOnToolError?: boolean,
+  hostExtras?: Record<string, string | number | boolean>,
 ): EvalResultInput[] {
   return iterations.map((iteration, index) => {
     const prompts = iteration.prompts ?? [];
@@ -600,10 +645,13 @@ export function iterationsToEvalResultInputs(
       error: iteration.error,
       trace,
       widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
-      metadata: {
-        retryCount: iteration.retryCount ?? 0,
-        iterationNumber: index + 1,
-      },
+      metadata: mergeHostExtrasIntoMetadata(
+        {
+          retryCount: iteration.retryCount ?? 0,
+          iterationNumber: index + 1,
+        },
+        resolveIterationHostExtras(iteration, hostExtras),
+      ),
     };
   });
 }
@@ -614,7 +662,8 @@ export function iterationsToEvalResultInputs(
 export function suiteTestResultsToEvalResultInputs(
   testResults: Map<string, EvalRunResult>,
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>,
-  failOnToolError?: boolean
+  failOnToolError?: boolean,
+  hostExtras?: Record<string, string | number | boolean>,
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
@@ -666,11 +715,14 @@ export function suiteTestResultsToEvalResultInputs(
         trace,
         widgetSnapshots:
           widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
-        metadata: {
-          testName,
-          iterationNumber: index + 1,
-          retryCount: iteration.retryCount ?? 0,
-        },
+        metadata: mergeHostExtrasIntoMetadata(
+          {
+            testName,
+            iterationNumber: index + 1,
+            retryCount: iteration.retryCount ?? 0,
+          },
+          resolveIterationHostExtras(iteration, hostExtras),
+        ),
       });
     }
   }
