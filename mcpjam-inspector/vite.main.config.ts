@@ -56,6 +56,16 @@ export default defineConfig({
         // fallback-port-not-synced regression. Keeping dynamic imports
         // as separate chunks preserves the deferral semantics.
         inlineDynamicImports: false,
+        // Pin every emitted JS file to `.cjs`. package.json has
+        // `"type": "module"`, so Node treats unknown `.js` files as ESM.
+        // The entry is already `.cjs` via `lib.fileName`, and Vite's
+        // current lib-mode default happens to give chunks `.cjs` too,
+        // but that's implicit. Make it explicit so a future Vite version
+        // can't silently emit a `.js` chunk that main.cjs's
+        // `require(...)` would then fail to load with "exports is not
+        // defined".
+        entryFileNames: "[name].cjs",
+        chunkFileNames: "[name]-[hash].cjs",
       },
     },
   },
