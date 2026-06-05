@@ -24,6 +24,14 @@
     "heading": { "family": "Geist", "weight": 500 },
     "body": { "family": "Geist", "weight": 400 }
   },
+  "styling": {
+    "codeblocks": {
+      "theme": {
+        "light": "github-light",
+        "dark": "vesper"
+      }
+    }
+  },
   "favicon": "/mcp_jam.svg",
   "navigation": {
     "groups": [
