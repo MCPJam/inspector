@@ -115,7 +115,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       compareRunId,
     });
 
-    return convexClient.action.mock.calls[0]?.[1] as {
+    // Find the updateTestIteration call specifically. The PR-2 fanout
+    // introduced an `isEvalChatSessionsWriterEnabled` flag check that
+    // fires before any iteration write, so indexing by `calls[0]`
+    // would now return the flag query, not the iteration update.
+    // Mock returns undefined for the flag query → cached as `false` →
+    // legacy single-call path runs unchanged.
+    const updateCall = convexClient.action.mock.calls.find(
+      (call) => call[0] === "testSuites:updateTestIteration",
+    );
+    return updateCall?.[1] as {
       metadata?: Record<string, string | number | boolean>;
       tokensUsed?: number;
     };
@@ -174,6 +183,53 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       text: vi.fn().mockResolvedValue(""),
     };
   }
+
+  it(
+    "PR-2 review #5: lockEvalSession fires when fanout succeeded but updateTestIteration throws transient error",
+    async () => {
+      // Mock convexClient.action with ref-aware responses:
+      //   - flag-check returns enabled:true (writer on)
+      //   - appendEvalTurnTrace returns success (fanout persists)
+      //   - updateTestIteration throws a transient error (NOT a
+      //     "not found"/"cancelled" message — those bypass the lock)
+      //   - lockEvalSession records the call so we can assert it fired
+      const callsByRef: Record<string, number> = {};
+      const action = vi.fn(async (ref: string) => {
+        callsByRef[ref] = (callsByRef[ref] ?? 0) + 1;
+        if (ref === "testSuites:isEvalChatSessionsWriterEnabled") {
+          return { enabled: true };
+        }
+        if (ref === "testSuites:appendEvalTurnTrace") {
+          return { skipped: false, chatSessionId: "sess_x", locked: false };
+        }
+        if (ref === "testSuites:updateTestIteration") {
+          throw new Error("transient backend hiccup");
+        }
+        if (ref === "testSuites:lockEvalSession") {
+          return { skipped: false, locked: true, alreadyLocked: false };
+        }
+        return undefined;
+      });
+      convexClient.action = action;
+      // Reset the helper's process-latched flag cache so this test
+      // sees `enabled:true` instead of an earlier test's `false`.
+      const { __resetEvalChatSessionsWriterFlagCacheForTests } = await import(
+        "../persist-eval-trace.js"
+      );
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+
+      await runQuickTestCase();
+
+      // Sanity: fanout did fire (so we know we're testing the new path)
+      // AND lockEvalSession was called despite the update throwing.
+      expect(callsByRef["testSuites:appendEvalTurnTrace"]).toBeGreaterThan(0);
+      expect(callsByRef["testSuites:updateTestIteration"]).toBeGreaterThan(0);
+      expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
+      // Reset for subsequent tests that may rely on the legacy "all
+      // actions return undefined" mock.
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+    },
+  );
 
   it("persists compareRunId in quick-run iteration metadata when provided", async () => {
     const updatePayload = await runQuickTestCase("cmp_123");
