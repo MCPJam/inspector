@@ -30,18 +30,26 @@ Draw me an MCP architecture diagram
 
 Press **Send**. The diagram renders in the app. No API key, ngrok, or ChatGPT/Claude subscription needed. Sequence: tool call → widget → inspect.
 
+<Check>
+You should see a tool call to `create_view` followed by a rendered diagram inline in the chat. If you don't, check that the Excalidraw server shows **Connected** in the **Connect** tab.
+</Check>
+
 <Tip>
   Use the widget debug icons to open tool input/output, CSP activity, widget state, and JSON-RPC for that result.
 </Tip>
 
 ## 3. Connect your own server
 
-Open **Servers** in the left sidebar. Click **Add server**.
+Open the **Connect** tab in the left sidebar (labelled **Servers** in some builds). Click **Add server**.
 
 - **HTTP**: Paste a URL ending in `/mcp`. The web app accepts **HTTPS** URLs only. Desktop and Terminal accept **HTTP** or **HTTPS**. Add a bearer token or use the [OAuth Debugger](/inspector/guided-oauth) if the server requires auth.
 - **STDIO** (Desktop and Terminal only): Paste a command such as `npx -y @modelcontextprotocol/server-everything`. Not available in the web app. See [Hosted App](/hosted/overview).
 
-Each **Connected** server is available in the Playground, Tools, Prompts, and Resources. Connect more from **Servers** anytime.
+Each **Connected** server is available in the Playground, Tools, Prompts, and Resources. Connect more from the **Connect** tab anytime.
+
+<Check>
+You should see your server show **Connected** with a green dot in the **Connect** tab, and its tools should appear in the Playground's left rail.
+</Check>
 
 ## 4. Where to go next
 
