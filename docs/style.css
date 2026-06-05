@@ -9,36 +9,66 @@
  * No glassy backdrops, no floaty shadows, sharp warm borders, generous space.
  * ─────────────────────────────────────────────────────────────────────────── */
 
+/* Geist Mono — docs.json fonts only accepts heading+body, so the code face
+   is loaded here. */
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap");
+
 /* BEGIN GENERATED — sync via `npm run docs:sync-tokens` */
 /* Mirrors design-system/src/tokens.css — edits here will be overwritten. */
 :root {
-  --mcj-paper:        oklch(0.9818 0.0054 95.0986);
-  --mcj-paper-2:      oklch(0.9341 0.0153 90.239);
-  --mcj-paper-3:      oklch(0.9245 0.0138 92.9892);
-  --mcj-ink:          oklch(0.3438 0.0269 95.7226);
-  --mcj-ink-strong:   oklch(0.1908 0.002 106.5859);
-  --mcj-ink-muted:    oklch(0.6059 0.0075 97.4233);
-  --mcj-rule:         oklch(0.8847 0.0069 97.3627);
-  --mcj-rule-strong:  oklch(0.7621 0.0156 98.3528);
-  --mcj-orange:       oklch(0.6832 0.1382 38.744);
-  --mcj-orange-edge:  oklch(0.6171 0.1375 39.0427);
-  --mcj-radius:       0.5rem;
-  --mcj-orange-soft:  oklch(0.6832 0.1382 38.744 / 0.10);
+  --mcj-paper:               oklch(0.9818 0.0054 95.0986);
+  --mcj-paper-2:             oklch(0.9341 0.0153 90.239);
+  --mcj-paper-3:             oklch(0.9245 0.0138 92.9892);
+  --mcj-ink:                 oklch(0.3438 0.0269 95.7226);
+  --mcj-ink-strong:          oklch(0.1908 0.002 106.5859);
+  --mcj-ink-muted:           oklch(0.6059 0.0075 97.4233);
+  --mcj-rule:                oklch(0.8847 0.0069 97.3627);
+  --mcj-rule-strong:         oklch(0.7621 0.0156 98.3528);
+  --mcj-orange:              oklch(0.6832 0.1382 38.744);
+  --mcj-orange-edge:         oklch(0.6171 0.1375 39.0427);
+  --mcj-radius:              0.5rem;
+  --mcj-orange-soft:         oklch(0.6832 0.1382 38.744 / 0.10);
+
+  /* code syntax (Mintlify Shiki) */
+  --mint-color-text:                 oklch(0.1908 0.002 106.5859);
+  --mint-color-background:           oklch(0.9341 0.0153 90.239);
+  --mint-token-keyword:              oklch(0.55 0.16 35);
+  --mint-token-function:             oklch(0.1908 0.002 106.5859);
+  --mint-token-string:               oklch(0.45 0.09 145);
+  --mint-token-string-expression:    oklch(0.45 0.09 145);
+  --mint-token-constant:             oklch(0.52 0.08 60);
+  --mint-token-parameter:            oklch(0.3438 0.0269 95.7226);
+  --mint-token-punctuation:          oklch(0.58 0.005 95);
+  --mint-token-comment:              oklch(0.62 0.01 95);
+  --mint-token-link:                 oklch(0.6171 0.1375 39.0427);
 }
 
 .dark, [data-theme="dark"] {
-  --mcj-paper:        oklch(0.2679 0.0036 106.6427);
-  --mcj-paper-2:      oklch(0.2213 0.0038 106.707);
-  --mcj-paper-3:      oklch(0.213 0.0078 95.4245);
-  --mcj-ink:          oklch(0.8074 0.0142 93.0137);
-  --mcj-ink-strong:   oklch(0.9818 0.0054 95.0986);
-  --mcj-ink-muted:    oklch(0.7713 0.0169 99.0657);
-  --mcj-rule:         oklch(0.3618 0.0101 106.8928);
-  --mcj-rule-strong:  oklch(0.4336 0.0113 100.2195);
-  --mcj-orange:       oklch(0.6724 0.1308 38.7559);
-  --mcj-orange-edge:  oklch(0.6724 0.1308 38.7559);
-  --mcj-radius:       0.5rem;
-  --mcj-orange-soft:  oklch(0.6724 0.1308 38.7559 / 0.14);
+  --mcj-paper:               oklch(0.2679 0.0036 106.6427);
+  --mcj-paper-2:             oklch(0.2213 0.0038 106.707);
+  --mcj-paper-3:             oklch(0.213 0.0078 95.4245);
+  --mcj-ink:                 oklch(0.8074 0.0142 93.0137);
+  --mcj-ink-strong:          oklch(0.9818 0.0054 95.0986);
+  --mcj-ink-muted:           oklch(0.7713 0.0169 99.0657);
+  --mcj-rule:                oklch(0.3618 0.0101 106.8928);
+  --mcj-rule-strong:         oklch(0.4336 0.0113 100.2195);
+  --mcj-orange:              oklch(0.6724 0.1308 38.7559);
+  --mcj-orange-edge:         oklch(0.6724 0.1308 38.7559);
+  --mcj-radius:              0.5rem;
+  --mcj-orange-soft:         oklch(0.6724 0.1308 38.7559 / 0.14);
+
+  /* code syntax (Mintlify Shiki) */
+  --mint-color-text:                 oklch(0.92 0.01 95);
+  --mint-color-background:           oklch(0.2213 0.0038 106.707);
+  --mint-token-keyword:              oklch(0.75 0.13 35);
+  --mint-token-function:             oklch(0.92 0.01 95);
+  --mint-token-string:               oklch(0.78 0.10 145);
+  --mint-token-string-expression:    oklch(0.78 0.10 145);
+  --mint-token-constant:             oklch(0.78 0.09 65);
+  --mint-token-parameter:            oklch(0.86 0.01 95);
+  --mint-token-punctuation:          oklch(0.60 0.005 95);
+  --mint-token-comment:              oklch(0.55 0.01 95);
+  --mint-token-link:                 oklch(0.7400 0.1308 38.7559);
 }
 /* END GENERATED */
 
@@ -124,21 +154,76 @@ code, pre, kbd, samp {
     Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-code:not(pre code) {
-  background: var(--mcj-paper-2);
-  border: 1px solid var(--mcj-rule);
-  color: var(--mcj-ink-strong);
-  padding: 0.12em 0.38em;
-  border-radius: 4px;
-  font-size: 0.92em;
+/* Inline code — defeat .prose code AND any deeper Mintlify selectors
+   like `.prose p code`. Tighter chip, no browser bold, sits on the
+   baseline of the surrounding sentence. */
+:is(article, .prose, main, body) :is(p, li, td, h1, h2, h3, h4, h5, h6, span) code:not(pre code),
+:is(article, .prose, main, body) > code:not(pre code) {
+  background: var(--mcj-paper-2) !important;
+  border: 1px solid var(--mcj-rule) !important;
+  color: var(--mcj-ink-strong) !important;
+  padding: 0.08em 0.36em !important;
+  border-radius: 4px !important;
+  font-size: 0.86em !important;
+  font-weight: 400 !important;
+  line-height: 1.45 !important;
 }
 
+/* Code block container — Mintlify's css-variables theme (set in
+   docs.json) drives Shiki from --mint-* vars that the sync script
+   feeds from the design-system --code-* palette. */
 code-block,
 pre {
-  background: var(--mcj-paper-2) !important;
-  border: 1px solid var(--mcj-rule);
+  border: none !important;
   border-radius: var(--mcj-radius);
   box-shadow: none !important;
+}
+
+/* Shiki's css-variables theme only exposes a subset of token types
+   (keyword/string/comment/function/parameter/punctuation/constant/link).
+   Tokens it doesn't categorize (property keys, class names, imported
+   identifiers, generic variables) inherit the element's base color.
+   Anchor pre/code's base color to ink-strong so these fall back to a
+   visible color in light mode instead of Shiki's near-white default.
+   --mcj-ink-strong already flips per mode via the sync. */
+pre,
+pre code,
+.shiki,
+.shiki code {
+  color: var(--mcj-ink-strong) !important;
+}
+
+/* Thin warm scrollbar clipped inside the rounded corner. */
+pre {
+  scrollbar-width: thin;
+  scrollbar-color: var(--mcj-rule-strong) transparent;
+}
+pre::-webkit-scrollbar { height: 5px; width: 5px; }
+pre::-webkit-scrollbar-track { background: transparent; }
+pre::-webkit-scrollbar-thumb {
+  background: var(--mcj-rule-strong);
+  border-radius: 9999px;
+}
+pre::-webkit-scrollbar-thumb:hover { background: var(--mcj-ink-muted); }
+
+/* Copy button — Mintlify Maple hides it until hover; pin it to always
+   visible at ink-muted contrast like the Claude API docs. Selector net
+   covers the variants Mintlify renders (button + a11y-labeled span). */
+:is(pre, code-block, figure[data-rehype-pretty-code-figure]) :is(button, [role="button"], [aria-label*="opy" i], [aria-label*="lipboard" i]) {
+  opacity: 1 !important;
+  color: var(--mcj-ink-muted) !important;
+  background: transparent !important;
+  border: none !important;
+  transition: color 120ms ease-out, background 120ms ease-out;
+}
+:is(pre, code-block, figure[data-rehype-pretty-code-figure]) :is(button, [role="button"], [aria-label*="opy" i], [aria-label*="lipboard" i]):hover {
+  color: var(--mcj-ink-strong) !important;
+  background: var(--mcj-paper-3) !important;
+}
+/* Force the icon glyph itself to inherit (some themes inline-style SVGs) */
+:is(pre, code-block) :is(button, [role="button"]) svg {
+  color: inherit !important;
+  opacity: 1 !important;
 }
 
 /* ── Callouts (Note / Tip / Warning / Info) ─────────────────────────────── */
@@ -205,28 +290,64 @@ a.button-primary:hover {
   background: var(--mcj-orange-edge);
 }
 
-/* ── Tables ─────────────────────────────────────────────────────────────── */
+/* ── Tables — bottom-hairline rows only, no header tint, generous padding.
+       Matches the Claude API docs treatment: flat, content-forward, no chrome.
+       Inline code chips inside table cells stay normal-sized; row links are
+       quieted to body color so they read as text first, link second. */
 
 table {
-  border: 1px solid var(--mcj-rule);
-  border-radius: var(--mcj-radius);
-  overflow: hidden;
+  border: none !important;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+thead tr,
+thead th {
+  background: transparent !important;
 }
 
 th {
-  background: var(--mcj-paper-2);
-  color: var(--mcj-ink-strong);
-  font-weight: 500;
+  color: var(--mcj-ink-strong) !important;
+  font-weight: 500 !important;
   text-align: left;
-  border-bottom: 1px solid var(--mcj-rule);
+  border-bottom: 1px solid var(--mcj-rule) !important;
+  padding: 0.55rem 0.9rem !important;
+  font-size: 0.92em;
 }
 
 td {
-  border-bottom: 1px solid var(--mcj-rule);
+  color: var(--mcj-ink) !important;
+  border-top: none !important;
+  border-bottom: 1px solid var(--mcj-rule) !important;
+  border-left: none !important;
+  border-right: none !important;
+  padding: 0.7rem 0.9rem !important;
+  vertical-align: top;
 }
 
-tr:last-child td {
-  border-bottom: none;
+tbody tr:last-child td {
+  border-bottom: none !important;
+}
+
+/* Row hover — minimal lift, matches Anthropic's subtle row treatment */
+tbody tr:hover td {
+  background: var(--mcj-paper-2);
+}
+
+/* In-table links — read as part of the sentence, accent on hover only.
+   This is the "Read more" treatment from image #5: was too loud. */
+:is(td, th) a:not(.button-primary) {
+  color: var(--mcj-ink-strong) !important;
+  text-decoration: underline !important;
+  text-decoration-color: var(--mcj-rule-strong) !important;
+  text-decoration-thickness: 1px !important;
+  text-underline-offset: 3px !important;
+  transition: text-decoration-color 120ms ease-out, color 120ms ease-out;
+}
+
+:is(td, th) a:not(.button-primary):hover {
+  color: var(--mcj-orange) !important;
+  text-decoration-color: var(--mcj-orange) !important;
 }
 
 /* ── Misc polish ────────────────────────────────────────────────────────── */
