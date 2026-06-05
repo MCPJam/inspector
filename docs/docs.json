@@ -30,6 +30,10 @@
     }
   },
   "favicon": "/mcp_jam.svg",
+  "banner": {
+    "content": "New: [@mcpjam/sdk v1.12](/sdk) — programmatic evals + conformance suites for Jest and Vitest.",
+    "dismissible": true
+  },
   "navigation": {
     "tabs": [
       {
@@ -48,20 +52,44 @@
         "icon": "binoculars",
         "groups": [
           {
-            "group": "Features",
-            "icon": "star",
+            "group": "Connect",
+            "icon": "plug",
             "pages": [
               "inspector/home",
-              "inspector/playground",
               "inspector/clients",
-              "inspector/protocol-versions",
-              "inspector/guided-oauth",
-              "inspector/xaa-debugger",
-              "inspector/tools-prompts-resources",
-              "inspector/evals",
               "inspector/projects",
+              {
+                "page": "inspector/protocol-versions",
+                "tag": "Preview"
+              }
+            ]
+          },
+          {
+            "group": "MCP Apps",
+            "icon": "layout-dashboard",
+            "pages": [
+              {
+                "page": "inspector/playground",
+                "tag": "NEW"
+              },
               "inspector/views",
-              "inspector/skills"
+              "inspector/evals"
+            ]
+          },
+          {
+            "group": "Auth & Conformance",
+            "icon": "shield-check",
+            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+          },
+          {
+            "group": "Primitives",
+            "icon": "puzzle",
+            "pages": [
+              "inspector/tools-prompts-resources",
+              {
+                "page": "inspector/skills",
+                "tag": "NEW"
+              }
             ]
           },
           {
@@ -104,6 +132,7 @@
       {
         "tab": "SDK",
         "icon": "code",
+        "tag": "v1",
         "groups": [
           {
             "group": "Get Started",
