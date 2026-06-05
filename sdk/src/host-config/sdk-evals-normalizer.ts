@@ -5,8 +5,9 @@
  * the SDK eval reporter (Step 3) and the backend ingestion handler (Step 2)
  * feed into `canonicalizeHostConfigV2` + `computeHostConfigHashV2`. By
  * normalizing on the wire — not on either side independently — we guarantee
- * client and backend mint the same content-addressed `hostConfigsV2` id from
- * the same logical configuration.
+ * client and backend agree on the transport-integrity hash. The eventual
+ * stored v2 `hostConfigs` row may have a different hash because backend
+ * materialization layers suite-resolved Convex `serverIds` back in.
  *
  * The normalizer's only behavior is to STRIP fields that are runtime-manager
  * identifiers, never `Id<'servers'>`:
