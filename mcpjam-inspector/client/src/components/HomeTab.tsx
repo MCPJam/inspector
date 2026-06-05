@@ -6,7 +6,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedClients } from "./home/RecommendedClients";
-import { ProductUpdatesFeed } from "./home/ProductUpdatesFeed";
+import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 
 interface HomeTabProps {
   organizationId: string | null;
@@ -141,6 +141,9 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
           messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
         />
 
+        {/* What's new — release feed with hover preview + click-to-expand modal. */}
+        <ProductUpdatesRow />
+
         {/* Hero card */}
         <RecommendedServers
           servers={data?.recommendedServers}
@@ -148,9 +151,8 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
         />
 
         {/* Secondary cards */}
-        <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="grid gap-5">
           <RecommendedClients projectId={projectId} />
-          <ProductUpdatesFeed />
         </div>
       </div>
     </div>
