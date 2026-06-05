@@ -57,8 +57,9 @@ export function SidebarCreditUsage({
   const resetText = balance
     ? showMonthly
       ? formatMonthlyResetText(balance.monthlyResetAt, {
-          // Strip is narrow — drop the absolute date there, keep it in full.
-          withDate: variant === "full",
+          // Sidebar (both strip and full) drops the absolute date — only the
+          // billing card shows it.
+          withDate: false,
         })
       : formatCreditResetText(balance.freeDailyResetAt)
     : null;
