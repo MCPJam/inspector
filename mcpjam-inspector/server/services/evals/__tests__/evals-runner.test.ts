@@ -115,7 +115,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       compareRunId,
     });
 
-    return convexClient.action.mock.calls[0]?.[1] as {
+    // Find the updateTestIteration call specifically. The PR-2 fanout
+    // introduced an `isEvalChatSessionsWriterEnabled` flag check that
+    // fires before any iteration write, so indexing by `calls[0]`
+    // would now return the flag query, not the iteration update.
+    // Mock returns undefined for the flag query → cached as `false` →
+    // legacy single-call path runs unchanged.
+    const updateCall = convexClient.action.mock.calls.find(
+      (call) => call[0] === "testSuites:updateTestIteration",
+    );
+    return updateCall?.[1] as {
       metadata?: Record<string, string | number | boolean>;
       tokensUsed?: number;
     };
