@@ -147,6 +147,29 @@ aside[aria-label="sidebar"] a[aria-current="page"] {
   font-weight: 500;
 }
 
+/* Sidebar group headers — Anaconda-style all-caps section labels with a
+   hairline rule above. Mintlify Maple renders group titles inside
+   `<button>` or `<div role="button">` with the group label as text; we
+   target both common shapes. */
+:is(#sidebar, aside[aria-label="sidebar"]) :is(h2, h3, h4, h5, [role="heading"], button[aria-expanded], [data-sidebar-group-label]) {
+  font-size: 0.68rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--mcj-ink-muted) !important;
+  margin-top: 1.5rem !important;
+  padding-top: 1rem !important;
+  border-top: 1px solid var(--mcj-rule);
+}
+
+/* First group in the sidebar shouldn't get a divider above it. */
+:is(#sidebar, aside[aria-label="sidebar"]) > :first-child :is(h2, h3, h4, button[aria-expanded]):first-of-type,
+:is(#sidebar, aside[aria-label="sidebar"]) :is(h2, h3, h4, button[aria-expanded]):first-of-type {
+  border-top: none;
+  margin-top: 0.5rem !important;
+  padding-top: 0 !important;
+}
+
 /* ── Code & inline mono ─────────────────────────────────────────────────── */
 
 code, pre, kbd, samp {
@@ -155,17 +178,18 @@ code, pre, kbd, samp {
 }
 
 /* Inline code — defeat .prose code AND any deeper Mintlify selectors
-   like `.prose p code`. Tighter chip, no browser bold, sits on the
-   baseline of the surrounding sentence. */
+   like `.prose p code`. Tighter chip on a warm orange-tint background so
+   the brand flows through running prose (cf. Laravel's red inline code
+   treatment) instead of reading as a neutral beige pill. */
 :is(article, .prose, main, body) :is(p, li, td, h1, h2, h3, h4, h5, h6, span) code:not(pre code),
 :is(article, .prose, main, body) > code:not(pre code) {
-  background: var(--mcj-paper-2) !important;
-  border: 1px solid var(--mcj-rule) !important;
-  color: var(--mcj-ink-strong) !important;
-  padding: 0.08em 0.36em !important;
+  background: var(--mcj-orange-soft) !important;
+  border: none !important;
+  color: var(--mcj-orange-edge) !important;
+  padding: 0.08em 0.38em !important;
   border-radius: 4px !important;
   font-size: 0.86em !important;
-  font-weight: 400 !important;
+  font-weight: 500 !important;
   line-height: 1.45 !important;
 }
 
@@ -226,33 +250,49 @@ pre::-webkit-scrollbar-thumb:hover { background: var(--mcj-ink-muted); }
   opacity: 1 !important;
 }
 
-/* ── Callouts (Note / Tip / Warning / Info) ─────────────────────────────── */
+/* ── Callouts — editorial left-rail-only, no soft-fill box ──────────────── */
 
+/* Strip the rounded tinted box that ships by default. Replace with a clean
+   left rail in the tone color and slightly larger body text — reads as a
+   newspaper aside / pull-quote, not a generic alert. Tones derive from the
+   design-system semantic status colors. */
 callout,
 .callout,
 note,
 tip,
 warning,
 info {
-  background: var(--mcj-paper-2);
-  border: 1px solid var(--mcj-rule);
-  border-left: 3px solid var(--mcj-orange);
-  border-radius: var(--mcj-radius);
-  box-shadow: none;
-  padding: 0.9rem 1rem;
+  background: transparent !important;
+  border: none !important;
+  border-left: 2px solid var(--mcj-orange) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0.35rem 0 0.35rem 1rem !important;
+  margin: 1.25rem 0;
 }
 
-warning {
-  border-left-color: oklch(0.627 0.208 25.331); /* destructive */
+/* Body text inside a callout reads at ink, not ink-muted — the rail is
+   the only chrome, so the prose needs to carry the weight. */
+:is(callout, .callout, note, tip, warning, info) :is(p, li, span) {
+  color: var(--mcj-ink) !important;
 }
 
-tip {
-  border-left-color: oklch(0.696 0.17 152.5);   /* success */
+/* Icon inherits the rail color, slightly inset so it lines up with the
+   first line of body copy. */
+:is(callout, .callout, note, tip, warning, info) :is(svg, [class*="icon"]) {
+  color: inherit !important;
+  opacity: 1 !important;
 }
 
-info {
-  border-left-color: oklch(0.623 0.214 259);    /* info */
-}
+note   { border-left-color: var(--mcj-orange) !important;        color: var(--mcj-orange-edge) !important; }
+tip    { border-left-color: oklch(0.55 0.13 152.5) !important;   color: oklch(0.40 0.10 152.5) !important; }
+info   { border-left-color: oklch(0.55 0.16 259) !important;     color: oklch(0.40 0.14 259) !important; }
+warning{ border-left-color: oklch(0.627 0.208 25.331) !important;color: oklch(0.50 0.18 25.331) !important; }
+
+.dark note,    [data-theme="dark"] note    { color: oklch(0.78 0.13 38.7) !important; }
+.dark tip,     [data-theme="dark"] tip     { color: oklch(0.78 0.12 152.5) !important; }
+.dark info,    [data-theme="dark"] info    { color: oklch(0.78 0.14 259) !important; }
+.dark warning, [data-theme="dark"] warning { color: oklch(0.78 0.16 25.331) !important; }
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 
