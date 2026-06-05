@@ -7,11 +7,12 @@ Sentry.init({
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
 });
 
-import { app, BrowserWindow, shell, Menu } from "electron";
+import { app, BrowserWindow, shell, Menu, dialog } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
-import { serve } from "@hono/node-server";
 import path from "path";
+import fs from "fs";
 import { createHonoApp } from "../server/app.js";
+import { tryListenWithFallback } from "./server-port-fallback.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
@@ -241,9 +242,11 @@ function openSafeOAuthWindow(
   });
 }
 
+const DEFAULT_SERVER_PORT = 6274;
+const SERVER_PORT_FALLBACK_ATTEMPTS = 10;
+
 async function startHonoServer(): Promise<number> {
   try {
-    const port = 6274;
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
     process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";
@@ -258,13 +261,29 @@ async function startHonoServer(): Promise<number> {
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
     const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
 
-    server = serve({
-      fetch: honoApp.fetch,
-      port,
+    const { server: boundServer, port } = await tryListenWithFallback(
+      honoApp,
       hostname,
-    });
+      DEFAULT_SERVER_PORT,
+      SERVER_PORT_FALLBACK_ATTEMPTS,
+      {
+        onAttemptFailed: (failedPort, err) => {
+          log.warn(
+            `Port ${failedPort} unavailable (${err.code ?? err.message}); trying next port`,
+          );
+        },
+      },
+    );
 
-    log.info(`🚀 MCPJam Server started on port ${port}`);
+    server = boundServer;
+
+    if (port !== DEFAULT_SERVER_PORT) {
+      log.warn(
+        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`,
+      );
+    } else {
+      log.info(`🚀 MCPJam Server started on port ${port}`);
+    }
     return port;
   } catch (error) {
     log.error("Failed to start Hono server:", error);
@@ -527,9 +546,122 @@ function createAppMenu(): void {
   Menu.setApplicationMenu(menu);
 }
 
+function pruneStaleCachesOnVersionChange(): void {
+  // Dev launches change app version constantly with HMR/refresh; skip there.
+  if (!app.isPackaged) return;
+
+  const userData = app.getPath("userData");
+  const versionFile = path.join(userData, ".last-launched-version");
+  const currentVersion = app.getVersion();
+
+  let previousVersion: string | null = null;
+  try {
+    previousVersion = fs.readFileSync(versionFile, "utf8").trim();
+  } catch {
+    previousVersion = null;
+  }
+
+  if (previousVersion === currentVersion) {
+    return;
+  }
+
+  log.info(
+    `App version changed (${previousVersion ?? "<none>"} → ${currentVersion}); pruning stale GPU/HTTP caches`,
+  );
+
+  for (const sub of ["Cache", "Code Cache", "GPUCache"]) {
+    try {
+      fs.rmSync(path.join(userData, sub), { recursive: true, force: true });
+    } catch (err) {
+      log.warn(`Failed to prune ${sub} during version-change cleanup:`, err);
+    }
+  }
+
+  try {
+    fs.writeFileSync(versionFile, currentVersion);
+  } catch (err) {
+    log.warn("Failed to persist .last-launched-version marker:", err);
+  }
+}
+
+function summarizeInitError(error: unknown): {
+  message: string;
+  detail: string;
+} {
+  const err =
+    error instanceof Error ? error : new Error(String(error ?? "Unknown error"));
+
+  const isServerStartFailure = /bind server|EADDRINUSE|Hono/i.test(err.message);
+  const message = isServerStartFailure
+    ? "Couldn't start the internal server."
+    : "Initialization failed.";
+
+  const logsPath = (() => {
+    try {
+      return app.getPath("logs");
+    } catch {
+      return "(logs path unavailable)";
+    }
+  })();
+
+  const detail = `${err.message}\n\nLogs: ${logsPath}`;
+  return { message, detail };
+}
+
+function showStartupFailureDialog(error: unknown): void {
+  const { message, detail } = summarizeInitError(error);
+
+  const choice = dialog.showMessageBoxSync({
+    type: "error",
+    title: "MCPJam Inspector failed to start",
+    message,
+    detail,
+    buttons: ["Reset app data and quit", "Open logs folder", "Quit"],
+    defaultId: 2,
+    cancelId: 2,
+    noLink: true,
+  });
+
+  if (choice === 0) {
+    const userData = app.getPath("userData");
+    for (const sub of ["Cache", "Code Cache", "GPUCache", "Local Storage"]) {
+      try {
+        fs.rmSync(path.join(userData, sub), { recursive: true, force: true });
+        log.info(`Removed ${sub} during recovery reset`);
+      } catch (rmErr) {
+        log.warn(`Failed to remove ${sub} during recovery reset:`, rmErr);
+      }
+    }
+    app.relaunch();
+    app.quit();
+    return;
+  }
+
+  if (choice === 1) {
+    try {
+      void shell.openPath(app.getPath("logs"));
+    } catch (openErr) {
+      log.warn("Failed to open logs folder:", openErr);
+    }
+    app.quit();
+    return;
+  }
+
+  app.quit();
+}
+
 // App event handlers
 app.whenReady().then(async () => {
   try {
+    // Best-effort cleanup of GPU/HTTP caches when the app version changes.
+    // Stale caches from a previous build can crash the renderer/GPU process
+    // on launch after an auto-update.
+    try {
+      pruneStaleCachesOnVersionChange();
+    } catch (err) {
+      log.warn("pruneStaleCachesOnVersionChange threw; continuing:", err);
+    }
+
     // Start the embedded Hono server
     serverPort = await startHonoServer();
     const serverUrl = getServerUrl();
@@ -559,7 +691,15 @@ app.whenReady().then(async () => {
     log.info("MCPJam Electron app ready");
   } catch (error) {
     log.error("Failed to initialize app:", error);
-    app.quit();
+    try {
+      showStartupFailureDialog(error);
+    } catch (dialogErr) {
+      log.error(
+        "Failed to show startup failure dialog; quitting silently:",
+        dialogErr,
+      );
+      app.quit();
+    }
   }
 });
 
