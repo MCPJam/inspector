@@ -23,15 +23,20 @@ export const formatCreditResetText = (resetAt: number): string => {
  * use-it-or-lose-it refresh is unambiguous ("resets in 12 days (Jun 30)").
  */
 export const formatMonthlyResetText = (
-  resetAt: number | null | undefined
+  resetAt: number | null | undefined,
+  options?: { withDate?: boolean }
 ): string => {
   if (resetAt == null || !Number.isFinite(resetAt)) return "resets monthly";
   const diffMs = resetAt - Date.now();
   if (diffMs <= 0) return "resets shortly";
+  const days = Math.ceil(diffMs / MS_PER_DAY);
+  const base = `resets in ${days} day${days === 1 ? "" : "s"}`;
+  // The absolute date disambiguates the refresh day, but it crowds the narrow
+  // sidebar strip — callers there opt out via { withDate: false }.
+  if (options?.withDate === false) return base;
   const date = new Date(resetAt).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
   });
-  const days = Math.ceil(diffMs / MS_PER_DAY);
-  return `resets in ${days} day${days === 1 ? "" : "s"} (${date})`;
+  return `${base} (${date})`;
 };

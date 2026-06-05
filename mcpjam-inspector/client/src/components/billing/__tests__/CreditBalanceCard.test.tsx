@@ -21,7 +21,8 @@ let balanceState:
     }
   | undefined = undefined;
 let isLoadingState = false;
-let creditsFlagState = true;
+let creditTopupsFlagState = true;
+let teamCreditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -31,7 +32,11 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 }));
 
 vi.mock("@/lib/team-credits-flag", () => ({
-  useTeamCreditsUiEnabled: () => creditsFlagState,
+  useTeamCreditsUiEnabled: () => teamCreditsFlagState,
+}));
+
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditTopupsFlagState,
 }));
 
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
@@ -67,12 +72,13 @@ describe("CreditBalanceCard", () => {
       walletLocked: false,
     };
     isLoadingState = false;
-    creditsFlagState = true;
+    creditTopupsFlagState = true;
+    teamCreditsFlagState = true;
     window.location.hash = "";
   });
 
-  it("renders nothing when the credits UI flag is off", () => {
-    creditsFlagState = false;
+  it("renders nothing when the top-ups UI flag is off", () => {
+    creditTopupsFlagState = false;
     const { container } = render(<CreditBalanceCard organizationId="org-1" />);
 
     expect(container).toBeEmptyDOMElement();
@@ -259,8 +265,7 @@ describe("CreditBalanceCard", () => {
       render(<CreditBalanceCard />);
       const row = screen.getByTestId("usage-monthly");
       expect(within(row).getByText(/Monthly team credits/)).toBeInTheDocument();
-      // spent / total, where spent = total - remaining = 4,050.
-      expect(within(row).getByText(/4,050 \/ 18,000/)).toBeInTheDocument();
+      expect(within(row).getByText(/13,950 \/ 18,000/)).toBeInTheDocument();
       expect(within(row).getByText(/resets in 12 days/)).toBeInTheDocument();
       expect(screen.queryByTestId("usage-daily")).not.toBeInTheDocument();
     });
@@ -282,6 +287,24 @@ describe("CreditBalanceCard", () => {
       expect(
         screen.getByTestId("usage-monthly-exhausted")
       ).toHaveTextContent(/Monthly credits used/);
+    });
+
+    it("keeps the existing daily and top-up UI when only the team flag is off", async () => {
+      const user = userEvent.setup();
+      teamCreditsFlagState = false;
+
+      render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
+
+      expect(screen.queryByTestId("usage-monthly")).not.toBeInTheDocument();
+      expect(screen.getByTestId("usage-daily")).toHaveTextContent(
+        /Free daily credits/
+      );
+      expect(screen.getByTestId("usage-paid")).toHaveTextContent(
+        /19,500 credits/
+      );
+
+      await user.click(screen.getByRole("button", { name: /Buy credits/i }));
+      expect(screen.getByTestId("topup-dialog")).toBeInTheDocument();
     });
   });
 });

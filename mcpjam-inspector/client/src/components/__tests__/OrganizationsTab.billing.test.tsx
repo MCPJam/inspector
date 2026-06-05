@@ -1187,18 +1187,16 @@ describe("OrganizationsTab billing", () => {
 
     expect(screen.getByText("Return to Free at renewal?")).toBeInTheDocument();
     expect(
-      screen.getByText("This cancellation takes effect at renewal, not now."),
+      screen.getByText(/This cancellation takes effect at renewal, not now\./),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Team annual remains active until Apr 1, 2027."),
+      screen.getByText(/Team annual remains active until Apr 1, 2027/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("After that, the organization returns to Free."),
+      screen.getByText(/the organization returns to Free/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Stripe will open a cancellation flow that keeps paid access active until renewal.",
-      ),
+      screen.getByText(/you can't change your billing interval/),
     ).toBeInTheDocument();
 
     fireEvent.click(

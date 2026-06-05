@@ -11,11 +11,17 @@ let balanceState:
       freeDailyCreditsRemaining: number;
       freeDailyCreditsTotal: number;
       walletLocked: boolean;
+      billingModel?: "daily" | "monthly_per_seat";
+      monthlyAllowanceTotal?: number;
+      monthlyAllowanceRemaining?: number;
+      monthlyResetAt?: number | null;
+      paidCreditsRemaining?: number;
     }
   | undefined;
 let isLoadingState = false;
 let hasWorkOsUserState = true;
-let creditsFlagState = true;
+let creditTopupsFlagState = true;
+let teamCreditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -26,7 +32,11 @@ vi.mock("@/hooks/useCreditBalance", () => ({
 }));
 
 vi.mock("@/lib/team-credits-flag", () => ({
-  useTeamCreditsUiEnabled: () => creditsFlagState,
+  useTeamCreditsUiEnabled: () => teamCreditsFlagState,
+}));
+
+vi.mock("@/lib/credit-topups-flag", () => ({
+  useCreditTopupsUiEnabled: () => creditTopupsFlagState,
 }));
 
 describe("SidebarCreditUsage", () => {
@@ -44,7 +54,8 @@ describe("SidebarCreditUsage", () => {
     };
     isLoadingState = false;
     hasWorkOsUserState = true;
-    creditsFlagState = true;
+    creditTopupsFlagState = true;
+    teamCreditsFlagState = true;
   });
 
   afterEach(() => {
@@ -62,8 +73,8 @@ describe("SidebarCreditUsage", () => {
     expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
   });
 
-  it("renders nothing when the credits UI flag is off", () => {
-    creditsFlagState = false;
+  it("renders nothing when the top-ups UI flag is off", () => {
+    creditTopupsFlagState = false;
 
     const { container } = render(<SidebarCreditUsage />);
 
@@ -110,6 +121,89 @@ describe("SidebarCreditUsage", () => {
     expect(paidRow).toHaveTextContent("750");
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
     expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps monthly allowance separate from paid credits in the full variant", () => {
+    balanceState = {
+      availableCredits: 24_500,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 0,
+      freeDailyResetAt: 0,
+      freeDailyCreditsRemaining: 0,
+      freeDailyCreditsTotal: 0,
+      walletLocked: false,
+      billingModel: "monthly_per_seat",
+      monthlyAllowanceTotal: 24_000,
+      monthlyAllowanceRemaining: 24_000,
+      monthlyResetAt: Date.now() + 16 * 24 * 60 * 60 * 1000,
+      paidCreditsRemaining: 988,
+    };
+
+    render(<SidebarCreditUsage variant="full" />);
+
+    const monthlyRow = screen.getByTestId("sidebar-usage-monthly");
+    expect(monthlyRow).toHaveTextContent("Monthly team credits");
+    expect(monthlyRow).toHaveTextContent("24,000 / 24,000");
+    expect(monthlyRow).toHaveTextContent("resets in 16 days");
+    expect(screen.queryByTestId("sidebar-usage-daily")).not.toBeInTheDocument();
+
+    const paidRow = screen.getByTestId("sidebar-usage-paid");
+    expect(paidRow).toHaveTextContent("Paid credits");
+    expect(paidRow).toHaveTextContent("988");
+    expect(paidRow).not.toHaveTextContent("24,500");
+  });
+
+  it("keeps the existing daily and paid rows when only the team flag is off", () => {
+    teamCreditsFlagState = false;
+    balanceState = {
+      availableCredits: 24_500,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 0,
+      freeDailyResetAt: 0,
+      freeDailyCreditsRemaining: 0,
+      freeDailyCreditsTotal: 0,
+      walletLocked: false,
+      billingModel: "monthly_per_seat",
+      monthlyAllowanceTotal: 24_000,
+      monthlyAllowanceRemaining: 24_000,
+      monthlyResetAt: Date.now() + 16 * 24 * 60 * 60 * 1000,
+      paidCreditsRemaining: 988,
+    };
+
+    render(<SidebarCreditUsage variant="full" />);
+
+    expect(screen.queryByTestId("sidebar-usage-monthly")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
+      "Free daily credits"
+    );
+    const paidRow = screen.getByTestId("sidebar-usage-paid");
+    expect(paidRow).toHaveTextContent("Paid credits");
+    expect(paidRow).toHaveTextContent("24,500");
+    expect(paidRow).not.toHaveTextContent("988");
+  });
+
+  it("omits the absolute reset date in the narrow strip variant", () => {
+    balanceState = {
+      availableCredits: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 0,
+      freeDailyResetAt: 0,
+      freeDailyCreditsRemaining: 0,
+      freeDailyCreditsTotal: 0,
+      walletLocked: false,
+      billingModel: "monthly_per_seat",
+      monthlyAllowanceTotal: 18_000,
+      monthlyAllowanceRemaining: 4_050,
+      monthlyResetAt: Date.now() + 12 * 24 * 60 * 60 * 1000,
+      paidCreditsRemaining: 0,
+    };
+
+    render(<SidebarCreditUsage />);
+
+    const monthlyRow = screen.getByTestId("sidebar-usage-monthly");
+    expect(monthlyRow).toHaveTextContent("resets in 12 days");
+    // Strip is narrow: no "(May 15)" date appended.
+    expect(monthlyRow.textContent ?? "").not.toMatch(/resets in 12 days \(/);
   });
 
   it("does not render when there is no balance to show", () => {
