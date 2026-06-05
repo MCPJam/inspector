@@ -42,6 +42,7 @@ import {
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { WebApiError } from "@/lib/apis/web/base";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import type { ConnectionStatus } from "@/state/app-types";
@@ -361,6 +362,13 @@ export function ToolsTab({
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Failed to fetch tools", { error: message });
       setError(message);
+      // Preserve the backend-attached `normalized` block when listTools
+      // threw a WebApiError. Without this the ErrorCard re-classifies
+      // from the message alone and loses the specific transport / auth
+      // / JSON-RPC slug the server already pinned.
+      setNormalizedError(
+        err instanceof WebApiError && err.normalized ? err.normalized : null,
+      );
     } finally {
       if (fetchVersion === toolFetchVersionRef.current) {
         setFetchingTools(false);

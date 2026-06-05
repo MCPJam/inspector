@@ -128,7 +128,16 @@ export async function listTools({
       } catch {}
       if (!res.ok) {
         const message = body?.error || `List tools failed (${res.status})`;
-        throw new Error(message);
+        const code = typeof body?.code === "string" ? body.code : null;
+        // Preserve the backend-attached describer block. Throwing a plain
+        // `Error(message)` here used to strip `normalized`, forcing the UI
+        // catch to fall back to client-side classification from just the
+        // message string and producing a less specific ErrorCard.
+        const normalized =
+          body && typeof body.normalized === "object" && body.normalized
+            ? (body.normalized as NormalizedError)
+            : undefined;
+        throw new WebApiError(res.status, code, message, normalized);
       }
       return attachToolMetadata(body as ListToolsResultWithMetadata);
     },

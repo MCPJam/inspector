@@ -350,12 +350,10 @@ export function describeError(error: unknown): NormalizedError {
       ...(cause ? { cause } : {}),
     };
   } catch {
-    const fallback = ERROR_CATALOG["internal/unknown"];
-    return {
-      ...fallback,
-      rawMessage:
-        error instanceof Error ? error.message : String(error ?? "Unknown"),
-    };
+    // Fallback path: classification threw (e.g. a getter on the error
+    // object exploded). Still redact — otherwise a leaked bearer token
+    // in error.message would bypass the normal redaction guarantee.
+    return crashFallback(error, "Unknown");
   }
 }
 
@@ -384,11 +382,29 @@ export function describeAsSlug(
       ...(cause ? { cause } : {}),
     };
   } catch {
-    const fallback = ERROR_CATALOG["internal/unknown"];
-    return {
-      ...fallback,
-      rawMessage:
-        error instanceof Error ? error.message : String(error ?? ""),
-    };
+    // See note on the describeError fallback — redaction must still run.
+    return crashFallback(error, "");
   }
+}
+
+/**
+ * Shared crash-safe fallback for the two top-level entry points. Pulled
+ * out so a single audit point covers both — the prior open-coded version
+ * skipped redaction in the catch path, which leaked bearer tokens when
+ * classification threw (e.g. a throwing `code` getter on the error).
+ *
+ * Defensive: the message coercion + redact are themselves wrapped, so
+ * even a pathological `error.message` getter cannot escape.
+ */
+function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedError {
+  const fallback = ERROR_CATALOG["internal/unknown"];
+  let rawMessage = emptyPlaceholder;
+  try {
+    const raw =
+      error instanceof Error ? error.message : String(error ?? emptyPlaceholder);
+    rawMessage = redactString(raw);
+  } catch {
+    rawMessage = emptyPlaceholder;
+  }
+  return { ...fallback, rawMessage };
 }

@@ -286,6 +286,47 @@ describe("describeError — redaction", () => {
   it("never throws on truly unusual input", () => {
     expect(() => describeError({ get code() { throw new Error("nope"); } })).not.toThrow();
   });
+
+  it("crash-safe fallback still redacts bearer tokens", () => {
+    // Reproduces the leak: classification path throws (via a throwing
+    // `code` getter) AND the error message contains a token. Pre-fix the
+    // catch block returned `error.message` verbatim, so the token leaked
+    // through rawMessage. The fallback must still call redactString.
+    // `Object.defineProperty` is required — `Object.assign({}, {get x(){}})`
+    // invokes the getter at copy time.
+    const err = new Error(
+      "Authorization: Bearer leaky.deadbeef.token failed",
+    );
+    Object.defineProperty(err, "code", {
+      get(): string {
+        throw new Error("classification boom");
+      },
+    });
+    const out = describeError(err);
+    expect(out.slug).toBe("internal/unknown");
+    expect(out.rawMessage).not.toContain("leaky.deadbeef.token");
+    expect(out.rawMessage.toLowerCase()).toContain("redacted");
+  });
+
+  it("describeAsSlug crash-safe fallback also redacts", () => {
+    // Force the fallback by making the error's `message` getter throw
+    // inside the try block, then ensure the catch path still redacts the
+    // serialized form. `String(error)` on a real Error reads .toString,
+    // which by default reads .message — so we override toString too to
+    // give the fallback a non-throwing source carrying the token.
+    const err = new Error("placeholder");
+    Object.defineProperty(err, "message", {
+      get(): string {
+        throw new Error("message boom");
+      },
+    });
+    Object.defineProperty(err, "toString", {
+      value: () => "Authorization: Bearer leaky.value.here failed",
+    });
+    const out = describeAsSlug("provider/auth_error", err);
+    expect(out.slug).toBe("internal/unknown");
+    expect(out.rawMessage).not.toContain("leaky.value.here");
+  });
 });
 
 describe("extractNodeErrno — cause walking", () => {
