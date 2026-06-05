@@ -155,7 +155,7 @@
             "icon": "book",
             "pages": [
               "sdk/reference/mcp-client-manager",
-              "sdk/reference/test-agent",
+              "sdk/reference/host-runner",
               "sdk/reference/prompt-result",
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
@@ -198,7 +198,8 @@
     { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
     { "source": "/inspector/chat", "destination": "/inspector/playground" },
     { "source": "/inspector/app-builder", "destination": "/inspector/playground" },
-    { "source": "/inspector/test-cases", "destination": "/inspector/evals" }
+    { "source": "/inspector/test-cases", "destination": "/inspector/evals" },
+    { "source": "/sdk/reference/test-agent", "destination": "/sdk/reference/host-runner" }
   ],
   "navbar": {
     "links": [

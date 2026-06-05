@@ -1,8 +1,29 @@
 # `@mcpjam/sdk` changelog
 
-## Unreleased — Stage 4 (HostRunner rename + HostRuntime binding)
+## Unreleased — Stage 5 Step 3 (eval reporter wire-sends hostConfig)
 
-**Breaking changes** — ship as the next major.
+- Eval reporter now sends `{ hostConfig, hostConfigHash }` on `POST /sdk/v1/evals/runs/start` and `POST /sdk/v1/evals/report` when the backend advertises `evalsHostConfig` at `GET /sdk/v1/info`. Lazy capability probe is cached per `baseUrl` and **fail-safe to "no capability"** — any error (network / 404 / timeout / parse) makes the reporter omit `hostConfig` rather than fail the report.
+- Source order for the run-level host snapshot: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Pass-1 homogeneity gate: send run-level only when all available iteration snapshots canonicalize to the same hash; heterogeneous runs omit the field (per-iteration wire support is a later stage).
+- Old backends without the capability are unaffected — body shape stays the same.
+
+## 1.12.0
+
+### Stage 5 Step 1 — SDK helper for backend ingestion
+
+- New helper `normalizeSdkEvalHostConfigForWire` exported from `@mcpjam/sdk/host-config/internal` (not the public barrel). Strips runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) so the SDK reporter and the `/sdk/v1/evals/*` ingestion route hash byte-identical wire shapes. Accepts both canonical `HostConfigInputV2` and public `HostJson` from `Host.toJSON()`. Pure, browser-safe, idempotent.
+
+### Stage B — Canonicalizer tightening
+
+- Deep-sort nested `clientCapabilities` / `hostContext` records (matches `*Override` + `mcpProfile`).
+- Drop empty `allowFeatures` from canonical (matches sibling `openaiAppsOverrides`).
+- `requireRecord` helper fails fast on missing required `clientCapabilities` / `hostContext` (replaces `?? {}` coalescing — surfaces caller bugs at canonicalize time).
+- Drop `openaiAppsOverrides` when `compatRuntime.openaiApps === false` (the resolver ignores them anyway).
+- Tightened the shared `isPlainObject` predicate with a prototype guard (`Object.prototype` or `null`) so `Date` / `Map` / `Set` / class instances no longer canonicalize to `{}`.
+- Hash-neutral against all 15,389 prod `hostConfigs` rows at the time of release. Backend consumers should bump to `^1.12.0` to pick up the tightened behavior.
+
+## 1.11.0 — Stage 4 (HostRunner rename + HostRuntime binding)
+
+**Breaking changes** — major-style rename shipped under 1.11.0 because there were no public adopters at the time.
 
 ### Renamed surface
 

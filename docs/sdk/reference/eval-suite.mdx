@@ -77,7 +77,7 @@ add(test: EvalTest): void
 suite.add(new EvalTest({
   name: "addition",
   test: async (agent) => {
-    const r = await agent.prompt("Add 2 and 3");
+    const r = await agent.run("Add 2 and 3");
     return r.hasToolCall("add");
   },
 }));
@@ -85,7 +85,7 @@ suite.add(new EvalTest({
 suite.add(new EvalTest({
   name: "multiplication",
   test: async (agent) => {
-    const r = await agent.prompt("Multiply 4 by 5");
+    const r = await agent.run("Multiply 4 by 5");
     return r.hasToolCall("multiply");
   },
 }));
@@ -98,15 +98,15 @@ suite.add(new EvalTest({
 Runs all tests in the suite and returns aggregate results.
 
 ```typescript
-run(agent: EvalAgent, options: EvalTestRunOptions): Promise<EvalSuiteResult>
+run(executor: HostExecutor, options: EvalTestRunOptions): Promise<EvalSuiteResult>
 ```
 
 #### Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `agent` | `EvalAgent` | The agent to test with (`TestAgent` or mock) |
-| `options` | `EvalTestRunOptions` | Run configuration (same as EvalTest) |
+| Parameter  | Type                 | Description                                                  |
+| ---------- | -------------------- | ------------------------------------------------------------ |
+| `executor` | `HostExecutor`       | The executor to test with (`HostRunner`, `HostRuntime`, or mock) |
+| `options`  | `EvalTestRunOptions` | Run configuration (same as EvalTest)                         |
 
 #### EvalTestRunOptions
 
@@ -315,7 +315,7 @@ suite.getName() // "Math Operations"
 ## Complete Example
 
 ```typescript
-import { MCPClientManager, TestAgent, EvalSuite, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalSuite, EvalTest } from "@mcpjam/sdk";
 
 async function main() {
   // Setup
@@ -327,7 +327,7 @@ async function main() {
   });
   await manager.connectToServer("everything");
 
-  const agent = new TestAgent({
+  const agent = new HostRunner({
     tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -345,17 +345,17 @@ async function main() {
 
   suite.add(new EvalTest({
     name: "add",
-    test: async (a) => (await a.prompt("Add 2+3")).hasToolCall("add"),
+    test: async (a) => (await a.run("Add 2+3")).hasToolCall("add"),
   }));
 
   suite.add(new EvalTest({
     name: "echo",
-    test: async (a) => (await a.prompt("Echo 'test'")).hasToolCall("echo"),
+    test: async (a) => (await a.run("Echo 'test'")).hasToolCall("echo"),
   }));
 
   suite.add(new EvalTest({
     name: "longRunningOperation",
-    test: async (a) => (await a.prompt("Run a long operation")).hasToolCall("longRunningOperation"),
+    test: async (a) => (await a.run("Run a long operation")).hasToolCall("longRunningOperation"),
   }));
 
   // Run
@@ -438,7 +438,7 @@ const providers = [
 ];
 
 for (const { model, key } of providers) {
-  const agent = new TestAgent({
+  const agent = new HostRunner({
     tools,
     model,
     apiKey: process.env[key],

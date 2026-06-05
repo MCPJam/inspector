@@ -195,9 +195,9 @@ console.log(result); // 8
 expect(result).toBe(8);
 ```
 
-## Integration with TestAgent
+## Integration with HostRunner
 
-The most common pattern is connecting servers, then creating a `TestAgent` with their tools:
+The most common pattern is connecting servers, then creating a `HostRunner` with their tools:
 
 ```typescript
 const manager = new MCPClientManager({
@@ -206,18 +206,18 @@ const manager = new MCPClientManager({
 
 await manager.connectToServer("myServer");
 
-// Get tools for TestAgent
+// Get tools for HostRunner
 const tools = await manager.getTools();
 
 // Create agent with those tools
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 // Now prompt the agent
-const result = await agent.prompt("Add 2 and 3");
+const result = await agent.run("Add 2 and 3");
 ```
 
 ## Error Handling

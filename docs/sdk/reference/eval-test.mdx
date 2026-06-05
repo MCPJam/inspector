@@ -34,15 +34,15 @@ new EvalTest(options: EvalTestConfig)
 ### TestFunction Type
 
 ```typescript
-type TestFunction = (agent: EvalAgent) => boolean | Promise<boolean>;
+type TestFunction = (executor: HostExecutor) => boolean | Promise<boolean>;
 ```
 
-The test function receives an [`EvalAgent`](/sdk/reference/test-agent) and must return a `boolean`:
+The test function receives a [`HostExecutor`](/sdk/reference/host-runner) (the interface implemented by both `HostRunner` and `HostRuntime`) and must return a `boolean`:
 
 - `true` = test passed
 - `false` = test failed
 
-Both `TestAgent` and mock agents implement the `EvalAgent` interface, so you can use either for testing.
+Both `HostRunner`, `HostRuntime`, and mock executors implement the `HostExecutor` interface, so you can use any of them for testing.
 
 ### Example
 
@@ -50,7 +50,7 @@ Both `TestAgent` and mock agents implement the `EvalAgent` interface, so you can
 const test = new EvalTest({
   name: "addition-accuracy",
   test: async (agent) => {
-    const result = await agent.prompt("Add 2 and 3");
+    const result = await agent.run("Add 2 and 3");
     return result.hasToolCall("add");
   },
 });
@@ -65,15 +65,15 @@ const test = new EvalTest({
 Executes the test multiple times and returns detailed results.
 
 ```typescript
-run(agent: EvalAgent, options: EvalTestRunOptions): Promise<EvalRunResult>
+run(executor: HostExecutor, options: EvalTestRunOptions): Promise<EvalRunResult>
 ```
 
 #### Parameters
 
-| Parameter | Type                 | Description                                  |
-| --------- | -------------------- | -------------------------------------------- |
-| `agent`   | `EvalAgent`          | The agent to test with (`TestAgent` or mock) |
-| `options` | `EvalTestRunOptions` | Run configuration                            |
+| Parameter  | Type                 | Description                                                  |
+| ---------- | -------------------- | ------------------------------------------------------------ |
+| `executor` | `HostExecutor`       | The executor to test with (`HostRunner`, `HostRuntime`, or mock) |
+| `options`  | `EvalTestRunOptions` | Run configuration                                            |
 
 #### EvalTestRunOptions
 
@@ -351,7 +351,7 @@ test.getName(); // "addition-accuracy"
 
 ```typescript
 test: async (agent) => {
-  const result = await agent.prompt("Add 5 and 3");
+  const result = await agent.run("Add 5 and 3");
   return result.hasToolCall("add");
 };
 ```
@@ -360,7 +360,7 @@ test: async (agent) => {
 
 ```typescript
 test: async (agent) => {
-  const result = await agent.prompt("Add 10 and 20");
+  const result = await agent.run("Add 10 and 20");
   const args = result.getToolArguments("add");
   return args?.a === 10 && args?.b === 20;
 };
@@ -370,7 +370,7 @@ test: async (agent) => {
 
 ```typescript
 test: async (agent) => {
-  const result = await agent.prompt("What is 5 + 5?");
+  const result = await agent.run("What is 5 + 5?");
   return result.getText().includes("10");
 };
 ```
@@ -379,7 +379,7 @@ test: async (agent) => {
 
 ```typescript
 test: async (agent) => {
-  const result = await agent.prompt("Calculate 5 * 3");
+  const result = await agent.run("Calculate 5 * 3");
   return (
     result.hasToolCall("multiply") &&
     !result.hasError() &&
@@ -392,8 +392,8 @@ test: async (agent) => {
 
 ```typescript
 test: async (agent) => {
-  const r1 = await agent.prompt("Create a project");
-  const r2 = await agent.prompt("Add a task to it", { context: r1 });
+  const r1 = await agent.run("Create a project");
+  const r2 = await agent.run("Add a task to it", { context: r1 });
   return r1.hasToolCall("createProject") && r2.hasToolCall("createTask");
 };
 ```
@@ -404,7 +404,7 @@ test: async (agent) => {
 import { matchToolCallWithArgs } from "@mcpjam/sdk";
 
 test: async (agent) => {
-  const result = await agent.prompt("Add 2 and 3");
+  const result = await agent.run("Add 2 and 3");
   return matchToolCallWithArgs("add", { a: 2, b: 3 }, result.getToolCalls());
 };
 ```
@@ -414,7 +414,7 @@ test: async (agent) => {
 ## Complete Example
 
 ```typescript
-import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalTest } from "@mcpjam/sdk";
 
 async function main() {
   const manager = new MCPClientManager({
@@ -425,7 +425,7 @@ async function main() {
   });
   await manager.connectToServer("everything");
 
-  const agent = new TestAgent({
+  const agent = new HostRunner({
     tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -435,7 +435,7 @@ async function main() {
   const test = new EvalTest({
     name: "addition",
     test: async (agent) => {
-      const r = await agent.prompt("Add 2 and 3");
+      const r = await agent.run("Add 2 and 3");
       return r.hasToolCall("add");
     },
   });
