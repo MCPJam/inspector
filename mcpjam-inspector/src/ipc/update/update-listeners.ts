@@ -43,12 +43,15 @@ function startStalledInstallWatchdog(): void {
       currentStatus.installRequested
     ) {
       log.error(
-        `Auto-updater stalled in pending+installRequested for ${stalledInstallTimeoutMs}ms — surfacing error (download may still be running)`,
+        `Auto-updater stalled in pending+installRequested for ${stalledInstallTimeoutMs}ms — surfacing error`,
       );
-      // Intentionally do NOT clear `isCheckingOrDownloading`: the underlying
-      // Squirrel download may finish later, and we want the eventual
-      // `update-downloaded` event to flip status to "downloaded" so the
-      // user can still install. Just unstick the spinner and tell them.
+      // Clear BOTH `installRequested` (so the spinner unsticks) AND
+      // `isCheckingOrDownloading` (so a follow-up Update click can call
+      // `checkForUpdates()` again to re-trigger the download). Squirrel's
+      // own `update-downloaded` event is independent of our flag, so if the
+      // original download eventually completes anyway, the existing handler
+      // still flips status to "downloaded" and the user can install.
+      isCheckingOrDownloading = false;
       setStatus({ ...currentStatus, installRequested: false });
       broadcastUpdateError();
     }
@@ -311,8 +314,19 @@ export function installUpdateOnQuit(): boolean {
   if (currentStatus.kind === "downloaded" && !isQuittingForUpdate) {
     log.info("Staged update found at quit — installing before exit");
     isQuittingForUpdate = true;
-    autoUpdater.quitAndInstall();
-    return true;
+    try {
+      autoUpdater.quitAndInstall();
+      return true;
+    } catch (error) {
+      // Same failure mode as the click-path quitAndInstall guards: a
+      // mis-signed staged build or corrupted Squirrel staging dir can
+      // throw synchronously. Don't trap the user in a quit-loop — log and
+      // fall through to the normal shutdown path. The window may already
+      // be tearing down so we don't bother broadcasting.
+      log.error("installUpdateOnQuit: quitAndInstall threw:", error);
+      isQuittingForUpdate = false;
+      return false;
+    }
   }
   return false;
 }

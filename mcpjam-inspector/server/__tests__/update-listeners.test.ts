@@ -215,6 +215,63 @@ describe("update-listeners", () => {
     expect(quitAndInstallMock).not.toHaveBeenCalled();
   });
 
+  it("lets the user retry checkForUpdates after the watchdog fires", async () => {
+    // Regression: bugbot flagged that holding `isCheckingOrDownloading` true
+    // after the watchdog blocks in-app retry, because the pending-click
+    // path skips `checkForUpdates` while that flag is set. Watchdog must
+    // clear it so a follow-up Update click triggers a fresh Squirrel check.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setStalledInstallTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      // First checkForUpdates call fires on update-available via
+      // update-electron-app's polling path; that's outside our handler.
+      // Our handler only re-calls it on user-click while !isChecking.
+      checkForUpdatesMock.mockClear();
+
+      // Watchdog fires.
+      vi.advanceTimersByTime(1_000);
+
+      // User clicks Update again — should re-trigger checkForUpdates.
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      expect(checkForUpdatesMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("guards installUpdateOnQuit against quitAndInstall throws", async () => {
+    appState.isPackaged = true;
+    const window = createWindow();
+    windows.push(window);
+    const { installUpdateOnQuit, registerUpdateListeners } =
+      await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    emitAutoUpdaterEvent("update-available");
+    emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+    // Simulate the macOS Squirrel staging failure at quit time.
+    quitAndInstallMock.mockImplementationOnce(() => {
+      throw new Error("simulated quitAndInstall failure");
+    });
+
+    expect(() => installUpdateOnQuit()).not.toThrow();
+    // Returned false so the caller falls through to the normal quit path
+    // instead of being trapped in event.preventDefault().
+    expect(installUpdateOnQuit()).toBe(true);
+    // ^ second call: the previous throw cleared `isQuittingForUpdate`, and
+    // status is still "downloaded", so the second call re-enters and this
+    // time quitAndInstall doesn't throw (mockImplementationOnce). Returns true.
+  });
+
   it("fires update-error broadcast when stuck in pending+installRequested past the watchdog", async () => {
     vi.useFakeTimers();
     try {
