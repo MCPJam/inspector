@@ -420,3 +420,92 @@ blockquote {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--mcj-ink-muted);
 }
+
+/* ── Page bottom: feedback + prev/next pager ─────────────────────────────── */
+
+/* "Was this page helpful?" Yes/No buttons — match the warm theme */
+button[aria-label="Yes"],
+button[aria-label="No"],
+button[aria-label*="helpful" i] {
+  background: var(--mcj-paper-2) !important;
+  border: 1px solid var(--mcj-rule) !important;
+  color: var(--mcj-ink) !important;
+  border-radius: var(--mcj-radius) !important;
+  box-shadow: none !important;
+  font-weight: 500;
+}
+button[aria-label="Yes"]:hover,
+button[aria-label="No"]:hover,
+button[aria-label*="helpful" i]:hover {
+  border-color: var(--mcj-orange) !important;
+  color: var(--mcj-ink-strong) !important;
+}
+
+/* Previous/Next pager — Mintlify renders it as one rounded slab.
+   Flatten the container, let prev/next read as separate affordances. */
+nav[aria-label*="agination" i],
+nav[aria-label*="age navigation" i],
+[class*="pagination" i] {
+  background: transparent !important;
+  border: 1px solid var(--mcj-rule);
+  border-radius: var(--mcj-radius);
+  box-shadow: none !important;
+  margin-top: 1.25rem;
+}
+
+nav[aria-label*="agination" i] a,
+nav[aria-label*="age navigation" i] a,
+[class*="pagination" i] a {
+  background: transparent !important;
+  color: var(--mcj-ink) !important;
+  border-radius: 0;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+nav[aria-label*="agination" i] a:hover,
+nav[aria-label*="age navigation" i] a:hover,
+[class*="pagination" i] a:hover {
+  background: var(--mcj-paper-2) !important;
+  color: var(--mcj-ink-strong) !important;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────
+   Reference shape: a thin top divider, then a single tight row — social
+   icons left, "Powered by mintlify" right. No dark slab, no empty space
+   below. Match the body background so the footer reads as a quiet endcap,
+   not a separate region.
+   ──────────────────────────────────────────────────────────────────────── */
+
+footer,
+[role="contentinfo"] {
+  background: transparent !important;
+  border-top: 1px solid var(--mcj-rule);
+  padding: 1rem 1.5rem !important;
+  min-height: 0 !important;
+  height: auto !important;
+  margin: 0 !important;
+}
+
+/* Collapse any inner wrappers that would otherwise force a tall slab */
+footer > *,
+[role="contentinfo"] > * {
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+/* Footer links — muted resting, orange on hover */
+footer a,
+[role="contentinfo"] a {
+  color: var(--mcj-ink-muted);
+  transition: color 120ms ease-out;
+}
+footer a:hover,
+[role="contentinfo"] a:hover {
+  color: var(--mcj-orange);
+}
+
+/* "Powered by mintlify" — small and muted; leave the wordmark itself alone */
+footer [class*="powered" i],
+[role="contentinfo"] [class*="powered" i] {
+  color: var(--mcj-ink-muted);
+  font-size: 0.8125rem;
+}
