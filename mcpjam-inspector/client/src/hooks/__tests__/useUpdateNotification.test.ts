@@ -185,6 +185,35 @@ describe("useUpdateNotification", () => {
 
       expect(mockToastError).toHaveBeenCalledWith(
         "Update failed. Try again later.",
+        expect.objectContaining({
+          action: expect.objectContaining({
+            label: "Download manually",
+          }),
+        }),
+      );
+    });
+
+    it("toast action opens the releases page via openExternal", () => {
+      const mocks = setupElectronMock();
+      const mockOpenExternal = vi.fn().mockResolvedValue(undefined);
+      (window.electronAPI as any).app = { openExternal: mockOpenExternal };
+
+      renderHook(() => useUpdateNotification());
+      const callback = mocks.mockOnUpdateError.mock.calls[0][0];
+
+      act(() => {
+        callback();
+      });
+
+      const toastOptions = mockToastError.mock.calls[0][1];
+      expect(toastOptions?.action?.label).toBe("Download manually");
+
+      act(() => {
+        toastOptions.action.onClick();
+      });
+
+      expect(mockOpenExternal).toHaveBeenCalledWith(
+        "https://github.com/MCPJam/inspector/releases",
       );
     });
 
