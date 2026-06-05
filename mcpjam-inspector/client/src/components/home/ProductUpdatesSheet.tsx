@@ -6,6 +6,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@mcpjam/design-system/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -28,65 +33,228 @@ interface ProductUpdatesSheetProps {
   onDismiss: (slug: string) => void | Promise<void>;
 }
 
+interface VideoPreviewProps {
+  update: ProductUpdateEntry;
+  onOpen: () => void;
+}
+
+const PREVIEW_WRAPPER_CLASS =
+  "group/play relative mt-2 block aspect-video w-full overflow-hidden rounded-md border border-border bg-muted";
+
+function VideoPreview({ update, onOpen }: VideoPreviewProps) {
+  const embed = update.videoUrl ? parseVideoEmbed(update.videoUrl) : null;
+  const hasPreviewMp4 = !!update.previewVideoUrl;
+  const poster = update.videoPosterUrl || embed?.posterSrc || undefined;
+  const canEmbedInModal = !!embed && embed.provider !== "raw";
+
+  // Nothing to render: no preview clip and no parseable full video URL.
+  if (!hasPreviewMp4 && !embed) return null;
+
+  // Raw / non-embeddable URL with no MP4 preview: keep the existing
+  // "Watch" link behavior, no modal — we can't reliably iframe an
+  // arbitrary URL.
+  if (!hasPreviewMp4 && embed?.provider === "raw") {
+    return (
+      <div className="mt-2">
+        <Button
+          asChild
+          variant="outline"
+          size="sm"
+          className="h-6 gap-1 px-2 text-[11px]"
+        >
+          <a href={embed.embedSrc} target="_blank" rel="noopener noreferrer">
+            <Play className="size-3" strokeWidth={2} />
+            Watch
+          </a>
+        </Button>
+      </div>
+    );
+  }
+
+  const media = hasPreviewMp4 ? (
+    <video
+      src={update.previewVideoUrl}
+      poster={poster}
+      className="absolute inset-0 size-full object-cover"
+      aria-hidden
+      autoPlay
+      loop
+      muted
+      playsInline
+      preload="auto"
+    />
+  ) : poster ? (
+    <img
+      src={poster}
+      alt=""
+      loading="lazy"
+      className="absolute inset-0 size-full object-cover"
+    />
+  ) : null;
+
+  // Play affordance is only meaningful when clicking the preview actually
+  // does something — opens the modal, or navigates to a raw URL. With only
+  // a `previewVideoUrl` and no full `videoUrl`, the preview is decorative
+  // (it already autoplays) and we skip the overlay entirely.
+  const showAffordance = canEmbedInModal || embed?.provider === "raw";
+  const affordance = showAffordance ? (
+    <span
+      className={`absolute inset-0 flex items-center justify-center transition-colors ${
+        hasPreviewMp4
+          ? "bg-black/0 group-hover/play:bg-black/20"
+          : "bg-black/20 group-hover/play:bg-black/30"
+      }`}
+    >
+      <span
+        className={`flex size-12 items-center justify-center rounded-full bg-white/90 text-foreground shadow-md transition-all group-hover/play:scale-105 ${
+          hasPreviewMp4
+            ? "opacity-0 group-hover/play:opacity-100"
+            : "opacity-100"
+        }`}
+      >
+        <Play
+          className="size-5 translate-x-[1px]"
+          strokeWidth={2}
+          fill="currentColor"
+        />
+      </span>
+    </span>
+  ) : null;
+
+  if (canEmbedInModal) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Play video for ${update.title}`}
+        className={PREVIEW_WRAPPER_CLASS}
+      >
+        {media}
+        {affordance}
+      </button>
+    );
+  }
+
+  // Raw `videoUrl` with an MP4 preview: open the raw URL in a new tab
+  // rather than the in-app modal (the modal can only iframe known
+  // embeddable providers).
+  if (embed?.provider === "raw") {
+    return (
+      <a
+        href={embed.embedSrc}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Watch video for ${update.title}`}
+        className={PREVIEW_WRAPPER_CLASS}
+      >
+        {media}
+        {affordance}
+      </a>
+    );
+  }
+
+  // Preview MP4 only, no full video: decorative autoplay, not clickable.
+  return <div className={PREVIEW_WRAPPER_CLASS}>{media}</div>;
+}
+
+interface VideoModalProps {
+  update: ProductUpdateEntry | null;
+  onClose: () => void;
+}
+
+function VideoModal({ update, onClose }: VideoModalProps) {
+  const embed = update?.videoUrl ? parseVideoEmbed(update.videoUrl) : null;
+  const youtubeId =
+    embed?.provider === "youtube"
+      ? embed.embedSrc.split("/embed/")[1]?.split("?")[0]
+      : null;
+
+  return (
+    <Dialog
+      open={!!update}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent
+        showCloseButton
+        className="max-w-3xl gap-0 overflow-hidden border-0 bg-neutral-950 p-0 sm:max-w-3xl"
+      >
+        <DialogTitle className="sr-only">
+          {update?.title ?? "Video"}
+        </DialogTitle>
+        <div className="relative aspect-video w-full bg-black">
+          {embed && embed.provider !== "raw" ? (
+            <iframe
+              key={update?.slug}
+              src={`${embed.embedSrc}${embed.embedSrc.includes("?") ? "&" : "?"}autoplay=1`}
+              title={update?.title ?? "Video"}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="absolute inset-0 size-full"
+            />
+          ) : null}
+
+          {youtubeId ? (
+            <a
+              href={`https://www.youtube.com/watch?v=${youtubeId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5 rounded bg-black/70 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-black/90"
+            >
+              Watch on <span className="font-bold">YouTube</span>
+            </a>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function ProductUpdatesSheet({
   open,
   onOpenChange,
   updates,
   onDismiss,
 }: ProductUpdatesSheetProps) {
-  const [playing, setPlaying] = useState<Set<string>>(new Set());
+  const [activeVideo, setActiveVideo] = useState<ProductUpdateEntry | null>(
+    null,
+  );
 
-  // Stop any inline iframes (and their autoplay state) when the drawer closes,
-  // so reopening doesn't immediately restart playback.
+  // Close the video modal when the sheet closes so reopening starts clean.
   useEffect(() => {
-    if (!open) setPlaying(new Set());
+    if (!open) setActiveVideo(null);
   }, [open]);
 
-  const togglePlaying = (slug: string) => {
-    setPlaying((prev) => {
-      const next = new Set(prev);
-      next.add(slug);
-      return next;
-    });
-  };
-
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex w-full flex-col gap-0 sm:max-w-md"
-      >
-        <SheetHeader className="border-b border-border px-6 py-4">
-          <SheetTitle className="text-[15px] tracking-[-0.005em]">
-            What&apos;s new
-          </SheetTitle>
-          <SheetDescription className="text-[12.5px]">
-            All releases and platform changes.
-          </SheetDescription>
-        </SheetHeader>
+    <>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent
+          side="right"
+          className="flex w-full flex-col gap-0 sm:max-w-md"
+        >
+          <SheetHeader className="border-b border-border px-6 py-4">
+            <SheetTitle className="text-[15px] tracking-[-0.005em]">
+              What&apos;s new
+            </SheetTitle>
+            <SheetDescription className="text-[12.5px]">
+              All releases and platform changes.
+            </SheetDescription>
+          </SheetHeader>
 
-        <ScrollArea className="flex-1">
-          <ol className="relative px-6 py-5">
-            <span
-              aria-hidden
-              className="absolute left-[29px] top-7 bottom-6 w-px bg-border"
-            />
-            {updates.length === 0 ? (
-              <p className="text-[12.5px] text-muted-foreground">
-                No updates yet.
-              </p>
-            ) : null}
-            {updates.map((update) => {
-              const embed = update.videoUrl
-                ? parseVideoEmbed(update.videoUrl)
-                : null;
-              const isInlineEmbeddable =
-                embed && embed.provider !== "raw";
-              const isPlaying = playing.has(update.slug);
-              const poster =
-                update.videoPosterUrl || embed?.posterSrc || undefined;
-
-              return (
+          <ScrollArea className="flex-1">
+            <ol className="relative px-6 py-5">
+              <span
+                aria-hidden
+                className="absolute left-[29px] top-7 bottom-6 w-px bg-border"
+              />
+              {updates.length === 0 ? (
+                <p className="text-[12.5px] text-muted-foreground">
+                  No updates yet.
+                </p>
+              ) : null}
+              {updates.map((update) => (
                 <li
                   key={update.slug}
                   className={`group relative pb-6 pl-7 last:pb-0 ${
@@ -147,71 +315,21 @@ export function ProductUpdatesSheet({
                     {update.body}
                   </p>
 
-                  {isInlineEmbeddable ? (
-                    <div className="mt-2">
-                      {isPlaying ? (
-                        <iframe
-                          src={`${embed!.embedSrc}${
-                            embed!.embedSrc.includes("?") ? "&" : "?"
-                          }autoplay=1`}
-                          title={update.title}
-                          loading="lazy"
-                          allow="autoplay; encrypted-media"
-                          allowFullScreen
-                          className="aspect-video w-full rounded-md border border-border"
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => togglePlaying(update.slug)}
-                          aria-label={`Play video for ${update.title}`}
-                          className="group/play relative block aspect-video w-full overflow-hidden rounded-md border border-border bg-muted"
-                        >
-                          {poster ? (
-                            <img
-                              src={poster}
-                              alt=""
-                              loading="lazy"
-                              className="absolute inset-0 size-full object-cover"
-                            />
-                          ) : null}
-                          <span className="absolute inset-0 flex items-center justify-center bg-black/20 transition-colors group-hover/play:bg-black/30">
-                            <span className="flex size-12 items-center justify-center rounded-full bg-white/90 text-foreground shadow-md transition-transform group-hover/play:scale-105">
-                              <Play
-                                className="size-5 translate-x-[1px]"
-                                strokeWidth={2}
-                                fill="currentColor"
-                              />
-                            </span>
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  ) : embed && embed.provider === "raw" ? (
-                    <div className="mt-2">
-                      <Button
-                        asChild
-                        variant="outline"
-                        size="sm"
-                        className="h-6 gap-1 px-2 text-[11px]"
-                      >
-                        <a
-                          href={embed.embedSrc}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <Play className="size-3" strokeWidth={2} />
-                          Watch
-                        </a>
-                      </Button>
-                    </div>
-                  ) : null}
+                  <VideoPreview
+                    update={update}
+                    onOpen={() => setActiveVideo(update)}
+                  />
                 </li>
-              );
-            })}
-          </ol>
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
+              ))}
+            </ol>
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
+
+      <VideoModal
+        update={activeVideo}
+        onClose={() => setActiveVideo(null)}
+      />
+    </>
   );
 }
