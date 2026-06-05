@@ -1,62 +1,50 @@
-import { serve } from "@hono/node-server";
-import type { ServerType } from "@hono/node-server";
+import net from "net";
 
-export type HonoFetch = (
-  request: Request,
-  ...args: unknown[]
-) => Response | Promise<Response>;
-
-export interface HonoAppLike {
-  fetch: HonoFetch;
-}
-
-export interface PortListenResult {
-  server: ServerType;
-  port: number;
-}
-
-export interface TryListenOptions {
+export interface ProbeFreePortOptions {
   /**
-   * Override the underlying `serve` implementation. Used by tests to inject
-   * deterministic success/failure behavior without binding real sockets.
-   */
-  serveImpl?: typeof serve;
-  /**
-   * Optional callback invoked with `(port, error)` each time a port attempt
+   * Optional callback invoked with `(port, error)` each time a probe attempt
    * fails. Useful for logging in production callers without bloating the
    * helper's surface.
    */
   onAttemptFailed?: (port: number, error: NodeJS.ErrnoException) => void;
+  /**
+   * Override the underlying net implementation. Tests inject a deterministic
+   * stand-in via this hook; production callers should never pass it.
+   */
+  createServerImpl?: typeof net.createServer;
 }
 
 /**
- * Attempt to bind a Hono server to `startPort`, falling back to `startPort + 1`,
- * `startPort + 2`, ..., up to `maxAttempts` total. Returns the first successful
- * bind. If all attempts fail, throws an AggregateError-shaped Error whose message
- * lists every port tried.
+ * Probe `startPort`, `startPort + 1`, ..., up to `maxAttempts` total, looking
+ * for one that is free to bind on `hostname`. Returns the first port that
+ * binds successfully (immediately closing the probe server before returning).
  *
- * Bind failures are detected via the `error` event on the returned server (the
- * common case is `EADDRINUSE` from a stale orphan process). Non-EADDRINUSE
- * errors are still treated as attempt failures so we keep trying other ports.
+ * This intentionally probes with a bare `net` server instead of binding the
+ * real Hono app. The reason: `server/config.ts` reads `SERVER_PORT` from
+ * `process.env` at module-load time, so the picked port must be known
+ * BEFORE `createHonoApp()` runs. The probe gives us that port without paying
+ * the cost of constructing a partial Hono app per attempt — and avoids
+ * leaving CORS/origin allowlists out of sync with the bound port (see PR
+ * #2418 review).
  *
- * The successful server has its bind-time `error` listener removed before
- * returning so the caller can attach their own.
+ * A small TOCTOU window remains between probe-close and the real
+ * `serve(...)`. Callers should still handle the rare race by surfacing the
+ * failure to the user (this is what the recovery dialog in `main.ts` is for).
  */
-export async function tryListenWithFallback(
-  honoApp: HonoAppLike,
+export async function probeFreePort(
   hostname: string,
   startPort: number,
   maxAttempts: number,
-  options: TryListenOptions = {},
-): Promise<PortListenResult> {
-  const serveFn = options.serveImpl ?? serve;
+  options: ProbeFreePortOptions = {},
+): Promise<number> {
+  const createServer = options.createServerImpl ?? net.createServer;
   const errors: Array<{ port: number; error: NodeJS.ErrnoException }> = [];
 
   for (let i = 0; i < maxAttempts; i++) {
     const port = startPort + i;
     try {
-      const server = await listenOnce(serveFn, honoApp, hostname, port);
-      return { server, port };
+      await probeOnce(createServer, hostname, port);
+      return port;
     } catch (err) {
       const error = err as NodeJS.ErrnoException;
       errors.push({ port, error });
@@ -68,52 +56,42 @@ export async function tryListenWithFallback(
     .map(({ port, error }) => `${port} (${error.code ?? error.message})`)
     .join(", ");
   throw new Error(
-    `Failed to bind server after ${maxAttempts} attempts starting at port ${startPort}. Tried: ${tried}`,
+    `No free port available after ${maxAttempts} attempts starting at port ${startPort}. Tried: ${tried}`,
   );
 }
 
-function listenOnce(
-  serveFn: typeof serve,
-  honoApp: HonoAppLike,
+function probeOnce(
+  createServer: typeof net.createServer,
   hostname: string,
   port: number,
-): Promise<ServerType> {
-  return new Promise<ServerType>((resolve, reject) => {
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     let settled = false;
-
-    let server: ServerType;
-    try {
-      server = serveFn(
-        {
-          fetch: honoApp.fetch as Parameters<typeof serve>[0]["fetch"],
-          port,
-          hostname,
-        },
-        () => {
-          if (settled) return;
-          settled = true;
-          server.removeListener("error", onError);
-          resolve(server);
-        },
-      );
-    } catch (err) {
-      // Some failure modes (e.g. synchronous validation inside serve) surface
-      // as a thrown error instead of an error event.
-      reject(err);
-      return;
-    }
+    const server = createServer();
 
     const onError = (err: NodeJS.ErrnoException) => {
       if (settled) return;
       settled = true;
       try {
-        server.close?.();
+        server.close();
       } catch {
-        // best-effort cleanup; the listen failed so close may also throw
+        // best-effort cleanup
       }
       reject(err);
     };
 
-    server.on("error", onError);
+    server.once("error", onError);
+    server.listen(port, hostname, () => {
+      if (settled) return;
+      settled = true;
+      server.removeListener("error", onError);
+      server.close((closeErr) => {
+        if (closeErr) {
+          reject(closeErr);
+          return;
+        }
+        resolve();
+      });
+    });
   });
 }

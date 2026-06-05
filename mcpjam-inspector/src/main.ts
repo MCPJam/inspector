@@ -9,10 +9,16 @@ Sentry.init({
 
 import { app, BrowserWindow, shell, Menu, dialog } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
+import { serve } from "@hono/node-server";
 import path from "path";
 import fs from "fs";
-import { createHonoApp } from "../server/app.js";
-import { tryListenWithFallback } from "./server-port-fallback.js";
+// IMPORTANT: do NOT statically import "../server/app.js" or anything that
+// transitively reads server/config.ts at module-load time. `SERVER_PORT`
+// in that config is a top-level const computed from `process.env`, so we
+// have to set `process.env.SERVER_PORT` (after probing for a free port)
+// BEFORE the server module graph is first evaluated. The dynamic import
+// in `startHonoServer()` enforces that ordering.
+import { probeFreePort } from "./server-port-fallback.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
@@ -256,13 +262,16 @@ async function startHonoServer(): Promise<number> {
       : app.getAppPath();
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
 
-    const honoApp = createHonoApp();
-
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
     const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
 
-    const { server: boundServer, port } = await tryListenWithFallback(
-      honoApp,
+    // Probe for a free port BEFORE loading server modules. server/config.ts
+    // reads SERVER_PORT from process.env once, at module-init time, and that
+    // value flows into LOCAL_SERVER_ADDR, CORS_ORIGINS, and the
+    // origin-validation allowlist. If we bound the server before setting
+    // this, the renderer (loading from the fallback port) would 403 on its
+    // own API calls and ngrok would target the wrong local address.
+    const port = await probeFreePort(
       hostname,
       DEFAULT_SERVER_PORT,
       SERVER_PORT_FALLBACK_ATTEMPTS,
@@ -274,8 +283,18 @@ async function startHonoServer(): Promise<number> {
         },
       },
     );
+    process.env.SERVER_PORT = String(port);
 
-    server = boundServer;
+    // Dynamic import so server/config.ts evaluates with the env var we just
+    // set, not the build-time default.
+    const { createHonoApp } = await import("../server/app.js");
+    const honoApp = createHonoApp();
+
+    server = serve({
+      fetch: honoApp.fetch,
+      port,
+      hostname,
+    });
 
     if (port !== DEFAULT_SERVER_PORT) {
       log.warn(
