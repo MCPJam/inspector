@@ -31,7 +31,7 @@
   },
   "favicon": "/mcp_jam.svg",
   "banner": {
-    "content": "New: [@mcpjam/sdk v1.12](/sdk) — programmatic evals + conformance suites for Jest and Vitest.",
+    "content": "New: [@mcpjam/sdk v1.12](/sdk) — programmatic evals and conformance checks, runnable from Jest or Vitest.",
     "dismissible": true
   },
   "navigation": {
