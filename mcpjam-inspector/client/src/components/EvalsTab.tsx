@@ -111,6 +111,13 @@ function EvalsTabContent({
 }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
+  // Note: intentionally NOT routed through computeHostsHubFlagEnabled.
+  // create-suite-dialog uses `hostsEnabled` as both a feature gate AND a
+  // "skeleton suite creation requires attachments" gate (attachmentsRequired
+  // = hostsEnabled && projectId). Defaulting it on for desktop blocks the
+  // empty-suite-then-attach-later flow that fresh/local projects rely on.
+  // We surface the new Connect/Clients UI via the sidebar + App routing
+  // changes; eval-dialog requirements stay on the PostHog rollout.
   const hostsEnabled =
     useFeatureFlagEnabled("hosts-enabled") === true && isAuthenticated;
   const route = useEvalsRouteFromUrl();
