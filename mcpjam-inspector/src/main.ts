@@ -657,12 +657,13 @@ function showStartupFailureDialog(error: unknown): void {
   }
 
   if (choice === 1) {
-    try {
-      void shell.openPath(app.getPath("logs"));
-    } catch (openErr) {
-      log.warn("Failed to open logs folder:", openErr);
-    }
-    app.quit();
+    // Don't fire-and-forget: shutdown can finish before Finder/Explorer
+    // gets the openPath message, making the recovery action appear to do
+    // nothing. Chain the quit so it runs only after openPath settles.
+    shell
+      .openPath(app.getPath("logs"))
+      .catch((openErr) => log.warn("Failed to open logs folder:", openErr))
+      .finally(() => app.quit());
     return;
   }
 
