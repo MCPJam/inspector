@@ -44,6 +44,8 @@ import { CreateSuiteDialog, type CreateSuitePayload } from "./evals/create-suite
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { HOSTED_MODE } from "@/lib/config";
+import { computeHostsHubFlagEnabled } from "@/components/mcp-sidebar";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
@@ -111,8 +113,12 @@ function EvalsTabContent({
 }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
+  const hostsHubFlag = useFeatureFlagEnabled("hosts-enabled");
   const hostsEnabled =
-    useFeatureFlagEnabled("hosts-enabled") === true && isAuthenticated;
+    computeHostsHubFlagEnabled({
+      hostsFlag: hostsHubFlag,
+      hostedMode: HOSTED_MODE,
+    }) && isAuthenticated;
   const route = useEvalsRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);

@@ -35,6 +35,8 @@ import {
   type HostAttachmentDraft,
 } from "@/components/evals/client-attachments-editor";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { HOSTED_MODE } from "@/lib/config";
+import { computeHostsHubFlagEnabled } from "@/components/mcp-sidebar";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -92,7 +94,12 @@ export function SaveAsTestCaseAction({
   );
 
   const attachmentPickersEnabled =
-    hostsFlagEnabled === true && convexAuthed && Boolean(projectId);
+    computeHostsHubFlagEnabled({
+      hostsFlag: hostsFlagEnabled,
+      hostedMode: HOSTED_MODE,
+    }) &&
+    convexAuthed &&
+    Boolean(projectId);
 
   const { serverAttachments: projectServerAttachments } =
     useProjectServerAttachments({

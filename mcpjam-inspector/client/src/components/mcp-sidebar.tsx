@@ -131,6 +131,29 @@ export function filterByFeatureFlags(
 }
 
 /**
+ * Resolve the effective "hosts-enabled" rollout flag for the current build,
+ * independent of authentication state.
+ *
+ * Hosted web rolls Hosts/Connect out via PostHog so the flag must be honored
+ * server-side. Desktop ships a single binary with no staged rollout — and on
+ * the packaged Electron app PostHog may be blocked, slow, or simply hasn't
+ * resolved when the sidebar first renders. Treating the flag as off in that
+ * window hides the new Connect tab and leaves the legacy Servers item in
+ * place, which is what Ray reported.
+ *
+ * Callers still AND this with `isAuthenticated` at each site — only signed-in
+ * users see the Hosts/Connect surface.
+ */
+export function computeHostsHubFlagEnabled(opts: {
+  hostsFlag: unknown;
+  hostedMode: boolean;
+}): boolean {
+  const { hostsFlag, hostedMode } = opts;
+  if (!hostedMode) return true;
+  return isPostHogBooleanFlagOn(hostsFlag);
+}
+
+/**
  * Keeps billed nav items visible; marks them disabled when the gate denies access
  * and enforcement is enabled (not soft/disabled).
  *
@@ -625,7 +648,11 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
-      "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
+      "hosts-enabled":
+        computeHostsHubFlagEnabled({
+          hostsFlag: hostsEnabled,
+          hostedMode: HOSTED_MODE,
+        }) && isAuthenticated,
       "home-page-enabled": homePageEnabled === true && isAuthenticated,
       "evaluate-ui": evaluateUiEnabled === true,
       xaa: xaaEnabled === true,

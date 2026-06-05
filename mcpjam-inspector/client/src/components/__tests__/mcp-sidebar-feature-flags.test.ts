@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applyBillingGateNavState,
+  computeHostsHubFlagEnabled,
   filterByFeatureFlags,
   getEvalsSubnavItems,
   getHostedNavigationSections,
@@ -405,5 +406,118 @@ describe("getHostedNavigationSections", () => {
         evalsSubnav: true,
       },
     ]);
+  });
+});
+
+// The packaged Electron app ships a single binary with no staged rollout, so
+// gating Hosts/Connect on PostHog would just hide the new UI whenever the
+// feature flag hasn't resolved (or is blocked entirely). Desktop must default
+// the flag on for signed-in users while hosted web keeps the PostHog gate.
+//
+// Regression: Ray reported the desktop Clients tab showed empty/no affordances
+// because `useFeatureFlagEnabled("hosts-enabled")` returned `undefined` in the
+// packaged app, which collapsed both the sidebar nav filter and `ClientsRoute`
+// gate to `false`. See `computeHostsHubFlagEnabled` in `mcp-sidebar.tsx`.
+describe("computeHostsHubFlagEnabled", () => {
+  it("defaults on for desktop when PostHog has not resolved the flag", () => {
+    expect(
+      computeHostsHubFlagEnabled({
+        hostsFlag: undefined,
+        hostedMode: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("defaults on for desktop even when PostHog reports the flag off", () => {
+    expect(
+      computeHostsHubFlagEnabled({
+        hostsFlag: false,
+        hostedMode: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("honors the PostHog flag in hosted web when the flag is on", () => {
+    expect(
+      computeHostsHubFlagEnabled({ hostsFlag: true, hostedMode: true }),
+    ).toBe(true);
+  });
+
+  it("keeps Hosts/Connect hidden in hosted web until PostHog enables it", () => {
+    expect(
+      computeHostsHubFlagEnabled({ hostsFlag: undefined, hostedMode: true }),
+    ).toBe(false);
+    expect(
+      computeHostsHubFlagEnabled({ hostsFlag: false, hostedMode: true }),
+    ).toBe(false);
+  });
+});
+
+// The sidebar uses `featureFlag` to keep "Connect" visible and `hiddenByFlag`
+// to swap "Servers" out once the rollout fires. Wire the helper through the
+// nav filter the same way the component does and verify the desktop default-on
+// path keeps "Connect" visible (and hides legacy "Servers") even when PostHog
+// has not resolved the flag.
+describe("filterByFeatureFlags + computeHostsHubFlagEnabled (Connect/Servers swap)", () => {
+  const connectAndServers = () => [
+    {
+      id: "connection",
+      items: [
+        {
+          title: "Connect",
+          url: "/servers",
+          icon: FakeIcon,
+          featureFlag: "hosts-enabled",
+        },
+        {
+          title: "Servers",
+          url: "/servers",
+          icon: FakeIcon,
+          hiddenByFlag: "hosts-enabled",
+        },
+      ],
+    },
+  ];
+
+  const hostsEnabledForNav = (
+    hostsFlag: unknown,
+    hostedMode: boolean,
+    isAuthenticated: boolean,
+  ) =>
+    computeHostsHubFlagEnabled({ hostsFlag, hostedMode }) && isAuthenticated;
+
+  it("shows Connect on desktop when authenticated and PostHog is silent", () => {
+    const result = filterByFeatureFlags(connectAndServers(), {
+      "hosts-enabled": hostsEnabledForNav(undefined, false, true),
+    });
+    expect(result[0].items.map((i) => i.title)).toEqual(["Connect"]);
+  });
+
+  it("shows Connect on desktop when authenticated and PostHog reports off", () => {
+    const result = filterByFeatureFlags(connectAndServers(), {
+      "hosts-enabled": hostsEnabledForNav(false, false, true),
+    });
+    expect(result[0].items.map((i) => i.title)).toEqual(["Connect"]);
+  });
+
+  it("falls back to legacy Servers on desktop until the user signs in", () => {
+    const result = filterByFeatureFlags(connectAndServers(), {
+      "hosts-enabled": hostsEnabledForNav(undefined, false, false),
+    });
+    expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
+  });
+
+  it("keeps legacy Servers on hosted web until PostHog enables the rollout", () => {
+    const result = filterByFeatureFlags(connectAndServers(), {
+      "hosts-enabled": hostsEnabledForNav(undefined, true, true),
+    });
+    expect(result[0].items.map((i) => i.title)).toEqual(["Servers"]);
+  });
+
+  it("swaps to Connect on hosted web once PostHog enables the rollout", () => {
+    const result = filterByFeatureFlags(connectAndServers(), {
+      "hosts-enabled": hostsEnabledForNav(true, true, true),
+    });
+    expect(result[0].items.map((i) => i.title)).toEqual(["Connect"]);
   });
 });

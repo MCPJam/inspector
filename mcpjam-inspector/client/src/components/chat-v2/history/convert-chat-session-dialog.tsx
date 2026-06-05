@@ -42,6 +42,8 @@ import {
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
+import { HOSTED_MODE } from "@/lib/config";
+import { computeHostsHubFlagEnabled } from "@/components/mcp-sidebar";
 
 type ConvertChatSessionDialogProps = {
   open: boolean;
@@ -83,7 +85,12 @@ export function ConvertChatSessionDialog({
   const hostsFlagEnabled = useFeatureFlagEnabled("hosts-enabled");
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const attachmentPickersEnabled =
-    hostsFlagEnabled === true && convexAuthed && Boolean(effectiveProjectId);
+    computeHostsHubFlagEnabled({
+      hostsFlag: hostsFlagEnabled,
+      hostedMode: HOSTED_MODE,
+    }) &&
+    convexAuthed &&
+    Boolean(effectiveProjectId);
   const { servers, serversById, isLoading: projectServersLoading } =
     useProjectServers({
       isAuthenticated,
