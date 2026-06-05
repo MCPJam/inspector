@@ -9,6 +9,7 @@ import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
+import { persistEvalTraceFanout } from "./persist-eval-trace.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
@@ -230,6 +231,40 @@ export const createSuiteRunRecorder = ({
         status ?? (passed ? DEFAULT_ITERATION_STATUS : "failed");
       const result = passed ? "passed" : "failed";
 
+      // PR-2 eval→chatSessions fanout: when the backend flag is on,
+      // write the transcript as per-turn rows in the chatSessions path
+      // before calling updateTestIteration. The fanout result drives
+      // whether we still pass messages/spans/prompts/widgetSnapshots
+      // to updateTestIteration:
+      //   - null            → flag off; today's legacy behavior runs
+      //   - persisted:true  → trace lives in chatSessions; updateTestIteration
+      //                       called WITHOUT trace fields (no double-persist)
+      //   - persisted:false → fanout failed mid-stream; fall back to
+      //                       the legacy single-call path so the iteration
+      //                       is still complete and replayable.
+      const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
+        iterationStatus === "cancelled"
+          ? "eval_cancelled"
+          : passed
+            ? "eval_completed"
+            : "eval_failed";
+      const fanout = await persistEvalTraceFanout({
+        convexClient,
+        iterationId,
+        terminalReason,
+        messages,
+        spans,
+        prompts,
+        widgetSnapshots,
+      });
+      if (fanout?.persisted === false) {
+        logger.warn(
+          "[evals] persistEvalTraceFanout failed; falling back to legacy single-call path",
+          { iterationId, error: fanout.error.message },
+        );
+      }
+      const sendTraceFieldsToUpdate = fanout?.persisted !== true;
+
       try {
         await convexClient.action("testSuites:updateTestIteration" as any, {
           iterationId,
@@ -238,17 +273,21 @@ export const createSuiteRunRecorder = ({
           result,
           actualToolCalls: sanitizeForConvexTransport(toolsCalled),
           tokensUsed: usage.totalTokens ?? 0,
-          messages: sanitizeForConvexTransport(messages),
-          ...(spans?.length
-            ? { spans: sanitizeForConvexTransport(spans) }
-            : {}),
-          ...(prompts?.length
-            ? { prompts: sanitizeForConvexTransport(prompts) }
-            : {}),
-          ...(widgetSnapshots?.length
+          ...(sendTraceFieldsToUpdate
             ? {
-                widgetSnapshots:
-                  sanitizeForConvexTransport(widgetSnapshots),
+                messages: sanitizeForConvexTransport(messages),
+                ...(spans?.length
+                  ? { spans: sanitizeForConvexTransport(spans) }
+                  : {}),
+                ...(prompts?.length
+                  ? { prompts: sanitizeForConvexTransport(prompts) }
+                  : {}),
+                ...(widgetSnapshots?.length
+                  ? {
+                      widgetSnapshots:
+                        sanitizeForConvexTransport(widgetSnapshots),
+                    }
+                  : {}),
               }
             : {}),
           error,

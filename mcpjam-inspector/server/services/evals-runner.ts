@@ -88,6 +88,7 @@ import {
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
+import { persistEvalTraceFanout } from "./evals/persist-eval-trace.js";
 import type {
   EvalStreamEvent,
   EvalStreamToolCall,
@@ -697,6 +698,33 @@ async function finishIterationDirectly(
     params.status ?? (params.passed ? "completed" : "failed");
   const result = params.passed ? "passed" : "failed";
 
+  // PR-2 eval→chatSessions fanout. Mirrors recorder.finishIteration —
+  // see persist-eval-trace.ts for the contract. When the flag is on,
+  // we persist N per-turn rows in chatSessions BEFORE the
+  // updateTestIteration call, then omit trace fields from the update.
+  const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
+    iterationStatus === "cancelled"
+      ? "eval_cancelled"
+      : params.passed
+        ? "eval_completed"
+        : "eval_failed";
+  const fanout = await persistEvalTraceFanout({
+    convexClient,
+    iterationId: params.iterationId,
+    terminalReason,
+    messages: params.messages,
+    spans: params.spans,
+    prompts: params.prompts,
+    widgetSnapshots: params.widgetSnapshots,
+  });
+  if (fanout?.persisted === false) {
+    logger.warn(
+      "[evals] persistEvalTraceFanout failed (quick run); falling back to legacy single-call path",
+      { iterationId: params.iterationId, error: fanout.error.message },
+    );
+  }
+  const sendTraceFieldsToUpdate = fanout?.persisted !== true;
+
   try {
     await convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId: params.iterationId,
@@ -704,18 +732,22 @@ async function finishIterationDirectly(
       status: iterationStatus,
       actualToolCalls: sanitizeForConvexTransport(params.toolsCalled),
       tokensUsed: params.usage.totalTokens ?? 0,
-      messages: sanitizeForConvexTransport(params.messages),
-      ...(params.spans?.length
-        ? { spans: sanitizeForConvexTransport(params.spans) }
-        : {}),
-      ...(params.prompts?.length
-        ? { prompts: sanitizeForConvexTransport(params.prompts) }
-        : {}),
-      ...(params.widgetSnapshots?.length
+      ...(sendTraceFieldsToUpdate
         ? {
-            widgetSnapshots: sanitizeForConvexTransport(
-              params.widgetSnapshots,
-            ),
+            messages: sanitizeForConvexTransport(params.messages),
+            ...(params.spans?.length
+              ? { spans: sanitizeForConvexTransport(params.spans) }
+              : {}),
+            ...(params.prompts?.length
+              ? { prompts: sanitizeForConvexTransport(params.prompts) }
+              : {}),
+            ...(params.widgetSnapshots?.length
+              ? {
+                  widgetSnapshots: sanitizeForConvexTransport(
+                    params.widgetSnapshots,
+                  ),
+                }
+              : {}),
           }
         : {}),
       error: params.error,
