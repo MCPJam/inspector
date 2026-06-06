@@ -35,7 +35,6 @@ import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { serializeServersForSharing } from "@/lib/project-serialization";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
-import { SeatProrationNote } from "@/components/billing/SeatProrationNote";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   getBillingUpsellCtaLabel,
@@ -589,12 +588,6 @@ export function ShareProjectDialog({
                   {isInviting ? "..." : "Invite"}
                 </Button>
               </div>
-
-              {billingStatus?.plan &&
-              planCatalog?.plans[billingStatus.plan]?.billingModel ===
-                "per_seat" ? (
-                <SeatProrationNote lead="Inviting someone new adds a seat." />
-              ) : null}
 
               {emailValidationError ? (
                 <p className="text-sm text-destructive">
