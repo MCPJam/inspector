@@ -510,6 +510,19 @@ export function useSharedChatWidgetCapture({
         widgetPermissive: widget.csp?.mode === "permissive",
         prefersBorder: widget.prefersBorder,
         displayContext: toDisplayContext(widget.globals),
+        // Persist the OpenAI Apps SDK shim provenance so replay can
+        // reconstruct the same `window.openai` surface the widget was
+        // captured against. Pulled from the widget-debug store (set by
+        // the MCP-Apps renderer at fetch time).
+        ...(typeof widget.injectedOpenAiCompat === "boolean"
+          ? { injectedOpenAiCompat: widget.injectedOpenAiCompat }
+          : {}),
+        ...(widget.injectedOpenAiCompatCapabilities
+          ? {
+              injectedOpenAiCompatCapabilities:
+                widget.injectedOpenAiCompatCapabilities,
+            }
+          : {}),
       };
       const snapshotPayload = {
         ...(chatboxId ? { chatboxId } : {}),

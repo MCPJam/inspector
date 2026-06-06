@@ -157,6 +157,44 @@ describe("evalTraceSnapshotToPayload", () => {
     expect(minimal!.prefersBorder).toBeUndefined();
   });
 
+  test("forwards injectedOpenAiCompat + capabilities when set on the source", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: true,
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+          sendFollowUpMessage: false,
+          requestDisplayMode: "fullscreen-only",
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBe(true);
+    expect(out!.injectedOpenAiCompatCapabilities).toEqual({
+      callTool: true,
+      sendFollowUpMessage: false,
+      requestDisplayMode: "fullscreen-only",
+    });
+  });
+
+  test("omits OpenAI compat fields when absent (pre-feature snapshot)", () => {
+    const out = evalTraceSnapshotToPayload(makeEvalSnap());
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("omits injectedOpenAiCompat when the source value is non-boolean", () => {
+    // EvalTraceWidgetSnapshot types it as `boolean | undefined`, but a
+    // round-tripped JSON snapshot could theoretically carry `null` from
+    // a misbehaved producer. We intentionally drop non-boolean values
+    // rather than forwarding them and tripping the Convex validator.
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: null as unknown as boolean,
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+  });
+
   test("drops toolMetadata and widgetHtmlUrl (backend stores them elsewhere or not at all)", () => {
     const out = evalTraceSnapshotToPayload(
       makeEvalSnap({
