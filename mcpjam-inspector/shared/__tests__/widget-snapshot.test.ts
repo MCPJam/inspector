@@ -157,7 +157,7 @@ describe("evalTraceSnapshotToPayload", () => {
     expect(minimal!.prefersBorder).toBeUndefined();
   });
 
-  test("forwards injectedOpenAiCompat + capabilities when set on the source", () => {
+  test("forwards injectedOpenAiCompat + capabilities when compat is true", () => {
     const out = evalTraceSnapshotToPayload(
       makeEvalSnap({
         injectedOpenAiCompat: true,
@@ -174,6 +174,35 @@ describe("evalTraceSnapshotToPayload", () => {
       sendFollowUpMessage: false,
       requestDisplayMode: "fullscreen-only",
     });
+  });
+
+  test("drops capabilities when injectedOpenAiCompat is false (no shim injected ⇒ no surface)", () => {
+    // A buggy producer could attach a capability matrix to a snapshot
+    // where the shim wasn't actually injected. Persisting that would let
+    // replay hash the matrix and treat the surface as different than
+    // the shim-less HTML actually represents.
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: false,
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBe(false);
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("drops capabilities when injectedOpenAiCompat is undefined", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
   });
 
   test("omits OpenAI compat fields when absent (pre-feature snapshot)", () => {

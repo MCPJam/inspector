@@ -240,7 +240,17 @@ export function evalTraceSnapshotToPayload(
   if (typeof snap.injectedOpenAiCompat === "boolean") {
     payload.injectedOpenAiCompat = snap.injectedOpenAiCompat;
   }
-  if (snap.injectedOpenAiCompatCapabilities) {
+  // Capabilities are only meaningful when the shim was actually injected
+  // — they describe the surface the injected `window.openai` exposes.
+  // Persisting a matrix alongside `injectedOpenAiCompat: false` or
+  // `undefined` would let cached replay hash and treat the surface
+  // differently than the byte-frozen HTML (the HTML contains no shim, so
+  // the matrix is meaningless). Matches the MCP-Apps fetch response,
+  // which only echoes capabilities when the shim is injected.
+  if (
+    snap.injectedOpenAiCompat === true &&
+    snap.injectedOpenAiCompatCapabilities
+  ) {
     payload.injectedOpenAiCompatCapabilities =
       snap.injectedOpenAiCompatCapabilities;
   }
