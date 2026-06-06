@@ -416,6 +416,44 @@ describe("isNormalizedError — shape guard", () => {
   });
 });
 
+describe("describeError — specific message wording wins over generic HTTP 401", () => {
+  it("classifies 'Missing or invalid bearer token' (status 401) as auth/missing_bearer", () => {
+    // Reproduces the hosted-backend path: assertBearerToken throws
+    // WebRouteError(401, UNAUTHORIZED, "Missing or invalid bearer token"),
+    // then mapRuntimeError calls describeError(err). Before the fix the
+    // generic HTTP-status branch fired first and returned auth/http_401
+    // (MCP server re-auth guidance), instead of auth/missing_bearer
+    // (MCPJam CLI / MCPJAM_API_KEY guidance).
+    const err = Object.assign(new Error("Missing or invalid bearer token"), {
+      status: 401,
+      name: "WebRouteError",
+    });
+    const out = describeError(err);
+    expect(out.slug).toBe("auth/missing_bearer");
+  });
+
+  it("preserves MCPAuthError mapping to auth/http_401 (class wins)", () => {
+    // The class-name detector runs BEFORE the message check, so a real
+    // MCPAuthError still maps to auth/http_401 even if its message
+    // happens to contain the word "bearer". This is the desired
+    // behavior — MCPAuthError specifically means MCP-server auth.
+    const err = Object.assign(
+      new Error("Server rejected bearer token"),
+      { name: "MCPAuthError", statusCode: 401 },
+    );
+    const out = describeError(err);
+    expect(out.slug).toBe("auth/http_401");
+  });
+
+  it("falls back to auth/http_401 for a plain 401 without bearer wording", () => {
+    // Generic 401 with no specific message hints should still match
+    // the catch-all status branch.
+    const err = Object.assign(new Error("Unauthorized"), { status: 401 });
+    const out = describeError(err);
+    expect(out.slug).toBe("auth/http_401");
+  });
+});
+
 describe("describeError — unclassified errors surface their raw message", () => {
   it("promotes rawMessage into oneLine when slug is internal/unknown", () => {
     // OAuth step errors and other unclassified text used to be hidden

@@ -389,6 +389,17 @@ function resolveSlug(error: unknown): {
     if (slug) return { slug, rawCode: errno };
   }
 
+  // (d.5) Specific message wording that pins a slug more precisely than
+  // the generic HTTP-status check below. The inspector's hosted backend
+  // throws `WebRouteError(401, "Missing or invalid bearer token")` when
+  // its own bearer-token gate fails — that's a MCPJam-CLI / MCPJAM_API_KEY
+  // problem, not the MCP-server-re-auth problem auth/http_401 talks about.
+  // Without this pre-check the generic status branch wins and the user
+  // gets the wrong docs link / next steps.
+  if (/missing\s+(?:or\s+invalid\s+)?bearer/i.test(message)) {
+    return { slug: "auth/missing_bearer" };
+  }
+
   // (e) HTTP status field (`statusCode` / `status`).
   const httpStatus = getHttpStatus(error);
   if (httpStatus !== undefined) {
@@ -408,9 +419,8 @@ function resolveSlug(error: unknown): {
   if (/refresh\s+token/i.test(message) && /(failed|invalid|expired|revoked)/i.test(message)) {
     return { slug: "auth/oauth_refresh_failed" };
   }
-  if (/missing\s+(?:or\s+invalid\s+)?bearer/i.test(message)) {
-    return { slug: "auth/missing_bearer" };
-  }
+  // Note: "missing bearer" wording is checked earlier (step d.5) so it
+  // wins over the generic HTTP status check; no duplicate here.
 
   const messageBased = messageSlug(message);
   if (messageBased) return { slug: messageBased };
