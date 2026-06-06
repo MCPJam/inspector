@@ -2842,7 +2842,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("does not apply a CI billing redirect for free projects when evaluate-ci is enabled", async () => {
+  it("still applies the CI billing redirect when evaluate-ci is enabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2897,10 +2897,10 @@ describe("App hosted OAuth callback handling", () => {
               gateKey: "cicd",
               kind: "feature",
               scope: "organization",
-              canAccess: true,
-              shouldShowUpsell: false,
-              upgradePlan: null,
-              reason: "feature_included",
+              canAccess: false,
+              shouldShowUpsell: true,
+              upgradePlan: "team",
+              reason: "feature_not_included",
             },
           ],
         };
@@ -2921,10 +2921,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/ci-evals");
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/servers");
+    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 });

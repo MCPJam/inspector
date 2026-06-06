@@ -53,7 +53,7 @@ function createPlanCatalog() {
         features: {
           evals: true,
           chatboxes: true,
-          cicd: true,
+          cicd: false,
           customDomains: false,
           auditLog: false,
           sso: false,
