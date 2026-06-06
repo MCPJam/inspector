@@ -5,7 +5,11 @@ import {
   ServerWithName,
 } from "./app-types";
 import type { ProjectClientConfig } from "@/lib/client-config";
-import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
+import {
+  describeError,
+  isNormalizedError,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
 
 /**
  * Helper used by failure-path reducer branches: when the dispatcher
@@ -14,6 +18,14 @@ import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
  * from the message string so every failure-path writer ends up with a
  * usable `lastNormalizedError` for the ErrorCard renderer.
  *
+ * Re-validates the incoming `normalized` shape — `webPost` populates it
+ * from any object in the response body, so a partial payload (older
+ * server, schema drift, proxy mangling) would otherwise be stored and
+ * later shadow the real message at the renderer (which prefers
+ * `lastNormalizedError` over `lastError`). Invalid shapes fall through
+ * to the message-string derivation, which always produces a complete
+ * block via `describeError`.
+ *
  * Returning `undefined` for empty messages keeps the reducer free of
  * synthetic "unknown error" entries that would obscure healthy state.
  */
@@ -21,7 +33,7 @@ function resolveNormalized(
   message: string | undefined,
   normalized: NormalizedError | undefined,
 ): NormalizedError | undefined {
-  if (normalized) return normalized;
+  if (isNormalizedError(normalized)) return normalized;
   if (!message) return undefined;
   return describeError(new Error(message));
 }

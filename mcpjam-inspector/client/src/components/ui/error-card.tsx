@@ -9,7 +9,11 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
+import {
+  describeError,
+  isNormalizedError,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
 import { cn } from "@/lib/utils";
 import { WebApiError } from "@/lib/apis/web/base";
 
@@ -49,26 +53,6 @@ export type ErrorCardProps = {
    */
   className?: string;
 };
-
-function isNormalizedError(value: unknown): value is NormalizedError {
-  // Require every field the render path dereferences. A partial payload
-  // (e.g. stale wire shape that omits docsAnchor/severity/rawMessage)
-  // must fall through to `describeError(input)`, which always produces a
-  // complete `NormalizedError` — otherwise the "Learn more" anchor or
-  // severity-based icon dereference would crash.
-  return (
-    !!value &&
-    typeof value === "object" &&
-    typeof (value as { slug?: unknown }).slug === "string" &&
-    typeof (value as { title?: unknown }).title === "string" &&
-    typeof (value as { oneLine?: unknown }).oneLine === "string" &&
-    typeof (value as { docsAnchor?: unknown }).docsAnchor === "string" &&
-    typeof (value as { severity?: unknown }).severity === "string" &&
-    typeof (value as { rawMessage?: unknown }).rawMessage === "string" &&
-    Array.isArray((value as { likelyCauses?: unknown }).likelyCauses) &&
-    Array.isArray((value as { nextSteps?: unknown }).nextSteps)
-  );
-}
 
 function resolveNormalized(input: unknown): NormalizedError {
   if (isNormalizedError(input)) return input;

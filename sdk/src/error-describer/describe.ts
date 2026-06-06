@@ -36,6 +36,34 @@ export type NormalizedError = ErrorCatalogEntry & {
   cause?: { name: string; message: string };
 };
 
+/**
+ * Shape guard for `NormalizedError` payloads received from any boundary
+ * (response body, action dispatch, prop). Use this before trusting a
+ * value that crossed a wire — `webPost` populates `WebApiError.normalized`
+ * from any object in the response body without validation, and a partial
+ * payload would crash the render path when it tries to read
+ * `docsAnchor.startsWith` / `severity` / `rawMessage`. Callers that fail
+ * this guard should fall back to `describeError(input)`, which always
+ * produces a complete `NormalizedError`.
+ *
+ * Mirrored field-for-field with the rendered surface — keep in sync when
+ * adding required fields to `NormalizedError`.
+ */
+export function isNormalizedError(value: unknown): value is NormalizedError {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as { slug?: unknown }).slug === "string" &&
+    typeof (value as { title?: unknown }).title === "string" &&
+    typeof (value as { oneLine?: unknown }).oneLine === "string" &&
+    typeof (value as { docsAnchor?: unknown }).docsAnchor === "string" &&
+    typeof (value as { severity?: unknown }).severity === "string" &&
+    typeof (value as { rawMessage?: unknown }).rawMessage === "string" &&
+    Array.isArray((value as { likelyCauses?: unknown }).likelyCauses) &&
+    Array.isArray((value as { nextSteps?: unknown }).nextSteps)
+  );
+}
+
 function redactString(value: string): string {
   const out = redactSensitiveValue(value);
   return typeof out === "string" ? out : String(value);
@@ -242,13 +270,36 @@ function captureCause(error: unknown): NormalizedError["cause"] {
   return { name, message };
 }
 
-function classifyAuthError(error: unknown): string | undefined {
+/**
+ * Map of well-known SDK error `code` strings → catalog slugs. Extend
+ * here when new throwable `MCPError`/`SdkError` codes are introduced.
+ *
+ * Current SDK only throws `MCPAuthError` (code "AUTH_ERROR"); other
+ * codes listed are doctor-result codes that aren't currently thrown but
+ * are mapped defensively so a future throw path doesn't fall through to
+ * `internal/unknown`.
+ */
+const MCP_CODE_TO_SLUG: Readonly<Record<string, string>> = {
+  AUTH_ERROR: "auth/http_401",
+  OAUTH_REQUIRED: "auth/http_401",
+};
+
+/**
+ * Classify by SDK error-class identity + string `code`. Covers
+ * `MCPAuthError` (the only currently-thrown subclass) plus any future
+ * `MCPError` instances that carry a code listed in `MCP_CODE_TO_SLUG`.
+ * Also recognizes upstream `UnauthorizedError` from the official MCP
+ * client by name.
+ */
+function classifyMcpError(error: unknown): string | undefined {
   const name = getErrorName(error);
   if (name === "MCPAuthError" || name === "UnauthorizedError") {
     return "auth/http_401";
   }
   const stringCode = getStringCode(error);
-  if (stringCode === "AUTH_ERROR") return "auth/http_401";
+  if (stringCode && MCP_CODE_TO_SLUG[stringCode]) {
+    return MCP_CODE_TO_SLUG[stringCode];
+  }
   return undefined;
 }
 
@@ -280,7 +331,7 @@ function resolveSlug(error: unknown): {
   if (sentinel) return { slug: sentinel };
 
   // (b) Auth class detector (MCPAuthError, UnauthorizedError, AUTH_ERROR).
-  const authClass = classifyAuthError(error);
+  const authClass = classifyMcpError(error);
   if (authClass) return { slug: authClass };
 
   // (c) Numeric JSON-RPC code.

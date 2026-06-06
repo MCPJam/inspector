@@ -4,9 +4,10 @@ import {
   describeError,
   ERROR_CATALOG,
   extractNodeErrno,
+  isNormalizedError,
   type NormalizedError,
 } from "../../src/error-describer/index.js";
-import { MCPAuthError } from "../../src/mcp-client-manager/errors.js";
+import { MCPAuthError, MCPError } from "../../src/mcp-client-manager/errors.js";
 
 function makeError(message: string, extras: Record<string, unknown> = {}) {
   const err = new Error(message) as Error & Record<string, unknown>;
@@ -371,6 +372,71 @@ describe("describeError — fetch failed surfaces specific transport slug", () =
     const out = describeError(wrapper);
     expect(out.slug).toBe("transport/econnrefused");
     expect(out.rawCode).toBe("ECONNREFUSED");
+  });
+});
+
+describe("isNormalizedError — shape guard", () => {
+  it("accepts a fully-populated NormalizedError", () => {
+    const out = describeError(new Error("boom"));
+    expect(isNormalizedError(out)).toBe(true);
+  });
+
+  it("rejects a partial payload missing docsAnchor", () => {
+    const partial = {
+      slug: "x",
+      title: "y",
+      oneLine: "z",
+      severity: "error",
+      rawMessage: "",
+      likelyCauses: [],
+      nextSteps: [],
+    };
+    expect(isNormalizedError(partial)).toBe(false);
+  });
+
+  it("rejects null / undefined / non-objects", () => {
+    expect(isNormalizedError(null)).toBe(false);
+    expect(isNormalizedError(undefined)).toBe(false);
+    expect(isNormalizedError("nope")).toBe(false);
+    expect(isNormalizedError(42)).toBe(false);
+  });
+
+  it("rejects shape with array fields swapped for strings", () => {
+    const bad = {
+      slug: "x",
+      title: "y",
+      oneLine: "z",
+      docsAnchor: "/troubleshooting/error-codes#x",
+      severity: "error",
+      rawMessage: "",
+      likelyCauses: "not-an-array",
+      nextSteps: [],
+    };
+    expect(isNormalizedError(bad)).toBe(false);
+  });
+});
+
+describe("describeError — MCPError dispatch table", () => {
+  it("classifies MCPError with AUTH_ERROR code as auth/http_401", () => {
+    // MCPAuthError extends MCPError and supplies code "AUTH_ERROR".
+    const out = describeError(new MCPAuthError("Unauthorized", 401));
+    expect(out.slug).toBe("auth/http_401");
+  });
+
+  it("classifies MCPError with OAUTH_REQUIRED code as auth/http_401", () => {
+    // Defensively covered even though no SDK path currently throws this.
+    // Adding a future throw at this code shouldn't silently fall back to
+    // internal/unknown.
+    const out = describeError(new MCPError("OAuth required", "OAUTH_REQUIRED"));
+    expect(out.slug).toBe("auth/http_401");
+  });
+
+  it("falls through gracefully for unmapped MCPError codes", () => {
+    // Catalog miss → fall through to message-regex or internal/unknown.
+    // No throw, no crash, complete shape returned.
+    const out = describeError(new MCPError("weird thing", "SOMETHING_NEW"));
+    expect(isNormalizedError(out)).toBe(true);
+    expect(out.slug).toBeDefined();
   });
 });
 

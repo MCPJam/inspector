@@ -20,6 +20,7 @@ export { redactSensitiveValue } from "./redaction.js";
 export {
   describeError,
   describeAsSlug,
+  isNormalizedError,
   ERROR_CATALOG,
   extractNodeErrno,
   RETRYABLE_NODE_ERROR_CODES,

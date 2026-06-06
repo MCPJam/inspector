@@ -35,9 +35,14 @@ A token issued by the MCPJam hosted backend for headless usage of the `@mcpjam/c
 
 ## 3. Playground BYOK (Bring Your Own Key)
 
-A per-server bearer token you paste into the **Servers** card for an HTTP MCP server that requires `Authorization: Bearer ...`. The inspector forwards it to that one server only.
+A per-server bearer token used to authenticate the inspector against an HTTP MCP server that requires `Authorization: Bearer ...`. The inspector forwards it to that one server only.
 
-**Where it lives:** the **Headers** field of the server card. Stored locally per project; never sent anywhere except the server URL.
+**Where it lives** (two equivalent ways to set it — pick whichever fits your workflow):
+
+- **Servers card → Headers field** in the inspector UI. Stored locally per project; never sent anywhere except the server URL.
+- **`config.json`** under `mcpServers.<name>.headers.Authorization`, shaped exactly like the HTTP example on the [Installation](/installation) page. The inspector reads this on startup and treats it the same as a UI-entered header.
+
+Either form ends up populating the same per-server request header. Pick the UI for quick experimentation; pick `config.json` when you want the token version-controlled or shared across a team's checkout (typically via env-var substitution like `"Authorization": "Bearer ${MY_SERVER_TOKEN}"`).
 
 **When it's used:** Every request the inspector makes to that MCP server.
 

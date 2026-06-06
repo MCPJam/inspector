@@ -1,6 +1,7 @@
 export {
   describeError,
   describeAsSlug,
+  isNormalizedError,
   type NormalizedError,
 } from "./describe.js";
 export {
