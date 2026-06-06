@@ -593,7 +593,7 @@ export function ShareProjectDialog({
               {billingStatus?.plan &&
               planCatalog?.plans[billingStatus.plan]?.billingModel ===
                 "per_seat" ? (
-                <SeatProrationNote lead="Inviting someone new adds a seat." />
+                <SeatProrationNote />
               ) : null}
 
               {emailValidationError ? (

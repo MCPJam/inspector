@@ -2,19 +2,12 @@ import { Info } from "lucide-react";
 import { cn } from "@/lib/chat-utils";
 
 /**
- * Inline note shown on team (per-seat) plans wherever an action adds a billed
- * seat — the org Members "Add member" row and the project Share invite row.
- * Explains that mid-cycle seat changes are prorated (charge + credits), so
- * users aren't surprised by the partial amounts.
+ * Inline note shown on team (per-seat) plans wherever a seat can change: the
+ * org Members add/remove flow and the project Share invite row. Explains that
+ * mid-cycle seat changes are prorated both ways (charge + credits when adding,
+ * refund + clawback when removing) so users aren't surprised by partial amounts.
  */
-export function SeatProrationNote({
-  lead = "This adds a seat.",
-  className,
-}: {
-  /** Bold lead sentence; differs slightly per surface. */
-  lead?: string;
-  className?: string;
-}) {
+export function SeatProrationNote({ className }: { className?: string }) {
   return (
     <p
       className={cn(
@@ -24,9 +17,12 @@ export function SeatProrationNote({
     >
       <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
       <span>
-        <span className="font-medium text-foreground">{lead}</span> You're
-        charged for the days left in this billing period, and get partial credits
-        to match.
+        <span className="font-medium text-foreground">
+          Seat changes are prorated to your billing cycle.
+        </span>{" "}
+        Adding a seat charges and credits you for the days left. Removing one
+        refunds the unused days and reclaims its leftover credits. Credits
+        already spent aren't refunded.
       </span>
     </p>
   );

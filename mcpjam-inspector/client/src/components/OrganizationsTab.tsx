@@ -1146,13 +1146,7 @@ function OrganizationPage({
                     {billingStatus?.plan &&
                     planCatalog?.plans[billingStatus.plan]?.billingModel ===
                       "per_seat" ? (
-                      <>
-                        <SeatProrationNote />
-                        <p className="text-xs text-muted-foreground">
-                          Pending invites are free. You'll be billed for this
-                          seat once the invite is accepted.
-                        </p>
-                      </>
+                      <SeatProrationNote />
                     ) : null}
 
                     {memberInviteGate.isDenied ? (
