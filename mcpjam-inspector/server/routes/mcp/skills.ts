@@ -20,33 +20,73 @@ import type {
   SkillFile,
   SkillFileContent,
 } from "../../../shared/skill-types";
+import {
+  getSharedProjectSkillsCacheDir,
+  readLocalSkillBundle,
+  syncSharedProjectSkills,
+} from "../../services/project-skills-sync";
+import { ConvexHttpClient } from "convex/browser";
 
 const skills = new Hono();
 
 /**
- * Get all skills directories as absolute paths
+ * Read the optional `projectId` request hint that lets project-aware callers
+ * include the shared project skills cache in their search path. Local
+ * uploads, deletes, and unscoped listings stay backwards-compatible by
+ * leaving `projectId` undefined.
+ */
+function readProjectIdHint(body: unknown): string | undefined {
+  if (
+    body &&
+    typeof body === "object" &&
+    "projectId" in body &&
+    typeof (body as { projectId?: unknown }).projectId === "string"
+  ) {
+    const value = (body as { projectId: string }).projectId;
+    if (/^[A-Za-z0-9_-]+$/.test(value)) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Get all skills directories as absolute paths.
  *
  * Skills can come from:
- * 1. Global user skills: ~/.mcpjam/skills/ and ~/.agents/skills/
- * 2. Project-local skills: .mcpjam/skills/ and .agents/skills/ (relative to cwd)
+ * 1. Global user skills: ~/.claude/skills/, ~/.mcpjam/skills/, ~/.agents/skills/
+ * 2. Shared project skills cache: ~/.mcpjam/projects/<projectId>/skills/
+ * 3. Project-local skills: .claude/skills/, .mcpjam/skills/, .agents/skills/
  *
- * Order matters - first writable directory is used for uploads
+ * Order matters: first match wins for `findSkillDirectory`, so a global
+ * personal skill with the same name as a shared project skill overrides the
+ * shared copy. This keeps surprise low for users who already had a local
+ * skill named the same thing before joining the project.
  */
-function getSkillsDirs(): string[] {
+function getSkillsDirs(projectId?: string): string[] {
   const homeDir = os.homedir();
   const cwd = process.cwd();
 
-  return [
+  const dirs: string[] = [
     // Global skills (always accessible regardless of how app is launched)
     path.join(homeDir, ".claude", "skills"), // Claude Desktop global skills
     path.join(homeDir, ".mcpjam", "skills"), // MCPJam global skills
     path.join(homeDir, ".agents", "skills"), // npx skills global installs
+  ];
 
-    // Project-local skills (when launched from project directory)
+  // Shared project cache slot — populated by syncSharedProjectSkills(). Sits
+  // between global personal skills and project-local skills so a user's own
+  // global override wins, but the shared cache still beats per-cwd files.
+  if (projectId) {
+    dirs.push(getSharedProjectSkillsCacheDir(projectId));
+  }
+
+  // Project-local skills (when launched from project directory)
+  dirs.push(
     path.join(cwd, ".claude", "skills"), // Claude Desktop project skills
     path.join(cwd, ".mcpjam", "skills"),
     path.join(cwd, ".agents", "skills"),
-  ];
+  );
+
+  return dirs;
 }
 
 /**
@@ -84,8 +124,11 @@ async function directoryExists(dirPath: string): Promise<boolean> {
  * Find the directory path for a skill by name
  * Returns the full path to the skill directory, or null if not found
  */
-async function findSkillDirectory(name: string): Promise<string | null> {
-  const skillsDirs = getSkillsDirs();
+async function findSkillDirectory(
+  name: string,
+  projectId?: string,
+): Promise<string | null> {
+  const skillsDirs = getSkillsDirs(projectId);
 
   for (const skillsDir of skillsDirs) {
     if (!(await directoryExists(skillsDir))) {
@@ -121,7 +164,15 @@ async function findSkillDirectory(name: string): Promise<string | null> {
  */
 skills.post("/list", async (c) => {
   try {
-    const skillsDirs = getSkillsDirs();
+    // Body is optional for backwards compatibility — older clients post `{}`.
+    let body: unknown = null;
+    try {
+      body = await c.req.json();
+    } catch {
+      body = null;
+    }
+    const projectId = readProjectIdHint(body);
+    const skillsDirs = getSkillsDirs(projectId);
     const skillsList: SkillListItem[] = [];
     const seenNames = new Set<string>(); // Prevent duplicates by name
 
@@ -177,13 +228,18 @@ skills.post("/list", async (c) => {
  */
 skills.post("/get", async (c) => {
   try {
-    const { name } = (await c.req.json()) as { name?: string };
+    const body = (await c.req.json()) as {
+      name?: string;
+      projectId?: string;
+    };
+    const { name } = body;
 
     if (!name) {
       return c.json({ success: false, error: "name is required" }, 400);
     }
 
-    const skillsDirs = getSkillsDirs();
+    const projectId = readProjectIdHint(body);
+    const skillsDirs = getSkillsDirs(projectId);
 
     // Search through all skills directories
     for (const skillsDir of skillsDirs) {
@@ -530,13 +586,17 @@ skills.post("/delete", async (c) => {
  */
 skills.post("/files", async (c) => {
   try {
-    const { name } = (await c.req.json()) as { name?: string };
+    const body = (await c.req.json()) as {
+      name?: string;
+      projectId?: string;
+    };
+    const { name } = body;
 
     if (!name) {
       return c.json({ success: false, error: "name is required" }, 400);
     }
 
-    const skillDir = await findSkillDirectory(name);
+    const skillDir = await findSkillDirectory(name, readProjectIdHint(body));
     if (!skillDir) {
       return c.json(
         { success: false, error: `Skill '${name}' not found` },
@@ -563,10 +623,12 @@ skills.post("/files", async (c) => {
  */
 skills.post("/read-file", async (c) => {
   try {
-    const { name, filePath } = (await c.req.json()) as {
+    const body = (await c.req.json()) as {
       name?: string;
       filePath?: string;
+      projectId?: string;
     };
+    const { name, filePath } = body;
 
     if (!name) {
       return c.json({ success: false, error: "name is required" }, 400);
@@ -576,7 +638,7 @@ skills.post("/read-file", async (c) => {
       return c.json({ success: false, error: "filePath is required" }, 400);
     }
 
-    const skillDir = await findSkillDirectory(name);
+    const skillDir = await findSkillDirectory(name, readProjectIdHint(body));
     if (!skillDir) {
       return c.json(
         { success: false, error: `Skill '${name}' not found` },
@@ -638,6 +700,359 @@ skills.post("/read-file", async (c) => {
     }
   } catch (error) {
     logger.error("Error reading skill file", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * Build a project-scoped Convex client using the auth token the client
+ * already plumbs through for other authenticated endpoints. Returns null and
+ * a 400-shaped error if either piece is missing — these endpoints only make
+ * sense when the inspector is signed in and aware of its project.
+ */
+function buildProjectConvexClient(opts: {
+  convexAuthToken?: string;
+}): ConvexHttpClient | null {
+  const url = process.env.CONVEX_URL;
+  if (!url || !opts.convexAuthToken) return null;
+  const client = new ConvexHttpClient(url);
+  client.setAuth(opts.convexAuthToken);
+  return client;
+}
+
+/**
+ * List active shared skills for a project from Convex (separate from the
+ * filesystem `/list` route so the popover can render shared vs local in
+ * different sections without one masking the other).
+ */
+skills.post("/list-project", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      projectId?: string;
+      convexAuthToken?: string;
+    };
+    if (!body.projectId) {
+      return c.json({ success: false, error: "projectId is required" }, 400);
+    }
+    const client = buildProjectConvexClient(body);
+    if (!client) {
+      return c.json(
+        {
+          success: false,
+          error:
+            "Project-shared skills require a signed-in Convex session (set CONVEX_URL and pass convexAuthToken)",
+        },
+        400,
+      );
+    }
+    const summaries = await client.query(
+      "projectSkills:listProjectSkills" as any,
+      { projectId: body.projectId },
+    );
+    return c.json({ skills: summaries });
+  } catch (error) {
+    logger.error("Error listing project skills", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * Sync the local cache for a project with Convex. Idempotent: re-callable
+ * after every popover open or after publish/update/archive to keep the
+ * filesystem cache and the canonical Convex copy in sync.
+ */
+skills.post("/sync-project", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      projectId?: string;
+      convexAuthToken?: string;
+    };
+    if (!body.projectId) {
+      return c.json({ success: false, error: "projectId is required" }, 400);
+    }
+    if (!body.convexAuthToken) {
+      return c.json(
+        { success: false, error: "convexAuthToken is required" },
+        400,
+      );
+    }
+    const result = await syncSharedProjectSkills(
+      body.projectId,
+      body.convexAuthToken,
+    );
+    return c.json({ success: true, ...result });
+  } catch (error) {
+    logger.error("Error syncing project skills", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * Publish a locally-stored skill to a project. The local copy stays where it
+ * is — this only copies the skill bundle into Convex so other members can
+ * sync it. Callers identify the local skill by name; we look it up in the
+ * filesystem precedence chain (NOT including the shared cache, since that
+ * would let us "publish" a copy of someone else's shared skill).
+ */
+skills.post("/publish-to-project", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      projectId?: string;
+      convexAuthToken?: string;
+      name?: string;
+      // Optional override so the published copy can use a different name (for
+      // collision resolution). The on-disk local skill is NOT renamed.
+      publishAs?: string;
+    };
+
+    if (!body.projectId) {
+      return c.json({ success: false, error: "projectId is required" }, 400);
+    }
+    if (!body.convexAuthToken) {
+      return c.json(
+        { success: false, error: "convexAuthToken is required" },
+        400,
+      );
+    }
+    if (!body.name) {
+      return c.json({ success: false, error: "name is required" }, 400);
+    }
+    const publishName = body.publishAs ?? body.name;
+    if (!isValidSkillName(publishName)) {
+      return c.json(
+        { success: false, error: `Invalid publish name: ${publishName}` },
+        400,
+      );
+    }
+
+    // Resolve to the local-only filesystem dirs (no projectId here).
+    const localDir = await findSkillDirectory(body.name);
+    if (!localDir) {
+      return c.json(
+        { success: false, error: `Skill '${body.name}' not found locally` },
+        404,
+      );
+    }
+
+    const skillMdRaw = await fs.readFile(
+      path.join(localDir, "SKILL.md"),
+      "utf-8",
+    );
+    const parsed = parseSkillFile(skillMdRaw, localDir);
+    if (!parsed) {
+      return c.json(
+        {
+          success: false,
+          error: "Local SKILL.md is not valid; cannot publish",
+        },
+        400,
+      );
+    }
+
+    const { skillMd, files } = await readLocalSkillBundle(localDir);
+
+    // If publishing under a different name, rewrite the frontmatter `name`
+    // field so the materialized copy matches the published name on disk.
+    const normalizedSkillMd =
+      publishName === parsed.name
+        ? skillMd
+        : skillMd.replace(
+            /(^---[\s\S]*?^name:\s*)([^\n]+)(\n)/m,
+            `$1${publishName}$3`,
+          );
+
+    const client = buildProjectConvexClient(body);
+    if (!client) {
+      return c.json(
+        {
+          success: false,
+          error:
+            "Project-shared skills require a signed-in Convex session (set CONVEX_URL)",
+        },
+        400,
+      );
+    }
+
+    try {
+      const detail = await client.mutation(
+        "projectSkills:publishProjectSkill" as any,
+        {
+          projectId: body.projectId,
+          name: publishName,
+          description: parsed.description,
+          skillMd: normalizedSkillMd,
+          files,
+        },
+      );
+      return c.json({ success: true, skill: detail });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Surface structured nameCollision so the popover/dialog can render
+      // the rename-and-publish affordance without parsing free text.
+      const match = message.match(/\{[^}]*nameCollision[^}]*\}/);
+      if (match) {
+        try {
+          const payload = JSON.parse(match[0]);
+          if (payload.code === "nameCollision") {
+            return c.json(
+              {
+                success: false,
+                error: payload.message,
+                code: "nameCollision",
+              },
+              409,
+            );
+          }
+        } catch {
+          // fall through
+        }
+      }
+      throw err;
+    }
+  } catch (error) {
+    logger.error("Error publishing project skill", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * Push an updated copy of a locally-stored skill to its existing published
+ * row in Convex. Only the creator is allowed — Convex enforces this server-
+ * side too, but we surface the failure here for a nicer error.
+ */
+skills.post("/update-published", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      skillId?: string;
+      convexAuthToken?: string;
+      // The local skill directory name to read from (defaults to the same
+      // name the published copy uses).
+      sourceName?: string;
+    };
+    if (!body.skillId) {
+      return c.json({ success: false, error: "skillId is required" }, 400);
+    }
+    if (!body.convexAuthToken) {
+      return c.json(
+        { success: false, error: "convexAuthToken is required" },
+        400,
+      );
+    }
+    if (!body.sourceName) {
+      return c.json(
+        { success: false, error: "sourceName is required" },
+        400,
+      );
+    }
+
+    const localDir = await findSkillDirectory(body.sourceName);
+    if (!localDir) {
+      return c.json(
+        {
+          success: false,
+          error: `Local skill '${body.sourceName}' not found`,
+        },
+        404,
+      );
+    }
+    const skillMdRaw = await fs.readFile(
+      path.join(localDir, "SKILL.md"),
+      "utf-8",
+    );
+    const parsed = parseSkillFile(skillMdRaw, localDir);
+    if (!parsed) {
+      return c.json(
+        { success: false, error: "Local SKILL.md is not valid" },
+        400,
+      );
+    }
+    const { skillMd, files } = await readLocalSkillBundle(localDir);
+
+    const client = buildProjectConvexClient(body);
+    if (!client) {
+      return c.json(
+        { success: false, error: "Project-shared skills require Convex" },
+        400,
+      );
+    }
+    const detail = await client.mutation(
+      "projectSkills:updateProjectSkill" as any,
+      {
+        skillId: body.skillId,
+        description: parsed.description,
+        skillMd,
+        files,
+      },
+    );
+    return c.json({ success: true, skill: detail });
+  } catch (error) {
+    logger.error("Error updating published skill", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * Archive (unshare) a published project skill. Creator or project admin/
+ * owner can do this — Convex is authoritative on the permission check.
+ */
+skills.post("/archive-published", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      skillId?: string;
+      convexAuthToken?: string;
+    };
+    if (!body.skillId) {
+      return c.json({ success: false, error: "skillId is required" }, 400);
+    }
+    if (!body.convexAuthToken) {
+      return c.json(
+        { success: false, error: "convexAuthToken is required" },
+        400,
+      );
+    }
+    const client = buildProjectConvexClient(body);
+    if (!client) {
+      return c.json(
+        { success: false, error: "Project-shared skills require Convex" },
+        400,
+      );
+    }
+    await client.mutation("projectSkills:archiveProjectSkill" as any, {
+      skillId: body.skillId,
+    });
+    return c.json({ success: true });
+  } catch (error) {
+    logger.error("Error archiving published skill", error);
     return c.json(
       {
         success: false,
