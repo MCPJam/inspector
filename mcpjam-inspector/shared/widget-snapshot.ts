@@ -15,12 +15,15 @@ import type { EvalTraceWidgetSnapshot } from "./eval-trace";
  * is the source of truth for the wire contract; this type is its
  * inspector-side mirror.
  *
- * Forward-looking note (`injectedOpenAiCompat*`):
- *   These exist on `EvalTraceWidgetSnapshot` and on the `mcpAppViews`
- *   table but NOT on `sharedChatWidgetSnapshots` yet. Once the backend
- *   schema PR lands those columns + accepting validators, add the
- *   fields here and thread them through `evalTraceSnapshotToPayload` —
- *   every writer picks them up for free.
+ * `injectedOpenAiCompat*`:
+ *   The OpenAI Apps SDK `window.openai` shim's provenance — was the
+ *   shim injected at capture time, and with which per-method
+ *   capability surface. Backend now accepts these on both
+ *   `chatSessions:createWidgetSnapshot` and `appendEvalTurnTrace`
+ *   (mcpjam-backend#435); persisted on the `sharedChatWidgetSnapshots`
+ *   row. Replay reads these to reconstruct the same `window.openai`
+ *   surface the widget was captured against, since the cached HTML
+ *   bytes embed shim assumptions made at capture time.
  */
 export type SharedChatWidgetSnapshotPayload = {
   toolCallId: string;
@@ -58,6 +61,49 @@ export type SharedChatWidgetSnapshotPayload = {
   widgetPermissive?: boolean;
   prefersBorder?: boolean;
   displayContext?: SharedChatWidgetDisplayContext;
+  /**
+   * Whether the OpenAI Apps SDK `window.openai` shim was injected into
+   * `widgetHtmlBlobId`'s contents at capture time. Persisted so replay
+   * can render the blob faithfully under a different host config —
+   * the cached HTML embeds shim assumptions, so a render without the
+   * matching shim would call methods that don't exist on `window`.
+   */
+  injectedOpenAiCompat?: boolean;
+  /**
+   * The per-method `window.openai.*` surface the runtime was configured
+   * with when the widget HTML was captured. The boolean above only
+   * answers "was a shim injected?"; this matrix tells replay *which*
+   * surface so debug/diff views can render the delta vs preset.
+   *
+   * Absent for snapshots captured before the matrix shipped — replay
+   * treats those as the full ChatGPT surface (pre-matrix default).
+   */
+  injectedOpenAiCompatCapabilities?: InjectedOpenAiCompatCapabilities;
+};
+
+/**
+ * Structurally identical to `OpenAiAppsCapabilities` in
+ * `client/src/lib/client-styles/types.ts` (and to the matching shape on
+ * `EvalTraceWidgetSnapshot`). All three are wire-level mirrors of the
+ * Convex `injectedOpenAiCompatCapabilitiesValidator` — kept separate
+ * because the client-styles file lives in `client/` and can't be
+ * imported from shared/. A future cleanup could move the canonical
+ * definition here and have the client-side alias re-export.
+ */
+export type InjectedOpenAiCompatCapabilities = {
+  callTool?: boolean;
+  sendFollowUpMessage?: boolean;
+  setWidgetState?: boolean;
+  requestDisplayMode?: "all" | "fullscreen-only" | "none";
+  notifyIntrinsicHeight?: boolean;
+  openExternal?: boolean;
+  setOpenInAppUrl?: boolean;
+  requestModal?: boolean;
+  uploadFile?: boolean;
+  selectFiles?: boolean;
+  getFileDownloadUrl?: boolean;
+  requestCheckout?: boolean;
+  requestClose?: boolean;
 };
 
 /**
@@ -163,8 +209,6 @@ export function sanitizeWidgetForBackend<
  *   `toolMetadata` (backend persists tool input/output separately, not
  *     as inline metadata)
  *   `widgetHtmlUrl` (backend stores only the blob id)
- *   `injectedOpenAiCompat`, `injectedOpenAiCompatCapabilities`
- *     (see file-header note — pending backend schema PR)
  *
  * Callers MUST run the result through `sanitizeWidgetForBackend`
  * before sending. (The two steps are kept separate so tests can exercise
@@ -192,6 +236,23 @@ export function evalTraceSnapshotToPayload(
   }
   if (typeof snap.prefersBorder === "boolean") {
     payload.prefersBorder = snap.prefersBorder;
+  }
+  if (typeof snap.injectedOpenAiCompat === "boolean") {
+    payload.injectedOpenAiCompat = snap.injectedOpenAiCompat;
+  }
+  // Capabilities are only meaningful when the shim was actually injected
+  // — they describe the surface the injected `window.openai` exposes.
+  // Persisting a matrix alongside `injectedOpenAiCompat: false` or
+  // `undefined` would let cached replay hash and treat the surface
+  // differently than the byte-frozen HTML (the HTML contains no shim, so
+  // the matrix is meaningless). Matches the MCP-Apps fetch response,
+  // which only echoes capabilities when the shim is injected.
+  if (
+    snap.injectedOpenAiCompat === true &&
+    snap.injectedOpenAiCompatCapabilities
+  ) {
+    payload.injectedOpenAiCompatCapabilities =
+      snap.injectedOpenAiCompatCapabilities;
   }
   return payload;
 }

@@ -510,6 +510,27 @@ export function useSharedChatWidgetCapture({
         widgetPermissive: widget.csp?.mode === "permissive",
         prefersBorder: widget.prefersBorder,
         displayContext: toDisplayContext(widget.globals),
+        // Persist the OpenAI Apps SDK shim provenance so replay can
+        // reconstruct the same `window.openai` surface the widget was
+        // captured against. Pulled from the widget-debug store (set by
+        // the MCP-Apps renderer at fetch time).
+        //
+        // Capabilities are gated behind `injectedOpenAiCompat === true`:
+        // the matrix describes the injected surface, so persisting one
+        // alongside a false/undefined compat flag lets cached replay
+        // hash and treat the surface differently than the byte-frozen
+        // HTML. The runtime mirrors this — it only emits capabilities
+        // when the shim is injected.
+        ...(typeof widget.injectedOpenAiCompat === "boolean"
+          ? { injectedOpenAiCompat: widget.injectedOpenAiCompat }
+          : {}),
+        ...(widget.injectedOpenAiCompat === true &&
+        widget.injectedOpenAiCompatCapabilities
+          ? {
+              injectedOpenAiCompatCapabilities:
+                widget.injectedOpenAiCompatCapabilities,
+            }
+          : {}),
       };
       const snapshotPayload = {
         ...(chatboxId ? { chatboxId } : {}),

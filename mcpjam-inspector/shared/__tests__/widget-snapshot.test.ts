@@ -157,6 +157,73 @@ describe("evalTraceSnapshotToPayload", () => {
     expect(minimal!.prefersBorder).toBeUndefined();
   });
 
+  test("forwards injectedOpenAiCompat + capabilities when compat is true", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: true,
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+          sendFollowUpMessage: false,
+          requestDisplayMode: "fullscreen-only",
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBe(true);
+    expect(out!.injectedOpenAiCompatCapabilities).toEqual({
+      callTool: true,
+      sendFollowUpMessage: false,
+      requestDisplayMode: "fullscreen-only",
+    });
+  });
+
+  test("drops capabilities when injectedOpenAiCompat is false (no shim injected ⇒ no surface)", () => {
+    // A buggy producer could attach a capability matrix to a snapshot
+    // where the shim wasn't actually injected. Persisting that would let
+    // replay hash the matrix and treat the surface as different than
+    // the shim-less HTML actually represents.
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: false,
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBe(false);
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("drops capabilities when injectedOpenAiCompat is undefined", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("omits OpenAI compat fields when absent (pre-feature snapshot)", () => {
+    const out = evalTraceSnapshotToPayload(makeEvalSnap());
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("omits injectedOpenAiCompat when the source value is non-boolean", () => {
+    // EvalTraceWidgetSnapshot types it as `boolean | undefined`, but a
+    // round-tripped JSON snapshot could theoretically carry `null` from
+    // a misbehaved producer. We intentionally drop non-boolean values
+    // rather than forwarding them and tripping the Convex validator.
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: null as unknown as boolean,
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+  });
+
   test("drops toolMetadata and widgetHtmlUrl (backend stores them elsewhere or not at all)", () => {
     const out = evalTraceSnapshotToPayload(
       makeEvalSnap({
