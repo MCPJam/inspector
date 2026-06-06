@@ -118,6 +118,41 @@ function lookupCatalog(slug: string): ErrorCatalogEntry {
   return ERROR_CATALOG[slug] ?? ERROR_CATALOG["internal/unknown"];
 }
 
+/**
+ * Max characters allowed in the visible one-line area. Beyond this the
+ * card layout breaks (the one-line is shown next to the title at a
+ * fixed-ish width). Catalog entries hand-size their `oneLine` under
+ * this; raw-message promotion respects it too.
+ */
+const ONE_LINE_MAX = 200;
+
+function truncateOneLine(value: string): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= ONE_LINE_MAX) return collapsed;
+  return `${collapsed.slice(0, ONE_LINE_MAX - 1).trimEnd()}…`;
+}
+
+/**
+ * For unclassified errors (slug === "internal/unknown"), promote the
+ * raw message into the visible `oneLine` so the user sees the actual
+ * text instead of the generic "An error occurred…" placeholder. The
+ * docs anchor, severity, and details panel still come from the
+ * catalog. Without this, OAuth step errors / custom server errors /
+ * any other unclassified text gets hidden in the collapsed details.
+ *
+ * Returns the entry unchanged for known slugs (catalog copy wins) and
+ * when the raw message is empty.
+ */
+function maybePromoteRawMessage(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  rawMessage: string,
+): ErrorCatalogEntry {
+  if (slug !== "internal/unknown") return entry;
+  if (!rawMessage) return entry;
+  return { ...entry, oneLine: truncateOneLine(rawMessage) };
+}
+
 function inspectorSentinelSlug(message: string): string | undefined {
   if (/NotYetSupportedInStateless/i.test(message)) {
     return "sdk/not_yet_supported_in_stateless";
@@ -392,7 +427,11 @@ export function describeError(error: unknown): NormalizedError {
   try {
     const rawMessage = redactString(getErrorMessage(error));
     const { slug, rawCode } = resolveSlug(error);
-    const entry = lookupCatalog(slug);
+    const entry = maybePromoteRawMessage(
+      lookupCatalog(slug),
+      slug,
+      rawMessage,
+    );
     const cause = captureCause(error);
     return {
       ...entry,
@@ -457,5 +496,10 @@ function crashFallback(error: unknown, emptyPlaceholder: string): NormalizedErro
   } catch {
     rawMessage = emptyPlaceholder;
   }
-  return { ...fallback, rawMessage };
+  // Same raw-message promotion as the happy path so the visible one-line
+  // shows the actual message instead of the generic placeholder.
+  return {
+    ...maybePromoteRawMessage(fallback, "internal/unknown", rawMessage),
+    rawMessage,
+  };
 }

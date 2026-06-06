@@ -416,6 +416,60 @@ describe("isNormalizedError — shape guard", () => {
   });
 });
 
+describe("describeError — unclassified errors surface their raw message", () => {
+  it("promotes rawMessage into oneLine when slug is internal/unknown", () => {
+    // OAuth step errors and other unclassified text used to be hidden
+    // behind the generic "An error occurred that the inspector could
+    // not classify." placeholder, forcing users to expand "Show details"
+    // to see what actually went wrong. The describer now surfaces the
+    // raw message as the visible oneLine for unknown classifications.
+    // Pick a string that doesn't trip any of the resolver's regex
+    // fallbacks (well-known, refresh token, missing bearer, HTTP status,
+    // econn*) so we hit the genuinely-unclassified internal/unknown.
+    const oauthStep = "PKCE code_verifier rejected by authorization server";
+    const out = describeError(new Error(oauthStep));
+    expect(out.slug).toBe("internal/unknown");
+    expect(out.oneLine).toBe(oauthStep);
+    expect(out.rawMessage).toBe(oauthStep);
+    // Title and docs anchor still come from the catalog so the
+    // ErrorCard's structure (icon, "Learn more" link, severity) is
+    // intact.
+    expect(out.title).toBe(ERROR_CATALOG["internal/unknown"].title);
+    expect(out.docsAnchor).toBe(ERROR_CATALOG["internal/unknown"].docsAnchor);
+  });
+
+  it("does NOT clobber catalog oneLine for known slugs", () => {
+    // A classified error keeps the catalog's hand-written one-liner —
+    // the raw message goes in rawMessage / details where it belongs.
+    const out = describeError(
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9999"), {
+        code: "ECONNREFUSED",
+      }),
+    );
+    expect(out.slug).toBe("transport/econnrefused");
+    expect(out.oneLine).toBe(
+      ERROR_CATALOG["transport/econnrefused"].oneLine,
+    );
+    expect(out.rawMessage).toBe("connect ECONNREFUSED 127.0.0.1:9999");
+  });
+
+  it("truncates very long raw messages so layout doesn't break", () => {
+    const long = "x".repeat(500);
+    const out = describeError(new Error(long));
+    expect(out.slug).toBe("internal/unknown");
+    expect(out.oneLine.length).toBeLessThanOrEqual(200);
+    expect(out.oneLine.endsWith("…")).toBe(true);
+    // The full untruncated text is still available in rawMessage.
+    expect(out.rawMessage).toBe(long);
+  });
+
+  it("falls back to the catalog oneLine when rawMessage is empty", () => {
+    const out = describeError(new Error(""));
+    expect(out.slug).toBe("internal/unknown");
+    expect(out.oneLine).toBe(ERROR_CATALOG["internal/unknown"].oneLine);
+  });
+});
+
 describe("describeError — MCPError dispatch table", () => {
   it("classifies MCPError with AUTH_ERROR code as auth/http_401", () => {
     // MCPAuthError extends MCPError and supplies code "AUTH_ERROR".
