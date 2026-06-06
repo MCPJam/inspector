@@ -251,12 +251,35 @@ export const createSuiteRunRecorder = ({
       //   - persisted:false → fanout failed mid-stream; fall back to
       //                       the legacy single-call path so the iteration
       //                       is still complete and replayable.
+      // lockReason describes the transcript LIFECYCLE (did the eval cycle
+      // run to completion?), NOT the verdict. A failed-verdict iteration
+      // that ran cleanly (status: "completed", result: "failed") still
+      // gets eval_completed; eval_failed is reserved for cycle failures
+      // like provider errors, MCP transport crashes, etc. The verdict
+      // lives on testIteration.result (passed | failed | pending).
+      //
+      // The `error != null` check covers a runner quirk (Codex review on
+      // #2446): the backend eval paths sometimes set
+      // `iterationError` while still calling finishIteration with
+      // `status: "completed"` (see evals-runner.ts:2079-2082 and
+      // :3962-3965). Treating those as eval_completed would lock an
+      // error transcript with the wrong reason. Presence of `error`
+      // is the cycle-failure signal we already have in scope.
+      //
+      // Today this is defense-in-depth: the backend's
+      // internalUpdateTestIteration auto-lock (W1) fires first with the
+      // same status-based derivation, and internalLockEvalSession is
+      // "first lock wins" — so this recorder-side lock call no-ops. But
+      // if W1 ever doesn't run (iteration finalized without status
+      // patches) the wrong `passed`-based reason would land.
+      const isCycleFailure =
+        iterationStatus === "failed" || (error !== undefined && error !== "");
       const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
         iterationStatus === "cancelled"
           ? "eval_cancelled"
-          : passed
-            ? "eval_completed"
-            : "eval_failed";
+          : isCycleFailure
+            ? "eval_failed"
+            : "eval_completed";
       const fanout = await persistEvalTraceFanout({
         convexClient,
         iterationId,
