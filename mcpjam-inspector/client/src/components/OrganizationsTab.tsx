@@ -67,6 +67,7 @@ import {
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
+import { SeatProrationNote } from "@/components/billing/SeatProrationNote";
 import {
   getBillingUpsellCtaLabel,
   getBillingUpsellTeaser,
@@ -1145,10 +1146,13 @@ function OrganizationPage({
                     {billingStatus?.plan &&
                     planCatalog?.plans[billingStatus.plan]?.billingModel ===
                       "per_seat" ? (
-                      <p className="text-xs text-muted-foreground">
-                        Pending invites are free. You'll be billed for this seat
-                        once the invite is accepted.
-                      </p>
+                      <>
+                        <SeatProrationNote />
+                        <p className="text-xs text-muted-foreground">
+                          Pending invites are free. You'll be billed for this
+                          seat once the invite is accepted.
+                        </p>
+                      </>
                     ) : null}
 
                     {memberInviteGate.isDenied ? (
