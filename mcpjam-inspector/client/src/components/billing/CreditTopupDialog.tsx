@@ -87,7 +87,7 @@ export function CreditTopupDialog({
           <DialogTitle>Buy credits to keep chatting</DialogTitle>
           <DialogDescription>
             Add credits to your organization so the team can keep using MCPJam
-            models without waiting for your free daily credits to reset.
+            models when your shared credits run low.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
