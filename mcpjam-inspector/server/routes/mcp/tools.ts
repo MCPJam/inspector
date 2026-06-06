@@ -6,6 +6,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import "../../types/hono"; // Type extensions
 import { listTools as listToolsShared } from "../../utils/route-handlers.js";
+import { describeError } from "@mcpjam/sdk";
 
 const tools = new Hono();
 
@@ -117,8 +118,9 @@ function jsonError(c: any, error: unknown, fallbackStatus = 500) {
     typeof (error as any)?.status === "number"
       ? (error as any).status
       : fallbackStatus;
+  const normalized = describeError(error);
   return c.json(
-    { error: details.message as string, mcpError: details },
+    { error: details.message as string, mcpError: details, normalized },
     status,
   );
 }

@@ -40,7 +40,8 @@
           "getting-started",
           "installation",
           "hosted/overview",
-          "troubleshooting/common-errors"
+          "troubleshooting/common-errors",
+          "troubleshooting/error-codes"
         ]
       },
       {
@@ -164,7 +165,8 @@
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
-              "sdk/reference/apps-conformance"
+              "sdk/reference/apps-conformance",
+              "reference/api-keys"
             ]
           }
         ]

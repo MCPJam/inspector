@@ -1,6 +1,10 @@
 import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
-import { isKnownProtocolVersion, type McpProtocolVersion } from "@mcpjam/sdk";
+import {
+  describeError,
+  isKnownProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk";
 import {
   ErrorCode,
   WebRouteError,
@@ -759,11 +763,13 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
   if (error.details?.oauthRequired === true) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
+  const normalized = error.normalized ?? describeError(error);
   return c.json(
     {
       success: false,
       error: error.message,
       ...(error.details ?? {}),
+      normalized,
     },
     error.status as any
   );
@@ -834,6 +840,7 @@ export async function executeLocalServerConnect(
         success: false,
         error: "Failed to resolve server config",
         details: error instanceof Error ? error.message : "Unknown error",
+        normalized: describeError(error),
       },
       500
     );
@@ -877,6 +884,7 @@ export async function executeLocalServerConnect(
           error instanceof Error ? error.message : "Unknown error"
         }`,
         details: error instanceof Error ? error.message : "Unknown error",
+        normalized: describeError(error),
       },
       500
     );

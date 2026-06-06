@@ -79,7 +79,14 @@ web.get("/guest-jwks", async (c) => {
 
 web.onError((error, c) => {
   const routeError = mapRuntimeError(error);
-  return webError(c, routeError.status, routeError.code, routeError.message);
+  return webError(
+    c,
+    routeError.status,
+    routeError.code,
+    routeError.message,
+    routeError.details,
+    routeError.normalized ? { normalized: routeError.normalized } : undefined,
+  );
 });
 
 export default web;
