@@ -1041,6 +1041,56 @@ function OrganizationPage({
               onStartAutoPlanChange={handleAutoPlanChange}
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
+              currentPlanPanel={
+                billingUiEnabled ? (
+                  <Card className="border-border/60">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-xl">
+                        <CreditCard className="size-4 text-muted-foreground" />
+                        Billing
+                      </CardTitle>
+                      <p className="text-sm text-muted-foreground">
+                        Review your current plan and subscription.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-3 pt-0">
+                      {isLoadingBilling ? (
+                        <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                          Loading billing details...
+                        </div>
+                      ) : billingStatus && !billingStatus.billingConfigured ? (
+                        <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                          Billing is not configured in this environment.
+                        </div>
+                      ) : billingStatus ? (
+                        <>
+                          <OrganizationCurrentPlanPanel
+                            billingStatus={billingStatus}
+                            planCatalog={planCatalog}
+                            isLoadingPlanCatalog={isLoadingPlanCatalog}
+                            onChangeBillingInterval={handleChangeBillingInterval}
+                            onCancelScheduledBillingChange={
+                              scheduledBillingChangeCancellation
+                                ? handleOpenScheduledBillingChangeCancelDialog
+                                : undefined
+                            }
+                            cancelScheduledBillingChangeLabel={
+                              scheduledBillingChangeCancellation?.ctaLabel ?? null
+                            }
+                            onManageBilling={handleManageBilling}
+                            isOpeningPortal={isOpeningPortal}
+                          />
+                          {!billingStatus.canManageBilling ? (
+                            <p className="min-w-0 text-sm font-medium text-primary">
+                              Only organization owners can manage billing.
+                            </p>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                ) : null
+              }
             />
             {billingError ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
@@ -1200,81 +1250,6 @@ function OrganizationPage({
                 ) : null}
               </CardContent>
             </Card>
-
-            {billingSectionEnabled ? (
-              <Card className="border-border/60">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-xl">
-                    <CreditCard className="size-4 text-muted-foreground" />
-                    {billingUiEnabled ? "Billing" : "Credits"}
-                  </CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    {billingUiEnabled
-                      ? "Review your plan here or open the billing view for the full pricing matrix, checkout, and subscription management."
-                      : "Review shared organization credits and buy more credits."}
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-3 pt-0">
-                  {!billingUiEnabled ? (
-                    <Button
-                      size="default"
-                      className="h-10 px-5"
-                      variant="outline"
-                      onClick={handleViewBilling}
-                    >
-                      View credits
-                    </Button>
-                  ) : isLoadingBilling ? (
-                    <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                      Loading billing details...
-                    </div>
-                  ) : billingStatus && !billingStatus.billingConfigured ? (
-                    <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                      Billing is not configured in this environment.
-                    </div>
-                  ) : billingStatus ? (
-                    <>
-                      <OrganizationCurrentPlanPanel
-                        billingStatus={billingStatus}
-                        planCatalog={planCatalog}
-                        isLoadingPlanCatalog={isLoadingPlanCatalog}
-                        onChangeBillingInterval={handleChangeBillingInterval}
-                        onCancelScheduledBillingChange={
-                          scheduledBillingChangeCancellation
-                            ? handleOpenScheduledBillingChangeCancelDialog
-                            : undefined
-                        }
-                        cancelScheduledBillingChangeLabel={
-                          scheduledBillingChangeCancellation?.ctaLabel ?? null
-                        }
-                        onManageBilling={handleManageBilling}
-                        isOpeningPortal={isOpeningPortal}
-                      />
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <Button
-                          size="default"
-                          className="h-10 px-5"
-                          variant="outline"
-                          onClick={handleViewBilling}
-                        >
-                          View plans
-                        </Button>
-                        {!billingStatus.canManageBilling ? (
-                          <p className="min-w-0 text-sm font-medium text-primary">
-                            Only organization owners can manage billing.
-                          </p>
-                        ) : null}
-                      </div>
-                    </>
-                  ) : null}
-                  {billingError ? (
-                    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-                      {billingError}
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-            ) : null}
 
             <Card className="border-border/60">
               <CardHeader className="pb-2">
@@ -1455,47 +1430,30 @@ function OrganizationPage({
               {pendingDowngradeConfirmation?.targetPlan === "free" ? (
                 <>
                   <span className="block">
-                    This cancellation takes effect at renewal, not now.
-                  </span>
-                  <span className="block">
+                    This cancellation takes effect at renewal, not now.{" "}
                     {pendingDowngradeCurrentLabel ?? "Your paid plan"} remains
                     active until{" "}
                     {pendingDowngradeEffectiveDate ??
                       "the end of the current billing period"}
-                    .
+                    , after which the organization returns to Free.
                   </span>
                   <span className="block">
-                    After that, the organization returns to Free.
+                    Once cancellation is scheduled, you can't change your billing
+                    interval (monthly or annual) until you reactivate.
                   </span>
                 </>
               ) : (
-                <>
-                  <span className="block">
-                    This downgrade takes effect at renewal, not now.
-                  </span>
-                  <span className="block">
-                    {pendingDowngradeTargetLabel ?? "Team"} begins{" "}
-                    {pendingDowngradeEffectiveDate ??
-                      "at the end of the current billing period"}
-                    .
-                  </span>
-                  <span className="block">
-                    {pendingDowngradeCurrentLabel ?? "Your current plan"}{" "}
-                    remains active until then.
-                  </span>
-                </>
+                <span className="block">
+                  This downgrade takes effect at renewal, not now.{" "}
+                  {pendingDowngradeTargetLabel ?? "Team"} begins{" "}
+                  {pendingDowngradeEffectiveDate ??
+                    "at the end of the current billing period"}
+                  , and {pendingDowngradeCurrentLabel ?? "your current plan"}{" "}
+                  remains active until then.
+                </span>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
-            <span className="font-medium text-foreground">
-              {pendingDowngradeConfirmation?.targetPlan === "free"
-                ? "Stripe will open a cancellation flow that keeps paid access active until renewal."
-                : `${pendingDowngradeTargetLabel ?? "Team"} will replace ${
-                    pendingDowngradeCurrentLabel ?? "the current plan"
-                  } at renewal.`}
-            </span>
-          </div>
           <AlertDialogFooter>
             <AlertDialogCancel
               disabled={isStartingPlanChange || isOpeningPortal}

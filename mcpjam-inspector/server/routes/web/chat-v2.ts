@@ -1,41 +1,16 @@
 import { Hono } from "hono";
-import { convertToModelMessages, type ToolSet } from "ai";
-import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import {
-  handleMCPJamFreeChatModel,
-  warnIfChatAbortSignalMissing,
-} from "../../utils/mcpjam-stream-handler.js";
-import {
-  handleHostedOrgChatModel,
-  handleLocalOrgChatModel,
-} from "../../utils/org-model-stream-handler.js";
-import {
-  deriveOrgProviderKey as deriveOrgProviderKeyResult,
-  isLocalRuntimeEligible,
-  resolveOrgProviderRuntime,
-  type OrgProviderRuntime,
-} from "../../utils/org-model-config.js";
-import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
-import type { ModelDefinition } from "@/shared/types";
+import { getModelById } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
-  buildWidgetModelContextSystemPrompt,
-  prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration.js";
-import {
-  buildDirectHostConfig,
-  persistChatSessionToConvex,
-  pickEnrichmentHeaders,
-  stampSenderUserIdsOnSessionMessages,
-  type PersistedTurnTrace,
-} from "../../utils/chat-ingestion.js";
-import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
+import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
+import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
@@ -52,14 +27,6 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { logger } from "../../utils/logger.js";
-
-function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
-  const result = deriveOrgProviderKeyResult(modelDefinition);
-  if (!result.ok) {
-    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, result.error);
-  }
-  return result.key;
-}
 
 const chatV2 = new Hono();
 
@@ -308,29 +275,20 @@ chatV2.post("/", async (c) => {
     }
 
     try {
-      const sessionStartedAt = Date.now();
-      // Convert UI messages to ModelMessage[] up front so prepareChatV2
-      // can replay prior `load_mcp_tools` calls into discovery state.
-      // Without this, the loaded set resets every turn and a multi-turn
-      // progressive flow regresses to meta-tools only on each request.
-      const modelMessages = await convertToModelMessages(messages);
-      let prepared;
-      try {
-        prepared = await prepareChatV2({
-          mcpClientManager: manager,
-          selectedServers: selectedServerIds,
+      const sourceType = isChatboxSession ? "chatbox" : "direct";
+      const isDirectChat = !isChatboxSession;
+
+      return await streamWebChatTurn({
+        manager,
+        prepare: {
+          selectedServerIds,
           modelDefinition,
           systemPrompt,
           temperature,
           requireToolApproval,
           respectToolVisibility,
           customProviders: body.customProviders,
-          priorMessages: modelMessages,
-          // Host-level toggle. Sourced from the project's default
-          // HostConfigV2 for direct chat (body), or re-resolved from the
-          // chatbox's pinned host for chatbox-bound sessions (the
-          // server-side override above). undefined → orchestrator uses
-          // its auto policy.
+          uiMessages: messages,
           ...(resolvedProgressiveToolDiscovery !== undefined
             ? {
                 progressiveToolDiscovery: {
@@ -339,332 +297,51 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           appTools: validatedAppTools,
-        });
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        if (msg.includes("Invalid tool name(s) for Anthropic")) {
-          throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, msg);
-        }
-        throw error;
-      }
-
-      const {
-        allTools,
-        enhancedSystemPrompt,
-        resolvedTemperature,
-        scrubMessages,
-        progressivePlan,
-        discoveryState,
-      } = prepared;
-      const widgetModelContextSystemPrompt =
-        buildWidgetModelContextSystemPrompt(validatedWidgetModelContext);
-      const effectiveEnhancedSystemPrompt = [
-        enhancedSystemPrompt,
-        widgetModelContextSystemPrompt,
-      ]
-        .filter((section) => section.trim().length > 0)
-        .join("\n\n");
-      const hostedChatSessionId = body.chatSessionId;
-      const cleanupStream = async () => {
-        await manager.disconnectAllServers();
-      };
-      const isMCPJam =
-        Boolean(modelDefinition.id) &&
-        isMCPJamProvidedModel(String(modelDefinition.id));
-
-      if (!isMCPJam) {
-        if (!process.env.CONVEX_HTTP_URL) {
-          throw new WebRouteError(
-            500,
-            ErrorCode.INTERNAL_ERROR,
-            "Server missing CONVEX_HTTP_URL configuration"
-          );
-        }
-        // Hosted org BYOK: resolve runtime location first.
-        // Cloud → LLM executes in Convex (/stream/org), keys never leave Convex.
-        // Local → LLM executes in the inspector using the decrypted API key.
-        const providerKey = deriveOrgProviderKey(modelDefinition);
-        const modelId = String(modelDefinition.id);
-        const scrubbedMessages = scrubMessages(modelMessages as ModelMessage[]);
-        const sourceType = isChatboxSession ? "chatbox" : "direct";
-
-        // Cloud-only providers (everything that isn't on the local-runtime
-        // allowlist) skip the /stream/org/resolve round-trip entirely. The
-        // answer is always "cloud" for those, so calling resolve would just
-        // add latency and a new failure point on the cloud path — which
-        // regressed BYOK chat for cloud-only providers like OpenAI/Anthropic
-        // when resolve was made unconditional.
-        const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
-          ? await resolveOrgProviderRuntime(
-              hostedBody.projectId,
-              providerKey,
-              modelId,
-              {
-                authHeader: c.req.header("authorization"),
-                chatboxId,
-                accessVersion,
-                serverIds: selectedServerIds,
-              }
-            )
-          : { runtimeLocation: "cloud", providerKey };
-
-        const onConversationComplete = hostedChatSessionId
-          ? async (
-              fullHistory: ModelMessage[],
-              turnTrace: PersistedTurnTrace
-            ) => {
-              const isDirectChat = !isChatboxSession;
-              // Capture the live tool catalog the chat saw, so the backend
-              // can fan it out to per-server `serverInspections` rows. Runs
-              // in the post-stream cleanup so its N concurrent listTools
-              // round-trips don't add latency to the user-visible response.
-              // Unknown ids (server disconnected mid-chat) are filtered out
-              // so the snapshot doesn't end up `partial` and get rejected.
-              // Defensive: a snapshot failure must never block the persist.
-              let toolSnapshot: unknown;
-              try {
-                const knownIds =
-                  typeof manager.hasServer === "function"
-                    ? selectedServerIds.filter((id) => manager.hasServer(id))
-                    : selectedServerIds;
-                if (knownIds.length > 0) {
-                  toolSnapshot =
-                    await exportConnectedServerToolSnapshotForEvalAuthoring(
-                      manager,
-                      knownIds,
-                      { logPrefix: "chat-v2.persist" }
-                    );
-                }
-              } catch {
-                toolSnapshot = undefined;
-              }
-              await persistChatSessionToConvex({
-                chatSessionId: hostedChatSessionId,
-                modelId,
-                modelSource:
-                  runtime.runtimeLocation === "local" ? "local_byok" : "byok",
-                projectId: hostedBody.projectId,
-                sourceType,
-                ...(isChatboxSession && surface ? { surface } : {}),
-                chatboxId,
-                accessVersion,
-                authHeader: c.req.header("authorization"),
-                sessionMessages: stampSenderUserIdsOnSessionMessages(
-                  fullHistory,
-                  messages,
-                  { authenticatedUserId }
-                ),
-                startedAt: sessionStartedAt,
-                lastActivityAt: Date.now(),
-                ...(toolSnapshot ? { toolSnapshot } : {}),
-                ...(isDirectChat
-                  ? {
-                      directVisibility: body.directVisibility,
-                      resumeConfig: {
-                        systemPrompt,
-                        temperature,
-                        requireToolApproval,
-                        respectToolVisibility,
-                        selectedServers:
-                          Array.isArray(selectedServerNames) &&
-                          selectedServerNames.length ===
-                            selectedServerIds.length
-                            ? selectedServerNames
-                            : selectedServerIds,
-                      },
-                      hostConfig: buildDirectHostConfig({
-                        modelId,
-                        // Phase 3: real host style flows from the
-                        // chat tab; old inspector builds omit it and
-                        // the backend defaults to 'claude' (no more
-                        // legacy 'direct' hostStyle in new traces).
-                        hostStyle: body.hostStyle,
-                        systemPrompt,
-                        requestedTemperature: temperature,
-                        resolvedTemperature,
-                        requireToolApproval,
-                        respectToolVisibility,
-                        selectedServerIds,
-                      }),
-                    }
-                  : {}),
-                turnTrace,
-                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-              });
-            }
-          : undefined;
-
-        const inboundAbortSignal = c.req.raw.signal as AbortSignal | undefined;
-        warnIfChatAbortSignalMissing(inboundAbortSignal, "web/chat-v2");
-
-        if (runtime.runtimeLocation === "local") {
-          return handleLocalOrgChatModel({
-            provider: runtime.provider,
-            projectId: hostedBody.projectId,
-            modelId,
-            chatSessionId: hostedChatSessionId,
-            sourceType,
-            messages: scrubbedMessages,
-            systemPrompt: effectiveEnhancedSystemPrompt,
-            temperature: resolvedTemperature,
-            tools: allTools as ToolSet,
-            progressivePlan,
-            discoveryState,
-            authHeader: c.req.header("authorization"),
-            chatboxId,
-            accessVersion,
-            selectedServers: selectedServerIds,
-            serverIds: selectedServerIds,
-            requireToolApproval,
-            onConversationComplete,
-            onStreamComplete: cleanupStream,
-            onStreamWriterReady: (writer) =>
-              rpcCollector?.attachStreamWriter(writer),
-            abortSignal: inboundAbortSignal,
-          });
-        }
-
-        return handleHostedOrgChatModel({
+          widgetModelContext: validatedWidgetModelContext,
+        },
+        persist: {
+          chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
-          providerKey: runtime.providerKey,
-          modelId,
-          chatSessionId: hostedChatSessionId,
           sourceType,
-          messages: scrubbedMessages,
-          systemPrompt: effectiveEnhancedSystemPrompt,
-          temperature: resolvedTemperature,
-          tools: allTools as ToolSet,
-          progressivePlan,
-          discoveryState,
-          authHeader: c.req.header("authorization"),
-          clientIp: getClientIp(c),
+          ...(isChatboxSession && surface ? { surface } : {}),
           chatboxId,
           accessVersion,
-          mcpClientManager: manager,
-          selectedServers: selectedServerIds,
-          serverIds: selectedServerIds,
+          authenticatedUserId,
+          originalMessages: messages,
+          ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
+          // Closure receives `resolvedTemperature` from inside the helper,
+          // preserving the legacy behavior where chat-v2 fed the post-
+          // prepare resolved temperature into `buildDirectHostConfig`.
+          hostConfig: isDirectChat
+            ? ({ resolvedTemperature }) =>
+                buildDirectHostConfig({
+                  modelId: String(modelDefinition.id),
+                  // Phase 3: real host style flows from the chat tab; old
+                  // inspector builds omit it and the backend defaults to
+                  // 'claude' (no more legacy 'direct' hostStyle in new traces).
+                  hostStyle: body.hostStyle,
+                  systemPrompt,
+                  requestedTemperature: temperature,
+                  resolvedTemperature,
+                  requireToolApproval,
+                  respectToolVisibility,
+                  selectedServerIds,
+                })
+            : null,
+          selectedServerNames,
+          selectedServerIds,
+          systemPrompt,
+          temperature,
           requireToolApproval,
-          onConversationComplete,
-          onStreamComplete: cleanupStream,
-          onStreamWriterReady: (writer) =>
-            rpcCollector?.attachStreamWriter(writer),
-          abortSignal: inboundAbortSignal,
-        });
-      }
-
-      // MCPJam-provided path also targets Convex (POST $CONVEX_HTTP_URL/stream),
-      // so it needs the same env guard as the org BYOK branch.
-      if (!process.env.CONVEX_HTTP_URL) {
-        throw new WebRouteError(
-          500,
-          ErrorCode.INTERNAL_ERROR,
-          "Server missing CONVEX_HTTP_URL configuration"
-        );
-      }
-
-      const inboundAbortSignalFree = c.req.raw.signal as
-        | AbortSignal
-        | undefined;
-      warnIfChatAbortSignalMissing(inboundAbortSignalFree, "web/chat-v2");
-
-      return handleMCPJamFreeChatModel({
-        messages: modelMessages as ModelMessage[],
-        modelId: String(modelDefinition.id),
-        chatSessionId: hostedChatSessionId,
-        sourceType: isChatboxSession ? "chatbox" : "direct",
-        systemPrompt: effectiveEnhancedSystemPrompt,
-        temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
-        progressivePlan,
-        discoveryState,
-        authHeader: c.req.header("authorization"),
-        clientIp: getClientIp(c),
-        chatboxId,
-        accessVersion,
-        projectId: hostedBody.projectId,
-        mcpClientManager: manager,
-        selectedServers: selectedServerIds,
-        requireToolApproval,
-        abortSignal: inboundAbortSignalFree,
-        onConversationComplete: hostedChatSessionId
-          ? async (fullHistory, turnTrace) => {
-              const isDirectChat = !isChatboxSession;
-              let toolSnapshot: unknown;
-              try {
-                const knownIds =
-                  typeof manager.hasServer === "function"
-                    ? selectedServerIds.filter((id) => manager.hasServer(id))
-                    : selectedServerIds;
-                if (knownIds.length > 0) {
-                  toolSnapshot =
-                    await exportConnectedServerToolSnapshotForEvalAuthoring(
-                      manager,
-                      knownIds,
-                      { logPrefix: "chat-v2.persist" }
-                    );
-                }
-              } catch {
-                toolSnapshot = undefined;
-              }
-              await persistChatSessionToConvex({
-                chatSessionId: hostedChatSessionId,
-                modelId: String(modelDefinition.id),
-                modelSource: "mcpjam",
-                projectId: hostedBody.projectId,
-                sourceType: isChatboxSession ? "chatbox" : "direct",
-                ...(isChatboxSession && surface ? { surface } : {}),
-                chatboxId,
-                accessVersion,
-                authHeader: c.req.header("authorization"),
-                sessionMessages: stampSenderUserIdsOnSessionMessages(
-                  fullHistory,
-                  messages,
-                  { authenticatedUserId }
-                ),
-                startedAt: sessionStartedAt,
-                lastActivityAt: Date.now(),
-                ...(toolSnapshot ? { toolSnapshot } : {}),
-                ...(isDirectChat
-                  ? {
-                      directVisibility: body.directVisibility,
-                      resumeConfig: {
-                        systemPrompt,
-                        temperature,
-                        requireToolApproval,
-                        respectToolVisibility,
-                        selectedServers:
-                          Array.isArray(selectedServerNames) &&
-                          selectedServerNames.length ===
-                            selectedServerIds.length
-                            ? selectedServerNames
-                            : selectedServerIds,
-                      },
-                      hostConfig: buildDirectHostConfig({
-                        modelId: String(modelDefinition.id),
-                        // Phase 3: forward the chat tab's resolved
-                        // host style (parity with the org-BYOK and
-                        // mcp/chat-v2 call sites). Without this, the
-                        // MCPJam-free path always persisted as
-                        // 'claude' regardless of the user's actual
-                        // hostStyle.
-                        hostStyle: body.hostStyle,
-                        systemPrompt,
-                        requestedTemperature: temperature,
-                        resolvedTemperature,
-                        requireToolApproval,
-                        respectToolVisibility,
-                        selectedServerIds,
-                      }),
-                    }
-                  : {}),
-                turnTrace,
-                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-              });
-            }
-          : undefined,
-        onStreamComplete: cleanupStream,
-        onStreamWriterReady: (writer) =>
-          rpcCollector?.attachStreamWriter(writer),
+          respectToolVisibility,
+        },
+        runtime: {
+          authHeader: c.req.header("authorization"),
+          clientIp: getClientIp(c),
+          abortSignal: c.req.raw.signal as AbortSignal | undefined,
+          rpcCollector,
+          c,
+        },
       });
     } catch (error) {
       await manager.disconnectAllServers();

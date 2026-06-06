@@ -6,6 +6,13 @@ icon: "hammer"
 
 The MCP Inspector provides a complete testing environment for your MCP server. Manually invoke tools, read resources, fetch prompts, and view all JSON-RPC messages between MCPJam and your server.
 
+<Note>
+  The Tools, Resources, and Prompts tabs only load data when the selected server
+  is connected. If the server is disconnected, the tabs clear any previously
+  loaded primitives and display a prompt to reconnect. Refresh, run, and read
+  actions are disabled until the server is connected again.
+</Note>
+
 <Frame>
   <img
     className="block"
@@ -54,3 +61,18 @@ All communication between MCPJam and your MCP server is logged in real-time:
 - **Timestamps** - Track message timing and performance
 
 The JSON-RPC logger helps you debug your MCP server implementation and understand the complete protocol flow.
+
+### OAuth log entries
+
+When a server uses OAuth, each step of the OAuth flow appears as a log entry in the traffic log alongside regular JSON-RPC messages. Use the **Source** filter dropdown and select **OAuth** to show only OAuth entries.
+
+Each OAuth log entry displays a status indicator:
+
+| Indicator | Meaning |
+|-----------|---------|
+| `oauth ✓` | Step completed successfully |
+| `oauth ✗` | Step failed |
+| `oauth …` | Step is in progress |
+| `oauth ↺` | Step failed but was recovered (for example, after re-registering the client) |
+
+Click any entry to expand it and inspect the full step payload, including HTTP request and response details.

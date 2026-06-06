@@ -405,6 +405,17 @@ vi.mock("../components/oauth/OAuthDebugCallback", () => ({
 }));
 vi.mock("../components/mcp-sidebar", () => ({
   MCPSidebar: (props: unknown) => mockMCPSidebar(props),
+  // App.tsx imports this helper to gate the Connect/Clients route on
+  // desktop. Tests run in jsdom (hosted-mode = true is the default but
+  // we still want the helper to behave correctly), so return the real
+  // semantic: hosted defers to PostHog, desktop default-on.
+  computeHostsHubFlagEnabled: ({
+    hostsFlag,
+    hostedMode,
+  }: {
+    hostsFlag: unknown;
+    hostedMode: boolean;
+  }) => (hostedMode ? hostsFlag === true : true),
 }));
 vi.mock("../components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children?: ReactNode }) => (

@@ -11,14 +11,12 @@ import {
   captureToolSnapshotForEvalAuthoring,
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
-import {
-  loadSuiteHostConfig,
-  resolveOpenAiCompatForHostConfig,
-} from "../../services/evals/compat-runtime";
+import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
 import {
   applyVisibilityPolicyAndCountSignals,
   extractHostExecutionPolicy,
-} from "../../services/evals/host-execution-policy.js";
+  resolveOpenAiCompatForHostConfig,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   runEvalSuiteWithAiSdk,
   streamTestCase,

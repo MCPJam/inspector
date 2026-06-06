@@ -11,6 +11,16 @@ const rootDir = path.resolve(clientDir, "..");
 const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
+// Same rationale: @mcpjam/sdk advertises ./host-config/internal via its package
+// exports, but a clean checkout has no dist/host-config/internal.* until
+// `npm run build -w @mcpjam/sdk` runs. The full `npm run build` chain builds
+// the SDK first, but `npm run dev:client` / `build:client` in isolation
+// (and Codex's `sdk/dist`-removed repro) fail Rollup resolution without
+// this alias.
+const sdkHostConfigInternalEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-config/internal.ts",
+);
 // Bypass stale Vite optimized deps for MCP SDK auth helpers by resolving
 // directly to the installed ESM entrypoints.
 const mcpSdkClientAuthEntry = path.resolve(
@@ -55,6 +65,7 @@ export default defineConfig(({ mode }) => {
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
         "@mcpjam/sdk/browser": sdkBrowserEntry,
+        "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,
         "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
         "@modelcontextprotocol/sdk/shared/auth.js": mcpSdkSharedAuthEntry,
         // Resolve shared frontend deps from the workspace root now that installs

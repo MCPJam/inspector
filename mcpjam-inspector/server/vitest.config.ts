@@ -18,6 +18,10 @@ const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+const sdkHostConfigInternalEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-config/internal.ts",
+);
 
 export default defineConfig({
   define: {
@@ -55,6 +59,7 @@ export default defineConfig({
           "@mcpjam/sdk/model-factory",
           "@mcpjam/sdk/matchers",
           "@mcpjam/sdk/predicates",
+          "@mcpjam/sdk/host-config/internal",
         ],
       },
     },
@@ -80,6 +85,10 @@ export default defineConfig({
       { find: "@mcpjam/sdk/model-factory", replacement: sdkModelFactoryEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      {
+        find: "@mcpjam/sdk/host-config/internal",
+        replacement: sdkHostConfigInternalEntry,
+      },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],
   },

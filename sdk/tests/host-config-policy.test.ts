@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
 import {
   extractHostExecutionPolicy,
   buildHostIterationMetadata,
+  buildHostSnapshotMetadata,
   type HostExecutionPolicy,
   type ToolExposureSignals,
-} from "../host-execution-policy";
+} from "../src/host-config/internal";
+import { Host } from "../src/host-config/host";
 
 describe("extractHostExecutionPolicy", () => {
   it("returns safe defaults when hostConfig is null", () => {
@@ -60,7 +61,10 @@ describe("extractHostExecutionPolicy", () => {
   });
 
   it("extracts hostStyle and namedHostId", () => {
-    const policy = extractHostExecutionPolicy({ hostStyle: "cursor" }, "h_abc");
+    const policy = extractHostExecutionPolicy(
+      { hostStyle: "cursor" },
+      "h_abc",
+    );
     expect(policy.hostStyle).toBe("cursor");
     expect(policy.namedHostId).toBe("h_abc");
   });
@@ -103,7 +107,10 @@ describe("buildHostIterationMetadata", () => {
   });
 
   it("stamps approvals_would_require when requireToolApproval and count > 0", () => {
-    const policy: HostExecutionPolicy = { ...basePolicy, requireToolApproval: true };
+    const policy: HostExecutionPolicy = {
+      ...basePolicy,
+      requireToolApproval: true,
+    };
     const meta = buildHostIterationMetadata(policy, baseSignals, 3, false);
     expect(meta.approvals_would_require).toBe(3);
   });
@@ -136,5 +143,69 @@ describe("buildHostIterationMetadata", () => {
     const meta = buildHostIterationMetadata(policy, baseSignals, 0, false);
     expect(meta.host_id).toBe("h_claude");
     expect(meta.host_style).toBe("claude");
+  });
+});
+
+// Regression: `extractHostExecutionPolicy` historically only read the
+// canonical `hostStyle` field. `HostRunner` now feeds it `Host.toJSON()`
+// snapshots whose top-level field is `style`. Both shapes must work or
+// SDK eval reports lose `host_style` stamping and the OpenAI-compat
+// decision misfires for `style: "mcpjam"`-style hosts.
+describe("HostJson shape (public API) compatibility", () => {
+  it("reads `style` from a HostJson snapshot", () => {
+    const policy = extractHostExecutionPolicy({ style: "mcpjam" });
+    expect(policy.hostStyle).toBe("mcpjam");
+  });
+
+  it("works with a real Host.toJSON() snapshot end-to-end", () => {
+    const host = new Host({
+      style: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+    }).requireServer("everything");
+    const snapshot = host.toJSON();
+
+    const policy = extractHostExecutionPolicy(
+      snapshot as unknown as Record<string, unknown>,
+    );
+    expect(policy.hostStyle).toBe("claude");
+  });
+
+  it("prefers canonical `hostStyle` when both fields are present", () => {
+    const policy = extractHostExecutionPolicy({
+      hostStyle: "claude",
+      style: "mcpjam",
+    });
+    expect(policy.hostStyle).toBe("claude");
+  });
+});
+
+describe("buildHostSnapshotMetadata", () => {
+  it("returns an empty object when the snapshot has no notable fields", () => {
+    const host = new Host({ style: "claude", model: "anthropic/claude-3" }).toJSON();
+    const meta = buildHostSnapshotMetadata(
+      host as unknown as Record<string, unknown>,
+    );
+    // `claude` is not progressive-discovery / no named host id, but it IS a
+    // hostStyle, so host_style should be stamped.
+    expect(meta.host_style).toBe("claude");
+    expect(meta.host_id).toBeUndefined();
+    expect(meta.progressive_discovery_enabled).toBeUndefined();
+  });
+
+  it("stamps progressive_discovery_enabled from snapshot", () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "openai/gpt-4o",
+      progressiveToolDiscovery: true,
+    }).toJSON();
+    const meta = buildHostSnapshotMetadata(
+      host as unknown as Record<string, unknown>,
+    );
+    expect(meta.progressive_discovery_enabled).toBe(true);
+    expect(meta.host_style).toBe("mcpjam");
+  });
+
+  it("returns {} for null input (no executor host snapshot)", () => {
+    expect(buildHostSnapshotMetadata(null)).toEqual({});
   });
 });

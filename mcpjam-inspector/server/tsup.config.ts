@@ -47,6 +47,7 @@ export default defineConfig({
     "@mcpjam/sdk/model-factory",
     "@mcpjam/sdk/matchers",
     "@mcpjam/sdk/predicates",
+    "@mcpjam/sdk/host-config/internal",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -58,6 +59,10 @@ export default defineConfig({
       "@mcpjam/sdk/model-factory": join(rootDir, "../sdk/dist/model-factory.js"),
       "@mcpjam/sdk/matchers": join(rootDir, "../sdk/dist/matchers.js"),
       "@mcpjam/sdk/predicates": join(rootDir, "../sdk/dist/predicates/index.js"),
+      "@mcpjam/sdk/host-config/internal": join(
+        rootDir,
+        "../sdk/dist/host-config/internal.js",
+      ),
     };
   },
 });

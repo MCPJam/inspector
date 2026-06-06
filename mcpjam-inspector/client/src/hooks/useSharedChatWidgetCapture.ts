@@ -11,6 +11,10 @@ import {
   useWidgetDebugStore,
   type WidgetDebugInfo,
 } from "@/stores/widget-debug-store";
+import {
+  sanitizeWidgetForBackend,
+  type SharedChatWidgetSnapshotPayload,
+} from "@/shared/widget-snapshot";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
@@ -484,12 +488,15 @@ export function useSharedChatWidgetCapture({
 
       if (!scopeStillValid()) return;
 
-      const snapshotPayload = {
-        ...(chatboxId ? { chatboxId } : {}),
-        ...(chatboxId && Number.isFinite(accessVersion)
-          ? { accessVersion }
-          : {}),
-        chatSessionId: sessionIdRef.current,
+      // Build the shared payload (the part every writer to
+      // `sharedChatWidgetSnapshots` produces), sanitize for Convex
+      // transport, then layer the playground/chatbox session context
+      // (chatboxId / accessVersion / chatSessionId) on top. The shared
+      // pipeline owns the $-key escaping inside `widgetPermissions`
+      // (JSON Schema fragments routinely use `$ref` / `$schema` which
+      // Convex's argument validator rejects raw) and any future
+      // normalization the table wants from every caller.
+      const widgetPayload: SharedChatWidgetSnapshotPayload = {
         ...(toolSource.serverId ? { serverId: toolSource.serverId } : {}),
         toolCallId,
         toolName: toolSource.toolName,
@@ -503,6 +510,35 @@ export function useSharedChatWidgetCapture({
         widgetPermissive: widget.csp?.mode === "permissive",
         prefersBorder: widget.prefersBorder,
         displayContext: toDisplayContext(widget.globals),
+        // Persist the OpenAI Apps SDK shim provenance so replay can
+        // reconstruct the same `window.openai` surface the widget was
+        // captured against. Pulled from the widget-debug store (set by
+        // the MCP-Apps renderer at fetch time).
+        //
+        // Capabilities are gated behind `injectedOpenAiCompat === true`:
+        // the matrix describes the injected surface, so persisting one
+        // alongside a false/undefined compat flag lets cached replay
+        // hash and treat the surface differently than the byte-frozen
+        // HTML. The runtime mirrors this — it only emits capabilities
+        // when the shim is injected.
+        ...(typeof widget.injectedOpenAiCompat === "boolean"
+          ? { injectedOpenAiCompat: widget.injectedOpenAiCompat }
+          : {}),
+        ...(widget.injectedOpenAiCompat === true &&
+        widget.injectedOpenAiCompatCapabilities
+          ? {
+              injectedOpenAiCompatCapabilities:
+                widget.injectedOpenAiCompatCapabilities,
+            }
+          : {}),
+      };
+      const snapshotPayload = {
+        ...(chatboxId ? { chatboxId } : {}),
+        ...(chatboxId && Number.isFinite(accessVersion)
+          ? { accessVersion }
+          : {}),
+        chatSessionId: sessionIdRef.current,
+        ...sanitizeWidgetForBackend(widgetPayload),
       };
       const snapshotResult = await createWidgetSnapshot(snapshotPayload);
 

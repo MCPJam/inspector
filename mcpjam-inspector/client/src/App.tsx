@@ -54,7 +54,10 @@ import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/clients/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
-import { MCPSidebar } from "./components/mcp-sidebar";
+import {
+  MCPSidebar,
+  computeHostsHubFlagEnabled,
+} from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import {
   Alert,
@@ -91,11 +94,7 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
 // Import global styles
 import "./index.css";
-import {
-  detectEnvironment,
-  detectPlatform,
-  isPostHogBooleanFlagOn,
-} from "./lib/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -1169,7 +1168,13 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
-  const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
+  // Desktop builds default the Hosts/Connect rollout on (PostHog may be
+  // unreachable on the packaged Electron app), while hosted web keeps the
+  // PostHog gate. See `computeHostsHubFlagEnabled` for details.
+  const hostsHubFlagEnabled = computeHostsHubFlagEnabled({
+    hostsFlag: hostsEnabled,
+    hostedMode: HOSTED_MODE,
+  });
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
@@ -1235,6 +1240,7 @@ export default function App() {
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
+  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   useEffect(() => {
@@ -1441,7 +1447,6 @@ export default function App() {
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
-  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug"

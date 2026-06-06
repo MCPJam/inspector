@@ -459,6 +459,22 @@ describe("chat-ingestion", () => {
     expect("hostConfig" in body).toBe(false);
   });
 
+  it("posts to /ingest-chat with the bearer authorization header", async () => {
+    await persistChatSessionToConvex({
+      chatSessionId: "session-user-default",
+      modelId: "openai/gpt-4o-mini",
+      modelSource: "byok",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      startedAt: 1,
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [url, request] = (global.fetch as any).mock.calls[0];
+    expect(url).toBe("https://test-convex.example.com/ingest-chat");
+    const headers = request.headers as Record<string, string>;
+    expect(headers["authorization"]).toBe("Bearer bearer-token");
+  });
+
   it("includes directVisibility when persisting a direct chat", async () => {
     await persistChatSessionToConvex({
       chatSessionId: "session-5",

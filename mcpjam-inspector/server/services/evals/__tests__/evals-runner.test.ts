@@ -115,7 +115,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       compareRunId,
     });
 
-    return convexClient.action.mock.calls[0]?.[1] as {
+    // Find the updateTestIteration call specifically. The PR-2 fanout
+    // introduced an `isEvalChatSessionsWriterEnabled` flag check that
+    // fires before any iteration write, so indexing by `calls[0]`
+    // would now return the flag query, not the iteration update.
+    // Mock returns undefined for the flag query → cached as `false` →
+    // legacy single-call path runs unchanged.
+    const updateCall = convexClient.action.mock.calls.find(
+      (call) => call[0] === "testSuites:updateTestIteration",
+    );
+    return updateCall?.[1] as {
       metadata?: Record<string, string | number | boolean>;
       tokensUsed?: number;
     };
@@ -174,6 +183,243 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       text: vi.fn().mockResolvedValue(""),
     };
   }
+
+  it(
+    "PR-2 review #5: lockEvalSession fires when fanout succeeded but updateTestIteration throws transient error",
+    async () => {
+      // Mock convexClient.action with ref-aware responses:
+      //   - flag-check returns enabled:true (writer on)
+      //   - appendEvalTurnTrace returns success (fanout persists)
+      //   - updateTestIteration throws a transient error (NOT a
+      //     "not found"/"cancelled" message — those bypass the lock)
+      //   - lockEvalSession records the call so we can assert it fired
+      const callsByRef: Record<string, number> = {};
+      const action = vi.fn(async (ref: string) => {
+        callsByRef[ref] = (callsByRef[ref] ?? 0) + 1;
+        if (ref === "testSuites:isEvalChatSessionsWriterEnabled") {
+          return { enabled: true };
+        }
+        if (ref === "testSuites:appendEvalTurnTrace") {
+          return { skipped: false, chatSessionId: "sess_x", locked: false };
+        }
+        if (ref === "testSuites:updateTestIteration") {
+          throw new Error("transient backend hiccup");
+        }
+        if (ref === "testSuites:lockEvalSession") {
+          return { skipped: false, locked: true, alreadyLocked: false };
+        }
+        return undefined;
+      });
+      convexClient.action = action;
+      // Reset the helper's process-latched flag cache so this test
+      // sees `enabled:true` instead of an earlier test's `false`.
+      const { __resetEvalChatSessionsWriterFlagCacheForTests } = await import(
+        "../persist-eval-trace.js"
+      );
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+
+      await runQuickTestCase();
+
+      // Sanity: fanout did fire (so we know we're testing the new path)
+      // AND lockEvalSession was called despite the update throwing.
+      expect(callsByRef["testSuites:appendEvalTurnTrace"]).toBeGreaterThan(0);
+      expect(callsByRef["testSuites:updateTestIteration"]).toBeGreaterThan(0);
+      expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
+      // Reset for subsequent tests that may rely on the legacy "all
+      // actions return undefined" mock.
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+    },
+  );
+
+  it(
+    "derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed",
+    async () => {
+      // Regression test for the transcript-lifecycle vs verdict split.
+      // The lock-reason describes whether the eval CYCLE ran to completion
+      // (so the chatSessions transcript is consistent), NOT whether the
+      // verdict passed. A failed-verdict iteration that ran cleanly
+      // (status: "completed", result: "failed", passed: false) must still
+      // get lockReason: "eval_completed". eval_failed is reserved for
+      // cycle failures (provider errors, transport crashes, status:"failed").
+      //
+      // Force passed=false by configuring an expectedToolCall the mock
+      // assistant won't make. The runner's success path then calls
+      // finishIterationDirectly with status:"completed" + passed:false.
+      // Before the fix this site derived terminalReason from `passed` and
+      // would have called lockEvalSession with reason:"eval_failed".
+      const lockCalls: Array<{ iterationId: string; reason: string }> = [];
+      const action = vi.fn(async (ref: string, payload: any) => {
+        if (ref === "testSuites:isEvalChatSessionsWriterEnabled") {
+          return { enabled: true };
+        }
+        if (ref === "testSuites:appendEvalTurnTrace") {
+          return { skipped: false, chatSessionId: "sess_x", locked: false };
+        }
+        if (ref === "testSuites:updateTestIteration") {
+          return undefined;
+        }
+        if (ref === "testSuites:lockEvalSession") {
+          lockCalls.push({
+            iterationId: payload?.iterationId,
+            reason: payload?.reason,
+          });
+          return { skipped: false, locked: true, alreadyLocked: false };
+        }
+        return undefined;
+      });
+      convexClient.action = action;
+      const { __resetEvalChatSessionsWriterFlagCacheForTests } = await import(
+        "../persist-eval-trace.js"
+      );
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              // Expecting a tool the mock assistant never calls → matchPassed=false
+              // → finalizePassedForEval mock returns false → passed=false.
+              expectedToolCalls: [
+                { toolName: "never-called-tool", arguments: {} },
+              ],
+              promptTurns: [
+                {
+                  id: "turn-1",
+                  prompt: "Hello",
+                  expectedToolCalls: [
+                    { toolName: "never-called-tool", arguments: {} },
+                  ],
+                },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      });
+
+      // Confirm we exercised the success path: updateTestIteration was
+      // called with result:"failed" + status:"completed", and the lock
+      // fired with reason:"eval_completed" (lifecycle-clean), not
+      // "eval_failed" (which is for cycle failures).
+      const updateCall = action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall?.[1]).toMatchObject({
+        result: "failed",
+        status: "completed",
+      });
+      expect(lockCalls).toHaveLength(1);
+      expect(lockCalls[0].reason).toBe("eval_completed");
+
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+    },
+  );
+
+  it(
+    "derives lockReason from iteration STATUS + error: backend cycle error (status:completed + error set) → eval_failed",
+    async () => {
+      // Codex review on #2446: the BACKEND-routed eval path's success
+      // tail passes `status: "completed"` to finishIteration[Directly]
+      // even when `iterationError` was captured during the run (see
+      // evals-runner.ts:2079-2082 and :3962-3965 / line 2088, 3971 —
+      // both hardcoded `status: "completed" as const`). A pure
+      // status-based derivation would lock those as eval_completed,
+      // even though the transcript represents a cycle failure.
+      // Presence of `error` is the cycle-failure signal.
+      //
+      // The local-generateText error path uses `status: "failed"` and
+      // is already correctly mapped — it's the backend path that has
+      // the status/error mismatch. Force the backend path by using a
+      // hosted MCPJam-routed model (no BYOK key needed) + making fetch
+      // reject mid-iteration.
+      fetchMock.mockRejectedValueOnce(new Error("backend down"));
+
+      const lockCalls: Array<{ iterationId: string; reason: string }> = [];
+      const action = vi.fn(async (ref: string, payload: any) => {
+        if (ref === "testSuites:isEvalChatSessionsWriterEnabled") {
+          return { enabled: true };
+        }
+        if (ref === "testSuites:appendEvalTurnTrace") {
+          return { skipped: false, chatSessionId: "sess_x", locked: false };
+        }
+        if (ref === "testSuites:updateTestIteration") {
+          return undefined;
+        }
+        if (ref === "testSuites:lockEvalSession") {
+          lockCalls.push({
+            iterationId: payload?.iterationId,
+            reason: payload?.reason,
+          });
+          return { skipped: false, locked: true, alreadyLocked: false };
+        }
+        return undefined;
+      });
+      convexClient.action = action;
+      const { __resetEvalChatSessionsWriterFlagCacheForTests } = await import(
+        "../persist-eval-trace.js"
+      );
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      });
+
+      // Confirm we exercised the cycle-failure path: the iteration was
+      // finalized with error:set, status:"completed", and the lock
+      // fired with reason:"eval_failed" — the codex finding.
+      const updateCall = action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall?.[1]).toMatchObject({
+        status: "completed",
+      });
+      expect(updateCall?.[1]?.error).toBeTruthy();
+      expect(lockCalls).toHaveLength(1);
+      expect(lockCalls[0].reason).toBe("eval_failed");
+
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+    },
+  );
 
   it("persists compareRunId in quick-run iteration metadata when provided", async () => {
     const updatePayload = await runQuickTestCase("cmp_123");

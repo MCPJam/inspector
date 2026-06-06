@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, CheckCircle2, CreditCard, Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -64,6 +64,7 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
+  scheduledCancellationDate: string | null;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval
@@ -87,6 +88,7 @@ function getPlanColumnCta(params: {
     billingConfigured,
     canManageBilling,
     isBillingActionPending,
+    scheduledCancellationDate,
     onDowngradePlan,
     onStartPlanChange,
     billingInterval,
@@ -114,6 +116,16 @@ function getPlanColumnCta(params: {
   }
 
   if (isDowngrade) {
+    if (scheduledCancellationDate !== null) {
+      return {
+        label: "Downgrade scheduled",
+        disabled: true,
+        variant: "outline",
+        tooltip: scheduledCancellationDate
+          ? `Your plan is already scheduled to return to Free on ${scheduledCancellationDate}.`
+          : "Your plan is already scheduled to return to Free at the end of the current billing period.",
+      };
+    }
     return {
       label: "Downgrade",
       disabled:
@@ -440,6 +452,8 @@ interface OrganizationBillingSectionProps {
   ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
+  /** Rendered below the credit usage card (above payments history). */
+  currentPlanPanel?: ReactNode;
 }
 
 export function OrganizationBillingSection({
@@ -460,6 +474,7 @@ export function OrganizationBillingSection({
   onStartAutoPlanChange,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
+  currentPlanPanel,
 }: OrganizationBillingSectionProps) {
   useCreditTopupReturnFlowBilling({ enabled: showCredits });
 
@@ -676,21 +691,23 @@ export function OrganizationBillingSection({
       </Dialog>
 
       {showCredits ? (
-        <>
-          <ErrorBoundary fallback={null}>
-            <CreditBalanceCard
-              organizationId={organizationId}
-              canManageCredits={canManageCredits}
-            />
-          </ErrorBoundary>
+        <ErrorBoundary fallback={null}>
+          <CreditBalanceCard
+            organizationId={organizationId}
+            canManageCredits={canManageCredits}
+          />
+        </ErrorBoundary>
+      ) : null}
 
-          <ErrorBoundary fallback={null}>
-            <PaymentsHistorySection
-              organizationId={organizationId}
-              canViewHistory={canManageCredits}
-            />
-          </ErrorBoundary>
-        </>
+      {currentPlanPanel}
+
+      {showCredits ? (
+        <ErrorBoundary fallback={null}>
+          <PaymentsHistorySection
+            organizationId={organizationId}
+            canViewHistory={canManageCredits}
+          />
+        </ErrorBoundary>
       ) : null}
 
       {showPlanBilling ? (
@@ -830,6 +847,16 @@ export function OrganizationBillingSection({
                                   entry,
                                   billingInterval
                                 );
+                            const cancellationDateMs =
+                              billingStatus?.stripeCancelAt ??
+                              billingStatus?.stripeCurrentPeriodEnd ??
+                              null;
+                            const scheduledCancellationDate =
+                              billingStatus?.stripeCancelAtPeriodEnd
+                                ? cancellationDateMs != null
+                                  ? formatBillingDate(cancellationDateMs)
+                                  : ""
+                                : null;
                             const cta = getPlanColumnCta({
                               plan,
                               currentPlan,
@@ -837,6 +864,7 @@ export function OrganizationBillingSection({
                               billingConfigured,
                               canManageBilling,
                               isBillingActionPending,
+                              scheduledCancellationDate,
                               onDowngradePlan: (
                                 targetPlan,
                                 targetBillingInterval

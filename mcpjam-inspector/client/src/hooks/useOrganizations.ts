@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type OrganizationMembershipRole = "owner" | "admin" | "member" | "guest";
 
@@ -65,12 +66,15 @@ export function useOrganizationQueries({
 }: {
   isAuthenticated: boolean;
 }) {
+  const isUserReady = useDbUserReady();
+  const canQuery = isAuthenticated && isUserReady;
   const organizations = useQuery(
     "organizations:getMyOrganizations" as any,
-    isAuthenticated ? ({} as any) : "skip",
+    canQuery ? ({} as any) : "skip",
   ) as Organization[] | undefined;
 
-  const isLoading = isAuthenticated && organizations === undefined;
+  const isLoading =
+    isAuthenticated && (!isUserReady || organizations === undefined);
 
   const sortedOrganizations = useMemo(() => {
     if (!organizations) return [];

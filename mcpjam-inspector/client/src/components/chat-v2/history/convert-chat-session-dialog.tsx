@@ -80,6 +80,10 @@ export function ConvertChatSessionDialog({
   // pickers (and the new-suite branch's serverAttachmentId/hostAttachments
   // wiring) only apply in the unified-attachment world. Without the flag,
   // we preserve the legacy path that #395 already covers.
+  // Intentionally tied to the raw PostHog flag, not the desktop-default-on
+  // helper: `attachmentPickersEnabled` also gates the new-suite branch's
+  // requires-attachments check, and flipping it on for desktop blocks the
+  // empty-skeleton-then-attach-later flow.
   const hostsFlagEnabled = useFeatureFlagEnabled("hosts-enabled");
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const attachmentPickersEnabled =

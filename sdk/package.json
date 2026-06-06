@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -71,7 +71,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers'); await import('@mcpjam/sdk/predicates'); await import('@mcpjam/sdk/host-config'); await import('@mcpjam/sdk/host-config/internal');\"",
+    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers'); await import('@mcpjam/sdk/predicates'); await import('@mcpjam/sdk/host-config'); const m = await import('@mcpjam/sdk/host-config/internal'); for (const n of ['canonicalizeHostConfigV2','computeHostConfigHashV2','isAppOnlyTool','filterAppOnlyTools','applyVisibilityPolicyAndCountSignals','extractHostExecutionPolicy','buildHostIterationMetadata','resolveOpenAiCompatForHostConfig','readOpenAiCompatOverride','compatPresetForHostStyle','normalizeSdkEvalHostConfigForWire']) { if (typeof m[n] !== 'function') { throw new Error('missing export: ' + n); } }\"",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",

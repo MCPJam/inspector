@@ -10,10 +10,10 @@ describe("Host — public surface", () => {
     expect(Host).toBe(HostFromBrowser);
   });
 
-  it("accumulates servers via addServer chaining", () => {
+  it("accumulates servers via requireServer chaining", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
-      .addServer("a")
-      .addServer("b");
+      .requireServer("a")
+      .requireServer("b");
     expect(host).toBeInstanceOf(Host);
     expect(host.toJSON().servers).toEqual(["a", "b"]);
   });
@@ -58,7 +58,7 @@ describe("Host — public surface", () => {
       model: "openai/gpt-5",
     });
     host.mcp.protocolVersion = "2025-06-18";
-    host.addServer("srv_a");
+    host.requireServer("srv_a");
     host.setServerOverride("srv_a", {
       headers: { A: "1" },
       protocolVersion: "2025-11-25",
@@ -99,7 +99,7 @@ describe("Host — public surface", () => {
 
   it("validates per-server request timeout overrides at toJSON()", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
-      .addServer("srv_a")
+      .requireServer("srv_a")
       .setServerOverride("srv_a", { requestTimeout: Infinity });
 
     expect(() => host.toJSON()).toThrow(/requestTimeoutOverride must be finite/);
@@ -123,9 +123,9 @@ describe("Host — public surface", () => {
       model: "anthropic/claude-sonnet-4-6",
       systemPrompt: "You are a helpful assistant.",
     })
-      .addServer("srv-c")
-      .addServer("srv-a")
-      .addServer("srv-b")
+      .requireServer("srv-c")
+      .requireServer("srv-a")
+      .requireServer("srv-b")
       .addOptionalServer("opt-z")
       .addOptionalServer("opt-a")
       .setServerOverride("srv-b", {
@@ -148,12 +148,12 @@ describe("Host — public surface", () => {
 });
 
 describe("Host — mutation helpers", () => {
-  it("addServer dedupes (idempotent)", () => {
+  it("requireServer dedupes (idempotent)", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
-      .addServer("a")
-      .addServer("a")
-      .addServer("b")
-      .addServer("a");
+      .requireServer("a")
+      .requireServer("a")
+      .requireServer("b")
+      .requireServer("a");
     expect(host.servers).toEqual(["a", "b"]);
     expect(host.toJSON().servers).toEqual(["a", "b"]);
   });
@@ -176,12 +176,12 @@ describe("Host — mutation helpers", () => {
     expect(host.optionalServers).toEqual(["x", "y"]);
   });
 
-  it("removeServer / removeOptionalServer are no-ops when absent", () => {
+  it("removeRequiredServer / removeOptionalServer are no-ops when absent", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
-      .addServer("a")
-      .addServer("b");
-    host.removeServer("missing");
-    host.removeServer("a");
+      .requireServer("a")
+      .requireServer("b");
+    host.removeRequiredServer("missing");
+    host.removeRequiredServer("a");
     expect(host.servers).toEqual(["b"]);
 
     host.addOptionalServer("opt");
@@ -192,7 +192,7 @@ describe("Host — mutation helpers", () => {
 
   it("removeServerOverride drops the entry from toJSON", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" })
-      .addServer("a")
+      .requireServer("a")
       .setServerOverride("a", { requestTimeout: 1000 });
     expect(host.toJSON().serverOverrides?.a?.requestTimeout).toBe(1000);
     host.removeServerOverride("a");
@@ -212,8 +212,8 @@ describe("Host — mutation helpers", () => {
 describe("Host — toJSON() round-trips", () => {
   it("new Host(host.toJSON()) reproduces the same JSON", () => {
     const host = new Host({ style: "chatgpt", model: "openai/gpt-5" })
-      .addServer("srv-b")
-      .addServer("srv-a")
+      .requireServer("srv-b")
+      .requireServer("srv-a")
       .setServerOverride("srv-a", { requestTimeout: 1234 });
     host.mcp.protocolVersion = "2025-06-18";
     host.mcp.apps = { compatRuntime: { openaiApps: true } };

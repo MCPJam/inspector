@@ -74,8 +74,8 @@ export function clearOnboardingState(): void {
 
 /**
  * Returns true when the user is eligible for first-run onboarding:
- * - No explicit hash route (empty, "#", "#/", or the default hub hash:
- *   `#servers`, `#connect`, or legacy `#hosts`)
+ * - No explicit hash route (empty, "#", "#/", the default hub hash
+ *   `#servers`/`#connect`/legacy `#hosts`, or the `#home` landing route)
  * - No saved servers that block first-run onboarding
  * - Onboarding has never been shown for the current identity. When a remote
  *   user row is available, that row is the source of truth; localStorage is
@@ -102,6 +102,7 @@ export function isFirstRunEligible(
     routeTab !== "connect" &&
     routeTab !== "clients" &&
     routeTab !== "hosts" &&
+    routeTab !== "home" &&
     routeTab
   )
     return false;

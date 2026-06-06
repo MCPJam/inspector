@@ -91,6 +91,11 @@ export function SaveAsTestCaseAction({
     [],
   );
 
+  // Intentionally tied to the raw PostHog flag, not the desktop-default-on
+  // helper: `attachmentPickersEnabled` also gates the "new suite requires
+  // both a server and a host attachment" requirement (see
+  // `newSuiteRequirementsMet` below). Flipping it on for desktop blocks the
+  // empty-skeleton-then-attach-later flow.
   const attachmentPickersEnabled =
     hostsFlagEnabled === true && convexAuthed && Boolean(projectId);
 

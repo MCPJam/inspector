@@ -351,27 +351,25 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
-  it("shows a View plans entry point in the overview billing card", () => {
+  it("shows the current plan summary in the billing view", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({ plan: "free" }),
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
+    const panel = within(screen.getByTestId("current-plan-panel"));
     expect(screen.getByRole("button", { name: "Billing" })).toBeInTheDocument();
-    expect(screen.getByText("Billing cycle")).toBeInTheDocument();
-    expect(screen.queryByText("Subscription status")).not.toBeInTheDocument();
+    expect(panel.getByText("Billing cycle")).toBeInTheDocument();
+    expect(panel.queryByText("Subscription status")).not.toBeInTheDocument();
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
       "No active subscription",
     );
-    expect(
-      screen.getByRole("button", { name: "View plans" }),
-    ).toBeInTheDocument();
   });
 
-  it("overview billing card hides Manage plan for non-owners and shows owner-only copy beside View plans", () => {
+  it("billing view hides Manage plan for non-owners and shows owner-only copy", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -388,15 +386,12 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.queryByRole("button", { name: "Manage plan" })).toBeNull();
-    const viewPlans = screen.getByRole("button", { name: "View plans" });
-    const ownerCopy = screen.getByText(
-      "Only organization owners can manage billing.",
-    );
-    expect(ownerCopy).toBeInTheDocument();
-    expect(viewPlans.parentElement).toContainElement(ownerCopy);
+    expect(
+      screen.getByText("Only organization owners can manage billing."),
+    ).toBeInTheDocument();
   });
 
   it("shows scheduled cancellation state instead of renewal copy for non-renewing subscriptions", () => {
@@ -417,7 +412,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
       "Cancels May 1, 2026",
@@ -450,7 +445,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
       "First charge May 19, 2026",
@@ -473,13 +468,14 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
+    const panel = within(screen.getByTestId("current-plan-panel"));
     expect(
-      screen.getByText("$30 per seat/month, billed annually"),
+      panel.getByText("$30 per seat/month, billed annually"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Billing details are updating…"),
+      panel.queryByText("Billing details are updating…"),
     ).not.toBeInTheDocument();
   });
 
@@ -503,7 +499,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
       "Changes Apr 1, 2027",
@@ -558,7 +554,9 @@ describe("OrganizationsTab billing", () => {
     });
     mockUseOrganizationBilling.mockImplementation(() => hookState);
 
-    const view = render(<OrganizationsTab organizationId="org-1" />);
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "Keep Team annual plan" }),
@@ -586,7 +584,7 @@ describe("OrganizationsTab billing", () => {
       "Scheduled billing change canceled. Team annual remains active.",
     );
 
-    view.rerender(<OrganizationsTab organizationId="org-1" />);
+    view.rerender(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(
       screen.queryByTestId("current-plan-scheduled-change"),
@@ -611,17 +609,18 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByText("Team Trial")).toBeInTheDocument();
+    const panel = within(screen.getByTestId("current-plan-panel"));
+    expect(panel.getByText("Team Trial")).toBeInTheDocument();
     expect(
-      screen.getByText("7-day trial · no active subscription yet"),
+      panel.getByText("7-day trial · no active subscription yet"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
       "Trial ends",
     );
     expect(
-      screen.queryByText(/flat monthly rate|per seat\/month/i),
+      panel.queryByText(/flat monthly rate|per seat\/month/i),
     ).not.toBeInTheDocument();
   });
 
@@ -636,16 +635,17 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByText("Team")).toBeInTheDocument();
+    const panel = within(screen.getByTestId("current-plan-panel"));
+    expect(panel.getByText("Team")).toBeInTheDocument();
     expect(
-      screen.getByText(
+      panel.getByText(
         "Simulation active. Limits and access use Team, while billing remains on Free.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Simulation active · billing changes are not applied"),
+      panel.getByText("Simulation active · billing changes are not applied"),
     ).toBeInTheDocument();
   });
 
@@ -1190,18 +1190,16 @@ describe("OrganizationsTab billing", () => {
 
     expect(screen.getByText("Return to Free at renewal?")).toBeInTheDocument();
     expect(
-      screen.getByText("This cancellation takes effect at renewal, not now."),
+      screen.getByText(/This cancellation takes effect at renewal, not now\./),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Team annual remains active until Apr 1, 2027."),
+      screen.getByText(/Team annual remains active until Apr 1, 2027/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("After that, the organization returns to Free."),
+      screen.getByText(/the organization returns to Free/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Stripe will open a cancellation flow that keeps paid access active until renewal.",
-      ),
+      screen.getByText(/you can't change your billing interval/),
     ).toBeInTheDocument();
 
     fireEvent.click(
@@ -1498,7 +1496,7 @@ describe("OrganizationsTab billing", () => {
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
-    expect(screen.getByText(/\$38/)).toBeInTheDocument();
+    expect(screen.getAllByText(/\$38/).length).toBeGreaterThan(0);
   });
 
   it("consumes paid deep links before subscription status catches up", async () => {
@@ -1577,7 +1575,7 @@ describe("OrganizationsTab billing", () => {
     expect(navigateBillingInSameTab).not.toHaveBeenCalled();
   });
 
-  it("opens the cadence-change portal flow from the overview current plan card", async () => {
+  it("opens the cadence-change portal flow from the billing current plan card", async () => {
     const openIntervalChangePortal = vi
       .fn()
       .mockResolvedValue("https://stripe.test/portal/interval");
@@ -1599,7 +1597,7 @@ describe("OrganizationsTab billing", () => {
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Change to annual" }));
 
@@ -1618,7 +1616,7 @@ describe("OrganizationsTab billing", () => {
     openSpy.mockRestore();
   });
 
-  it("opens the billing portal from the overview current plan card for paid owners", async () => {
+  it("opens the billing portal from the billing current plan card for paid owners", async () => {
     const openPortal = vi.fn().mockResolvedValue("https://stripe.test/portal");
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -1636,7 +1634,7 @@ describe("OrganizationsTab billing", () => {
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Manage plan" }));
 

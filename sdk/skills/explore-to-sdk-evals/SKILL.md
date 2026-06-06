@@ -40,7 +40,7 @@ Before emitting imports, inspect the target repo:
 ## 3. Quick API reference (Explore flows only)
 
 ```typescript
-import { MCPClientManager, TestAgent, createEvalRunReporter } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, createEvalRunReporter } from "@mcpjam/sdk";
 import {
   matchNoToolCalls,
   matchToolCallWithPartialArgs,
@@ -59,9 +59,9 @@ import {
 
 **Agent**
 
-- `new TestAgent({ tools, model: MODEL, apiKey: LLM_API_KEY, maxSteps: 8, mcpClientManager: manager })` — pass the **same** `MCPClientManager` instance you used for `connectToServer` / `getToolsForAiSdk`. `**mcpClientManager` is required** for `**widgetSnapshots`** on reported results (MCP App HTML capture via `readResource`), which powers **MCP App replay in MCPJam eval traces**. Omitting it still runs tools correctly but traces in the app will have **no embedded widget replay**.
+- `new HostRunner({ tools, model: MODEL, apiKey: LLM_API_KEY, maxSteps: 8, mcpClientManager: manager })` — pass the **same** `MCPClientManager` instance you used for `connectToServer` / `getToolsForAiSdk`. `**mcpClientManager` is required** for `**widgetSnapshots`** on reported results (MCP App HTML capture via `readResource`), which powers **MCP App replay in MCPJam eval traces**. Omitting it still runs tools correctly but traces in the app will have **no embedded widget replay**.
 - `**apiKey` and `model` must match the LLM provider the user chose** (see §5); there is no default assumption that the key is an OpenAI key.
-- `await agent.prompt(caseQuery)` — use **verbatim** `caseQuery` from Explore; for slow MCP + multi-step chains use `**{ timeoutMs }`** (or `timeout`) so the prompt does not abort before tools finish (see §6).
+- `await runner.run(caseQuery)` — use **verbatim** `caseQuery` from Explore; for slow MCP + multi-step chains use `**{ timeoutMs }`** (or `timeout`) so the prompt does not abort before tools finish (see §6).
 - Multi-turn only if a **single** Explore case clearly requires follow-up in one narrative; otherwise one prompt per `it()` (see §4c)
 
 **Result inspection**
@@ -78,7 +78,7 @@ import {
 
 **Optional MCPJam upload**
 
-- `createEvalRunReporter({ suiteName, apiKey, strict: true, mcpClientManager: manager, serverNames: [SERVER_ID], ... })` — pass the **same** connected `**MCPClientManager**` as for `TestAgent` so uploads include **`serverReplayConfigs`** (HTTP MCP only; stdio connections do not produce replayable server config in the SDK). That is what sets **`hasServerReplayConfig`** in MCPJam and enables **Replay this run** / **server-side MCP replay** in the UI.
+- `createEvalRunReporter({ suiteName, apiKey, strict: true, mcpClientManager: manager, serverNames: [SERVER_ID], ... })` — pass the **same** connected `**MCPClientManager**` as for `HostRunner` so uploads include **`serverReplayConfigs`** (HTTP MCP only; stdio connections do not produce replayable server config in the SDK). That is what sets **`hasServerReplayConfig`** in MCPJam and enables **Replay this run** / **server-side MCP replay** in the UI.
 - `await reporter.recordFromPrompt(result, { caseTitle, passed, expectedToolCalls?, isNegativeTest? })`
 - `await reporter.finalize()` in `afterAll` **before** `disconnectAllServers()` (with timeout). `finalize` calls `getServerReplayConfigs()` on the manager; disconnecting first clears client state and uploads **without** replay metadata. `**finalize()` can throw** (network, DNS, 401) even when all eval assertions passed. For best-effort upload: wrap in **try/catch**, log a warning, and continue; or gate uploads on something like `**MCPJAM_REPORTING=1`** so local/CI runs do not go red purely on reporting.
 - **UI replay still needs LLM keys in MCPJam Settings** for whatever `provider` the suite uses (e.g. OpenRouter); the app does not store provider API keys on the run.
@@ -87,7 +87,7 @@ import {
 
 ## 4. Per-case translation
 
-Use the **Explore case title** as the human-readable basis for `it("...")` description (sanitize quotes if needed). Use the **exact** user prompt from the ``` fenced block as `agent.prompt(\`...)` argument.
+Use the **Explore case title** as the human-readable basis for `it("...")` description (sanitize quotes if needed). Use the **exact** user prompt from the ``` fenced block as `runner.run(\`...)` argument.
 
 **Placeholder values in `tool_name({ ... })` lines:** Explore often shows **illustrative** arguments — e.g. `create_view({ elements: "" })` usually means **“this argument key exists / this shape,”** not “the value must be the empty string.” Blindly passing `{ elements: "" }` into `matchToolCallWithPartialArgs` will fail on real calls. **Prefer `hasToolCall("tool_name")`** when the brief does not state a concrete literal. When you need stricter checks: use `**matchToolArgumentWith("tool", "key", predicate, calls)**` (e.g. “present and non-empty”), or `**matchToolArgument**` only when Explore documents an **actual** expected value. Reserve `**matchToolCallWithPartialArgs`** for **real literals** listed in the case, not for `""`, `"..."`, or other stand-ins.
 
@@ -97,7 +97,7 @@ For each expected tool line like ``tool_name({arg: val})``:
 
 ```typescript
 it("Explore case title here", async () => {
-  const result = await agent.prompt(`paste exact query from Explore`);
+  const result = await runner.run(`paste exact query from Explore`);
   expect(result.hasToolCall("tool_name")).toBe(true);
   // Only when Explore lists real literals — not placeholders (see §4 intro).
   // expect(
@@ -117,7 +117,7 @@ it("Explore case title here", async () => {
 
 ```typescript
 it("Explore case title here", async () => {
-  const result = await agent.prompt(`paste exact query from Explore`);
+  const result = await runner.run(`paste exact query from Explore`);
   expect(matchNoToolCalls(result.toolsCalled())).toBe(true);
   if (reporter) {
     await reporter.recordFromPrompt(result, {
@@ -135,7 +135,7 @@ Prefer **one** `it()` that asserts all listed tools (unless the case text explic
 
 ```typescript
 it("Explore case title", async () => {
-  const result = await agent.prompt(`exact query`);
+  const result = await runner.run(`exact query`);
   expect(result.hasToolCall("first_tool")).toBe(true);
   expect(result.hasToolCall("second_tool")).toBe(true);
   // Optional: arg checks only for real literals (§4) — else hasToolCall is enough
@@ -200,14 +200,14 @@ const RUN_LLM_TESTS = Boolean(LLM_API_KEY && MCP_SERVER_URL);
 ```typescript
 (RUN_LLM_TESTS ? describe : describe.skip)("Explore cases", () => {
   let manager: MCPClientManager;
-  let agent: TestAgent;
+  let runner: HostRunner;
   let reporter: ReturnType<typeof createEvalRunReporter> | undefined;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
     await manager.connectToServer(SERVER_ID, { url: MCP_SERVER_URL });
     const tools = await manager.getToolsForAiSdk([SERVER_ID]);
-    agent = new TestAgent({
+    runner = new HostRunner({
       tools,
       model: MODEL,
       apiKey: LLM_API_KEY,
@@ -259,13 +259,13 @@ Optionally: **fail loudly** in dev when vars are missing (`throw` or `describe` 
 
 ## 6. Operational reminders
 
-- **Default `it(..., 90_000)`** per test. Use `**120_000`–`180_000**` and a matching `**agent.prompt(..., { timeoutMs: ... })**` when the brief implies **streaming, animation, slow MCP, or long multi-tool** runs (wall-clock often exceeds 90s end-to-end). Raise `**beforeAll` / `afterAll` hook timeouts** in Vitest if hooks approach default limits (`hookTimeout` in config or per-hook timeout argument).
-- `**await`** every `agent.prompt`, `reporter.record*`, `reporter.finalize`, `connectToServer`, `disconnectAllServers`.
+- **Default `it(..., 90_000)`** per test. Use `**120_000`–`180_000**` and a matching `**runner.run(..., { timeoutMs: ... })**` when the brief implies **streaming, animation, slow MCP, or long multi-tool** runs (wall-clock often exceeds 90s end-to-end). Raise `**beforeAll` / `afterAll` hook timeouts** in Vitest if hooks approach default limits (`hookTimeout` in config or per-hook timeout argument).
+- `**await`** every `runner.prompt`, `reporter.record*`, `reporter.finalize`, `connectToServer`, `disconnectAllServers`.
 - **One reporter per file**; `**finalize()` in `afterAll`** with a generous timeout — call **`finalize()` before `disconnectAllServers()`** so replay config is still available from the manager (§3, §5b). Treat upload as **non-fatal** when agreed (§3, §5b).
-- **`mcpClientManager` on `createEvalRunReporter`:** pass the connected `manager` here **in addition to** `TestAgent` — uploads need this to attach **`serverReplayConfigs`** (`hasServerReplayConfig`); the agent’s field alone does not populate the report payload (§3).
+- **`mcpClientManager` on `createEvalRunReporter`:** pass the connected `manager` here **in addition to** `HostRunner` — uploads need this to attach **`serverReplayConfigs`** (`hasServerReplayConfig`); the runner’s field alone does not populate the report payload (§3).
 - **MCPJam UI replay** uses stored MCP replay plus **your Settings API keys** for the suite’s LLM providers; keys are not stored on the run.
-- `**maxSteps: 8`** on `TestAgent` unless the Explore case implies a longer tool chain.
-- `**mcpClientManager` on `TestAgent`:** pass the connected `manager` whenever results are reported to MCPJam so `**widgetSnapshots`** (MCP App HTML) are captured; without it, uploaded traces only have messages + spans.
+- `**maxSteps: 8`** on `HostRunner` unless the Explore case implies a longer tool chain.
+- `**mcpClientManager` on `HostRunner`:** pass the connected `manager` whenever results are reported to MCPJam so `**widgetSnapshots`** (MCP App HTML) are captured; without it, uploaded traces only have messages + spans.
 - Wrap LLM suites with `**(RUN_LLM_TESTS ? describe : describe.skip)**` and **nest lifecycle hooks inside that `describe`** (§5b) so skipped runs do not connect to the MCP.
 - If the user has not yet listed required env vars, **stop and ask** for them (§5a) before producing runnable files; emit the **env contract** block (§5a.4) before codegen.
 

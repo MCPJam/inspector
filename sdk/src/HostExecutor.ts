@@ -1,8 +1,9 @@
 import type { StopCondition, TimeoutConfiguration, ToolSet } from "ai";
 import type { PromptResult } from "./PromptResult.js";
+import type { MCPServerReplayConfig } from "./eval-reporting-types.js";
 
 /**
- * Options for the prompt() method
+ * Options for the run() method
  */
 export interface PromptOptions {
   /** Previous PromptResult(s) to include as conversation context for multi-turn conversations */
@@ -24,13 +25,13 @@ export interface PromptOptions {
    * import { hasToolCall } from "@mcpjam/sdk";
    *
    * // Stop the loop after the step where "search_tasks" is called
-   * const result = await agent.prompt("Find my tasks", {
+   * const result = await executor.run("Find my tasks", {
    *   stopWhen: hasToolCall("search_tasks"),
    * });
    * expect(result.hasToolCall("search_tasks")).toBe(true);
    *
    * // Multiple conditions (any one being true stops the loop)
-   * const result = await agent.prompt("Do something", {
+   * const result = await executor.run("Do something", {
    *   stopWhen: [hasToolCall("tool_a"), hasToolCall("tool_b")],
    * });
    * ```
@@ -61,13 +62,28 @@ export interface PromptOptions {
 }
 
 /**
- * Minimal agent interface for running eval tests.
- * TestAgent implements this; use TestAgent.mock() for deterministic tests
- * without the unsafe `as unknown as TestAgent` cast.
+ * Minimal executor interface that eval tests run against. Implemented by
+ * `HostRunner` (sync, tools pre-resolved) and `HostRuntime` (live binding
+ * to a manager). Use `HostRunner.mock()` for deterministic tests without
+ * an unsafe `as unknown as HostRunner` cast.
  */
-export interface EvalAgent {
-  prompt(message: string, options?: PromptOptions): Promise<PromptResult>;
-  withOptions(options: Record<string, any>): EvalAgent;
+export interface HostExecutor {
+  run(message: string, options?: PromptOptions): Promise<PromptResult>;
+  withOptions(options: Record<string, any>): HostExecutor;
   getPromptHistory(): PromptResult[];
   resetPromptHistory(): void;
+  /**
+   * Returns the immutable `HostJson` snapshot driving this executor, if it
+   * was constructed from a `Host`. Optional because callers can also build
+   * an executor without supplying a `Host` (legacy explicit-config path).
+   */
+  getHostSnapshot?(): import("./host-config/public-types.js").HostJson | undefined;
+  /**
+   * Returns replay configs for the executor's attached MCP servers.
+   * Optional — `HostRunner` and `HostRuntime` expose it when their
+   * underlying manager supports it, so SDK eval uploads can infer
+   * replay configs without callers manually copying them into
+   * `mcpjam.serverReplayConfigs`.
+   */
+  getServerReplayConfigs?(): MCPServerReplayConfig[] | undefined;
 }

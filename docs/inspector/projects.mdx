@@ -16,10 +16,13 @@ Each project saves its own set of MCP servers. Switch between projects with one 
 
 ## Getting Started
 
-1. **Click the project name** in the header bar
-2. **Create a project** - Click "Add Project" and give it a name
+The combined org and project switcher sits at the top of the sidebar. It shows your active project name and, below it, the organization it belongs to.
+
+1. **Click the switcher** at the top of the sidebar to open the context menu
+2. **Create a project** - Click the **+** icon next to the **Projects** heading and give it a name
 3. **Add your servers** - Configure your MCP servers in the Servers tab
-4. **Share with your team** - Click the share button and invite collaborators
+4. **Enable auto-connect** - Use the **Auto-connect** toggle in the Servers tab header to automatically connect all project servers whenever a host opens
+5. **Share with your team** - Click the share button and invite collaborators
 
 <Info>
 When you switch projects, all servers disconnect automatically to give you a clean slate.
@@ -33,17 +36,47 @@ When you switch projects, all servers disconnect automatically to give you a cle
   allowFullScreen
 ></iframe>
 
+## Switching Organizations
+
+The **Organization** section at the top of the context menu shows your active organization. Click the organization chip to open a popover listing all your organizations and select a different one. Switching organizations reloads the sidebar with that organization's projects — no page reload required.
+
+- On desktop, hovering over the chip also opens the organization list.
+- The gear icon next to an organization name (visible to admins and owners) navigates to that organization's settings.
+- Per-project settings gears and member avatars are shown on each project row in the list.
+
+<Info>
+After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
+</Info>
+
 ## Sharing Projects
 
 Project sharing lets your entire team work with the same servers. Set up your project once, invite your team by email, and everyone gets access to the same servers with the same configurations instantly.
 
 ### What Gets Shared
 
-Members get access to every server in the project with the same configuration.
+Members get access to every server in the project with the same configuration. Project admins can also configure which servers auto-connect and set per-server overrides (headers, timeout) from the Servers tab — these settings apply across every host in the project.
 
 <Note>
 For security, authorization headers and OAuth tokens are never shared. Each team member authenticates with their own credentials when connecting to servers that require authentication.
 </Note>
+
+## Secret storage for env vars and headers
+
+When you save a server that has **environment variables** (stdio) or **custom HTTP headers**, those values are stored as encrypted secrets. The next time you open the server's edit form, those fields show **"Hidden — Reveal to view"** instead of the raw values.
+
+### Revealing saved secrets
+
+Click **Reveal** next to the hidden section to fetch and display the stored values. You can then view or edit them as normal.
+
+<Warning>
+If you want to change the **authentication type** (for example, switching from Bearer Token to a different method) on an HTTP server that has hidden headers, you must click **Reveal** first. Saving an auth change without revealing will show a validation error to prevent accidentally overwriting hidden headers.
+</Warning>
+
+### How updates work
+
+- **Env vars**: Any edit to the env vars section (add, remove, or change a value) replaces the stored secret with the new set of values on save.
+- **Custom headers**: Any edit to headers or the authentication type replaces the stored headers secret on save.
+- If you save without revealing or editing a secret section, the existing stored secret is left unchanged.
 
 ### Real-Time Sync
 
@@ -63,6 +96,18 @@ Once they sign in with that email address, the shared project will appear in the
 If you created the project, you can remove any member by clicking the X next to their name.
 
 If you're not the creator, you can leave the project at any time. The creator can also remove you from the project.
+
+## Project Settings
+
+Open **Project Settings** (gear icon in the header) to manage project-level configuration.
+
+### Default host config
+
+The **Default Host Config** section sets the seed configuration applied to new chatboxes, eval suites, and direct chat tabs when they are created. It controls the default model, system prompt, temperature, tool approval, connection settings, capabilities, and host context for anything new in the project.
+
+Editing the default host config does **not** change existing chatboxes or eval suites — each owns its own config once created.
+
+The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
 
 ## What's Next
 

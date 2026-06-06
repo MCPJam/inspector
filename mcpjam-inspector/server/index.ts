@@ -102,6 +102,7 @@ import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
+import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
 import {
   SERVER_PORT,
   CORS_ORIGINS,
@@ -557,6 +558,10 @@ async function shutdown() {
 
   appLogger.info("Shutting down gracefully...");
   try {
+    // Abort active synthetic-session runs and write a terminal "failed"
+    // status so the dialog/UI doesn't see a stuck "running" run. Bounded
+    // by an internal timeout; the outer `forceExitTimer` still wins.
+    await shutdownRunningSimulations();
     await tunnelManager.closeAll();
     server.close();
     await appLogger.flush();

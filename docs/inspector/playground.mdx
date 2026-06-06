@@ -65,7 +65,7 @@ Switch between three perspectives on the same conversation from the segmented co
 
 - **Chat** — The normal thread with inline messages, tool calls, and rendered widgets.
 - **Trace** — A timestamped timeline of every step (user turns, agent turns, tool calls) with per-step and total latency and token counts. Expand any step to inspect its raw input and output.
-- **Raw** — The full JSON payload sent to the model (system prompt, tool definitions, conversation history). Updates as the conversation changes. Useful for debugging tool schemas and verifying what the model actually sees.
+- **Raw** — The full JSON payload sent to the model (system prompt, tool definitions, conversation history). Available for both live sessions and previously-saved sessions you reopen.
 
 <Frame>
   <img
@@ -88,9 +88,25 @@ Open the **Tools** tab in the left rail to invoke any tool by hand:
 
 When multiple servers are selected at the same time, the Tools rail aggregates every server's tools into one list and routes each execution to the right server automatically.
 
+## Model Picker
+
+The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
+
+- **Free models** — Frontier models (Claude, GPT, Gemini, DeepSeek, and more) available at no cost with no API key required.
+- **Your providers** — Models from providers you've configured in Settings with your own API key.
+
+The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together.
+
 ## Multi-Model Compare
 
 Send one prompt to up to 3 models simultaneously. Open the model picker, toggle **Multiple models** on, and select the models you want to compare. Each model's response — including tool calls and rendered widgets — appears in its own column.
+
+<Note>
+  The **Multiple models** toggle is hidden when the active session is shared
+  with the project (project-visible). Enabling it on a shared session would
+  mutate experiment state for every collaborator. Switch the session back to
+  private to use multi-model compare.
+</Note>
 
 <Frame>
   <img
@@ -108,6 +124,13 @@ Toggle **Multiple hosts** on in the host picker (top-left of the center header) 
 One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
 
 This is the fastest way to verify that a widget renders correctly across the host environments you intend to ship to.
+
+<Note>
+  The **Multiple hosts** toggle and the host picker are hidden when the active
+  session is shared with the project (project-visible), for the same reason as
+  multi-model compare. Switch the session back to private to use multi-host
+  compare.
+</Note>
 
 ## Sessions
 
@@ -139,6 +162,30 @@ Toggle light and dark mode to test both appearances.
 
 Switch between Claude and ChatGPT host styles. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
 
+Each host style ships with a distinct `hostCapabilities` preset. Switching from one preset to another changes the capabilities advertised in the `ui/initialize` handshake, so widgets that gate on optional fields (such as `serverResources` or `logging`) will behave differently under each style.
+
+| Preset | `HostContext.toolInfo` | `availableDisplayModes` |
+|---|---|---|
+| Claude | Included | `["inline", "fullscreen", "pip"]` |
+| Copilot | Omitted (`undefined`) | `["inline", "fullscreen"]` |
+| ChatGPT | Included | `["inline", "fullscreen", "pip"]` |
+
+**Copilot** follows Microsoft 365 Copilot's published bridge: `toolInfo` is not delivered and `pip` is not advertised, so a widget that calls `app.getHostContext()?.toolInfo` on the Copilot preset correctly sees `undefined`.
+
+### Host Capabilities
+
+The **Host Capabilities** button in the toolbar (next to Host Context) lets you override the `hostCapabilities` blob advertised to MCP App widgets in the `ui/initialize` response.
+
+By default, the active host style's preset is used. Click **Host Capabilities** to open the editor and customize which capabilities the mock host claims to support. This is useful for testing how your widget behaves when specific capabilities are absent or present — for example, verifying that your widget degrades gracefully when `serverResources` is not advertised.
+
+- **No override** — the active host style's preset is used (shown as the placeholder in the editor)
+- **Custom override** — your JSON object is advertised verbatim; an "Override" badge appears on the button
+- **Clear override** — resets back to the host style preset
+
+<Note>
+  Host Capabilities configures what the mock host *advertises*. Enforcement — rejecting widget requests for capabilities not in the blob — is a planned follow-up. Until then, the inspector will still service all widget requests regardless of what the handshake advertises.
+</Note>
+
 ### Locale
 
 Pick a BCP 47 locale (e.g. `en-US`, `es-ES`, `ja-JP`, `fr-FR`) to verify internationalization.
@@ -153,8 +200,8 @@ Choose from 19 IANA timezones plus `UTC` to test time-aware widgets.
 
 ### CSP Mode
 
-- **Permissive** (default) — Allows all HTTPS resources. Recommended for development.
-- **Strict** — Only allows domains declared in your widget's CSP metadata (`openai/widgetCSP` for ChatGPT Apps, `ui.csp` for MCP Apps).
+- **Permissive** (default) — Allows all HTTP and HTTPS resources. Recommended for development.
+- **Strict** — Only allows domains declared in your widget's CSP metadata (`openai/widgetCSP` or `_meta.ui.csp` for ChatGPT Apps, `ui.csp` for MCP Apps).
 
 ### Device Capabilities
 
@@ -177,14 +224,11 @@ All three display modes are supported for both ChatGPT Apps and MCP Apps:
 
 Widgets can request mode changes from their own code; users can exit PiP or Fullscreen via the close button.
 
-### Protocol Selector
+### Widget rendering
 
-When a tool declares both `openai/outputTemplate` and `ui.resourceUri`, a protocol toggle appears in the tool row so you can flip between the two host bridges:
+All widgets — whether they declare `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — render through a single unified renderer. The `window.openai` compatibility shim is always injected, so both `window.openai.*` calls and `ui/*` JSON-RPC messages work regardless of which metadata the tool declares.
 
-- **ChatGPT Apps** — Renders using the `window.openai` host bridge.
-- **MCP Apps** — Renders using the `ui/*` JSON-RPC host bridge.
-
-Tools that use a single protocol render under that protocol automatically.
+Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored.
 
 ## Per-Widget Debugging
 
@@ -209,6 +253,10 @@ In Strict mode, a badge shows the number of blocked requests. The panel includes
 - **Suggested fix** — Copyable JSON snippet to add to your `openai/widgetCSP` or `ui.csp` field.
 - **Blocked requests** — Each violation with the directive and source that was blocked.
 - **Declared domains** — The connect, resource, frame, and base URI domains your widget currently declares.
+
+#### Mounts
+
+The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
 
 ### Save View
 

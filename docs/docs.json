@@ -7,61 +7,140 @@
   "name": "MCPJam Inspector",
   "colors": {
     "primary": "#EF5B25",
-    "light": "#FF7A4D",
-    "dark": "#D44A1A"
+    "light": "#FF8B5C",
+    "dark": "#C94818"
+  },
+  "background": {
+    "color": {
+      "light": "#FAF9F5",
+      "dark": "#2D2A23"
+    }
+  },
+  "appearance": {
+    "default": "light",
+    "strict": false
+  },
+  "fonts": {
+    "heading": { "family": "Geist", "weight": 500 },
+    "body": { "family": "Geist", "weight": 400 }
+  },
+  "styling": {
+    "codeblocks": {
+      "theme": "css-variables"
+    }
   },
   "favicon": "/mcp_jam.svg",
   "navigation": {
-    "groups": [
+    "tabs": [
       {
-        "group": "Overview",
-        "icon": "book-open",
+        "tab": "Get Started",
+        "icon": "rocket",
         "pages": [
           "index",
           "getting-started",
           "installation",
-          "inspector/launch-from-code",
-          "hosted/overview"
+          "hosted/overview",
+          "troubleshooting/common-errors"
         ]
       },
       {
-        "group": "Inspector Features",
-        "icon": "star",
-        "pages": [
-          "inspector/playground",
-          "inspector/clients",
-          "inspector/protocol-versions",
-          "inspector/guided-oauth",
-          "inspector/tools-prompts-resources",
-          "inspector/evals",
-          "inspector/projects",
-          "inspector/views",
-          "inspector/skills"
+        "tab": "Inspector",
+        "icon": "binoculars",
+        "groups": [
+          {
+            "group": "Connect",
+            "icon": "plug",
+            "pages": [
+              "inspector/home",
+              "inspector/clients",
+              "inspector/projects",
+              {
+                "page": "inspector/protocol-versions",
+                "tag": "Preview"
+              }
+            ]
+          },
+          {
+            "group": "MCP Apps",
+            "icon": "layout-dashboard",
+            "pages": [
+              {
+                "page": "inspector/playground",
+                "tag": "NEW"
+              },
+              "inspector/views",
+              "inspector/evals",
+              {
+                "page": "inspector/host-templates",
+                "tag": "NEW"
+              }
+            ]
+          },
+          {
+            "group": "Auth & Conformance",
+            "icon": "shield-check",
+            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+          },
+          {
+            "group": "Primitives",
+            "icon": "puzzle",
+            "pages": [
+              "inspector/tools-prompts-resources",
+              {
+                "page": "inspector/skills",
+                "tag": "NEW"
+              }
+            ]
+          },
+          {
+            "group": "Embedding",
+            "icon": "code",
+            "pages": ["inspector/launch-from-code"]
+          },
+          {
+            "group": "Recipes",
+            "icon": "map",
+            "pages": ["guides/first-mcp-app", "guides/first-chatgpt-app-react"]
+          }
         ]
       },
       {
-        "group": "CLI",
+        "tab": "CLI",
         "icon": "terminal",
-        "pages": [
-          "cli/overview",
-          "cli/server-inspection",
-          "cli/oauth-conformance",
-          "cli/oauth-login",
-          "cli/apps-conformance",
-          "cli/tools-resources-prompts",
-          "cli/ci",
-          "cli/telemetry",
-          "cli/reference"
-        ]
-      },
-      {
-        "group": "SDK",
-        "icon": "code",
-        "pages": [
-          "sdk/index",
-          "sdk/quickstart",
+        "groups": [
           {
             "group": "Guides",
+            "icon": "map",
+            "pages": [
+              "cli/overview",
+              "cli/server-inspection",
+              "cli/oauth-conformance",
+              "cli/oauth-login",
+              "cli/apps-conformance",
+              "cli/tools-resources-prompts",
+              "cli/ci",
+              "cli/telemetry"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "book",
+            "pages": ["cli/reference"]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
+        "icon": "code",
+        "tag": "v1",
+        "groups": [
+          {
+            "group": "Get Started",
+            "icon": "rocket",
+            "pages": ["sdk/index", "sdk/quickstart"]
+          },
+          {
+            "group": "Concepts",
             "icon": "map",
             "pages": [
               "sdk/concepts/connecting-servers",
@@ -76,7 +155,7 @@
             "icon": "book",
             "pages": [
               "sdk/reference/mcp-client-manager",
-              "sdk/reference/test-agent",
+              "sdk/reference/host-runner",
               "sdk/reference/prompt-result",
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
@@ -89,16 +168,6 @@
             ]
           }
         ]
-      },
-      {
-        "group": "Guides",
-        "icon": "map",
-        "pages": ["guides/first-mcp-app", "guides/first-chatgpt-app-react"]
-      },
-      {
-        "group": "Troubleshooting",
-        "icon": "wrench",
-        "pages": ["troubleshooting/common-errors"]
       }
     ],
     "global": {
@@ -129,7 +198,8 @@
     { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
     { "source": "/inspector/chat", "destination": "/inspector/playground" },
     { "source": "/inspector/app-builder", "destination": "/inspector/playground" },
-    { "source": "/inspector/test-cases", "destination": "/inspector/evals" }
+    { "source": "/inspector/test-cases", "destination": "/inspector/evals" },
+    { "source": "/sdk/reference/test-agent", "destination": "/sdk/reference/host-runner" }
   ],
   "navbar": {
     "links": [
@@ -158,6 +228,13 @@
       "website": "https://mcpjam.com",
       "linkedin": "https://www.linkedin.com/company/109011364/",
       "x": "https://x.com/mcpjams"
+    }
+  },
+  "errors": {
+    "404": {
+      "redirect": false,
+      "title": "Lost in the inspector?",
+      "description": "Try the [getting started guide](/getting-started), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
     }
   }
 }

@@ -53,12 +53,14 @@ describe("Everything MCP example", () => {
 
 Test that an LLM correctly understands how to use your MCP server. Evals are non-deterministic and multiple runs are needed.
 
+> **Heads up: renames in 1.11.** `TestAgent` → `HostRunner`, `EvalAgent` → `HostExecutor`, `.prompt()` → `.run()`, `Host.addServer()` → `Host.requireServer()`. No deprecation aliases. See the [changelog](./CHANGELOG.md) for the codemod.
+
 ```ts
-import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalTest } from "@mcpjam/sdk";
 
 describe("Asana MCP Evals", () => {
   let manager: MCPClientManager;
-  let agent: TestAgent;
+  let runner: HostRunner;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -69,7 +71,7 @@ describe("Asana MCP Evals", () => {
       },
     });
 
-    agent = new TestAgent({
+    runner = new HostRunner({
       tools: await manager.getToolsForAiSdk(["asana"]),
       model: "openai/gpt-4o",
       apiKey: process.env.OPENAI_API_KEY!,
@@ -84,13 +86,13 @@ describe("Asana MCP Evals", () => {
   test("list workspaces > 80% accuracy", async () => {
     const evalTest = new EvalTest({
       name: "list-workspaces",
-      test: async (agent) => {
-        const result = await agent.prompt("Show me all my Asana workspaces");
+      test: async (runner) => {
+        const result = await runner.run("Show me all my Asana workspaces");
         return result.hasToolCall("asana_list_workspaces");
       },
     });
 
-    await evalTest.run(agent, {
+    await evalTest.run(runner, {
       iterations: 10,
       onFailure: (report) => console.error(report), // Print the report when a test iteration fails.
     });
@@ -102,18 +104,18 @@ describe("Asana MCP Evals", () => {
   test("get user then list projects > 80% accuracy", async () => {
     const evalTest = new EvalTest({
       name: "user-then-projects",
-      test: async (agent) => {
-        const r1 = await agent.prompt("Who am I in Asana?");
+      test: async (runner) => {
+        const r1 = await runner.run("Who am I in Asana?");
         if (!r1.hasToolCall("asana_get_user")) return false;
 
-        const r2 = await agent.prompt("Now list my projects", {
+        const r2 = await runner.run("Now list my projects", {
           context: [r1],
         }); // Continue the conversation from the previous prompt
         return r2.hasToolCall("asana_get_projects");
       },
     });
 
-    await evalTest.run(agent, {
+    await evalTest.run(runner, {
       iterations: 5,
       onFailure: (report) => console.error(report),
     });
@@ -125,8 +127,8 @@ describe("Asana MCP Evals", () => {
   test("search tasks passes correct workspace_gid", async () => {
     const evalTest = new EvalTest({
       name: "search-args",
-      test: async (agent) => {
-        const result = await agent.prompt(
+      test: async (runner) => {
+        const result = await runner.run(
           "Search for tasks containing 'bug' in my workspace"
         );
         const args = result.getToolArguments("asana_search_tasks");
@@ -137,7 +139,7 @@ describe("Asana MCP Evals", () => {
       },
     });
 
-    await evalTest.run(agent, {
+    await evalTest.run(runner, {
       iterations: 5,
       onFailure: (report) => console.error(report),
     });
@@ -146,6 +148,82 @@ describe("Asana MCP Evals", () => {
   });
 });
 ```
+
+### Host + HostRuntime: bring your own runtime
+
+`Host` is the portable host-configuration spec — the same object the MCPJam Inspector uses to drive its Playground and eval suites. You can build one in your own code and run evals against it, so the inspector and your CI exercise the same host behavior (style, model, MCP profile, sandbox/permission policy, OpenAI-Apps compat, tool-visibility policy, etc.).
+
+```ts
+import { MCPClientManager, Host, EvalTest } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager();
+await manager.connectToServer("everything", {
+  command: "npx",
+  args: ["-y", "@modelcontextprotocol/server-everything"],
+});
+
+// Build the spec — Host is just an editable wrapper around the canonical JSON.
+const host = new Host({
+  style: "mcpjam",
+  model: "openai/gpt-4o",
+  systemPrompt: "You are a helpful assistant.",
+}).requireServer("everything");
+
+// Bind the spec to a live MCP manager. `apiKey` lives on the runtime, not per-call.
+const runtime = host.withManager(manager, { apiKey: process.env.OPENAI_API_KEY! });
+
+const evalTest = new EvalTest({
+  name: "add",
+  test: async (runner) => (await runner.run("Add 2 and 3")).hasToolCall("add"),
+});
+await evalTest.run(runtime, { iterations: 10 });
+```
+
+**`HostRuntime.run()` is stateless across turns.** Prior `PromptResult`s accumulate in `runtime.getPromptHistory()` for inspection but are NOT auto-replayed. Multi-turn continuity stays explicit via `PromptOptions.context`:
+
+```ts
+const r1 = await runtime.run("Who am I?");
+const r2 = await runtime.run("List my projects", { context: [r1] });
+```
+
+**Static specs use `HostRunner` directly.** When you've already resolved the tool set and don't need live-binding to a manager, skip the runtime and pass `host` straight into `HostRunner`:
+
+```ts
+import { HostRunner } from "@mcpjam/sdk";
+
+const runner = new HostRunner({
+  host: host.toJSON(),
+  tools: await manager.getToolsForAiSdk(["everything"]),
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+```
+
+`HostRunner` snapshots the host once at construction; post-construction mutations to the original `Host` do NOT affect the runner. `HostRuntime` snapshots on every `.run()` so live mutations to the bound `Host` take effect on the next iteration.
+
+**One-shot sugar:**
+
+```ts
+await host.run("write me a haiku", {
+  apiKey: process.env.OPENAI_API_KEY!,
+  mcpClientManager: manager,
+});
+```
+
+#### Eval reporting (Stage 5)
+
+When the inspector backend advertises the `evalsHostConfig` capability at `GET /sdk/v1/info`, the eval reporter additionally sends `{ hostConfig, hostConfigHash }` so the persisted run row in the MCPJam UI shows the exact host you ran with. Source order:
+
+1. `iteration.hostSnapshot` (per-iteration capture from `HostRuntime`)
+2. `executor.getHostSnapshot?.()` (fallback for executors that don't expose per-iteration snapshots)
+3. `MCPJamReportingConfig.host` (explicit override, compatibility path)
+
+Pass-1 only sends a run-level host config when all iteration snapshots canonicalize to the same hash. If you mutate the bound `Host` between iterations, the reporter omits the run-level field (per-iteration wire support is a later stage). Old backends without the capability are unaffected.
+
+#### `@mcpjam/sdk/host-config/internal`
+
+The `internal` subpath exposes the canonicalizer, hasher, normalizer, and policy resolvers (`canonicalizeHostConfigV2`, `computeHostConfigHashV2`, `normalizeSdkEvalHostConfigForWire`, `extractHostExecutionPolicy`, `resolveOpenAiCompatForHostConfig`, …) that the MCPJam backend and the inspector server both import. It is **first-party-only, not semver-stable** — external consumers should use the `Host` facade. The MCPJam backend `convex/lib/hostConfigV2.ts` imports the canonicalizer directly from this subpath so there is exactly one source of truth shared between the SDK and the persisted `hostConfigs` rows.
+
+---
 
 ### OAuth Conformance
 
@@ -283,7 +361,7 @@ await manager.connectToServer("asana", {
   },
 });
 
-// Get tools for TestAgent
+// Get tools for HostRunner
 const tools = await manager.getToolsForAiSdk(["everything", "asana"]);
 
 // Direct MCP operations
@@ -336,14 +414,14 @@ await manager.executeTool(
 </details>
 
 <details>
-<summary><strong>TestAgent</strong></summary>
+<summary><strong>HostRunner</strong></summary>
 
 Runs LLM prompts with MCP tool access.
 
 ```ts
 import { hasToolCall } from "@mcpjam/sdk";
 
-const agent = new TestAgent({
+const runner = new HostRunner({
   tools: await manager.getToolsForAiSdk(),
   model: "openai/gpt-4o", // provider/model format
   apiKey: process.env.OPENAI_API_KEY!,
@@ -353,33 +431,33 @@ const agent = new TestAgent({
 });
 
 // Run a prompt
-const result = await agent.prompt("Add 2 and 3");
+const result = await runner.run("Add 2 and 3");
 
 // Multi-turn with context
-const r1 = await agent.prompt("Who am I?");
-const r2 = await agent.prompt("List my projects", { context: [r1] });
+const r1 = await runner.run("Who am I?");
+const r2 = await runner.run("List my projects", { context: [r1] });
 
 // Stop the loop after the step where a tool is called
-const r3 = await agent.prompt("Search tasks", {
+const r3 = await runner.run("Search tasks", {
   stopWhen: hasToolCall("search_tasks"),
 });
 r3.hasToolCall("search_tasks"); // true
 
 // Bound prompt runtime
-const r4 = await agent.prompt("Run a long workflow", {
+const r4 = await runner.run("Run a long workflow", {
   timeout: { totalMs: 10_000, stepMs: 2_500 },
 });
 r4.hasError(); // true if the prompt timed out
 
 // Exit early after selecting a tool without waiting for the MCP round-trip
-const r5 = await agent.prompt("Search tasks", {
+const r5 = await runner.run("Search tasks", {
   stopAfterToolCall: "search_tasks",
   timeoutMs: 5_000,
 });
 r5.getToolArguments("search_tasks"); // captured even if the prompt stops early
 ```
 
-`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `HostRunner` also applies `stepCountIs(maxSteps)` as a safety guard.
 
 `timeout` bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` is accepted for parity but mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
 
@@ -392,10 +470,10 @@ r5.getToolArguments("search_tasks"); // captured even if the prompt stops early
 <details>
 <summary><strong>PromptResult</strong></summary>
 
-Returned by `agent.prompt()`. Contains the LLM response and tool calls.
+Returned by `runner.run()`. Contains the LLM response and tool calls.
 
 ```ts
-const result = await agent.prompt("Add 2 and 3");
+const result = await runner.run("Add 2 and 3");
 
 // Tool calls
 result.hasToolCall("add"); // boolean
@@ -440,13 +518,13 @@ Runs a single test scenario with multiple iterations.
 ```ts
 const test = new EvalTest({
   name: "addition",
-  test: async (agent) => {
-    const result = await agent.prompt("Add 2 and 3");
+  test: async (runner) => {
+    const result = await runner.run("Add 2 and 3");
     return result.hasToolCall("add");
   },
 });
 
-await test.run(agent, {
+await test.run(runner, {
   iterations: 30,
   concurrency: 5, // parallel iterations (default: 5)
   retries: 2, // retry failed iterations (default: 0)
@@ -479,8 +557,8 @@ const suite = new EvalSuite({ name: "Math Operations" });
 suite.add(
   new EvalTest({
     name: "addition",
-    test: async (agent) => {
-      const r = await agent.prompt("Add 2+3");
+    test: async (runner) => {
+      const r = await runner.run("Add 2+3");
       return r.hasToolCall("add");
     },
   })
@@ -489,14 +567,14 @@ suite.add(
 suite.add(
   new EvalTest({
     name: "multiply",
-    test: async (agent) => {
-      const r = await agent.prompt("Multiply 4*5");
+    test: async (runner) => {
+      const r = await runner.run("Multiply 4*5");
       return r.hasToolCall("multiply");
     },
   })
 );
 
-await suite.run(agent, { iterations: 30 });
+await suite.run(runner, { iterations: 30 });
 
 // Aggregate metrics
 suite.accuracy(); // overall accuracy

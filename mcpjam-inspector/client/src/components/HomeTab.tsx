@@ -1,12 +1,15 @@
-import { useEffect, useMemo } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useCallback, useMemo } from "react";
+import { useQuery } from "convex/react";
+import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedClients } from "./home/RecommendedClients";
-import { ProductUpdatesFeed } from "./home/ProductUpdatesFeed";
+import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
+import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
+import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
 
 interface HomeTabProps {
   organizationId: string | null;
@@ -36,6 +39,56 @@ function deriveFirstName(opts: {
 
 export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const navigate = useAppNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sessionParam = searchParams.get("session");
+
+  const handleSessionStart = useCallback(
+    (id: string, firstMessage: string) => {
+      // Stash the typed prompt so the inline thread can autosubmit it on
+      // mount — without this, the hero would lose the message in the
+      // hero-to-thread swap. sessionStorage (not localStorage) so a stale
+      // pending message can't leak across browser sessions.
+      //
+      // The `fresh: true` flag distinguishes "user just minted this id and
+      // hit submit" from "user landed on /home?session=<id> via the Recent
+      // Chat pill". Without it, the thread can't tell the two apart and
+      // would replay the prompt against an already-hydrated transcript if
+      // hydration hadn't committed yet on the first effect pass.
+      try {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(
+            `mcpjam:agent-pending:${id}`,
+            JSON.stringify({ text: firstMessage, fresh: true })
+          );
+        }
+      } catch {
+        // Ignore quota/disabled storage — worst case the user retypes.
+      }
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("session", id);
+          return next;
+        },
+        { replace: false }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const handleResumeSession = useCallback(
+    (id: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("session", id);
+          return next;
+        },
+        { replace: false }
+      );
+    },
+    [setSearchParams]
+  );
   const { user } = useAuth();
   const convexUser = useQuery("users:getCurrentUser" as any) as
     | { name?: string }
@@ -77,20 +130,6 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
       ? ({ organizationId, metric: "messages_sent_30d" } as any)
       : "skip"
   ) as OrgMetricResult;
-
-  const ensureMetricFresh = useMutation(
-    "orgMetrics:ensureOrgMetricFresh" as any
-  );
-  useEffect(() => {
-    if (!organizationId) return;
-    const args = { organizationId } as { organizationId: string };
-    Promise.all([
-      ensureMetricFresh({ ...args, metric: "tool_executions_30d" } as any),
-      ensureMetricFresh({ ...args, metric: "messages_sent_30d" } as any),
-    ]).catch(() => {
-      // Soft-fail: cache stays stale, UI shows last known value (or 0).
-    });
-  }, [organizationId, ensureMetricFresh]);
 
   const fullName =
     convexUser?.name ||
@@ -143,6 +182,30 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
           </h1>
         </header>
 
+        {/* MCPJam Agent surface — hero composer, or inline thread when a
+            ?session=<id> URL param is present. The future bubble reuses
+            these same components without renaming. */}
+        {sessionParam ? (
+          <McpjamAgentThread
+            sessionId={sessionParam}
+            projectId={projectId}
+            organizationId={organizationId}
+            surface="home"
+          />
+        ) : (
+          <McpjamAgentHero
+            surface="home"
+            onSessionStart={handleSessionStart}
+            onResumeSession={handleResumeSession}
+            // The backend route requires `projectId`; without it, submit
+            // would 400. The hero's own model gate runs inside
+            // `useMcpjamAgentSession` on the thread side — the hero itself
+            // doesn't see the model, but `projectId` is the gate that
+            // matters at mint time.
+            ready={Boolean(projectId)}
+          />
+        )}
+
         {/* Slim stats — pills with dot separators */}
         <OrgStatsStrip
           memberCount={isLoading ? null : data!.memberCount}
@@ -155,6 +218,9 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
           messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
         />
 
+        {/* What's new — release feed with hover preview + click-to-expand modal. */}
+        <ProductUpdatesRow />
+
         {/* Hero card */}
         <RecommendedServers
           servers={data?.recommendedServers}
@@ -162,9 +228,8 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
         />
 
         {/* Secondary cards */}
-        <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="grid gap-5">
           <RecommendedClients projectId={projectId} />
-          <ProductUpdatesFeed />
         </div>
       </div>
     </div>
