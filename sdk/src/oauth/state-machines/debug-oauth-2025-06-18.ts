@@ -34,7 +34,11 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
-import { buildResourceMetadataUrl } from "./shared/urls.js";
+import {
+  buildResourceMetadataUrl,
+  canonicalizeResourceUrl,
+  resolveOAuthResourceIndicator,
+} from "./shared/urls.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -233,7 +237,14 @@ export function buildActions_2025_06_18(
               label: "method",
               value: flowState.codeChallengeMethod || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "—" },
+            {
+              label: "resource",
+              value:
+                resolveOAuthResourceIndicator(
+                  flowState.serverUrl,
+                  flowState.resourceMetadata
+                ) ?? "—",
+            },
             { label: "Protocol", value: "2025-06-18" },
           ]
         : undefined,
@@ -252,7 +263,14 @@ export function buildActions_2025_06_18(
               value:
                 flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "" },
+            {
+              label: "resource",
+              value:
+                resolveOAuthResourceIndicator(
+                  flowState.serverUrl,
+                  flowState.resourceMetadata
+                ) ?? "",
+            },
           ]
         : undefined,
     },
@@ -306,7 +324,14 @@ export function buildActions_2025_06_18(
       details: flowState.codeVerifier
         ? [
             { label: "grant_type", value: "authorization_code" },
-            { label: "resource", value: flowState.serverUrl || "" },
+            {
+              label: "resource",
+              value:
+                resolveOAuthResourceIndicator(
+                  flowState.serverUrl,
+                  flowState.resourceMetadata
+                ) ?? "",
+            },
           ]
         : undefined,
     },
@@ -428,6 +453,11 @@ export const createDebugOAuthStateMachine = (
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
+  const getResourceIndicator = () =>
+    resolveOAuthResourceIndicator(
+      serverUrl,
+      getCurrentState().resourceMetadata
+    ) ?? canonicalizeResourceUrl(serverUrl);
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -1460,7 +1490,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                resource: getResourceIndicator(),
               },
             );
 
@@ -1496,9 +1526,7 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
-              authUrl.searchParams.set("resource", state.serverUrl);
-            }
+            authUrl.searchParams.set("resource", getResourceIndicator());
 
             const requestedScopeValue = resolveRequestedScopeValue({
               customScopes,
@@ -1583,9 +1611,7 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
-              tokenRequestBodyObj.resource = state.serverUrl;
-            }
+            tokenRequestBodyObj.resource = getResourceIndicator();
 
             const tokenRequest = {
               method: "POST",
@@ -1650,9 +1676,7 @@ export const createDebugOAuthStateMachine = (
               }
 
               // Add resource parameter if available
-              if (state.serverUrl) {
-                tokenRequestBody.set("resource", state.serverUrl);
-              }
+              tokenRequestBody.set("resource", getResourceIndicator());
 
               // Make the token request via backend proxy
               const response = await executeRequest(
@@ -1772,13 +1796,16 @@ export const createDebugOAuthStateMachine = (
 
                   // Check if audience claim exists and validate it
                   if (formatted.aud) {
-                    const expectedResource = state.serverUrl;
+                    const expectedResource = getResourceIndicator();
                     const audArray = Array.isArray(formatted.aud)
                       ? formatted.aud
                       : [formatted.aud];
 
                     const isValidAudience = audArray.some(
-                      (aud: string) => aud === expectedResource,
+                      (aud: string) =>
+                        aud === expectedResource ||
+                        canonicalizeResourceUrl(aud) ===
+                          canonicalizeResourceUrl(expectedResource)
                     );
 
                     audienceNote._validation = {

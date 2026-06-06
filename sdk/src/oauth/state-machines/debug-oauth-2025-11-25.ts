@@ -37,6 +37,7 @@ import {
 import {
   buildResourceMetadataUrl,
   canonicalizeResourceUrl,
+  resolveOAuthResourceIndicator,
 } from "./shared/urls.js";
 import {
   buildInitializeRequestBody,
@@ -337,9 +338,11 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "—",
+              value:
+                resolveOAuthResourceIndicator(
+                  flowState.serverUrl,
+                  flowState.resourceMetadata
+                ) ?? "—",
             },
             { label: "Protocol", value: "2025-11-25" },
           ]
@@ -361,9 +364,11 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
+              value:
+                resolveOAuthResourceIndicator(
+                  flowState.serverUrl,
+                  flowState.resourceMetadata
+                ) ?? "",
             },
           ]
         : undefined,
@@ -420,9 +425,11 @@ export function buildActions_2025_11_25(
             { label: "grant_type", value: "authorization_code" },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
+              value:
+                resolveOAuthResourceIndicator(
+                  flowState.serverUrl,
+                  flowState.resourceMetadata
+                ) ?? "",
             },
           ]
         : undefined,
@@ -544,8 +551,8 @@ export const createDebugOAuthStateMachine = (
     registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
   } = config;
 
-  // Canonicalize the server URL once at initialization (per RFC 8707)
-  const canonicalServerUrl = canonicalizeResourceUrl(serverUrl);
+  // Fallback resource indicator used before protected-resource metadata exists.
+  const fallbackResourceIndicator = canonicalizeResourceUrl(serverUrl);
   const redirectUri = redirectUrl;
   const initializeProtocolVersion = resolveInitializeProtocolVersion("2025-11-25");
   const dynamicRegistrationDefaults = dynamicRegistration ?? {};
@@ -570,6 +577,11 @@ export const createDebugOAuthStateMachine = (
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
+  const getResourceIndicator = () =>
+    resolveOAuthResourceIndicator(
+      serverUrl,
+      getCurrentState().resourceMetadata
+    ) ?? fallbackResourceIndicator;
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -1749,7 +1761,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: canonicalServerUrl,
+                resource: getResourceIndicator(),
               }
             );
 
@@ -1785,7 +1797,7 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            authUrl.searchParams.set("resource", canonicalServerUrl);
+            authUrl.searchParams.set("resource", getResourceIndicator());
 
             const requestedScopeValue = resolveRequestedScopeValue({
               customScopes,
@@ -1870,7 +1882,7 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            tokenRequestBodyObj.resource = canonicalServerUrl;
+            tokenRequestBodyObj.resource = getResourceIndicator();
 
             const tokenRequest = {
               method: "POST",
@@ -1934,8 +1946,8 @@ export const createDebugOAuthStateMachine = (
                 tokenRequestBody.set("client_secret", state.clientSecret);
               }
 
-              // Add resource parameter (canonicalized per RFC 8707)
-              tokenRequestBody.set("resource", canonicalServerUrl);
+              // Add resource parameter resolved from protected-resource metadata.
+              tokenRequestBody.set("resource", getResourceIndicator());
 
               // Make the token request via backend proxy
               const response = await executeRequest(
@@ -2055,13 +2067,16 @@ export const createDebugOAuthStateMachine = (
 
                   // Check if audience claim exists and validate it
                   if (formatted.aud) {
-                    const expectedResource = state.serverUrl;
+                    const expectedResource = getResourceIndicator();
                     const audArray = Array.isArray(formatted.aud)
                       ? formatted.aud
                       : [formatted.aud];
 
                     const isValidAudience = audArray.some(
-                      (aud: string) => aud === expectedResource
+                      (aud: string) =>
+                        aud === expectedResource ||
+                        canonicalizeResourceUrl(aud) ===
+                          canonicalizeResourceUrl(expectedResource)
                     );
 
                     audienceNote._validation = {
