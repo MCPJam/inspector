@@ -6,28 +6,19 @@ import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 // Type definitions matching backend
 export type ViewProtocol = "mcp-apps" | "openai-apps";
 
-export type DisplayContext = {
-  theme?: "light" | "dark";
-  displayMode?: "inline" | "pip" | "fullscreen";
-  deviceType?: "mobile" | "tablet" | "desktop";
-  viewport?: { width: number; height: number };
-  locale?: string;
-  timeZone?: string;
-  capabilities?: { hover: boolean; touch: boolean };
-  safeAreaInsets?: {
-    top: number;
-    right: number;
-    bottom: number;
-    left: number;
-  };
-};
+// Re-exported from the shared module so the playground hook, eval
+// fanout, and synthetic runner all reference the same definitions.
+// See `shared/widget-snapshot.ts` for the source of truth. The
+// `import type` brings the names into local scope so type references
+// below (`defaultContext: DisplayContext`, `widgetCsp?: WidgetCsp`)
+// resolve — `export type { ... }` alone is a pure re-export and does
+// not create a local binding.
+import type {
+  SharedChatWidgetDisplayContext as DisplayContext,
+  SharedChatWidgetCsp as WidgetCsp,
+} from "@/shared/widget-snapshot";
 
-export type WidgetCsp = {
-  connectDomains?: string[];
-  resourceDomains?: string[];
-  frameDomains?: string[];
-  baseUriDomains?: string[];
-};
+export type { DisplayContext, WidgetCsp };
 
 export type ServerInfo = {
   name: string;

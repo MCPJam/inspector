@@ -7,6 +7,11 @@ import type {
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import {
+  evalTraceSnapshotToPayload,
+  sanitizeWidgetForBackend,
+  type SharedChatWidgetSnapshotPayload,
+} from "@/shared/widget-snapshot";
 
 /**
  * Inspector-side per-turn fanout for the eval→chatSessions unification.
@@ -187,97 +192,22 @@ function sliceTraceIntoTurns(args: {
 }
 
 /**
- * Backend `appendEvalTurnTrace` widget shape (after renames). Kept inline
- * rather than imported from `@convex` to avoid pulling generated types
- * into the inspector server bundle. Mirror of
- * `appendEvalTurnTraceWidgetValidator` in
- * `mcpjam-backend/convex/testSuites.ts`.
+ * Translate the eval runner's captured snapshots to the shared
+ * `sharedChatWidgetSnapshots` payload shape and run them through the
+ * Convex transport sanitizer. The mapping + CSP normalization + $-key
+ * sanitization all live in `shared/widget-snapshot.ts` so every writer
+ * to that table (playground hook, synthetic runner, eval) goes through
+ * the same pipeline.
  */
-type BackendEvalWidget = {
-  toolCallId: string;
-  toolName: string;
-  /** Friendly MCP server name; backend resolves to Id<'servers'>. */
-  serverId: string;
-  widgetHtmlBlobId: string;
-  uiType: "mcp-apps" | "openai-apps";
-  resourceUri?: string;
-  widgetCsp?: {
-    connectDomains?: string[];
-    resourceDomains?: string[];
-    frameDomains?: string[];
-    baseUriDomains?: string[];
-  };
-  widgetPermissions?: unknown;
-  widgetPermissive?: boolean;
-  prefersBorder?: boolean;
-};
-
-function toStringArrayOrUndefined(v: unknown): string[] | undefined {
-  if (!Array.isArray(v)) return undefined;
-  const out: string[] = [];
-  for (const item of v) {
-    if (typeof item === "string") out.push(item);
-  }
-  return out.length > 0 ? out : undefined;
-}
-
-function normalizeWidgetCsp(
-  v: unknown,
-): BackendEvalWidget["widgetCsp"] | undefined {
-  if (!v || typeof v !== "object") return undefined;
-  const rec = v as Record<string, unknown>;
-  const out: BackendEvalWidget["widgetCsp"] = {};
-  const connect = toStringArrayOrUndefined(rec.connectDomains);
-  const resource = toStringArrayOrUndefined(rec.resourceDomains);
-  const frame = toStringArrayOrUndefined(rec.frameDomains);
-  const base = toStringArrayOrUndefined(rec.baseUriDomains);
-  if (connect) out.connectDomains = connect;
-  if (resource) out.resourceDomains = resource;
-  if (frame) out.frameDomains = frame;
-  if (base) out.baseUriDomains = base;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 function serializeWidgetsForBackend(
   snapshots: EvalTraceWidgetSnapshot[] | undefined,
-): BackendEvalWidget[] {
+): SharedChatWidgetSnapshotPayload[] {
   if (!snapshots || snapshots.length === 0) return [];
-  const out: BackendEvalWidget[] = [];
+  const out: SharedChatWidgetSnapshotPayload[] = [];
   for (const snap of snapshots) {
-    if (!snap.widgetHtmlBlobId) {
-      // Required by `sharedChatWidgetSnapshots.widgetHtmlBlobId`. The
-      // capture path uploads when it can; widgets without an uploaded
-      // blob are unusable to the reader and dropped here.
-      continue;
-    }
-    const widget: BackendEvalWidget = {
-      toolCallId: snap.toolCallId,
-      toolName: snap.toolName,
-      serverId: snap.serverId,
-      widgetHtmlBlobId: snap.widgetHtmlBlobId,
-      uiType: snap.protocol,
-    };
-    if (snap.resourceUri) widget.resourceUri = snap.resourceUri;
-    const csp = normalizeWidgetCsp(snap.widgetCsp);
-    if (csp) widget.widgetCsp = csp;
-    if (snap.widgetPermissions !== undefined && snap.widgetPermissions !== null) {
-      widget.widgetPermissions = snap.widgetPermissions;
-    }
-    if (typeof snap.widgetPermissive === "boolean") {
-      widget.widgetPermissive = snap.widgetPermissive;
-    }
-    if (typeof snap.prefersBorder === "boolean") {
-      widget.prefersBorder = snap.prefersBorder;
-    }
-    // `widgetPermissions` is free-form `Record<string, unknown>` on the
-    // wire (typed `v.any()` server-side). JSON Schema fragments commonly
-    // appear there and use `$`-prefixed keys (`$ref`, `$schema`), which
-    // Convex rejects at the argument validator boundary, failing the
-    // whole `appendEvalTurnTrace` call and killing the fanout. Sanitize
-    // the widget so any `$`-prefixed key is escaped to
-    // `__convexReserved__*` for transport — same protection
-    // `sessionMessages` / `spans` / `prompts` already get.
-    out.push(sanitizeForConvexTransport(widget));
+    const payload = evalTraceSnapshotToPayload(snap);
+    if (!payload) continue;
+    out.push(sanitizeWidgetForBackend(payload));
   }
   return out;
 }
