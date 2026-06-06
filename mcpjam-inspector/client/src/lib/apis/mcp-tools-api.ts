@@ -9,6 +9,7 @@ import type {
   NormalizedError,
   TaskOptions,
 } from "@mcpjam/sdk/browser";
+import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { authFetch } from "@/lib/session-token";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -161,8 +162,15 @@ export async function executeToolApi(
         })) as ToolExecutionResponse;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        // Validate the WebApiError-attached block with the shared SDK
+        // shape guard before forwarding it. Without this a partial
+        // payload (older server, schema drift, proxy mangling) would
+        // reach ResultsPanel as `normalizedError` and shadow the real
+        // `error` string at render (renderer prefers normalizedError).
         const normalized =
-          error instanceof WebApiError ? error.normalized : undefined;
+          error instanceof WebApiError && isNormalizedError(error.normalized)
+            ? error.normalized
+            : undefined;
         return { error: message, ...(normalized ? { normalized } : {}) };
       }
     },
@@ -181,10 +189,11 @@ export async function executeToolApi(
         // server-attached describe-error block if it came back (the
         // jsonError helper in /api/mcp/tools/execute always populates it).
         const message = body?.error || `Execute tool failed (${res.status})`;
-        const normalized =
-          body && typeof body.normalized === "object" && body.normalized
-            ? (body.normalized as NormalizedError)
-            : undefined;
+        // Shape-validate before forwarding — same rationale as the
+        // hosted catch above. Bare `typeof === "object"` is not enough.
+        const normalized = isNormalizedError(body?.normalized)
+          ? (body.normalized as NormalizedError)
+          : undefined;
         return {
           error: message,
           ...(normalized ? { normalized } : {}),

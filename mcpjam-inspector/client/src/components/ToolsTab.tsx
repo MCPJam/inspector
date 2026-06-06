@@ -42,6 +42,7 @@ import {
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
@@ -363,11 +364,13 @@ export function ToolsTab({
       logger.error("Failed to fetch tools", { error: message });
       setError(message);
       // Preserve the backend-attached `normalized` block when listTools
-      // threw a WebApiError. Without this the ErrorCard re-classifies
-      // from the message alone and loses the specific transport / auth
-      // / JSON-RPC slug the server already pinned.
+      // threw a WebApiError, but shape-validate first. Partial payloads
+      // would otherwise shadow the real `error` string at render
+      // (ResultsPanel prefers normalizedError over error).
       setNormalizedError(
-        err instanceof WebApiError && err.normalized ? err.normalized : null,
+        err instanceof WebApiError && isNormalizedError(err.normalized)
+          ? err.normalized
+          : null,
       );
     } finally {
       if (fetchVersion === toolFetchVersionRef.current) {
@@ -480,12 +483,14 @@ export function ToolsTab({
       setResponseDurationMs(durationMs);
       setError(response.error as string);
       // Preserve the rich describer block when the response carried one
-      // (server-side `jsonError` always populates `normalized` now).
+      // (server-side `jsonError` always populates `normalized`), but
+      // shape-validate first — a partial `{}` would otherwise shadow the
+      // real `error` string at render. ResultsPanel prefers
+      // normalizedError over error, so an invalid block hides the API's
+      // actual message and yields a generic "Unknown error" ErrorCard.
       const maybeNormalized = (response as { normalized?: unknown }).normalized;
       setNormalizedError(
-        maybeNormalized && typeof maybeNormalized === "object"
-          ? (maybeNormalized as import("@mcpjam/sdk/browser").NormalizedError)
-          : null,
+        isNormalizedError(maybeNormalized) ? maybeNormalized : null,
       );
     }
   };
