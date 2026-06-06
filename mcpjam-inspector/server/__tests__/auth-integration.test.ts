@@ -230,18 +230,18 @@ describe("Auth Integration", () => {
     });
   });
 
-  describe("query parameter authentication for SSE", () => {
-    it("accepts SSE route with token in query parameter", async () => {
-      const res = await app.request(
-        `/api/mcp/servers/rpc/stream?_token=${validToken}`,
-      );
+  describe("cookie authentication for SSE", () => {
+    it("accepts SSE route with token in same-origin cookie", async () => {
+      const res = await app.request("/api/mcp/servers/rpc/stream", {
+        headers: { Cookie: `mcp_session_auth=${validToken}` },
+      });
 
       expect(res.status).toBe(200);
     });
 
-    it("rejects SSE route with invalid query token", async () => {
+    it("rejects SSE route with token in query parameter", async () => {
       const res = await app.request(
-        "/api/mcp/servers/rpc/stream?_token=invalid",
+        `/api/mcp/servers/rpc/stream?_token=${validToken}`,
       );
 
       expect(res.status).toBe(401);

@@ -95,12 +95,12 @@ describe("sessionAuthMiddleware", () => {
       expect(data.message).toBe("protected route");
     });
 
-    it("allows request with valid token in query parameter", async () => {
+    it("rejects session tokens supplied in query parameters", async () => {
       const res = await app.request(`/api/mcp/test?_token=${validToken}`);
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
       const data = await res.json();
-      expect(data.message).toBe("protected route");
+      expect(data.error).toBe("Unauthorized");
     });
 
     it("prefers header over query parameter when both present", async () => {
@@ -115,8 +115,10 @@ describe("sessionAuthMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
-    it("falls back to query parameter when header is missing", async () => {
-      const res = await app.request(`/api/mcp/test?_token=${validToken}`);
+    it("falls back to cookie when header is missing", async () => {
+      const res = await app.request("/api/mcp/test", {
+        headers: { Cookie: `mcp_session_auth=${validToken}` },
+      });
 
       expect(res.status).toBe(200);
     });
@@ -151,7 +153,7 @@ describe("sessionAuthMiddleware", () => {
 
       expect(res.status).toBe(401);
       const data = await res.json();
-      expect(data.hint).toContain("?_token=");
+      expect(data.hint).toContain("mcp_session_auth cookie");
     });
 
     it("provides header hint for non-SSE routes without token", async () => {
