@@ -231,6 +231,105 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     },
   );
 
+  it(
+    "derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed",
+    async () => {
+      // Regression test for the transcript-lifecycle vs verdict split.
+      // The lock-reason describes whether the eval CYCLE ran to completion
+      // (so the chatSessions transcript is consistent), NOT whether the
+      // verdict passed. A failed-verdict iteration that ran cleanly
+      // (status: "completed", result: "failed", passed: false) must still
+      // get lockReason: "eval_completed". eval_failed is reserved for
+      // cycle failures (provider errors, transport crashes, status:"failed").
+      //
+      // Force passed=false by configuring an expectedToolCall the mock
+      // assistant won't make. The runner's success path then calls
+      // finishIterationDirectly with status:"completed" + passed:false.
+      // Before the fix this site derived terminalReason from `passed` and
+      // would have called lockEvalSession with reason:"eval_failed".
+      const lockCalls: Array<{ iterationId: string; reason: string }> = [];
+      const action = vi.fn(async (ref: string, payload: any) => {
+        if (ref === "testSuites:isEvalChatSessionsWriterEnabled") {
+          return { enabled: true };
+        }
+        if (ref === "testSuites:appendEvalTurnTrace") {
+          return { skipped: false, chatSessionId: "sess_x", locked: false };
+        }
+        if (ref === "testSuites:updateTestIteration") {
+          return undefined;
+        }
+        if (ref === "testSuites:lockEvalSession") {
+          lockCalls.push({
+            iterationId: payload?.iterationId,
+            reason: payload?.reason,
+          });
+          return { skipped: false, locked: true, alreadyLocked: false };
+        }
+        return undefined;
+      });
+      convexClient.action = action;
+      const { __resetEvalChatSessionsWriterFlagCacheForTests } = await import(
+        "../persist-eval-trace.js"
+      );
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              // Expecting a tool the mock assistant never calls → matchPassed=false
+              // → finalizePassedForEval mock returns false → passed=false.
+              expectedToolCalls: [
+                { toolName: "never-called-tool", arguments: {} },
+              ],
+              promptTurns: [
+                {
+                  id: "turn-1",
+                  prompt: "Hello",
+                  expectedToolCalls: [
+                    { toolName: "never-called-tool", arguments: {} },
+                  ],
+                },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      });
+
+      // Confirm we exercised the success path: updateTestIteration was
+      // called with result:"failed" + status:"completed", and the lock
+      // fired with reason:"eval_completed" (lifecycle-clean), not
+      // "eval_failed" (which is for cycle failures).
+      const updateCall = action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall?.[1]).toMatchObject({
+        result: "failed",
+        status: "completed",
+      });
+      expect(lockCalls).toHaveLength(1);
+      expect(lockCalls[0].reason).toBe("eval_completed");
+
+      __resetEvalChatSessionsWriterFlagCacheForTests();
+    },
+  );
+
   it("persists compareRunId in quick-run iteration metadata when provided", async () => {
     const updatePayload = await runQuickTestCase("cmp_123");
 

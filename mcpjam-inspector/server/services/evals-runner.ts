@@ -706,12 +706,16 @@ async function finishIterationDirectly(
   // rows BEFORE updateTestIteration; the chatSessions lock fires AFTER
   // updateTestIteration succeeds (PR-2 review fix #2). When the
   // backend flag is off, today's legacy behavior runs unchanged.
+  // lockReason describes the transcript LIFECYCLE, not the verdict —
+  // see recorder.ts for the full rationale. A failed-verdict iteration
+  // that ran cleanly still gets eval_completed; eval_failed is reserved
+  // for cycle failures (provider errors, transport crashes, etc.).
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"
-      : params.passed
-        ? "eval_completed"
-        : "eval_failed";
+      : iterationStatus === "failed"
+        ? "eval_failed"
+        : "eval_completed";
   const fanout = await persistEvalTraceFanout({
     convexClient,
     iterationId: params.iterationId,
