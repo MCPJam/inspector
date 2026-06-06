@@ -710,10 +710,19 @@ async function finishIterationDirectly(
   // see recorder.ts for the full rationale. A failed-verdict iteration
   // that ran cleanly still gets eval_completed; eval_failed is reserved
   // for cycle failures (provider errors, transport crashes, etc.).
+  //
+  // The `params.error` check covers a runner quirk (Codex review on
+  // #2446): some backend eval paths set `iterationError` but still
+  // pass `status: "completed"` to finishIteration (see
+  // evals-runner.ts:2079-2082 / :3962-3965). Treating those as
+  // eval_completed would lock an error transcript with the wrong reason.
+  const isCycleFailure =
+    iterationStatus === "failed" ||
+    (params.error !== undefined && params.error !== "");
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"
-      : iterationStatus === "failed"
+      : isCycleFailure
         ? "eval_failed"
         : "eval_completed";
   const fanout = await persistEvalTraceFanout({
