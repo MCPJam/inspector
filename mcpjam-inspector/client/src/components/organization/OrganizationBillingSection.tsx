@@ -718,11 +718,14 @@ export function OrganizationBillingSection({
 
       {currentPlanPanel}
 
-      {showCredits ? (
+      {showCredits || (showPlanBilling && billingStatus?.canManageBilling) ? (
         <ErrorBoundary fallback={null}>
           <PaymentsHistorySection
             organizationId={organizationId}
-            canViewHistory={canManageCredits}
+            canViewHistory={showCredits && canManageCredits}
+            canViewInvoices={
+              !!(showPlanBilling && billingStatus?.canManageBilling)
+            }
           />
         </ErrorBoundary>
       ) : null}
