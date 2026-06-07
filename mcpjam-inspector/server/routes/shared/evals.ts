@@ -1498,6 +1498,7 @@ export async function streamEvalTestCaseWithManager(
         const outcomes = await streamTestCase({
           test,
           tools,
+          selectedServers: resolvedServerIds,
           mcpClientManager: clientManager,
           recorder: null,
           modelApiKeys: resolvedStreamModelApiKeys ?? undefined,

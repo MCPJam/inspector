@@ -41,6 +41,26 @@ vi.mock("../../../utils/chat-helpers", () => ({
   ) => createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
 }));
 
+// Stub the chat-side tool/system/temperature pipeline. The real implementation
+// in `chat-v2-orchestration` pulls in `getSkillToolsAndPrompt`, which touches
+// the filesystem outside HOSTED_MODE; the eval test environment doesn't need
+// that. Return a minimal `PrepareChatV2Result` shape — the actual tool set
+// stays empty (matching `mcpClientManager.getToolsForAiSdk` → `{}`), and the
+// engine swap only depends on the named output fields.
+vi.mock("../../../utils/chat-v2-orchestration", () => ({
+  prepareChatV2: vi.fn(async (options: any) => ({
+    allTools: {},
+    enhancedSystemPrompt: options?.systemPrompt ?? "",
+    resolvedTemperature: options?.temperature,
+    scrubMessages: (msgs: unknown[]) => msgs,
+    progressivePlan: { enabled: false },
+    discoveryState: {
+      loadedToolIds: new Set<string>(),
+      catalogVersion: 0,
+    },
+  })),
+}));
+
 import { runEvalSuiteWithAiSdk, streamTestCase } from "../../evals-runner";
 
 describe("runEvalSuiteWithAiSdk compare session metadata", () => {
@@ -589,6 +609,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         testCaseId: "case-1",
       },
       tools: {},
+      selectedServers: [],
       mcpClientManager: mcpClientManager as any,
       recorder: null,
       modelApiKeys: { openai: "sk-test" },
@@ -700,6 +721,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-1",
         },
         tools: {},
+        selectedServers: [],
         mcpClientManager: mcpClientManager as any,
         recorder: null,
         modelApiKeys: {},
@@ -942,5 +964,216 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       { ollama: "http://ollama.internal:11434" },
       undefined,
     );
+  });
+
+  it("records prepareChatV2 setup failures as a failed iteration", async () => {
+    // Force prepareChatV2 to throw — simulates Anthropic name validation,
+    // meta-tool name collision, or skill-tool prep failure. The runner must
+    // catch this and persist a failed iteration row, NOT propagate the throw.
+    const orchestration = await import(
+      "../../../utils/chat-v2-orchestration"
+    );
+    const prepareSpy = vi
+      .spyOn(orchestration, "prepareChatV2")
+      .mockRejectedValueOnce(
+        new Error(
+          "Invalid tool name(s) for Anthropic: 'bad.name'. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
+        ),
+      );
+
+    // The iteration row is created via `mutation` (default mock returns
+    // { iterationId: "iter-1" }); the finalize call goes through `action`
+    // (testSuites:updateTestIteration). Convex serializes `passed` into
+    // separate `result` ("failed") and `status` ("failed") fields — see
+    // `finishIterationDirectly`.
+    convexClient.mutation.mockResolvedValueOnce({
+      iterationId: "iter-failed-setup",
+    });
+
+    try {
+      await expect(
+        runEvalSuiteWithAiSdk({
+          suiteId: "suite-1",
+          runId: null,
+          config: {
+            tests: [
+              {
+                title: "Case",
+                query: "Hello",
+                runs: 1,
+                model: "gpt-4-turbo",
+                provider: "openai",
+                expectedToolCalls: [],
+                promptTurns: [
+                  { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+                ],
+                testCaseId: "case-1",
+              },
+            ],
+            environment: { servers: ["srv-1"] },
+          },
+          modelApiKeys: { openai: "sk-test" },
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          mcpClientManager: mcpClientManager as any,
+          testCaseId: "case-1",
+        }),
+      ).resolves.toBeDefined();
+
+      expect(prepareSpy).toHaveBeenCalled();
+
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      expect(payload.status).toBe("failed");
+      expect(payload.result).toBe("failed");
+      expect(payload.error).toEqual(
+        expect.stringContaining("Invalid tool name"),
+      );
+      expect(payload.iterationId).toBe("iter-failed-setup");
+
+      // The runner must NOT have called generateText — the failure happens
+      // before any model invocation.
+      expect(generateTextMock).not.toHaveBeenCalled();
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  it("does not count a negative-test setup failure as a suite pass", async () => {
+    // Regression guard for the Cursor review #2: with `isNegativeTest: true`
+    // and an empty `expectedToolCalls`, `evaluateMultiTurnResults([], ...)`
+    // returns `passed: true`. If the runner returned that evaluation as-is on
+    // setup failure, the suite summary would credit it as a pass even though
+    // the persisted iteration row is `failed`. The setup-failure path must
+    // force `evaluation.passed = false` before returning.
+    const orchestration = await import(
+      "../../../utils/chat-v2-orchestration"
+    );
+    const prepareSpy = vi
+      .spyOn(orchestration, "prepareChatV2")
+      .mockRejectedValueOnce(new Error("simulated prep failure"));
+
+    convexClient.mutation.mockResolvedValueOnce({
+      iterationId: "iter-negative-setup-fail",
+    });
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Negative case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              isNegativeTest: true,
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-neg",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-neg",
+      });
+
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      expect(payload.result).toBe("failed");
+      expect(payload.status).toBe("failed");
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  it("emits an error event when streamTestCase backend setup fails", async () => {
+    // Regression guard for Cursor review on commit 3924d0c: the
+    // `streamIterationViaBackend` setup-failure catch persists the failed
+    // iteration row but used to return silently. The live test-runner UI
+    // watching `streamTestCase` SSE then finished with no failure signal,
+    // unlike the local-AI-SDK stream variant whose outer catch already
+    // emits an `error` event. Setup failures must now emit one too.
+    const orchestration = await import(
+      "../../../utils/chat-v2-orchestration"
+    );
+    const prepareSpy = vi
+      .spyOn(orchestration, "prepareChatV2")
+      .mockRejectedValueOnce(new Error("backend stream prep boom"));
+
+    convexClient.mutation.mockResolvedValueOnce({
+      iterationId: "iter-stream-setup-fail",
+    });
+
+    const emitted: Array<Record<string, unknown>> = [];
+    try {
+      await streamTestCase({
+        test: {
+          title: "Stream backend setup-fail case",
+          query: "Hello",
+          runs: 1,
+          model: "claude-haiku-4.5",
+          provider: "anthropic",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-stream-setup",
+        },
+        tools: {},
+        selectedServers: [],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-stream-setup",
+        suiteId: "suite-stream",
+        runId: null,
+        emit: (event) => emitted.push(event as Record<string, unknown>),
+      });
+
+      // The SSE consumer must see an in-stream error event.
+      expect(emitted).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "error",
+            message: expect.stringContaining("backend stream prep boom"),
+          }),
+        ]),
+      );
+
+      // And the failure must still be persisted (status:"failed").
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      expect(payload.status).toBe("failed");
+      expect(payload.result).toBe("failed");
+
+      // The runner must NOT have hit the backend — failure happens before
+      // the per-step fetch loop.
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 });

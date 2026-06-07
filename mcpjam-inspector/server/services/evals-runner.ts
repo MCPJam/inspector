@@ -87,6 +87,10 @@ import {
 } from "@/shared/prompt-turns";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
+import {
+  prepareChatV2,
+  type PrepareChatV2Result,
+} from "../utils/chat-v2-orchestration.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import {
   lockEvalSessionAfterUpdate,
@@ -826,10 +830,52 @@ async function finishIterationDirectly(
   }
 }
 
+/**
+ * Persist a failed iteration row when iteration setup throws BEFORE the
+ * per-prompt loop can start (e.g. `prepareChatV2` rejects on Anthropic
+ * tool-name validation or meta-tool collisions). Used by the backend
+ * runners, which lack the outer try/catch the AI-SDK runners have.
+ */
+async function persistSetupFailedIteration(args: {
+  iterationId: string | undefined;
+  runStartedAt: number;
+  errorMessage: string;
+  iterationMetadataBase: Record<string, string | number | boolean>;
+  recorder: SuiteRunRecorder | null;
+  convexClient: ConvexHttpClient;
+}): Promise<void> {
+  const failParams = {
+    ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+    passed: false,
+    toolsCalled: [],
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    messages: [] as ModelMessage[],
+    status: "failed" as const,
+    startedAt: args.runStartedAt,
+    error: args.errorMessage,
+    resultSource: "reported" as const,
+    metadata: { ...args.iterationMetadataBase },
+  };
+  if (args.recorder) {
+    await args.recorder.finishIteration(failParams);
+  } else {
+    await finishIterationDirectly(args.convexClient, failParams);
+  }
+}
+
 type RunIterationBaseParams = {
   test: EvalTestCase;
   runIndex: number;
+  /**
+   * Suite-level raw tool set, kept for `toolSignals` telemetry only.
+   * Iteration runners route the actual tool prep through `prepareChatV2`
+   * (per PR 1 of the engine consolidation) so eval gets skill tools,
+   * progressive-discovery meta-tools, Anthropic name validation, and the
+   * system-prompt assembly chat already applies. Removed in a later PR.
+   */
   tools: ToolSet;
+  /** Server ids the iteration runner hands to `prepareChatV2`. */
+  selectedServers: string[];
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   testCaseId?: string;
@@ -870,6 +916,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
+  /** Resolved model definition — fed to `prepareChatV2` for Anthropic name validation. */
+  modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
 };
@@ -1047,7 +1095,10 @@ async function resolveOrgByokEvalRuntime(args: {
 const runIterationWithAiSdk = async ({
   test,
   runIndex,
-  tools,
+  // `tools` is the suite-level raw set kept for `toolSignals` telemetry;
+  // this runner now goes through prepareChatV2 below for its actual tool prep.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
@@ -1167,11 +1218,11 @@ const runIterationWithAiSdk = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const baseMessages: ModelMessage[] = [];
-  if (system) {
-    baseMessages.push({ role: "system", content: system });
-  }
-  let conversationMessages: ModelMessage[] = [...baseMessages];
+  // `conversationMessages` starts empty; the system message is pushed below
+  // inside the try block, AFTER `prepareChatV2` (which can throw on Anthropic
+  // name validation / meta-tool collisions / skill-tool prep). Building it
+  // inside the try lets the catch path persist a failed iteration row.
+  let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   let accumulatedUsage = {
@@ -1187,6 +1238,28 @@ const runIterationWithAiSdk = async ({
     null;
 
   try {
+    // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
+    // this and call `getToolsForAiSdk` + an inline system/temperature wiring,
+    // missing skill tools, Anthropic name validation, and skills-prompt
+    // assembly. Called inside the try so prep failures become a recorded
+    // failed iteration rather than an uncaught setup error.
+    const prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt: system,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      customProviders: modelRuntime.customProviders,
+      priorMessages: [],
+    });
+    if (prepared.enhancedSystemPrompt) {
+      conversationMessages.push({
+        role: "system",
+        content: prepared.enhancedSystemPrompt,
+      });
+    }
+
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
@@ -1197,7 +1270,7 @@ const runIterationWithAiSdk = async ({
     if (
       toolChoice &&
       typeof toolChoice === "object" &&
-      !Object.hasOwn(tools, toolChoice.toolName)
+      !Object.hasOwn(prepared.allTools, toolChoice.toolName)
     ) {
       throw new Error(
         `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
@@ -1215,7 +1288,7 @@ const runIterationWithAiSdk = async ({
       activeCompletedStepCount = 0;
       activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
       const tracedTools = wrapToolSetForEvalTrace(
-        tools,
+        prepared.allTools,
         activeTraceCtx,
         promptIndex,
       );
@@ -1225,7 +1298,9 @@ const runIterationWithAiSdk = async ({
         messages: activePromptInputMessages,
         tools: tracedTools,
         stopWhen: stepCountIs(20),
-        ...(temperature == null ? {} : { temperature }),
+        ...(prepared.resolvedTemperature == null
+          ? {}
+          : { temperature: prepared.resolvedTemperature }),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
           : {}),
@@ -1488,6 +1563,13 @@ const runIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions,
     );
+    // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
+    // The persisted iteration is hard-coded `passed: false` below, but the
+    // returned evaluation could still report `passed: true` on negative tests
+    // or tests with no expected tools when the catch fires before any tools
+    // are called — that would inflate suite-pass counts. Force false here so
+    // the persisted and returned verdicts agree.
+    evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
@@ -1542,13 +1624,18 @@ const runIterationWithAiSdk = async ({
 const runIterationViaBackend = async ({
   test,
   runIndex,
-  tools,
+  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+  // is delegated to prepareChatV2 below.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  modelDefinition,
+  orgModelConfig,
   endpointPath = "/stream",
   extraBodyFields,
   convexClient,
@@ -1659,7 +1746,65 @@ const runIterationViaBackend = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const toolDefs = Object.entries(tools).map(([name, tool]) => {
+  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
+  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
+  // tools, Anthropic name validation, and the assembled system prompt. The
+  // backend path serializes `prepared.allTools` to `toolDefs` below and
+  // executes them locally on tool-call events. Run AFTER iteration creation
+  // and inside a try/catch so prep failures persist as a failed iteration row
+  // rather than rejecting the test case with no iteration record.
+  //
+  // `customProviders` is derived from `orgModelConfig` so Anthropic name
+  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
+  // custom providers (matches the local-AI-SDK runner, which threads the same
+  // shape via `resolveEvalModelRuntime`).
+  const backendCustomProviders = orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
+    : undefined;
+  let prepared: PrepareChatV2Result;
+  try {
+    prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      ...(backendCustomProviders?.length
+        ? { customProviders: backendCustomProviders }
+        : {}),
+      priorMessages: [],
+    });
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    await persistSetupFailedIteration({
+      iterationId,
+      runStartedAt,
+      errorMessage,
+      iterationMetadataBase,
+      recorder,
+      convexClient,
+    });
+    // Suite summary aggregates `evaluation.passed`; a fresh
+    // `evaluateMultiTurnResults([], ...)` returns `passed: true` for negative
+    // tests and for positive tests with no expected tools, so setup failures
+    // would silently count as suite passes if we returned that as-is.
+    const failedEvaluation = evaluateMultiTurnResults(
+      promptTurns,
+      [],
+      test.isNegativeTest,
+      test.matchOptions,
+    );
+    failedEvaluation.passed = false;
+    return {
+      evaluation: failedEvaluation,
+      iterationId,
+    };
+  }
+
+  const toolDefs = Object.entries(prepared.allTools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
     let serializedSchema: Record<string, unknown> | undefined;
     if (schema) {
@@ -1735,8 +1880,12 @@ const runIterationViaBackend = async ({
             mode: "step",
             messages: JSON.stringify(messageHistory),
             model: modelId,
-            ...(systemPrompt ? { systemPrompt } : {}),
-            ...(temperature == null ? {} : { temperature }),
+            ...(prepared.enhancedSystemPrompt
+              ? { systemPrompt: prepared.enhancedSystemPrompt }
+              : {}),
+            ...(prepared.resolvedTemperature == null
+              ? {}
+              : { temperature: prepared.resolvedTemperature }),
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
@@ -1832,7 +1981,7 @@ const runIterationViaBackend = async ({
 
         if (hasUnresolvedToolCalls(messageHistory as any)) {
           const toolsStartAbs = Date.now();
-          const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
+          const tracedBackendTools = wrapBackendToolsForTrace(prepared.allTools as any, {
             runStartedAt,
             promptIndex,
             stepIndex,
@@ -2120,6 +2269,7 @@ const runIterationViaBackend = async ({
 const runTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
+  selectedServers: string[];
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
@@ -2143,6 +2293,7 @@ const runTestCase = async (params: {
   const {
     test,
     tools,
+    selectedServers,
     mcpClientManager,
     recorder,
     modelApiKeys,
@@ -2245,6 +2396,7 @@ const runTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -2252,6 +2404,7 @@ const runTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        modelDefinition,
         extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
         convexClient,
         modelApiKeys,
@@ -2273,6 +2426,7 @@ const runTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -2280,6 +2434,7 @@ const runTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: String(modelDefinition.id),
+        modelDefinition,
         endpointPath: "/stream/org",
         extraBodyFields: {
           providerKey: orgByokRuntime.providerKey,
@@ -2305,6 +2460,7 @@ const runTestCase = async (params: {
       test,
       runIndex,
       tools,
+      selectedServers,
       mcpClientManager,
       recorder,
       testCaseId,
@@ -2431,6 +2587,7 @@ export const runEvalSuiteWithAiSdk = async ({
       runTestCase({
         test,
         tools,
+        selectedServers: serverIds,
         mcpClientManager,
         recorder,
         modelApiKeys,
@@ -2591,7 +2748,10 @@ export type StreamEmit = (event: EvalStreamEvent) => void;
 const streamIterationWithAiSdk = async ({
   test,
   runIndex,
-  tools,
+  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+  // is delegated to prepareChatV2 below.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
@@ -2713,11 +2873,10 @@ const streamIterationWithAiSdk = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const baseMessages: ModelMessage[] = [];
-  if (system) {
-    baseMessages.push({ role: "system", content: system });
-  }
-  let conversationMessages: ModelMessage[] = [...baseMessages];
+  // `conversationMessages` starts empty; the system message is pushed below
+  // inside the try block, AFTER `prepareChatV2`. See the suite-style runner
+  // for the rationale (prep failures persist as failed iteration rows).
+  let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const accumulatedUsage = {
@@ -2733,6 +2892,25 @@ const streamIterationWithAiSdk = async ({
     null;
 
   try {
+    // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
+    // so prep failures become a recorded failed iteration.
+    const prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt: system,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      customProviders: modelRuntime.customProviders,
+      priorMessages: [],
+    });
+    if (prepared.enhancedSystemPrompt) {
+      conversationMessages.push({
+        role: "system",
+        content: prepared.enhancedSystemPrompt,
+      });
+    }
+
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
@@ -2743,7 +2921,7 @@ const streamIterationWithAiSdk = async ({
     if (
       toolChoice &&
       typeof toolChoice === "object" &&
-      !Object.hasOwn(tools, toolChoice.toolName)
+      !Object.hasOwn(prepared.allTools, toolChoice.toolName)
     ) {
       throw new Error(
         `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
@@ -2761,7 +2939,7 @@ const streamIterationWithAiSdk = async ({
       activeCompletedStepCount = 0;
       activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
       const tracedTools = wrapToolSetForEvalTrace(
-        tools,
+        prepared.allTools,
         activeTraceCtx,
         promptIndex,
       );
@@ -2777,7 +2955,9 @@ const streamIterationWithAiSdk = async ({
         messages: activePromptInputMessages,
         tools: tracedTools,
         stopWhen: stepCountIs(20),
-        ...(temperature == null ? {} : { temperature }),
+        ...(prepared.resolvedTemperature == null
+          ? {}
+          : { temperature: prepared.resolvedTemperature }),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
           : {}),
@@ -3111,6 +3291,13 @@ const streamIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions,
     );
+    // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
+    // The persisted iteration is hard-coded `passed: false` below, but the
+    // returned evaluation could still report `passed: true` on negative tests
+    // or tests with no expected tools when the catch fires before any tools
+    // are called — that would inflate suite-pass counts. Force false here so
+    // the persisted and returned verdicts agree.
+    evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
@@ -3191,13 +3378,18 @@ const streamIterationWithAiSdk = async ({
 const streamIterationViaBackend = async ({
   test,
   runIndex,
-  tools,
+  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+  // is delegated to prepareChatV2 below.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  modelDefinition,
+  orgModelConfig,
   endpointPath = "/stream",
   extraBodyFields,
   convexClient,
@@ -3310,7 +3502,74 @@ const streamIterationViaBackend = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const toolDefs = Object.entries(tools).map(([name, tool]) => {
+  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
+  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
+  // tools, Anthropic name validation, and the assembled system prompt. The
+  // backend path serializes `prepared.allTools` to `toolDefs` below and
+  // executes them locally on tool-call events. Run AFTER iteration creation
+  // and inside a try/catch so prep failures persist as a failed iteration row
+  // rather than rejecting the test case with no iteration record.
+  //
+  // `customProviders` is derived from `orgModelConfig` so Anthropic name
+  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
+  // custom providers (matches the local-AI-SDK runner, which threads the same
+  // shape via `resolveEvalModelRuntime`).
+  const backendCustomProviders = orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
+    : undefined;
+  let prepared: PrepareChatV2Result;
+  try {
+    prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      ...(backendCustomProviders?.length
+        ? { customProviders: backendCustomProviders }
+        : {}),
+      priorMessages: [],
+    });
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    await persistSetupFailedIteration({
+      iterationId,
+      runStartedAt,
+      errorMessage,
+      iterationMetadataBase,
+      recorder,
+      convexClient,
+    });
+    // Mirror the in-stream failure signal `streamIterationWithAiSdk` already
+    // sends from its outer catch. Without this, the live test-runner UI
+    // watching `streamTestCase` SSE finishes silently on hosted-model /
+    // hosted-org-BYOK setup errors while the local-AI-SDK stream variant
+    // emits an `error` event for the same failure mode.
+    emit({
+      type: "error",
+      message: errorMessage,
+    });
+    // Suite summary aggregates `evaluation.passed`; a fresh
+    // `evaluateMultiTurnResults([], ...)` returns `passed: true` for negative
+    // tests and for positive tests with no expected tools, so setup failures
+    // would silently count as suite passes if we returned that as-is.
+    const failedEvaluation = evaluateMultiTurnResults(
+      promptTurns,
+      [],
+      test.isNegativeTest,
+      test.matchOptions,
+    );
+    failedEvaluation.passed = false;
+    return {
+      evaluation: failedEvaluation,
+      iterationId,
+    };
+  }
+
+  const toolDefs = Object.entries(prepared.allTools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
     let serializedSchema: Record<string, unknown> | undefined;
     if (schema) {
@@ -3392,8 +3651,12 @@ const streamIterationViaBackend = async ({
             skipChatIngestion: true,
             messages: JSON.stringify(messageHistory),
             model: modelId,
-            ...(systemPrompt ? { systemPrompt } : {}),
-            ...(temperature == null ? {} : { temperature }),
+            ...(prepared.enhancedSystemPrompt
+              ? { systemPrompt: prepared.enhancedSystemPrompt }
+              : {}),
+            ...(prepared.resolvedTemperature == null
+              ? {}
+              : { temperature: prepared.resolvedTemperature }),
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
@@ -3619,7 +3882,7 @@ const streamIterationViaBackend = async ({
 
         if (hasUnresolvedToolCalls(messageHistory as any)) {
           const toolsStartAbs = Date.now();
-          const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
+          const tracedBackendTools = wrapBackendToolsForTrace(prepared.allTools as any, {
             runStartedAt,
             promptIndex,
             stepIndex,
@@ -4003,6 +4266,7 @@ const streamIterationViaBackend = async ({
 export const streamTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
+  selectedServers: string[];
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
@@ -4032,6 +4296,7 @@ export const streamTestCase = async (params: {
   const {
     test,
     tools,
+    selectedServers,
     mcpClientManager,
     recorder,
     modelApiKeys,
@@ -4138,6 +4403,7 @@ export const streamTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -4145,6 +4411,7 @@ export const streamTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        modelDefinition,
         extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
         convexClient,
         modelApiKeys,
@@ -4167,6 +4434,7 @@ export const streamTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -4174,6 +4442,7 @@ export const streamTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: String(modelDefinition.id),
+        modelDefinition,
         endpointPath: "/stream/org",
         extraBodyFields: {
           providerKey: orgByokRuntime.providerKey,
@@ -4200,6 +4469,7 @@ export const streamTestCase = async (params: {
       test,
       runIndex,
       tools,
+      selectedServers,
       mcpClientManager,
       recorder,
       testCaseId,
