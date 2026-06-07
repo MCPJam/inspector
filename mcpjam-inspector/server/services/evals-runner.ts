@@ -51,11 +51,6 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import { z } from "zod";
-import {
-  executeToolCallsFromMessages,
-  hasUnresolvedToolCalls,
-} from "@/shared/http-tool-calls";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -66,10 +61,6 @@ import {
   type SuiteRunRecorder,
 } from "./evals/recorder";
 import {
-  pushBackendStepLlmFailureSpans,
-  pushBackendStepSuccessSpans,
-  pushBackendStepToolFailureSpans,
-  wrapBackendToolsForTrace,
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
   finalizeAiSdkTraceOnFailure,
@@ -97,6 +88,11 @@ import {
   type PrepareChatV2Result,
 } from "../utils/chat-v2-orchestration.js";
 import { runAssistantTurn } from "../utils/assistant-turn.js";
+import type {
+  MCPJamStepFinishEvent,
+  MCPJamToolCallEvent,
+  MCPJamToolResultEvent,
+} from "../utils/mcpjam-stream-handler.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import {
   lockEvalSessionAfterUpdate,
@@ -107,36 +103,6 @@ import type {
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
 
-/**
- * Turn a non-OK backend stream response into a human-readable message. The
- * Convex stream endpoint returns structured JSON for guardrails like the daily
- * spend cap — e.g. { code: "user_rate_limit", error: "Daily MCPJam model limit
- * reached. Use BYOK or try again tomorrow.", details: "Try again in N minutes." }.
- * Surface that instead of the bare HTTP status text ("Too Many Requests"), and
- * flag 429s as expected guardrails (not faults) so callers can log them quietly.
- */
-function describeBackendStreamError(
-  status: number,
-  bodyText: string,
-): { message: string; code?: string; expected: boolean } {
-  const expected = status === 429;
-  try {
-    const body = JSON.parse(bodyText) as {
-      code?: string;
-      error?: string;
-      details?: string;
-    };
-    if (body?.error) {
-      const message = body.details
-        ? `${body.error} ${body.details}`
-        : body.error;
-      return { message, code: body.code, expected };
-    }
-  } catch {
-    // body wasn't JSON — fall through to the generic shape
-  }
-  return { message: `Backend stream error: ${status} ${bodyText}`, expected };
-}
 
 export type EvalTestCase = {
   title: string;
@@ -545,58 +511,6 @@ function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   }));
 }
 
-/**
- * Parse the backend's UI Message Stream (SSE format produced by
- * `toUIMessageStreamResponse()` in AI SDK v6) into chunk objects.
- *
- * Wire format: `data: <JSON>\n\n` per event, terminated by `data: [DONE]\n\n`.
- */
-async function* parseBackendUIMessageSSE(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<{ type: string; [key: string]: unknown }> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      let boundary: number;
-      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
-        const event = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        for (const line of event.split("\n")) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") return;
-          try {
-            yield JSON.parse(data);
-          } catch {
-            /* ignore malformed JSON */
-          }
-        }
-      }
-    }
-    // Flush remaining buffer
-    if (buffer.trim()) {
-      for (const line of buffer.split("\n")) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6);
-        if (data === "[DONE]") return;
-        try {
-          yield JSON.parse(data);
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
 
 function buildTraceSnapshotEvent(params: {
   turnIndex: number;
@@ -4077,46 +3991,39 @@ const streamIterationViaBackend = async ({
     };
   }
 
-  const toolDefs = Object.entries(prepared.allTools).map(([name, tool]) => {
-    const schema = (tool as any)?.inputSchema;
-    let serializedSchema: Record<string, unknown> | undefined;
-    if (schema) {
-      if (
-        typeof schema === "object" &&
-        schema !== null &&
-        "jsonSchema" in (schema as Record<string, unknown>)
-      ) {
-        serializedSchema = (schema as any).jsonSchema as Record<
-          string,
-          unknown
-        >;
-      } else if (typeof schema === "object" && "safeParse" in (schema as any)) {
-        try {
-          serializedSchema = z.toJSONSchema(schema) as Record<string, unknown>;
-        } catch {
-          serializedSchema = undefined;
-        }
-      } else {
-        serializedSchema = schema as Record<string, unknown>;
-      }
-    }
+  // PR 5b: drive the per-turn loop through `runAssistantTurn` (the same
+  // engine chat / playground / synthetic / non-stream eval already use).
+  // Engine owns the Convex `/stream` per-step loop, tool execution,
+  // trace persistence, abort plumbing, progressive discovery, and
+  // approval handling. Eval owns the per-turn `runAssistantTurn` call,
+  // SSE callback wiring (text deltas via `onLiveTextDelta`, tool
+  // call/result/step events via the PR 5b-pre callbacks), failure
+  // detection, persistence, and grading.
+  //
+  // `runAssistantTurn` reads `authContext.token` and forwards it as the
+  // Authorization header on the per-step Convex fetch — same shape used
+  // by `runIterationViaBackend` above (PR 3/4d).
+  const evalAuthContext = {
+    kind: "user_bearer" as const,
+    token: `Bearer ${convexAuthToken}`,
+  };
 
-    return {
-      name,
-      description: (tool as any)?.description,
-      inputSchema:
-        serializedSchema ??
-        ({
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        } as Record<string, unknown>),
-    };
+  // Cursor review fix (mirrors PR 4b for the non-stream backend
+  // runner): the engine swallows AbortError internally (sets its
+  // `aborted` flag, omits `turnTrace`, doesn't throw out of
+  // `runAssistantTurn`). Read `abortSignal.aborted` directly as the
+  // authoritative cancellation signal, used at the top of each
+  // iteration AND after every per-turn call (success or catch).
+  const isAborted = () => abortSignal?.aborted === true;
+  const returnCancelled = () => ({
+    evaluation: evaluateMultiTurnResults(
+      promptTurns,
+      toolsCalledByPrompt,
+      test.isNegativeTest,
+      test.matchOptions,
+    ),
+    iterationId: undefined,
   });
-
-  const authHeader = convexAuthToken
-    ? { Authorization: `Bearer ${convexAuthToken}` }
-    : ({} as Record<string, string>);
 
   let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
@@ -4130,6 +4037,13 @@ const streamIterationViaBackend = async ({
   // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
   // `prepareChatV2` try.
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+    if (isAborted()) {
+      logger.debug(
+        "[evals] backend streaming iteration aborted between turns; skipping record",
+      );
+      return returnCancelled();
+    }
+
     const promptTurn = promptTurns[promptIndex]!;
     const promptToolsCalled: ToolCall[] = [];
     toolsCalledByPrompt.push(promptToolsCalled);
@@ -4144,526 +4058,388 @@ const streamIterationViaBackend = async ({
       prompt: promptTurn.prompt,
     });
 
-    let steps = 0;
-    while (steps < MAX_STEPS) {
-      const stepStartAbs = Date.now();
-      const stepIndex = steps;
-      const llmStartAbs = stepStartAbs;
-      const stepMessageStartIndex = messageHistory.length;
-      try {
-        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(authHeader ? { ...authHeader } : {}),
-          },
-          body: JSON.stringify({
-            skipChatIngestion: true,
-            messages: JSON.stringify(messageHistory),
-            model: modelId,
-            ...(prepared.enhancedSystemPrompt
-              ? { systemPrompt: prepared.enhancedSystemPrompt }
-              : {}),
-            ...(prepared.resolvedTemperature == null
-              ? {}
-              : { temperature: prepared.resolvedTemperature }),
-            ...(toolChoice ? { toolChoice } : {}),
-            tools: toolDefs,
-            maxOutputTokens: 16384,
-            ...(extraBodyFields ?? {}),
-          }),
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        });
+    // Per-turn span-capture context. `wrapToolSetForEvalTrace`
+    // instruments each tool's `execute` to push to
+    // `traceCtx.recordedSpans`; we drain into `capturedSpans` after the
+    // engine finishes (same shape as the non-stream backend runner).
+    const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
+    const tracedTools = wrapToolSetForEvalTrace(
+      prepared.allTools,
+      traceCtx,
+      promptIndex,
+    );
 
-        if (!res.ok) {
-          const errorText = await res.text().catch(() => res.statusText);
-          const { message, expected } = describeBackendStreamError(
-            res.status,
-            errorText,
-          );
-          iterationError = message;
-          iterationErrorDetails = errorText;
-          if (expected) {
-            // Daily spend cap / concurrency guardrail — expected, and with N
-            // cases running concurrently it fires once per case. Log a single
-            // quiet line with the real reason, not an alarming per-case stack.
-            logger.warn(`[evals] run halted: ${message}`);
-          } else {
-            logger.error("[evals] backend stream error", new Error(message));
-          }
-          const failAbs = Date.now();
-          pushBackendStepLlmFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            llmStartAbs,
-            failAbs,
-          );
-          emit(
-            buildTraceSnapshotEvent({
-              turnIndex: promptIndex,
-              stepIndex,
-              snapshotKind: "failure",
-              messages: withSystemPrefix(messageHistory),
-              spans: capturedSpans,
-              actualToolCalls: extractToolCallsFromConversation({
-                messages: messageHistory,
-              }),
-              usage: accumulatedUsage,
-            }),
-          );
-          emit({
-            type: "error",
-            message: iterationError,
-            details: iterationErrorDetails,
-          });
-          break;
-        }
+    const messageCountBeforeTurn = messageHistory.length;
+    const inputMessages: ModelMessage[] = [...messageHistory];
+    const accumulatedUsageBeforeTurn = {
+      inputTokens: accumulatedUsage.inputTokens ?? 0,
+      outputTokens: accumulatedUsage.outputTokens ?? 0,
+      totalTokens: accumulatedUsage.totalTokens ?? 0,
+    };
+    // Track engine-emitted step events so the post-turn `turn_finish`
+    // trace_snapshot has a stable last-step index, and so failure
+    // branches can carry stepIndex when available.
+    let activeCompletedStepCount = 0;
+    let lastSettledStepIndex: number | undefined;
 
-        if (!res.body) {
-          iterationError = "No response body from backend stream";
-          const failAbs = Date.now();
-          pushBackendStepLlmFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            llmStartAbs,
-            failAbs,
-            { modelId },
-          );
-          emit(
-            buildTraceSnapshotEvent({
-              turnIndex: promptIndex,
-              stepIndex,
-              snapshotKind: "failure",
-              messages: withSystemPrefix(messageHistory),
-              spans: capturedSpans,
-              actualToolCalls: extractToolCallsFromConversation({
-                messages: messageHistory,
-              }),
-              usage: accumulatedUsage,
-            }),
-          );
-          emit({
-            type: "error",
-            message: iterationError,
-          });
-          break;
-        }
-
-        // Consume SSE stream from the backend (real-time text deltas)
-        let stepText = "";
-        const stepToolCalls: Array<{
-          toolCallId: string;
-          toolName: string;
-          input: unknown;
-        }> = [];
-        let stepFinishReason: string | undefined;
-        let stepUsage: {
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-        } = {};
-
-        for await (const chunk of parseBackendUIMessageSSE(res.body)) {
-          switch (chunk.type) {
-            case "text-delta":
-              stepText += (chunk.delta as string) ?? "";
-              emit({
-                type: "text_delta",
-                content: (chunk.delta as string) ?? "",
-              });
-              break;
-            case "tool-input-available": {
-              const tcId =
-                (chunk.toolCallId as string) ??
-                `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-              const tcName = chunk.toolName as string;
-              const tcInput = (chunk.input ?? {}) as Record<string, unknown>;
-              stepToolCalls.push({
-                toolCallId: tcId,
-                toolName: tcName,
-                input: tcInput,
-              });
-              if (tcName) {
-                emit({
-                  type: "tool_call",
-                  toolName: tcName,
-                  toolCallId: tcId,
-                  args: tcInput,
-                });
-              }
-              break;
-            }
-            case "finish": {
-              stepFinishReason = chunk.finishReason as string | undefined;
-              const metadata = chunk.messageMetadata as
-                | Record<string, number>
-                | undefined;
-              if (metadata) {
-                stepUsage = {
-                  inputTokens: metadata.inputTokens,
-                  outputTokens: metadata.outputTokens,
-                  totalTokens: metadata.totalTokens,
-                };
-              }
-              break;
-            }
-            case "error":
-              iterationError =
-                (chunk.errorText as string) ?? "Backend stream error";
-              break;
-          }
-        }
-
-        if (iterationError) {
-          const failAbs = Date.now();
-          pushBackendStepLlmFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            llmStartAbs,
-            failAbs,
-            { modelId },
-          );
-          emit(
-            buildTraceSnapshotEvent({
-              turnIndex: promptIndex,
-              stepIndex,
-              snapshotKind: "failure",
-              messages: withSystemPrefix(messageHistory),
-              spans: capturedSpans,
-              actualToolCalls: extractToolCallsFromConversation({
-                messages: messageHistory,
-              }),
-              usage: accumulatedUsage,
-            }),
-          );
-          emit({
-            type: "error",
-            message: iterationError,
-            details: iterationErrorDetails,
-          });
-          break;
-        }
-
-        const llmEndAbs = Date.now();
-
-        // Update accumulated usage from stream metadata
-        accumulatedUsage.inputTokens =
-          (accumulatedUsage.inputTokens || 0) +
-          (stepUsage.inputTokens || 0);
-        accumulatedUsage.outputTokens =
-          (accumulatedUsage.outputTokens || 0) +
-          (stepUsage.outputTokens || 0);
-        accumulatedUsage.totalTokens =
-          (accumulatedUsage.totalTokens || 0) +
-          (stepUsage.totalTokens || 0);
-
-        // Reconstruct assistant message from stream chunks
-        const assistantContent: unknown[] = [];
-        if (stepText) {
-          assistantContent.push({ type: "text", text: stepText });
-        }
-        for (const tc of stepToolCalls) {
-          assistantContent.push({
-            type: "tool-call",
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            input: tc.input ?? {},
-          });
-          promptToolsCalled.push({
-            toolName: tc.toolName,
-            arguments: (tc.input ?? {}) as Record<string, any>,
-          });
-        }
-        if (assistantContent.length > 0) {
-          messageHistory.push({
-            role: "assistant",
-            content: assistantContent,
-          } as ModelMessage);
-        }
-
-        if (hasUnresolvedToolCalls(messageHistory as any)) {
-          const toolsStartAbs = Date.now();
-          const tracedBackendTools = wrapBackendToolsForTrace(prepared.allTools as any, {
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            spans: capturedSpans,
-          });
-          try {
-            const newToolMessages = await executeToolCallsFromMessages(
-              messageHistory as any,
-              {
-                tools: tracedBackendTools as any,
-              },
-            );
-            const toolsEndAbs = Date.now();
-
-            // Emit tool_result events for each tool result message
-            for (const toolMsg of newToolMessages) {
-              if (
-                (toolMsg as any)?.role === "tool" &&
-                Array.isArray((toolMsg as any).content)
-              ) {
-                for (const part of (toolMsg as any).content) {
-                  if (
-                    part?.type === "tool-result" &&
-                    typeof part.toolCallId === "string"
-                  ) {
-                    emit({
-                      type: "tool_result",
-                      toolCallId: part.toolCallId,
-                      result: part.result,
-                      isError: part.isError,
-                    });
-                  }
-                }
-              }
-            }
-
-            const toolMessageIndexByCallId = new Map<string, number>();
-            for (let index = 0; index < messageHistory.length; index++) {
-              const msg = messageHistory[index] as any;
-              if (msg?.role !== "tool" || !Array.isArray(msg.content)) {
-                continue;
-              }
-              for (const part of msg.content) {
-                if (
-                  part?.type === "tool-result" &&
-                  typeof part.toolCallId === "string"
-                ) {
-                  toolMessageIndexByCallId.set(part.toolCallId, index);
-                }
-              }
-            }
-            for (const span of capturedSpans) {
-              if (
-                span.stepIndex !== stepIndex ||
-                (span.promptIndex ?? 0) !== promptIndex ||
-                typeof span.toolCallId !== "string" ||
-                typeof span.messageStartIndex === "number"
-              ) {
-                continue;
-              }
-              const toolMessageIndex = toolMessageIndexByCallId.get(
-                span.toolCallId,
-              );
-              if (typeof toolMessageIndex === "number") {
-                span.messageStartIndex = toolMessageIndex;
-                span.messageEndIndex = toolMessageIndex;
-              }
-            }
-            const stepMessageEndIndex =
-              messageHistory.length > stepMessageStartIndex
-                ? messageHistory.length - 1
-                : undefined;
-            pushBackendStepSuccessSpans(
-              capturedSpans,
-              runStartedAt,
-              promptIndex,
-              stepIndex,
-              stepStartAbs,
-              { startAbs: llmStartAbs, endAbs: llmEndAbs },
-              {
-                startAbs: toolsStartAbs,
-                endAbs: toolsEndAbs,
-                pushAggregateSpan: newToolMessages.length === 0,
-              },
-              {
-                modelId,
-                inputTokens: stepUsage.inputTokens,
-                outputTokens: stepUsage.outputTokens,
-                totalTokens: stepUsage.totalTokens,
-                messageStartIndex:
-                  stepMessageEndIndex != null
-                    ? stepMessageStartIndex
-                    : undefined,
-                messageEndIndex: stepMessageEndIndex,
-                status: "ok",
-              },
-            );
-          } catch (toolErr) {
-            const failAbs = Date.now();
-            const stepMessageEndIndex =
-              messageHistory.length > stepMessageStartIndex
-                ? messageHistory.length - 1
-                : undefined;
-            pushBackendStepToolFailureSpans(
-              capturedSpans,
-              runStartedAt,
-              promptIndex,
-              stepIndex,
-              stepStartAbs,
-              { startAbs: llmStartAbs, endAbs: llmEndAbs },
-              toolsStartAbs,
-              failAbs,
-              {
-                modelId,
-                inputTokens: stepUsage.inputTokens,
-                outputTokens: stepUsage.outputTokens,
-                totalTokens: stepUsage.totalTokens,
-                messageStartIndex:
-                  stepMessageEndIndex != null
-                    ? stepMessageStartIndex
-                    : undefined,
-                messageEndIndex: stepMessageEndIndex,
-                pushAggregateSpan: false,
-              },
-            );
-            iterationError =
-              toolErr instanceof Error ? toolErr.message : String(toolErr);
-            logger.error("[evals] tool execution failed", toolErr);
-            emit(
-              buildTraceSnapshotEvent({
-                turnIndex: promptIndex,
-                stepIndex,
-                snapshotKind: "failure",
-                messages: withSystemPrefix(messageHistory),
-                spans: capturedSpans,
-                actualToolCalls: extractToolCallsFromConversation({
-                  messages: messageHistory,
-                }),
-                usage: accumulatedUsage,
-              }),
-            );
-            emit({
-              type: "error",
-              message: iterationError,
-              details: iterationErrorDetails,
-            });
-            break;
-          }
-        } else {
-          const stepMessageEndIndex =
-            messageHistory.length > stepMessageStartIndex
-              ? messageHistory.length - 1
-              : undefined;
-          pushBackendStepSuccessSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            { startAbs: llmStartAbs, endAbs: llmEndAbs },
-            undefined,
-            {
-              modelId,
-              inputTokens: stepUsage.inputTokens,
-              outputTokens: stepUsage.outputTokens,
-              totalTokens: stepUsage.totalTokens,
-              messageStartIndex:
-                stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
-              messageEndIndex: stepMessageEndIndex,
-              status: "ok",
-            },
-          );
-        }
-
-        steps += 1;
-
-        emit({
-          type: "step_finish",
-          stepNumber: steps,
-          usage: {
-            inputTokens: stepUsage.inputTokens ?? 0,
-            outputTokens: stepUsage.outputTokens ?? 0,
-          },
-        });
-        emit(
-          buildTraceSnapshotEvent({
-            turnIndex: promptIndex,
-            stepIndex,
-            snapshotKind: "step_finish",
-            messages: withSystemPrefix(messageHistory),
-            spans: capturedSpans,
-            actualToolCalls: extractToolCallsFromConversation({
-              messages: messageHistory,
-            }),
-            usage: accumulatedUsage,
-          }),
-        );
-
-        if (stepFinishReason && stepFinishReason !== "tool-calls") {
-          break;
-        }
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          logger.debug(
-            "[evals] backend streaming iteration aborted due to cancellation",
-          );
-          return {
-            evaluation: evaluateMultiTurnResults(
-              promptTurns,
-              toolsCalledByPrompt,
-              test.isNegativeTest,
-              test.matchOptions,
-            ),
-            iterationId: undefined,
-          };
-        }
-
-        if (error instanceof Error) {
-          iterationError = error.message || error.toString();
-
-          const responseBody = (error as any).responseBody;
-          if (responseBody && typeof responseBody === "string") {
-            iterationErrorDetails = responseBody;
-          }
-        } else if (typeof error === "string") {
-          iterationError = error;
-        } else {
-          iterationError = String(error);
-        }
-
-        if (iterationError && iterationError.length > 500) {
-          iterationError = iterationError.substring(0, 497) + "...";
-        }
-
-        logger.error("[evals] backend fetch failed", error);
-        const failAbs = Date.now();
-        pushBackendStepLlmFailureSpans(
-          capturedSpans,
-          runStartedAt,
-          promptIndex,
-          stepIndex,
-          stepStartAbs,
-          llmStartAbs,
-          failAbs,
-          {
-            modelId,
-          },
-        );
-        emit(
-          buildTraceSnapshotEvent({
-            turnIndex: promptIndex,
-            stepIndex,
-            snapshotKind: "failure",
-            messages: withSystemPrefix(messageHistory),
-            spans: capturedSpans,
-            actualToolCalls: extractToolCallsFromConversation({
-              messages: messageHistory,
-            }),
-            usage: accumulatedUsage,
-          }),
-        );
-        emit({
-          type: "error",
-          message: iterationError,
-          details: iterationErrorDetails,
-        });
-        break;
+    // Engine callbacks → SSE events. These mirror the events the old
+    // inline backend stream loop emitted from its chunk-processing
+    // switch:
+    //  - `onToolCall`     → `tool_call` SSE (was `tool-input-available`
+    //                       chunk branch).
+    //  - `onToolResult`   → `tool_result` SSE (was post-tool-execution
+    //                       loop over new tool messages).
+    //  - `onStepFinish`   → `step_finish` SSE + step_finish trace
+    //                       snapshot, gated on `settledWithError ===
+    //                       false` per Marcelo's PR 5b-pre review
+    //                       caveat. Failed backend steps surface via
+    //                       the failure detection branches below; we
+    //                       don't emit `step_finish` for them.
+    // `onLiveTextDelta`  → `text_delta` SSE (was the `text-delta`
+    //                       chunk branch).
+    //
+    // `promptToolsCalled` mirrors the legacy local accumulator; the
+    // engine's `messageHistory` is the source of truth post-turn, so
+    // we also rebuild from there for the eval grader (see
+    // `extractToolCallsFromConversation` below). Pushing into
+    // `promptToolsCalled` here keeps the SSE consumer's running view
+    // aligned with the trace snapshot's `actualToolCalls`.
+    const onLiveTextDelta = (delta: string) => {
+      if (typeof delta === "string" && delta.length > 0) {
+        emit({ type: "text_delta", content: delta });
       }
+    };
+    const onToolCall = (event: MCPJamToolCallEvent) => {
+      if (!event.toolName) return;
+      const args = (event.input ?? {}) as Record<string, unknown>;
+      promptToolsCalled.push({
+        toolName: event.toolName,
+        arguments: args as Record<string, any>,
+      });
+      emit({
+        type: "tool_call",
+        toolName: event.toolName,
+        toolCallId: event.toolCallId,
+        args,
+      });
+    };
+    const onToolResult = (event: MCPJamToolResultEvent) => {
+      emit({
+        type: "tool_result",
+        toolCallId: event.toolCallId,
+        result: event.output,
+        isError: event.isError,
+      });
+    };
+    const onStepFinish = (event: MCPJamStepFinishEvent) => {
+      // Marcelo's PR 5b-pre review caveat: only emit `step_finish` for
+      // settled-OK steps; failed backend steps surface through the
+      // post-turn failure detection (no `turnTrace`, error span, etc).
+      if (event.settledWithError) return;
+      activeCompletedStepCount += 1;
+      lastSettledStepIndex = event.stepIndex;
+      // Per-step usage delta = current cumulative - pre-turn baseline +
+      // last step's running total. The engine reports turn-cumulative
+      // usage on each onStepFinish; recompute accumulated usage from
+      // the snapshot taken at turn start so mid-run trace_snapshot
+      // events show the right running total even when this is step N
+      // of a multi-step turn.
+      accumulatedUsage.inputTokens =
+        accumulatedUsageBeforeTurn.inputTokens +
+        (event.turnUsage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        accumulatedUsageBeforeTurn.outputTokens +
+        (event.turnUsage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        accumulatedUsageBeforeTurn.totalTokens +
+        (event.turnUsage?.totalTokens ?? 0);
+      emit({
+        type: "step_finish",
+        stepNumber: activeCompletedStepCount,
+        usage: {
+          inputTokens: event.turnUsage?.inputTokens ?? 0,
+          outputTokens: event.turnUsage?.outputTokens ?? 0,
+        },
+      });
+      // Live trace snapshot for the step. Spans accumulate on
+      // `traceCtx.recordedSpans` (tool spans) + the engine's own LLM
+      // step spans (delivered on `turnResult.turnTrace.spans` AFTER
+      // the turn finishes). Mid-turn we only have the tool spans; the
+      // engine's LLM-step spans land at `turn_finish`.
+      const snapshotMessages = [...messageHistory];
+      emit(
+        buildTraceSnapshotEvent({
+          turnIndex: promptIndex,
+          stepIndex: event.stepIndex,
+          snapshotKind: "step_finish",
+          messages: withSystemPrefix(snapshotMessages),
+          spans: [...capturedSpans, ...traceCtx.recordedSpans],
+          actualToolCalls: extractToolCallsFromConversation({
+            messages: snapshotMessages,
+          }),
+          usage: accumulatedUsage,
+        }),
+      );
+    };
+
+    // `runAssistantTurn` call shape mirrors `runIterationViaBackend`
+    // (the non-stream backend runner) with SSE callback wires added.
+    // The contract bullets carried since PR 5a:
+    //  - Wire shape: `systemPrompt:` arg (engine sends `system:` field
+    //    to Convex `/stream`).
+    //  - Persistence prefix: `backendEnhancedSystemPromptForPersist`
+    //    prepended at finishParams (see post-loop section).
+    //  - SSE prefix: `withSystemPrefix` applied at every
+    //    `buildTraceSnapshotEvent` call site.
+    //  - Eval correctness invariants: progressive discovery, skill
+    //    tools, anthropic name validation flow from `prepareChatV2`.
+    //  - Resolver wire-up: `resolveExecutionContext` + suite
+    //    hostConfig already in place (PR 4d).
+    //  - UI event contract preserved: text_delta / tool_call /
+    //    tool_result / step_finish / turn_finish / trace_snapshot all
+    //    still emit in the same order as the legacy inline loop.
+    const mergedExtraBodyFields: Record<string, unknown> = {
+      maxOutputTokens: 16384,
+      ...(extraBodyFields ?? {}),
+      ...(toolChoice ? { toolChoice } : {}),
+    };
+
+    let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
+    try {
+      turnResult = await runAssistantTurn({
+        messages: inputMessages,
+        modelDefinition: { ...modelDefinition, id: modelId },
+        systemPrompt: prepared.enhancedSystemPrompt,
+        ...(prepared.resolvedTemperature != null
+          ? { temperature: prepared.resolvedTemperature }
+          : {}),
+        tools: tracedTools,
+        ...(selectedServers.length
+          ? { selectedServerIds: selectedServers }
+          : {}),
+        mcpClientManager,
+        authContext: evalAuthContext,
+        sourceType: "eval",
+        origin: "eval",
+        streamSink: "none",
+        persistMode: "caller",
+        approvalMode: "auto-deny",
+        endpointPath,
+        extraBodyFields: mergedExtraBodyFields,
+        ...(abortSignal ? { abortSignal } : {}),
+        maxSteps: MAX_STEPS,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+        onLiveTextDelta,
+        onToolCall,
+        onToolResult,
+        onStepFinish,
+      });
+    } catch (error) {
+      // Cancellation: bail without recording. AbortError can surface
+      // either as a thrown exception or as the engine's internal
+      // silent-cancellation path; check `isAborted()` to catch both.
+      if (
+        isAborted() ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
+        logger.debug(
+          "[evals] backend streaming iteration aborted due to cancellation",
+        );
+        return returnCancelled();
+      }
+
+      if (error instanceof Error) {
+        iterationError = error.message || error.toString();
+        const responseBody = (error as { responseBody?: unknown })
+          .responseBody;
+        if (responseBody && typeof responseBody === "string") {
+          iterationErrorDetails = responseBody;
+        }
+      } else if (typeof error === "string") {
+        iterationError = error;
+      } else {
+        iterationError = String(error);
+      }
+      if (iterationError && iterationError.length > 500) {
+        iterationError = iterationError.substring(0, 497) + "...";
+      }
+      logger.error("[evals] runAssistantTurn (stream) failed", error);
+      // Mirror the in-stream failure signal the legacy inline loop
+      // emitted: failure trace_snapshot + error event before `break`
+      // so live SSE consumers don't see a silent end.
+      emit(
+        buildTraceSnapshotEvent({
+          turnIndex: promptIndex,
+          ...(lastSettledStepIndex != null
+            ? { stepIndex: lastSettledStepIndex }
+            : {}),
+          snapshotKind: "failure",
+          messages: withSystemPrefix(messageHistory),
+          spans: capturedSpans,
+          actualToolCalls: extractToolCallsFromConversation({
+            messages: messageHistory,
+          }),
+          usage: accumulatedUsage,
+        }),
+      );
+      emit({
+        type: "error",
+        message: iterationError,
+        details: iterationErrorDetails,
+      });
+      break;
     }
 
-    if (iterationError) {
+    // Cancellation that fired DURING `runAssistantTurn` without
+    // surfacing as a throw (engine catches AbortError, sets internal
+    // `aborted` flag, omits `turnTrace`, returns normally).
+    if (isAborted()) {
+      logger.debug(
+        "[evals] backend streaming iteration aborted mid-turn; skipping record",
+      );
+      return returnCancelled();
+    }
+
+    // Drain per-turn outputs into iteration-level accumulators BEFORE
+    // failure checks. Same shape as `runIterationViaBackend` (PR 3/4d).
+    //
+    // Tool spans from `wrapToolSetForEvalTrace` land in
+    // `traceCtx.recordedSpans` with `stepIndex: -1` (no `prepareStep`
+    // bridge to the engine yet); the engine's own LLM-step spans land
+    // on `turnResult.turnTrace.spans` with correct per-step indices.
+    // Merge both for the persisted run.
+    capturedSpans.push(...traceCtx.recordedSpans);
+    if (turnResult.turnTrace?.spans?.length) {
+      capturedSpans.push(...turnResult.turnTrace.spans);
+    }
+    // Reconcile accumulated usage to the engine's canonical post-turn
+    // total. The per-step `onStepFinish` callback already updates
+    // `accumulatedUsage` for each completed step, but if the engine
+    // resolved with zero settled-OK steps (no-content failure path),
+    // the baseline is the only source of truth — fold in `turnTrace.usage`
+    // to match the non-stream runner's "totalUsage merged BEFORE
+    // failure branches" invariant from PR 4b.
+    if (turnResult.usage) {
+      accumulatedUsage.inputTokens =
+        accumulatedUsageBeforeTurn.inputTokens +
+        (turnResult.usage.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        accumulatedUsageBeforeTurn.outputTokens +
+        (turnResult.usage.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        accumulatedUsageBeforeTurn.totalTokens +
+        (turnResult.usage.totalTokens ?? 0);
+    }
+
+    // Per-turn tool calls — rebuild from the new messages only so
+    // prior turns' calls aren't double-counted. The engine returns
+    // the full transcript; slice from `messageCountBeforeTurn`.
+    const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
+    // `promptToolsCalled` was already populated via the `onToolCall`
+    // callback during the run. Reconcile against the engine's
+    // transcript so the grader sees the canonical post-turn shape
+    // (handles cases where `onToolCall` arguments were `undefined`).
+    const canonicalPromptToolsCalled = extractToolCallsFromConversation({
+      messages: newMessages,
+    });
+    promptToolsCalled.length = 0;
+    promptToolsCalled.push(...canonicalPromptToolsCalled);
+
+    // Roll the engine's transcript forward as the next turn's input.
+    messageHistory.length = 0;
+    messageHistory.push(...turnResult.messages);
+
+    // Failure detection — same three-signal shape as the non-stream
+    // backend runner (PR 3/4d):
+    //   (a) Engine catch fired mid-turn (`!turnTrace`) — engine
+    //       runSucceeded=false, partial messages may exist.
+    //   (b) Engine succeeded but produced no new content
+    //       (`newMessages.length === 0`).
+    //   (c) Engine succeeded and produced content, but a later step
+    //       errored (non-tool error span on `turnTrace.spans`).
+    if (!turnResult.turnTrace) {
+      iterationError =
+        "Backend stream failed during iteration (engine caught an error mid-turn)";
+      logger.error(
+        `[evals] runAssistantTurn (stream) returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${newMessages.length > 0})`,
+      );
+      emit(
+        buildTraceSnapshotEvent({
+          turnIndex: promptIndex,
+          ...(lastSettledStepIndex != null
+            ? { stepIndex: lastSettledStepIndex }
+            : {}),
+          snapshotKind: "failure",
+          messages: withSystemPrefix(messageHistory),
+          spans: capturedSpans,
+          actualToolCalls: extractToolCallsFromConversation({
+            messages: messageHistory,
+          }),
+          usage: accumulatedUsage,
+        }),
+      );
+      emit({ type: "error", message: iterationError });
+      break;
+    }
+    if (newMessages.length === 0) {
+      iterationError =
+        "Backend step returned no content (stream error or empty response)";
+      logger.error(
+        "[evals] runAssistantTurn (stream) produced no new messages this turn; treating as cycle failure",
+      );
+      emit(
+        buildTraceSnapshotEvent({
+          turnIndex: promptIndex,
+          ...(lastSettledStepIndex != null
+            ? { stepIndex: lastSettledStepIndex }
+            : {}),
+          snapshotKind: "failure",
+          messages: withSystemPrefix(messageHistory),
+          spans: capturedSpans,
+          actualToolCalls: extractToolCallsFromConversation({
+            messages: messageHistory,
+          }),
+          usage: accumulatedUsage,
+        }),
+      );
+      emit({ type: "error", message: iterationError });
+      break;
+    }
+    // Cursor / Codex PR 5a review fix applied here too: filter to
+    // backend step / LLM failure spans only (exclude `category: "tool"`
+    // AND any span carrying a `toolCallId` — the child error span that
+    // `wrapToolSetForEvalTrace` emits alongside a failed tool span).
+    // Tool-category error spans flow through the `failOnToolError`
+    // gate below; treating them as cycle failures here would defeat
+    // that policy.
+    const stepErrorSpan = turnResult.turnTrace.spans.find(
+      (span) =>
+        span.status === "error" &&
+        span.category !== "tool" &&
+        !(span as { toolCallId?: string }).toolCallId,
+    );
+    if (stepErrorSpan) {
+      iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
+      logger.error(
+        `[evals] runAssistantTurn (stream) turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+      );
+      emit(
+        buildTraceSnapshotEvent({
+          turnIndex: promptIndex,
+          ...(lastSettledStepIndex != null
+            ? { stepIndex: lastSettledStepIndex }
+            : {}),
+          snapshotKind: "failure",
+          messages: withSystemPrefix(messageHistory),
+          spans: capturedSpans,
+          actualToolCalls: extractToolCallsFromConversation({
+            messages: messageHistory,
+          }),
+          usage: accumulatedUsage,
+        }),
+      );
+      emit({ type: "error", message: iterationError });
       break;
     }
 
@@ -4681,6 +4457,7 @@ const streamIterationViaBackend = async ({
     );
     emit({ type: "turn_finish", turnIndex: promptIndex });
   }
+
 
   const evaluation = evaluateMultiTurnResults(
     promptTurns,

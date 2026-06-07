@@ -3315,4 +3315,286 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       );
     });
   });
+
+  describe("PR 5b — streamIterationViaBackend on runAssistantTurn + engine callbacks", () => {
+    // PR 5b replaces the inline `while (steps < MAX_STEPS)` Convex
+    // /stream loop in `streamIterationViaBackend` with a single
+    // `runAssistantTurn` call per turn, wired to the engine callbacks
+    // added in PR 5b-pre (onToolCall / onToolResult / onStepFinish)
+    // plus the existing `onLiveTextDelta` for text deltas. The legacy
+    // event vocabulary (text_delta / tool_call / tool_result /
+    // step_finish / trace_snapshot / turn_finish) is preserved so
+    // streamTestCase SSE consumers see the same byte shape.
+
+    it("emits the canonical SSE event vocabulary from engine callbacks (PR 5b)", async () => {
+      // Lock the byte-shape contract for the backend variant: the
+      // runner threads `onLiveTextDelta`, `onToolCall`, `onToolResult`,
+      // and `onStepFinish` into `runAssistantTurn`. The engine fires
+      // them in-order during the turn; the runner emits the matching
+      // SSE events. After the turn finishes, the runner emits
+      // turn_finish + trace_snapshot.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Fire the engine callbacks in the order the real engine
+          // would, then return the assembled turnResult.
+          opts.onLiveTextDelta?.("Working");
+          opts.onToolCall?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            input: { q: "status" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            output: { ok: true },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b SSE vocabulary",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-vocab",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-vocab",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        expect(emitted).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "turn_start" }),
+            expect.objectContaining({
+              type: "text_delta",
+              content: "Working",
+            }),
+            expect.objectContaining({
+              type: "tool_call",
+              toolName: "search",
+              toolCallId: "call-1",
+            }),
+            expect.objectContaining({
+              type: "tool_result",
+              toolCallId: "call-1",
+              isError: false,
+            }),
+            expect.objectContaining({ type: "step_finish" }),
+            expect.objectContaining({ type: "trace_snapshot" }),
+            expect.objectContaining({ type: "turn_finish" }),
+          ]),
+        );
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("does NOT emit step_finish SSE when onStepFinish fires with settledWithError=true (PR 5b — Marcelo caveat)", async () => {
+      // Marcelo's PR 5b-pre review caveat: `MCPJamStepFinishEvent`
+      // settles with `settledWithError` carrying the engine's
+      // step-level OK/error state. The runner must NOT translate a
+      // failed-step settle into a `step_finish` SSE event — failed
+      // backend steps already surface via the failure detection paths
+      // (no `turnTrace`, error span on turnTrace, etc). Emitting
+      // step_finish for failed steps would surface a "step succeeded"
+      // SSE event to live UI consumers when the step actually failed.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Engine settled with error — runner must NOT emit
+          // step_finish SSE for this step.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+            settledWithError: true,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b settledWithError gate",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-settle-gate",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-settle-gate",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishEvents = emitted.filter(
+          (e) => e.type === "step_finish",
+        );
+        expect(stepFinishEvents).toHaveLength(0);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("passes `streamSink: 'none'` and `persistMode: 'caller'` to runAssistantTurn (PR 5b contract)", async () => {
+      // PR 5b contract bullet: the backend stream runner drives the
+      // engine in headless mode and owns its own caller-side
+      // persistence (recorder + verdict + locking semantics). This
+      // locks the call shape so a future refactor doesn't
+      // accidentally flip it to `streamSink: "ui"` or
+      // `persistMode: "handler"`, which would double-persist or
+      // wedge the SSE writer.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockResolvedValueOnce({
+          messages: [
+            { role: "user", content: "Hello" } as any,
+            { role: "assistant", content: "Done" } as any,
+          ],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          turnTrace: {
+            turnId: "t_1",
+            promptIndex: 0,
+            startedAt: 0,
+            endedAt: 10,
+            modelId: "anthropic/claude-haiku-4.5",
+            spans: [],
+          },
+        } as any);
+
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b call shape",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-callshape",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-callshape",
+          suiteId: "suite-1",
+          runId: null,
+          emit: () => {},
+        } as any);
+
+        expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+        const call = runAssistantTurnSpy.mock.calls[0]![0]!;
+        expect(call.streamSink).toBe("none");
+        expect(call.persistMode).toBe("caller");
+        expect(call.sourceType).toBe("eval");
+        expect(call.approvalMode).toBe("auto-deny");
+        // The four engine-callback wires that PR 5b adds.
+        expect(typeof call.onLiveTextDelta).toBe("function");
+        expect(typeof call.onToolCall).toBe("function");
+        expect(typeof call.onToolResult).toBe("function");
+        expect(typeof call.onStepFinish).toBe("function");
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+  });
 });
