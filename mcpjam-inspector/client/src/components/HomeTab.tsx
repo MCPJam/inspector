@@ -76,6 +76,21 @@ function McpjamAgentTakeoverFrame({
   );
 }
 
+// Mirrors the key handleSessionStart writes and McpjamAgentThread's autosubmit
+// effect removes; lives here so the takeover Back / New chat handlers can
+// clean up unconsumed payloads when the thread unmounts before its effect
+// runs.
+function clearPendingForSession(sessionId: string | null | undefined) {
+  if (!sessionId || typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(`mcpjam:agent-pending:${sessionId}`);
+  } catch {
+    // Quota/disabled storage — stale entry will be a no-op unless the user
+    // returns to this session, and even then the duplicate-send is the only
+    // visible regression. Not worth surfacing.
+  }
+}
+
 export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const navigate = useAppNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -135,6 +150,10 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const handleBackToHome = useCallback(() => {
     setSearchParams(
       (prev) => {
+        // Drop any unconsumed pending payload for the session we're leaving;
+        // otherwise a later resume of the same id replays the prompt and
+        // re-renders the optimistic bubble over the hydrated transcript.
+        clearPendingForSession(prev.get("session"));
         const next = new URLSearchParams(prev);
         next.delete("session");
         next.delete("compose");
@@ -151,6 +170,9 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const handleNewChat = useCallback(() => {
     setSearchParams(
       (prev) => {
+        // Same rationale as handleBackToHome — drop the leaving session's
+        // unconsumed pending payload so a later resume doesn't double-send.
+        clearPendingForSession(prev.get("session"));
         const next = new URLSearchParams(prev);
         next.delete("session");
         next.set("compose", "1");
