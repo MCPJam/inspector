@@ -12,6 +12,7 @@ import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+import vscodeLogo from "/vscode_logo.svg";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
 
@@ -205,11 +206,100 @@ const CLAUDE_FONTS_CSS = `
 }
 `;
 
+// Verbatim from a real Visual Studio Code 1.121.0 host probe
+// (hostContext.styles.variables). Every token is an indirection into VS
+// Code's own theme vars (`var(--vscode-*)`), so it renders faithfully
+// inside a real VS Code webview. CAVEAT: those `--vscode-*` vars don't
+// exist in MCPJam's renderer, so a widget's VS-Code-themed colors won't
+// resolve here. To make them render in the inspector too, add hex
+// fallbacks (e.g. `var(--vscode-editor-background, #1e1e1e)`) from VS
+// Code's Default Dark Modern theme — still faithful in real VS Code, which
+// ignores the fallback.
+const VSCODE_HOST_STYLE_VARIABLES: Record<string, string> = {
+  "--color-background-primary": "var(--vscode-editor-background)",
+  "--color-background-secondary": "var(--vscode-sideBar-background)",
+  "--color-background-tertiary": "var(--vscode-activityBar-background)",
+  "--color-background-inverse": "var(--vscode-editor-foreground)",
+  "--color-background-ghost": "transparent",
+  "--color-background-info": "var(--vscode-inputValidation-infoBackground)",
+  "--color-background-danger": "var(--vscode-inputValidation-errorBackground)",
+  "--color-background-success": "var(--vscode-diffEditor-insertedTextBackground)",
+  "--color-background-warning": "var(--vscode-inputValidation-warningBackground)",
+  "--color-background-disabled": "var(--vscode-editor-inactiveSelectionBackground)",
+  "--color-text-primary": "var(--vscode-foreground)",
+  "--color-text-secondary": "var(--vscode-descriptionForeground)",
+  "--color-text-tertiary": "var(--vscode-disabledForeground)",
+  "--color-text-inverse": "var(--vscode-editor-background)",
+  "--color-text-ghost": "var(--vscode-descriptionForeground)",
+  "--color-text-info": "var(--vscode-textLink-foreground)",
+  "--color-text-danger": "var(--vscode-errorForeground)",
+  "--color-text-success": "var(--vscode-testing-iconPassed)",
+  "--color-text-warning": "var(--vscode-editorWarning-foreground)",
+  "--color-text-disabled": "var(--vscode-disabledForeground)",
+  "--color-border-primary": "var(--vscode-widget-border)",
+  "--color-border-secondary": "var(--vscode-editorWidget-border)",
+  "--color-border-tertiary": "var(--vscode-panel-border)",
+  "--color-border-inverse": "var(--vscode-foreground)",
+  "--color-border-ghost": "transparent",
+  "--color-border-info": "var(--vscode-inputValidation-infoBorder)",
+  "--color-border-danger": "var(--vscode-inputValidation-errorBorder)",
+  "--color-border-success": "var(--vscode-testing-iconPassed)",
+  "--color-border-warning": "var(--vscode-inputValidation-warningBorder)",
+  "--color-border-disabled": "var(--vscode-disabledForeground)",
+  "--color-ring-primary": "var(--vscode-focusBorder)",
+  "--color-ring-secondary": "var(--vscode-focusBorder)",
+  "--color-ring-inverse": "var(--vscode-focusBorder)",
+  "--color-ring-info": "var(--vscode-inputValidation-infoBorder)",
+  "--color-ring-danger": "var(--vscode-inputValidation-errorBorder)",
+  "--color-ring-success": "var(--vscode-testing-iconPassed)",
+  "--color-ring-warning": "var(--vscode-inputValidation-warningBorder)",
+  "--font-sans": "var(--vscode-font-family)",
+  "--font-mono": "var(--vscode-editor-font-family)",
+  "--font-weight-normal": "normal",
+  "--font-weight-medium": "500",
+  "--font-weight-semibold": "600",
+  "--font-weight-bold": "bold",
+  "--font-text-xs-size": "10px",
+  "--font-text-sm-size": "11px",
+  "--font-text-md-size": "13px",
+  "--font-text-lg-size": "14px",
+  "--font-heading-xs-size": "16px",
+  "--font-heading-sm-size": "18px",
+  "--font-heading-md-size": "20px",
+  "--font-heading-lg-size": "24px",
+  "--font-heading-xl-size": "32px",
+  "--font-heading-2xl-size": "40px",
+  "--font-heading-3xl-size": "48px",
+  "--font-text-xs-line-height": "1.5",
+  "--font-text-sm-line-height": "1.5",
+  "--font-text-md-line-height": "1.5",
+  "--font-text-lg-line-height": "1.5",
+  "--font-heading-xs-line-height": "1.25",
+  "--font-heading-sm-line-height": "1.25",
+  "--font-heading-md-line-height": "1.25",
+  "--font-heading-lg-line-height": "1.25",
+  "--font-heading-xl-line-height": "1.25",
+  "--font-heading-2xl-line-height": "1.25",
+  "--font-heading-3xl-line-height": "1.25",
+  "--border-radius-xs": "2px",
+  "--border-radius-sm": "3px",
+  "--border-radius-md": "4px",
+  "--border-radius-lg": "6px",
+  "--border-radius-xl": "8px",
+  "--border-radius-full": "9999px",
+  "--border-width-regular": "1px",
+  "--shadow-hairline": "0 0 0 1px var(--vscode-widget-shadow)",
+  "--shadow-sm": "0 1px 2px 0 var(--vscode-widget-shadow)",
+  "--shadow-md": "0 4px 6px -1px var(--vscode-widget-shadow)",
+  "--shadow-lg": "0 10px 15px -3px var(--vscode-widget-shadow)",
+};
+
 export type HostTemplateId =
   | "mcpjam"
   | "claude"
   | "chatgpt"
   | "cursor"
+  | "vscode"
   | "codex"
   | "copilot";
 
@@ -798,6 +888,147 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "vscode",
+    label: "VS Code",
+    description: "VS Code chat panel. MCP Apps host, no window.openai.",
+    logoSrc: vscodeLogo,
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "vscode",
+        // Canonical id (anthropic/<slug>) so the chat-composer model picker
+        // resolves it. VS Code's chat is model-agnostic (you pick); Sonnet
+        // 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS so guests get it without
+        // an Anthropic key, and it mirrors the Cursor sibling default.
+        modelId: "anthropic/claude-sonnet-4.5",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+      // clientCapabilities: verbatim from a VS Code 1.121.0 probe. Keep the
+      // SDK-default MCP UI extension entry (mimeTypes) and layer VS Code's
+      // roots / sampling / elicitation / tasks declarations on top.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        roots: { listChanged: true },
+        sampling: {},
+        elicitation: { form: {}, url: {} },
+        tasks: {
+          list: {},
+          cancel: {},
+          requests: {
+            sampling: { createMessage: {} },
+            elicitation: { create: {} },
+          },
+        },
+      };
+      // hostCapabilities override: captured verbatim from the probe's
+      // ui/initialize. `sandbox` is intentionally omitted — the
+      // canonicalizer strips it from the override (sandbox is per-resource
+      // at runtime per SEP-1865; see mcpProfile.apps.sandbox below). Notably
+      // no `message`: VS Code exposes no widget→model message channel.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: { listChanged: true },
+        serverResources: { listChanged: true },
+        logging: {},
+        updateModelContext: {
+          audio: {},
+          image: {},
+          resourceLink: {},
+          resource: {},
+          structuredContent: {},
+        },
+        downloadFile: {},
+      };
+      // Per-resource environment context VS Code exposes to MCP apps.
+      // `containerDimensions` from the probe (maxHeight 804.75 rounded to
+      // 805). `availableDisplayModes` is inline-only — VS Code renders the
+      // chat-output webview inline (no fullscreen / pip). `styles.variables`
+      // is VS Code's faithful `var(--vscode-*)` token map (see
+      // VSCODE_HOST_STYLE_VARIABLES and its caveat above).
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: { width: 910, maxHeight: 805 },
+        locale: "en-US",
+        platform: "desktop",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Code/1.121.0 Chrome/142.0.7444.265 Electron/39.8.8 Safari/537.36",
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        styles: { variables: VSCODE_HOST_STYLE_VARIABLES },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // Base MCP protocol: clientInfo sent to MCP servers during
+          // `initialize`. Matches VS Code's outer-editor identity.
+          clientInfo: { name: "Visual Studio Code", version: "1.121.0" },
+        },
+        apps: {
+          // MCP Apps extension: hostInfo sent to the View iframe in
+          // `ui/initialize`. Apps that branch on
+          // `hostInfo.name === "Visual Studio Code"` need this to take that
+          // path.
+          uiInitialize: {
+            hostInfo: { name: "Visual Studio Code", version: "1.121.0" },
+          },
+          // No compatRuntime — VS Code is a pure MCP Apps host (the probe's
+          // window.openai surface is absent), unlike ChatGPT / Copilot.
+          sandbox: {
+            csp: {
+              // No host-side `restrictTo` — see the Claude template for the
+              // full rationale (SEP-1865 makes restrictTo an intersection,
+              // so mirroring VS Code's allowlist only narrows a widget's
+              // declared CSP). cspDirectives below are union-merged
+              // (grant-only) and captured verbatim from the probe meta CSP.
+              mode: "declared",
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https://cdn.jsdelivr.net",
+                ],
+                "style-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https://cdn.jsdelivr.net",
+                ],
+                "connect-src": [
+                  "'self'",
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                ],
+                "img-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
+                "font-src": ["'self'", "https://cdn.jsdelivr.net"],
+                "media-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
+                "frame-src": ["'none'"],
+                "object-src": ["'none'"],
+                "base-uri": ["'self'"],
+              },
+            },
+            permissions: {
+              // Probe outer-iframe `allow=` grants clipboard-write (+ read);
+              // clipboardWrite is the SEP-1865 permission modeled here.
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+            // Probe frame.sandboxAttr extras beyond the spec-mandated
+            // allow-scripts / allow-same-origin.
+            sandboxAttrs: [
+              "allow-forms",
+              "allow-downloads",
+              "allow-pointer-lock",
+            ],
           },
         },
       };

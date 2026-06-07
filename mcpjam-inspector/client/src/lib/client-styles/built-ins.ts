@@ -1,6 +1,7 @@
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+import vscodeLogo from "/vscode_logo.svg";
 import copilotLogo from "/copilot_logo.png";
 import codexLogo from "/codex-logo.svg";
 import mcpjamLogo from "/mcp_jam.svg";
@@ -23,6 +24,12 @@ import {
   CURSOR_PLATFORM,
   getCursorStyleVariables,
 } from "@/config/cursor-client-context";
+import {
+  VSCODE_CHAT_BACKGROUND,
+  VSCODE_FONT_CSS,
+  VSCODE_PLATFORM,
+  getVSCodeStyleVariables,
+} from "@/config/vscode-client-context";
 import {
   MCPJAM_CHAT_BACKGROUND,
   MCPJAM_FONT_CSS,
@@ -329,6 +336,45 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Visual Studio Code host style. VS Code's chat-output webview is a dark,
+ * flat IDE surface (same visual bucket as Cursor), and it speaks the
+ * SEP-1865 MCP Apps protocol (`text/html;profile=mcp-app`) — NOT the
+ * OpenAI Apps SDK, so there is no `window.openai` shim (probe-confirmed
+ * absent). Richer than Cursor: it keeps serverResources + logging +
+ * updateModelContext; only `message` is off.
+ */
+export const VSCODE_HOST_STYLE: HostStyleDefinition = {
+  id: "vscode",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: VSCODE_PLATFORM,
+    fontCss: VSCODE_FONT_CSS,
+    // Captured from a VS Code 1.121.0 probe: full MCP Apps surface minus
+    // `message` (VS Code exposes no widget→model message channel). Exact
+    // serverTools/serverResources `listChanged: true` markers are carried
+    // by the template's `hostCapabilitiesOverride` (the authoritative
+    // advertise); the boolean matrix here just keeps those rows on.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      message: false,
+    },
+    resolveStyleVariables: getVSCodeStyleVariables,
+    // No `compatRuntime` — VS Code does not inject `window.openai`
+    // (probe `window.openai` block: present=false, all methods absent).
+  },
+  chatUi: {
+    label: "VS Code",
+    shortLabel: "VS Code-style host",
+    pickerDescription: "VS Code chat panel chrome",
+    logoSrc: vscodeLogo,
+    // Dark, flat IDE surface — same visual family as Cursor / ChatGPT.
+    family: "chatgpt",
+    resolveChatBackground: (theme) => VSCODE_CHAT_BACKGROUND[theme],
+    loadingIndicator: CursorShineIndicator,
+  },
+};
+
+/**
  * Microsoft 365 Copilot host style. Reuses ChatGPT's MCP profile and most
  * of its chat chrome — Copilot routes widgets through the OpenAI Apps SDK
  * under the hood and its chat UI sits in the same flat-neutral visual
@@ -467,6 +513,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
   CURSOR_HOST_STYLE,
+  VSCODE_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
 ];
