@@ -34,7 +34,7 @@ import {
   runChatEngineLoop,
   type MCPJamHandlerOptions,
 } from "./mcpjam-stream-handler.js";
-import type { PersistedTurnTrace } from "./chat-ingestion.js";
+import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -86,6 +86,12 @@ export interface RunAssistantTurnOptions {
    * narrowed to the public values to avoid silent string churn.
    */
   sourceType: "direct" | "chatbox" | "eval";
+  /**
+   * Product-surface discriminator forwarded into chat-ingestion. Required
+   * so each caller (eval runner, session simulation, MCP route) explicitly
+   * picks the surface — see `ChatOrigin` in `chat-ingestion.ts`.
+   */
+  origin: ChatOrigin;
   /**
    * Surface marker forwarded into chat-ingestion. Stage 1 only wires
    * the type-narrow union; existing callers still send the string
