@@ -3363,6 +3363,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             stepIndex: 0,
             promptIndex: 0,
             turnUsage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+            turnSpans: [],
             settledWithError: false,
           });
           return {
@@ -3484,12 +3485,14 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             stepIndex: 0,
             promptIndex: 0,
             turnUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            turnSpans: [],
             settledWithError: false,
           });
           opts.onStepFinish?.({
             stepIndex: 1,
             promptIndex: 0,
             turnUsage: { inputTokens: 25, outputTokens: 13, totalTokens: 38 },
+            turnSpans: [],
             settledWithError: false,
           });
           return {
@@ -3604,6 +3607,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             stepIndex: 0,
             promptIndex: 0,
             turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            turnSpans: [],
             settledWithError: false,
           });
           return {
@@ -3746,6 +3750,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             stepIndex: 0,
             promptIndex: 0,
             turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            turnSpans: [],
             settledWithError: false,
           });
           // Step 2: model says "Step2 text", calls tool B, gets a result.
@@ -3771,6 +3776,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             stepIndex: 1,
             promptIndex: 0,
             turnUsage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+            turnSpans: [],
             settledWithError: false,
           });
           return {
@@ -3880,6 +3886,238 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
+    it("stitches engine turnSpans into mid-turn step_finish trace_snapshot (PR 5b-followup-2 — Cursor 'Step snapshots omit LLM spans')", async () => {
+      // PR 5b-followup-2 closes Cursor's PR 5b-round-3 finding: mid-turn
+      // `step_finish` `trace_snapshot` events would otherwise show only
+      // prior-turn `capturedSpans` + the runner's tool-instrumentation
+      // spans, dropping the active turn's engine-recorded per-step LLM
+      // spans (engine puts them on `turnTrace.spans` but eval only drains
+      // post-turn). Engine surface fix: `MCPJamStepFinishEvent.turnSpans`
+      // carries a defensive-copy snapshot at step settlement. Runner
+      // stitches it into the snapshot's spans alongside capturedSpans +
+      // traceCtx.recordedSpans.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Engine fires onStepFinish with two per-step LLM spans.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            settledWithError: false,
+            turnSpans: [
+              {
+                category: "step",
+                status: "ok",
+                name: "llm-step-0",
+                stepIndex: 0,
+                promptIndex: 0,
+                startMs: 100,
+                endMs: 150,
+              } as any,
+            ],
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+            settledWithError: false,
+            turnSpans: [
+              {
+                category: "step",
+                status: "ok",
+                name: "llm-step-0",
+                stepIndex: 0,
+                promptIndex: 0,
+                startMs: 100,
+                endMs: 150,
+              } as any,
+              {
+                category: "step",
+                status: "ok",
+                name: "llm-step-1",
+                stepIndex: 1,
+                promptIndex: 0,
+                startMs: 200,
+                endMs: 250,
+              } as any,
+            ],
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b-followup-2 turnSpans",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-followup2-spans",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-followup2-spans",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        ) as Array<{
+          stepIndex?: number;
+          trace: { spans?: Array<{ name?: string; category?: string }> };
+        }>;
+        expect(stepFinishSnapshots).toHaveLength(2);
+
+        // Step 1 snapshot must carry the step-0 LLM span the engine
+        // surfaced via turnSpans.
+        const step1Spans = stepFinishSnapshots[0]!.trace.spans ?? [];
+        expect(step1Spans.some((s) => s.name === "llm-step-0")).toBe(true);
+
+        // Step 2 snapshot must carry BOTH the step-0 + step-1 LLM
+        // spans (engine accumulates them on traceTurn.turnSpans;
+        // defensive copy means each snapshot carries the running set
+        // as of that step).
+        const step2Spans = stepFinishSnapshots[1]!.trace.spans ?? [];
+        expect(step2Spans.some((s) => s.name === "llm-step-0")).toBe(true);
+        expect(step2Spans.some((s) => s.name === "llm-step-1")).toBe(true);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("surfaces engine guardrail detail on error SSE via onEngineError (PR 5b-followup-2 — Cursor 'Stream guardrail errors lose detail')", async () => {
+      // PR 5b-followup-2 closes Cursor's PR 5b-round-3 finding: when the
+      // Convex `/stream` endpoint returns a non-OK with a structured
+      // guardrail body (e.g. 429 `{ code: "user_rate_limit", error:
+      // "Daily MCPJam model limit reached…", details: "Try again in N
+      // minutes." }`), the engine catches internally and emits an
+      // `error` UI chunk to the no-op writer (because `streamSink:
+      // "none"`). Before the followup, eval's runner mapped the missing
+      // `turnTrace` to a generic "Backend stream failed during
+      // iteration" — losing the actual reason. Engine surface fix:
+      // `onEngineError({code, message, details, httpStatus, rawText})`
+      // fires at the same site; runner captures the event and prefers
+      // its message over the generic fallback.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Engine catches a 429 and fires onEngineError with the
+          // parsed structured body, then returns with NO turnTrace
+          // (runSucceeded=false shape — what the runner detects as
+          // "engine catch fired mid-turn").
+          opts.onEngineError?.({
+            message:
+              "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 30 minutes.",
+            code: "user_rate_limit",
+            details: "Try again in 30 minutes.",
+            httpStatus: 429,
+            rawText:
+              '{"code":"user_rate_limit","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","details":"Try again in 30 minutes."}',
+            promptIndex: 0,
+            stepIndex: 0,
+          });
+          return {
+            // No turnTrace → runner enters the failure-detection branch.
+            messages: [{ role: "user", content: "Hello" } as any],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b-followup-2 guardrail detail",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-followup2-guardrail",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-followup2-guardrail",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const errorEvents = emitted.filter((e) => e.type === "error") as Array<{
+          message: string;
+          details?: string;
+        }>;
+        expect(errorEvents).toHaveLength(1);
+        // The eval SSE error event carries the structured guardrail
+        // message — NOT the generic "Backend stream failed during
+        // iteration (engine caught an error mid-turn)" fallback.
+        expect(errorEvents[0]!.message).toContain(
+          "Daily MCPJam model limit reached",
+        );
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend stream failed during iteration",
+        );
+        // The raw body is forwarded on `details` so the live UI can
+        // show the full JSON when an operator wants to inspect it.
+        expect(errorEvents[0]!.details).toContain('"code":"user_rate_limit"');
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
     it("does NOT emit step_finish SSE when onStepFinish fires with settledWithError=true (PR 5b — Marcelo caveat)", async () => {
       // Marcelo's PR 5b-pre review caveat: `MCPJamStepFinishEvent`
       // settles with `settledWithError` carrying the engine's
@@ -3901,6 +4139,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             stepIndex: 0,
             promptIndex: 0,
             turnUsage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+            turnSpans: [],
             settledWithError: true,
           });
           return {
