@@ -2358,4 +2358,41 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
     expect(anyCallHasIt).toBe(true);
   });
+
+  it("records token usage even when the local-BYOK turn fails with no new messages (PR 4b review)", async () => {
+    // Cursor PR 4b review "Failed turn drops token usage": the failure
+    // branches (no new messages / non-tool error span) used to `break`
+    // before `headless.totalUsage` was merged into `accumulatedUsage`.
+    // Persisted iterations then reported `tokensUsed: 0` even when the
+    // model actually consumed tokens up to the failure. Fix: merge
+    // `totalUsage` BEFORE the failure-detection branches so the
+    // persisted iteration reflects reality on every exit path.
+    //
+    // This test exercises the no-new-messages branch (the simplest
+    // failure path to mock): streamText resolves with empty
+    // `response.messages` BUT `totalUsage` populated. Pre-fix this
+    // yielded `tokensUsed: 0`; post-fix it should reflect the totals.
+    streamTextMock.mockReturnValueOnce({
+      consumeStream: async () => {},
+      response: Promise.resolve({
+        modelId: "gpt-4-turbo",
+        messages: [],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 7,
+        outputTokens: 11,
+        totalTokens: 18,
+      }),
+      finishReason: Promise.resolve("stop"),
+    });
+
+    const updatePayload = await runQuickTestCase();
+
+    // Both the failure was recorded (iterationError set) AND the token
+    // total survived the break path. The exact field is `tokensUsed`
+    // on the updateTestIteration payload (`usage.totalTokens` reduced
+    // through buildIterationUsageMetadata).
+    expect(updatePayload.tokensUsed).toBe(18);
+  });
 });

@@ -1398,6 +1398,23 @@ const runIterationWithAiSdk = async ({
         );
       }
 
+      // PR 4b review fix (Cursor "Failed turn drops token usage"):
+      // accumulate `totalUsage` BEFORE the failure-detection branches.
+      // `headless.totalUsage` reflects what the model actually consumed
+      // up to (and including) the failing step; the persisted iteration
+      // should report it regardless of which exit path the turn takes.
+      // Failure branches `break` after this so the persisted token
+      // totals match reality even when the cycle fails.
+      accumulatedUsage.inputTokens =
+        (accumulatedUsage.inputTokens ?? 0) +
+        (headless.totalUsage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        (accumulatedUsage.outputTokens ?? 0) +
+        (headless.totalUsage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        (accumulatedUsage.totalTokens ?? 0) +
+        (headless.totalUsage?.totalTokens ?? 0);
+
       // PR 4b failure-detection shape (mirrors PR 3 backend-path):
       //
       //  (a) No new messages → driver returned nothing (network failure
@@ -1455,16 +1472,10 @@ const runIterationWithAiSdk = async ({
         ...activePromptInputMessages,
         ...promptResponseMessages,
       ];
-
-      accumulatedUsage.inputTokens =
-        (accumulatedUsage.inputTokens ?? 0) +
-        (headless.totalUsage?.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        (accumulatedUsage.outputTokens ?? 0) +
-        (headless.totalUsage?.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        (accumulatedUsage.totalTokens ?? 0) +
-        (headless.totalUsage?.totalTokens ?? 0);
+      // Note: `accumulatedUsage` was merged above (before the failure
+      // branches) so token totals stay correct whether the loop
+      // continues, breaks on the no-messages path, or breaks on the
+      // step-error path.
 
       activeTraceCtx = null;
       activePromptInputMessages = [];
