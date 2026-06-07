@@ -1,14 +1,19 @@
 /**
  * MCPJam Agent side-panel state.
  *
- * Persists `isOpen`, `width`, and `activeSessionId` to localStorage so the
- * panel survives page reloads and stays open across navigation. A `storage`
- * listener mirrors changes from other tabs so opening the agent in one tab
- * is reflected in others (matches `recent-sessions.ts`).
+ * Persists `isOpen`, `width`, `activeSessionId`, and `activeSessionProjectId`
+ * to localStorage so the panel survives page reloads and stays open across
+ * navigation. A `storage` listener mirrors changes from other tabs so opening
+ * the agent in one tab is reflected in others (matches `recent-sessions.ts`).
  *
  * The active session id is a uuid minted client-side and also persisted
  * server-side via the existing chat-history flow — this store only owns the
  * "which session is selected in the panel" pointer, not the transcript.
+ *
+ * `activeSessionProjectId` carries the owning project so render and effect
+ * code can detect cross-project pointers (cross-tab sync, fresh reload into
+ * a different active project) and avoid hydrating a session against the
+ * wrong project.
  */
 import { create } from "zustand";
 
@@ -20,16 +25,18 @@ export interface AgentPanelState {
   isOpen: boolean;
   width: number;
   activeSessionId: string | null;
+  activeSessionProjectId: string | null;
   setOpen: (next: boolean) => void;
   toggle: () => void;
   setWidth: (next: number) => void;
-  setActiveSessionId: (id: string | null) => void;
+  setActiveSession: (id: string | null, projectId: string | null) => void;
 }
 
 interface PersistedShape {
   isOpen?: unknown;
   width?: unknown;
   activeSessionId?: unknown;
+  activeSessionProjectId?: unknown;
 }
 
 function isWindowAvailable(): boolean {
@@ -48,15 +55,19 @@ function clampWidth(raw: number): number {
   return Math.min(lowerBounded, max);
 }
 
-function loadPersisted(): {
+interface LoadedState {
   isOpen: boolean;
   width: number;
   activeSessionId: string | null;
-} {
-  const fallback = {
+  activeSessionProjectId: string | null;
+}
+
+function loadPersisted(): LoadedState {
+  const fallback: LoadedState = {
     isOpen: false,
     width: AGENT_PANEL_DEFAULT_WIDTH,
-    activeSessionId: null as string | null,
+    activeSessionId: null,
+    activeSessionProjectId: null,
   };
   if (!isWindowAvailable()) return fallback;
   let raw: string | null;
@@ -69,27 +80,32 @@ function loadPersisted(): {
   try {
     const parsed = JSON.parse(raw) as PersistedShape;
     if (!parsed || typeof parsed !== "object") return fallback;
+    const sessionId =
+      typeof parsed.activeSessionId === "string"
+        ? parsed.activeSessionId
+        : null;
+    const sessionProjectId =
+      typeof parsed.activeSessionProjectId === "string"
+        ? parsed.activeSessionProjectId
+        : null;
     return {
       isOpen: parsed.isOpen === true,
       width:
         typeof parsed.width === "number"
           ? clampWidth(parsed.width)
           : AGENT_PANEL_DEFAULT_WIDTH,
-      activeSessionId:
-        typeof parsed.activeSessionId === "string"
-          ? parsed.activeSessionId
-          : null,
+      // A v1-shape entry has a sessionId but no sessionProjectId. Treat that
+      // as a cross-project pointer (we don't know its project) and drop it
+      // rather than hydrate it against the wrong project.
+      activeSessionId: sessionProjectId ? sessionId : null,
+      activeSessionProjectId: sessionProjectId,
     };
   } catch {
     return fallback;
   }
 }
 
-function persist(state: {
-  isOpen: boolean;
-  width: number;
-  activeSessionId: string | null;
-}): void {
+function persist(state: LoadedState): void {
   if (!isWindowAvailable()) return;
   try {
     window.localStorage.setItem(
@@ -98,6 +114,7 @@ function persist(state: {
         isOpen: state.isOpen,
         width: state.width,
         activeSessionId: state.activeSessionId,
+        activeSessionProjectId: state.activeSessionProjectId,
       })
     );
   } catch {
@@ -111,30 +128,46 @@ export const useAgentPanelStore = create<AgentPanelState>((set, get) => ({
   isOpen: initial.isOpen,
   width: initial.width,
   activeSessionId: initial.activeSessionId,
+  activeSessionProjectId: initial.activeSessionProjectId,
   setOpen: (next) => {
     if (get().isOpen === next) return;
-    const state = { ...get(), isOpen: next };
-    persist(state);
+    const current = get();
+    persist({ ...current, isOpen: next });
     set({ isOpen: next });
   },
   toggle: () => {
     const next = !get().isOpen;
-    const state = { ...get(), isOpen: next };
-    persist(state);
+    const current = get();
+    persist({ ...current, isOpen: next });
     set({ isOpen: next });
   },
   setWidth: (next) => {
     const clamped = clampWidth(next);
     if (get().width === clamped) return;
-    const state = { ...get(), width: clamped };
-    persist(state);
+    const current = get();
+    persist({ ...current, width: clamped });
     set({ width: clamped });
   },
-  setActiveSessionId: (id) => {
-    if (get().activeSessionId === id) return;
-    const state = { ...get(), activeSessionId: id };
-    persist(state);
-    set({ activeSessionId: id });
+  setActiveSession: (id, projectId) => {
+    // Clearing collapses both fields so a stale projectId never lingers.
+    const nextId = id;
+    const nextProjectId = id === null ? null : projectId;
+    const current = get();
+    if (
+      current.activeSessionId === nextId &&
+      current.activeSessionProjectId === nextProjectId
+    ) {
+      return;
+    }
+    persist({
+      ...current,
+      activeSessionId: nextId,
+      activeSessionProjectId: nextProjectId,
+    });
+    set({
+      activeSessionId: nextId,
+      activeSessionProjectId: nextProjectId,
+    });
   },
 }));
 
@@ -146,7 +179,8 @@ if (isWindowAvailable()) {
     if (
       current.isOpen === next.isOpen &&
       current.width === next.width &&
-      current.activeSessionId === next.activeSessionId
+      current.activeSessionId === next.activeSessionId &&
+      current.activeSessionProjectId === next.activeSessionProjectId
     ) {
       return;
     }
@@ -154,6 +188,7 @@ if (isWindowAvailable()) {
       isOpen: next.isOpen,
       width: next.width,
       activeSessionId: next.activeSessionId,
+      activeSessionProjectId: next.activeSessionProjectId,
     });
   });
 

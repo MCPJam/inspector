@@ -9,7 +9,7 @@
  * navigation between tabs without unmounting the in-flight `useChat`
  * instance.
  */
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
 import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
 import { useAppReady } from "@/hooks/use-app-ready";
@@ -71,32 +71,31 @@ export function AgentSidePanelMount({
     }
   }, [homeEnabled, isOpen]);
 
-  // Switching projects must drop the active session pointer — sessions are
-  // project-scoped on the backend, so reusing an id from a different project
-  // would post under the wrong project or 404 on hydration. Two things this
-  // guard has to avoid:
-  //   1. The initial render (would clear the persisted sessionId on reload).
-  //   2. The bootstrap window where `activeProjectId` flips from a synthetic
-  //      local-fallback id to the real Convex-scoped id — that's normal
-  //      hydration, not a user-initiated switch.
-  // Gating on `useAppReady().status === "ready"` covers (2), and a seeded
-  // ref covers (1) post-ready.
+  // Drop the persisted session pointer whenever the panel state and the
+  // current active project disagree about which project the session belongs
+  // to. The render path (`AgentSidePanel`) already gates the thread on a
+  // project match, so a stale pointer is inert; this effect just GCs it so
+  // it doesn't linger in localStorage. Wait for `useAppReady` so the normal
+  // bootstrap step where `activeProjectId` flips from a synthetic
+  // local-fallback id to the real Convex-scoped id isn't treated as a
+  // project switch.
   const appReady = useAppReady();
-  const lastProjectIdRef = useRef<string | null>(null);
-  const projectIdSeededRef = useRef(false);
+  const activeSessionId = useAgentPanelStore((s) => s.activeSessionId);
+  const activeSessionProjectId = useAgentPanelStore(
+    (s) => s.activeSessionProjectId
+  );
   useEffect(() => {
     if (appReady.status !== "ready") return;
-    if (!projectIdSeededRef.current) {
-      projectIdSeededRef.current = true;
-      lastProjectIdRef.current = projectId;
-      return;
-    }
-    if (lastProjectIdRef.current === projectId) return;
-    lastProjectIdRef.current = projectId;
-    useAgentPanelStore.getState().setActiveSessionId(null);
-  }, [appReady.status, projectId]);
+    if (activeSessionId === null) return;
+    if (activeSessionProjectId === projectId) return;
+    useAgentPanelStore.getState().setActiveSession(null, null);
+  }, [activeSessionId, activeSessionProjectId, appReady.status, projectId]);
 
-  if (!homeEnabled) return null;
+  // Render the panel during the brief PostHog flag-hydration window so an
+  // in-flight `useChat` stream isn't unmounted by `useFeatureFlagEnabled`
+  // returning `undefined` before resolving. Only an explicit `false`
+  // disconnects the trigger and tears down the panel.
+  if (homeEnabled === false) return null;
 
   return (
     <AgentSidePanel

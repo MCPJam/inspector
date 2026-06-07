@@ -55,11 +55,23 @@ export function AgentSidePanel({
   const isMobile = useIsMobile();
   const isOpen = useAgentPanelStore((s) => s.isOpen);
   const width = useAgentPanelStore((s) => s.width);
-  const activeSessionId = useAgentPanelStore((s) => s.activeSessionId);
+  const storedSessionId = useAgentPanelStore((s) => s.activeSessionId);
+  const storedSessionProjectId = useAgentPanelStore(
+    (s) => s.activeSessionProjectId
+  );
   const setOpen = useAgentPanelStore((s) => s.setOpen);
   const setWidth = useAgentPanelStore((s) => s.setWidth);
-  const setActiveSessionId = useAgentPanelStore((s) => s.setActiveSessionId);
+  const setActiveSession = useAgentPanelStore((s) => s.setActiveSession);
   const posthog = usePostHog();
+
+  // Only honor the persisted session pointer when it was stored under the
+  // currently active project. Cross-tab sync or a fresh reload landing on a
+  // different project would otherwise hydrate a transcript from project A
+  // into a panel currently scoped to project B.
+  const activeSessionId =
+    storedSessionId && storedSessionProjectId === projectId
+      ? storedSessionId
+      : null;
 
   // Track previous open state to fire close telemetry exactly when the user
   // closes the panel — not on every render where `isOpen` happens to be false.
@@ -72,8 +84,8 @@ export function AgentSidePanel({
   }, [activeTab, isOpen, posthog]);
 
   const handleNewChat = useCallback(() => {
-    setActiveSessionId(null);
-  }, [setActiveSessionId]);
+    setActiveSession(null, null);
+  }, [setActiveSession]);
 
   const handleSessionStart = useCallback(
     (sessionId: string, firstMessage: string) => {
@@ -91,16 +103,16 @@ export function AgentSidePanel({
       } catch {
         // Quota/disabled storage — user will retype if it doesn't autosubmit.
       }
-      setActiveSessionId(sessionId);
+      setActiveSession(sessionId, projectId);
     },
-    [setActiveSessionId]
+    [projectId, setActiveSession]
   );
 
   const handleResumeSession = useCallback(
     (sessionId: string) => {
-      setActiveSessionId(sessionId);
+      setActiveSession(sessionId, projectId);
     },
-    [setActiveSessionId]
+    [projectId, setActiveSession]
   );
 
   const handleClose = useCallback(() => {
