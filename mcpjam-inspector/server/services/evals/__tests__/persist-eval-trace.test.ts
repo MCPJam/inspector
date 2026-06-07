@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
 import type { ModelMessage } from "ai";
 import type {
@@ -7,8 +7,6 @@ import type {
   PromptTraceSummary,
 } from "@/shared/eval-trace";
 import {
-  __resetEvalChatSessionsWriterFlagCacheForTests,
-  isEvalChatSessionsWriterEnabled,
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "../persist-eval-trace.js";
@@ -19,16 +17,12 @@ type ActionCall = {
 };
 
 function makeMockClient(opts: {
-  flagEnabled?: boolean;
   appendResult?: { skipped: boolean };
   appendThrows?: Error;
-}): { client: ConvexHttpClient; calls: ActionCall[] } {
+} = {}): { client: ConvexHttpClient; calls: ActionCall[] } {
   const calls: ActionCall[] = [];
   const action = vi.fn(async (ref: string, args: Record<string, unknown>) => {
     calls.push({ ref, args });
-    if (ref === "testSuites:isEvalChatSessionsWriterEnabled") {
-      return { enabled: opts.flagEnabled ?? false };
-    }
     if (ref === "testSuites:appendEvalTurnTrace") {
       if (opts.appendThrows) throw opts.appendThrows;
       return opts.appendResult ?? { skipped: false };
@@ -48,63 +42,13 @@ function makeMockClient(opts: {
   };
 }
 
-beforeEach(() => {
-  __resetEvalChatSessionsWriterFlagCacheForTests();
-});
-
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("isEvalChatSessionsWriterEnabled", () => {
-  test("caches the flag value across calls in the same process", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
-
-    const a = await isEvalChatSessionsWriterEnabled(client);
-    const b = await isEvalChatSessionsWriterEnabled(client);
-    const c = await isEvalChatSessionsWriterEnabled(client);
-
-    expect(a).toBe(true);
-    expect(b).toBe(true);
-    expect(c).toBe(true);
-    // Only ONE network call across three reads.
-    expect(
-      calls.filter((c) => c.ref === "testSuites:isEvalChatSessionsWriterEnabled"),
-    ).toHaveLength(1);
-  });
-
-  test("returns false (safe default) when the flag query throws", async () => {
-    const client = {
-      action: vi.fn(async () => {
-        throw new Error("convex unreachable");
-      }),
-    } as unknown as ConvexHttpClient;
-
-    const result = await isEvalChatSessionsWriterEnabled(client);
-    expect(result).toBe(false);
-  });
-});
-
 describe("persistEvalTraceFanout", () => {
-  test("returns null and makes no per-turn calls when the flag is off", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: false });
-
-    const result = await persistEvalTraceFanout({
-      convexClient: client,
-      iterationId: "iter1",
-      messages: [{ role: "user", content: "hi" } as ModelMessage],
-      spans: undefined,
-      prompts: undefined,
-    });
-
-    expect(result).toBeNull();
-    expect(
-      calls.filter((c) => c.ref === "testSuites:appendEvalTurnTrace"),
-    ).toHaveLength(0);
-  });
-
   test("fans out N per-turn calls without setting terminal (deferred to lockEvalSessionAfterUpdate)", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     const spans: EvalTraceSpan[] = [
       {
@@ -218,7 +162,7 @@ describe("persistEvalTraceFanout", () => {
   });
 
   test("buckets unindexed spans onto the last turn (lossless)", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     // Two prompts (indices 0, 1) + one span without promptIndex.
     const spans: EvalTraceSpan[] = [
@@ -294,7 +238,7 @@ describe("persistEvalTraceFanout", () => {
 
   test("falls back when the action throws mid-fanout", async () => {
     const error = new Error("mid-fanout failure");
-    const { client } = makeMockClient({ flagEnabled: true, appendThrows: error });
+    const { client } = makeMockClient({ appendThrows: error });
 
     const result = await persistEvalTraceFanout({
       convexClient: client,
@@ -307,9 +251,8 @@ describe("persistEvalTraceFanout", () => {
     expect(result).toEqual({ persisted: false, error });
   });
 
-  test("falls back when the backend reports skipped:true (flag flipped mid-fanout)", async () => {
+  test("falls back when the backend reports skipped:true", async () => {
     const { client } = makeMockClient({
-      flagEnabled: true,
       appendResult: { skipped: true },
     });
 
@@ -330,7 +273,7 @@ describe("persistEvalTraceFanout", () => {
   });
 
   test("traces with no spans/prompts persist as a single promptIndex:0 turn", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     const result = await persistEvalTraceFanout({
       convexClient: client,
@@ -356,7 +299,7 @@ describe("persistEvalTraceFanout", () => {
   });
 
   test("threads iterationStartedAt through to the per-turn call (PR-2 review fix #1)", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     const realIterationStart = 1_700_000_000_000;
     await persistEvalTraceFanout({
@@ -382,7 +325,7 @@ describe("persistEvalTraceFanout", () => {
     // updateTestIteration succeeds. The fanout helper must NEVER make
     // the lock call (the whole point of the split is to defer the lock
     // past the iteration-row write).
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     await persistEvalTraceFanout({
       convexClient: client,
@@ -402,7 +345,7 @@ describe("persistEvalTraceFanout", () => {
   });
 
   test("falls back to Date.now() for startedAt when iterationStartedAt is absent", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
     const before = Date.now();
 
     await persistEvalTraceFanout({
@@ -424,7 +367,7 @@ describe("persistEvalTraceFanout", () => {
 
 describe("lockEvalSessionAfterUpdate", () => {
   test("calls testSuites:lockEvalSession with the right iterationId + reason", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     await lockEvalSessionAfterUpdate({
       convexClient: client,
@@ -478,7 +421,7 @@ describe("persistEvalTraceFanout — widget serialization", () => {
   });
 
   test("widgets are attached to the LAST turn call only", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     const prompts: PromptTraceSummary[] = [
       {
@@ -528,7 +471,7 @@ describe("persistEvalTraceFanout — widget serialization", () => {
   });
 
   test("renames protocol → uiType and forwards friendly serverId verbatim", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     await persistEvalTraceFanout({
       convexClient: client,
@@ -552,7 +495,7 @@ describe("persistEvalTraceFanout — widget serialization", () => {
   });
 
   test("drops widgets without widgetHtmlBlobId; other widgets pass through", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     await persistEvalTraceFanout({
       convexClient: client,
@@ -575,7 +518,7 @@ describe("persistEvalTraceFanout — widget serialization", () => {
   });
 
   test("sanitizes $-prefixed keys in widgetPermissions (Convex reserved-key protection)", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     await persistEvalTraceFanout({
       convexClient: client,
@@ -616,7 +559,7 @@ describe("persistEvalTraceFanout — widget serialization", () => {
   });
 
   test("normalizes widgetCsp to backend shape, drops unknown keys", async () => {
-    const { client, calls } = makeMockClient({ flagEnabled: true });
+    const { client, calls } = makeMockClient();
 
     await persistEvalTraceFanout({
       convexClient: client,

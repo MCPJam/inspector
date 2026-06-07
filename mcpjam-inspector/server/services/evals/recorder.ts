@@ -297,14 +297,13 @@ export const createSuiteRunRecorder = ({
       }
       const sendTraceFieldsToUpdate = fanout?.persisted !== true;
       // When the fanout failed mid-stream we MUST force the backend
-      // into the legacy blob path. Otherwise — with the writer flag
-      // still on — `updateTestIteration` re-enters the chatSessions
-      // W1 path with `promptIndex: 0` + full transcript, which would
-      // overwrite any partial turn rows the fanout already wrote
-      // and possibly fight an existing lock. The escape hatch makes
-      // the iteration replayable from `testIteration.blob` while the
-      // partial chatSessions data is left inert (source-aware reader
-      // tolerates absence).
+      // into the legacy blob path. Otherwise `updateTestIteration`
+      // re-enters the chatSessions W1 path with `promptIndex: 0` +
+      // full transcript, which would overwrite any partial turn rows
+      // the fanout already wrote and possibly fight an existing lock.
+      // The escape hatch makes the iteration replayable from
+      // `testIteration.blob` while the partial chatSessions data is
+      // left inert (source-aware reader tolerates absence).
       const forceLegacyTraceBlob = fanout?.persisted === false;
 
       // PR-2 review #5 (Cursor "Update failure after successful fanout"):
