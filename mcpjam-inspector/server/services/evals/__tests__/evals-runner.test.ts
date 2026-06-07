@@ -965,4 +965,77 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       undefined,
     );
   });
+
+  it("records prepareChatV2 setup failures as a failed iteration", async () => {
+    // Force prepareChatV2 to throw — simulates Anthropic name validation,
+    // meta-tool name collision, or skill-tool prep failure. The runner must
+    // catch this and persist a failed iteration row, NOT propagate the throw.
+    const orchestration = await import(
+      "../../../utils/chat-v2-orchestration"
+    );
+    const prepareSpy = vi
+      .spyOn(orchestration, "prepareChatV2")
+      .mockRejectedValueOnce(
+        new Error(
+          "Invalid tool name(s) for Anthropic: 'bad.name'. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
+        ),
+      );
+
+    // The iteration row is created via `mutation` (default mock returns
+    // { iterationId: "iter-1" }); the finalize call goes through `action`
+    // (testSuites:updateTestIteration). Convex serializes `passed` into
+    // separate `result` ("failed") and `status` ("failed") fields — see
+    // `finishIterationDirectly`.
+    convexClient.mutation.mockResolvedValueOnce({
+      iterationId: "iter-failed-setup",
+    });
+
+    await expect(
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      }),
+    ).resolves.toBeDefined();
+
+    expect(prepareSpy).toHaveBeenCalled();
+
+    const updateCall = convexClient.action.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestIteration",
+    );
+    expect(updateCall).toBeDefined();
+    const payload = updateCall![1] as Record<string, unknown>;
+    expect(payload.status).toBe("failed");
+    expect(payload.result).toBe("failed");
+    expect(payload.error).toEqual(expect.stringContaining("Invalid tool name"));
+    expect(payload.iterationId).toBe("iter-failed-setup");
+
+    // The runner must NOT have called generateText — the failure happens
+    // before any model invocation.
+    expect(generateTextMock).not.toHaveBeenCalled();
+
+    prepareSpy.mockRestore();
+  });
 });

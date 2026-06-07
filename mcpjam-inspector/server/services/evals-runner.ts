@@ -87,7 +87,10 @@ import {
 } from "@/shared/prompt-turns";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
-import { prepareChatV2 } from "../utils/chat-v2-orchestration.js";
+import {
+  prepareChatV2,
+  type PrepareChatV2Result,
+} from "../utils/chat-v2-orchestration.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import {
   lockEvalSessionAfterUpdate,
@@ -827,6 +830,39 @@ async function finishIterationDirectly(
   }
 }
 
+/**
+ * Persist a failed iteration row when iteration setup throws BEFORE the
+ * per-prompt loop can start (e.g. `prepareChatV2` rejects on Anthropic
+ * tool-name validation or meta-tool collisions). Used by the backend
+ * runners, which lack the outer try/catch the AI-SDK runners have.
+ */
+async function persistSetupFailedIteration(args: {
+  iterationId: string | undefined;
+  runStartedAt: number;
+  errorMessage: string;
+  iterationMetadataBase: Record<string, string | number | boolean>;
+  recorder: SuiteRunRecorder | null;
+  convexClient: ConvexHttpClient;
+}): Promise<void> {
+  const failParams = {
+    ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+    passed: false,
+    toolsCalled: [],
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    messages: [] as ModelMessage[],
+    status: "failed" as const,
+    startedAt: args.runStartedAt,
+    error: args.errorMessage,
+    resultSource: "reported" as const,
+    metadata: { ...args.iterationMetadataBase },
+  };
+  if (args.recorder) {
+    await args.recorder.finishIteration(failParams);
+  } else {
+    await finishIterationDirectly(args.convexClient, failParams);
+  }
+}
+
 type RunIterationBaseParams = {
   test: EvalTestCase;
   runIndex: number;
@@ -1148,22 +1184,6 @@ const runIterationWithAiSdk = async ({
     orgModelConfig,
   });
 
-  // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
-  // this and call `getToolsForAiSdk` + an inline system/temperature wiring,
-  // missing progressive discovery, skill tools, Anthropic name validation,
-  // and skills-prompt assembly. Per-turn hydration of `discoveryState` is a
-  // later PR; this PR threads the initial state through.
-  const prepared = await prepareChatV2({
-    mcpClientManager,
-    selectedServers,
-    modelDefinition,
-    systemPrompt: system,
-    temperature,
-    respectToolVisibility: hostPolicy?.respectToolVisibility,
-    customProviders: modelRuntime.customProviders,
-    priorMessages: [],
-  });
-
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
@@ -1198,11 +1218,11 @@ const runIterationWithAiSdk = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const baseMessages: ModelMessage[] = [];
-  if (prepared.enhancedSystemPrompt) {
-    baseMessages.push({ role: "system", content: prepared.enhancedSystemPrompt });
-  }
-  let conversationMessages: ModelMessage[] = [...baseMessages];
+  // `conversationMessages` starts empty; the system message is pushed below
+  // inside the try block, AFTER `prepareChatV2` (which can throw on Anthropic
+  // name validation / meta-tool collisions / skill-tool prep). Building it
+  // inside the try lets the catch path persist a failed iteration row.
+  let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   let accumulatedUsage = {
@@ -1218,6 +1238,28 @@ const runIterationWithAiSdk = async ({
     null;
 
   try {
+    // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
+    // this and call `getToolsForAiSdk` + an inline system/temperature wiring,
+    // missing skill tools, Anthropic name validation, and skills-prompt
+    // assembly. Called inside the try so prep failures become a recorded
+    // failed iteration rather than an uncaught setup error.
+    const prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt: system,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      customProviders: modelRuntime.customProviders,
+      priorMessages: [],
+    });
+    if (prepared.enhancedSystemPrompt) {
+      conversationMessages.push({
+        role: "system",
+        content: prepared.enhancedSystemPrompt,
+      });
+    }
+
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
@@ -1659,21 +1701,6 @@ const runIterationViaBackend = async ({
       : undefined;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
-  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
-  // tools, Anthropic name validation, and the assembled system prompt. The
-  // backend path serializes `prepared.allTools` to `toolDefs` below and
-  // executes them locally on tool-call events.
-  const prepared = await prepareChatV2({
-    mcpClientManager,
-    selectedServers,
-    modelDefinition,
-    systemPrompt,
-    temperature,
-    respectToolVisibility: hostPolicy?.respectToolVisibility,
-    priorMessages: [],
-  });
-
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const runStartedAt = Date.now();
@@ -1710,6 +1737,47 @@ const runIterationViaBackend = async ({
     : recorder
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
+
+  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
+  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
+  // tools, Anthropic name validation, and the assembled system prompt. The
+  // backend path serializes `prepared.allTools` to `toolDefs` below and
+  // executes them locally on tool-call events. Run AFTER iteration creation
+  // and inside a try/catch so prep failures persist as a failed iteration row
+  // rather than rejecting the test case with no iteration record.
+  let prepared: PrepareChatV2Result;
+  try {
+    prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      priorMessages: [],
+    });
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    await persistSetupFailedIteration({
+      iterationId,
+      runStartedAt,
+      errorMessage,
+      iterationMetadataBase,
+      recorder,
+      convexClient,
+    });
+    return {
+      evaluation: evaluateMultiTurnResults(
+        promptTurns,
+        [],
+        test.isNegativeTest,
+        test.matchOptions,
+      ),
+      iterationId,
+    };
+  }
 
   const toolDefs = Object.entries(prepared.allTools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -2746,20 +2814,6 @@ const streamIterationWithAiSdk = async ({
     orgModelConfig,
   });
 
-  // See `runIterationWithAiSdk`: adopt prepareChatV2 so this stream variant
-  // also gets skill tools, progressive-discovery meta-tools, Anthropic name
-  // validation, and the assembled system prompt.
-  const prepared = await prepareChatV2({
-    mcpClientManager,
-    selectedServers,
-    modelDefinition,
-    systemPrompt: system,
-    temperature,
-    respectToolVisibility: hostPolicy?.respectToolVisibility,
-    customProviders: modelRuntime.customProviders,
-    priorMessages: [],
-  });
-
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
@@ -2794,11 +2848,10 @@ const streamIterationWithAiSdk = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const baseMessages: ModelMessage[] = [];
-  if (prepared.enhancedSystemPrompt) {
-    baseMessages.push({ role: "system", content: prepared.enhancedSystemPrompt });
-  }
-  let conversationMessages: ModelMessage[] = [...baseMessages];
+  // `conversationMessages` starts empty; the system message is pushed below
+  // inside the try block, AFTER `prepareChatV2`. See the suite-style runner
+  // for the rationale (prep failures persist as failed iteration rows).
+  let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const accumulatedUsage = {
@@ -2814,6 +2867,25 @@ const streamIterationWithAiSdk = async ({
     null;
 
   try {
+    // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
+    // so prep failures become a recorded failed iteration.
+    const prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt: system,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      customProviders: modelRuntime.customProviders,
+      priorMessages: [],
+    });
+    if (prepared.enhancedSystemPrompt) {
+      conversationMessages.push({
+        role: "system",
+        content: prepared.enhancedSystemPrompt,
+      });
+    }
+
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
@@ -3360,21 +3432,6 @@ const streamIterationViaBackend = async ({
       : undefined;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
-  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
-  // tools, Anthropic name validation, and the assembled system prompt. The
-  // backend path serializes `prepared.allTools` to `toolDefs` below and
-  // executes them locally on tool-call events.
-  const prepared = await prepareChatV2({
-    mcpClientManager,
-    selectedServers,
-    modelDefinition,
-    systemPrompt,
-    temperature,
-    respectToolVisibility: hostPolicy?.respectToolVisibility,
-    priorMessages: [],
-  });
-
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const runStartedAt = Date.now();
@@ -3411,6 +3468,47 @@ const streamIterationViaBackend = async ({
     : recorder
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
+
+  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
+  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
+  // tools, Anthropic name validation, and the assembled system prompt. The
+  // backend path serializes `prepared.allTools` to `toolDefs` below and
+  // executes them locally on tool-call events. Run AFTER iteration creation
+  // and inside a try/catch so prep failures persist as a failed iteration row
+  // rather than rejecting the test case with no iteration record.
+  let prepared: PrepareChatV2Result;
+  try {
+    prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      priorMessages: [],
+    });
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    await persistSetupFailedIteration({
+      iterationId,
+      runStartedAt,
+      errorMessage,
+      iterationMetadataBase,
+      recorder,
+      convexClient,
+    });
+    return {
+      evaluation: evaluateMultiTurnResults(
+        promptTurns,
+        [],
+        test.isNegativeTest,
+        test.matchOptions,
+      ),
+      iterationId,
+    };
+  }
 
   const toolDefs = Object.entries(prepared.allTools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
