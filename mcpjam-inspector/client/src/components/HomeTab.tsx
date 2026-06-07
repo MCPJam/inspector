@@ -1,8 +1,8 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
-import { Plus } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
@@ -38,10 +38,49 @@ function deriveFirstName(opts: {
   return "there";
 }
 
+function McpjamAgentTakeoverFrame({
+  onBack,
+  onNewChat,
+  children,
+}: {
+  onBack: () => void;
+  onNewChat: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex items-center justify-between border-b border-border/40 px-4 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          aria-label="Back to home"
+          className="h-8 w-8 rounded-full p-0 text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onNewChat}
+          className="h-8 gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden />
+          <span>New chat</span>
+        </Button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const navigate = useAppNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionParam = searchParams.get("session");
+  const composeParam = searchParams.get("compose") === "1";
 
   const handleSessionStart = useCallback(
     (id: string, firstMessage: string) => {
@@ -69,6 +108,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
         (prev) => {
           const next = new URLSearchParams(prev);
           next.set("session", id);
+          next.delete("compose");
           return next;
         },
         { replace: false }
@@ -83,6 +123,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
         (prev) => {
           const next = new URLSearchParams(prev);
           next.set("session", id);
+          next.delete("compose");
           return next;
         },
         { replace: false }
@@ -91,11 +132,28 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
     [setSearchParams]
   );
 
+  const handleBackToHome = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("session");
+        next.delete("compose");
+        return next;
+      },
+      { replace: false }
+    );
+  }, [setSearchParams]);
+
+  // "New chat" inside the takeover keeps the user on the agent surface and
+  // swaps the thread for an empty composer (Hero). A session id is minted
+  // only when they actually submit, mirroring the chatbox "Clear chat"
+  // affordance — fresh slate without bouncing back to the greeting.
   const handleNewChat = useCallback(() => {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
         next.delete("session");
+        next.set("compose", "1");
         return next;
       },
       { replace: false }
@@ -178,37 +236,38 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
 
   const isLoading = data === undefined;
 
-  // PostHog/Attio-style chat takeover: when a session is active, the entire
-  // home screen *becomes* the conversation — the greeting, stats, and
-  // recommended cards drop out until the user starts a new chat.
-  if (sessionParam) {
+  // PostHog/Attio-style chat takeover: when a session is active OR the user
+  // chose "New chat" from inside the takeover, the entire home screen *becomes*
+  // the conversation surface. The greeting, stats, and recommended cards drop
+  // out until the user clicks Back.
+  if (sessionParam || composeParam) {
     return (
-      <div className="flex h-full flex-col bg-background">
-        <div className="flex items-center justify-between border-b border-border/40 px-4 py-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <img src="/mcp_jam.svg" alt="" aria-hidden className="h-5 w-5" />
-            <span>MCPJam Agent</span>
+      <McpjamAgentTakeoverFrame
+        onBack={handleBackToHome}
+        onNewChat={handleNewChat}
+      >
+        {sessionParam ? (
+          <McpjamAgentThread
+            sessionId={sessionParam}
+            projectId={projectId}
+            organizationId={organizationId}
+            surface="home"
+            variant="full"
+            className="flex-1 min-h-0"
+          />
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 pb-20 pt-16">
+              <McpjamAgentHero
+                surface="home"
+                onSessionStart={handleSessionStart}
+                onResumeSession={handleResumeSession}
+                ready={Boolean(projectId)}
+              />
+            </div>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={handleNewChat}
-            className="h-8 gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden />
-            <span>New chat</span>
-          </Button>
-        </div>
-        <McpjamAgentThread
-          sessionId={sessionParam}
-          projectId={projectId}
-          organizationId={organizationId}
-          surface="home"
-          variant="full"
-          className="flex-1 min-h-0"
-        />
-      </div>
+        )}
+      </McpjamAgentTakeoverFrame>
     );
   }
 
