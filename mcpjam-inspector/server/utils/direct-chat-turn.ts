@@ -38,6 +38,11 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import type { PersistedTurnTrace } from "./chat-ingestion";
+import { logger } from "./logger";
+import {
+  applyPrepareAdvertisedTools,
+  type PrepareAdvertisedTools,
+} from "./advertised-tools";
 
 /**
  * The chat-v2 user-API-key path (`streamDirectChatWithLiveTrace`) used to
@@ -189,6 +194,17 @@ export interface RunDirectChatTurnOptions {
   tools: ToolSet;
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
+  /**
+   * Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing —
+   * the AI-SDK-path equivalent of
+   * `MCPJamHandlerOptions.prepareAdvertisedTools`. Receives the names that
+   * would otherwise be advertised this step (the progressive active subset, or
+   * the full tool map in non-progressive mode) and returns the subset to keep,
+   * or `undefined` for no narrowing. Names outside the default set are ignored;
+   * a throw is logged and falls back to the default set. The eval runner uses
+   * it to hide `computer` / `finish_widget` until a widget has rendered.
+   */
+  prepareAdvertisedTools?: PrepareAdvertisedTools;
   abortSignal?: AbortSignal;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
@@ -283,6 +299,7 @@ export function runDirectChatTurn(
     tools,
     progressivePlan,
     discoveryState,
+    prepareAdvertisedTools,
     abortSignal,
     traceEvents,
     onPersist,
@@ -391,12 +408,30 @@ export function runDirectChatTurn(
         modelId,
         promptIndex: traceTurn.promptIndex,
       });
+      // Base advertised set: progressive discovery narrows to the active
+      // subset; otherwise the model sees the full tool map.
+      let activeToolNames: string[] | undefined;
       if (progressivePlan?.enabled && discoveryState) {
         commitNewlyLoaded(discoveryState);
-        const active = resolveActiveToolNames(progressivePlan, discoveryState);
-        return { activeTools: active };
+        activeToolNames = resolveActiveToolNames(progressivePlan, discoveryState);
       }
-      return {};
+      // Browser-rendered MCP App eval PR 2: layer runtime-conditional
+      // advertised-tool narrowing on top (e.g. hide `computer` /
+      // `finish_widget` until a widget has rendered). Mirrors the
+      // stream-handler hook: names outside the default set are ignored, and a
+      // throw is logged + falls back to the default set.
+      if (prepareAdvertisedTools) {
+        activeToolNames = applyPrepareAdvertisedTools({
+          defaultToolNames: activeToolNames ?? Object.keys(tools),
+          stepIndex: stepNumber,
+          prepareAdvertisedTools,
+          onWarn: (message, meta) =>
+            logger.warn(`[direct-chat-turn] ${message}`, meta),
+        });
+      }
+      return activeToolNames !== undefined
+        ? { activeTools: activeToolNames }
+        : {};
     },
     onChunk: async ({ chunk }) => {
       if (chunk.type === "text-delta") {

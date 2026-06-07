@@ -76,6 +76,10 @@ function isApprovalFreeMetaToolName(
   return META_TOOL_NAMES.includes(name);
 }
 import { logger } from "./logger";
+import {
+  applyPrepareAdvertisedTools,
+  type PrepareAdvertisedTools,
+} from "./advertised-tools";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
   mergeLiveChatTraceUsage,
@@ -332,6 +336,20 @@ export interface MCPJamHandlerOptions {
    */
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
   /**
+   * Browser-rendered MCP App eval PR 2 — optional per-step hook that narrows
+   * the *advertised* tool set the model sees this step. Called inside
+   * `processOneStep` after the active tool subset is resolved, with
+   * `{ stepIndex, defaultToolNames }` (the names that would otherwise be
+   * advertised). Returns the subset of names to keep, or `undefined` for "no
+   * narrowing". Names not in `defaultToolNames` are ignored (defense-in-depth:
+   * a caller can't smuggle in a non-advertised tool). A throw is logged and
+   * falls back to the default set. This is *runtime-conditional advertising*
+   * (e.g. hide `computer` / `finish_widget` until a widget has rendered) and
+   * is distinct from progressive discovery (lazy MCP tool catalogs). Chat /
+   * synthetic omit; the eval runner closes over harness state to decide.
+   */
+  prepareAdvertisedTools?: PrepareAdvertisedTools;
+  /**
    * Override the Convex endpoint path for the per-step LLM call.
    * Defaults to "/stream". Org BYOK chat uses "/stream/org".
    */
@@ -435,6 +453,8 @@ interface StepContext {
   // processOneStep, processStream/tool-execution catch, outer
   // agentic-loop catch). Optional.
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
+  // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
+  prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
 }
 
@@ -1657,18 +1677,41 @@ async function processOneStep(
     onToolResult,
     // PR 5b-followup-2 structured-error callback.
     onEngineError,
+    // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
+    prepareAdvertisedTools,
   } = ctx;
 
   // Pick the active tool subset for this step. In non-progressive mode
   // (`progressivePlan` undefined or plan.enabled === false) this collapses
   // to the full list and matches prior behavior. In progressive mode the
   // model only sees meta-tools + loaded + pending-approval + newly-loaded.
-  const activeToolDefs: ToolDefinition[] =
+  let activeToolDefs: ToolDefinition[] =
     progressivePlan && progressivePlan.enabled && discoveryState
       ? resolveActiveToolNames(progressivePlan, discoveryState)
           .map((name) => toolDefsByName.get(name))
           .filter((def): def is ToolDefinition => def !== undefined)
       : toolDefs;
+
+  // Browser-rendered MCP App eval PR 2: runtime-conditional advertised-tool
+  // narrowing. The hook receives the names that would otherwise be advertised
+  // this step (`defaultToolNames`) and returns the subset to keep, or
+  // `undefined` for no narrowing. Filtering against the resolved set means any
+  // returned name not already advertised is ignored (defense-in-depth), and a
+  // throw is logged + falls back to the default set so a buggy hook can't
+  // crash the loop. Applied here so both the request_payload trace snapshot
+  // and the Convex `/stream` request see the same narrowed set.
+  if (prepareAdvertisedTools) {
+    const advertised = new Set(
+      applyPrepareAdvertisedTools({
+        defaultToolNames: activeToolDefs.map((def) => def.name),
+        stepIndex,
+        prepareAdvertisedTools,
+        onWarn: (message, meta) =>
+          logger.warn(`[mcpjam-stream-handler] ${message}`, meta),
+      }),
+    );
+    activeToolDefs = activeToolDefs.filter((def) => advertised.has(def.name));
+  }
 
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
@@ -2386,6 +2429,8 @@ export async function runChatEngineLoop(
     onStepFinish,
     // PR 5b-followup-2 callback.
     onEngineError,
+    // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
+    prepareAdvertisedTools,
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
@@ -2631,6 +2676,8 @@ export async function runChatEngineLoop(
             // the two `processOneStep` error sites (non-OK Convex
             // response + processStream/tool catch).
             onEngineError,
+            // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
+            prepareAdvertisedTools,
             abortSignal,
           });
 

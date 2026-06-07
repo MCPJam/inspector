@@ -165,6 +165,13 @@ export interface RunAssistantTurnOptions {
   onEngineError?: MCPJamHandlerOptions["onEngineError"];
 
   /**
+   * Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing
+   * pass-through. The eval runner uses this to hide `computer` /
+   * `finish_widget` until a widget has rendered. Chat / synthetic omit.
+   */
+  prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
+
+  /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
    * `handleHostedOrgChatModel` (org BYOK delegation chain) keeps
    * working — `runAssistantTurn` is the same engine, and the org BYOK
@@ -343,6 +350,10 @@ function buildHandlerOptions(
     ...(opts.onStepFinish ? { onStepFinish: opts.onStepFinish } : {}),
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
+    // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
+    ...(opts.prepareAdvertisedTools
+      ? { prepareAdvertisedTools: opts.prepareAdvertisedTools }
+      : {}),
     ...(opts.endpointPath ? { endpointPath: opts.endpointPath } : {}),
     ...(opts.extraHeaders ? { extraHeaders: opts.extraHeaders } : {}),
     ...(opts.authContext.clientIp !== undefined &&
