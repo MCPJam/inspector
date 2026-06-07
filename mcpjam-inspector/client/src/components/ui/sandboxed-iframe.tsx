@@ -28,7 +28,10 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { SEP_1865_PERMISSION_FEATURES } from "@/lib/client-config-v2";
+import {
+  buildOuterAllowAttribute,
+  buildOuterSandboxAttribute,
+} from "@/lib/mcp-ui/iframe-sandbox-policy";
 
 export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
@@ -253,47 +256,10 @@ export const SandboxedIframe = forwardRef<
   // inspector-only legacy defaults are conditional.
   //
   // Per Permissions Policy spec, `;` separates features.
-  const outerAllowAttribute = useMemo(() => {
-    const allowFeaturesIsAuthoritative = allowFeatures !== undefined;
-    const allowList = allowFeaturesIsAuthoritative
-      ? []
-      : ["local-network-access *", "midi *"];
-    if (permissions?.camera) allowList.push("camera *");
-    if (permissions?.microphone) allowList.push("microphone *");
-    if (permissions?.geolocation) allowList.push("geolocation *");
-    if (permissions?.clipboardWrite) allowList.push("clipboard-write *");
-    if (allowFeatures) {
-      // Defense-in-depth: skip spec features in case the canonicalizer
-      // was bypassed. `permissions.allow.{camera,...}` is the single
-      // source of truth — see SEP_1865_PERMISSION_FEATURES.
-      const specFeatures = new Set<string>(SEP_1865_PERMISSION_FEATURES);
-      for (const k of Object.keys(allowFeatures).sort()) {
-        if (specFeatures.has(k)) continue;
-        const allowlist = allowFeatures[k];
-        if (typeof allowlist !== "string" || allowlist.length === 0) continue;
-        // Reject `;` and `,` in keys and values. The Permissions Policy
-        // iframe `allow=` attribute uses `;` to separate features; allowing
-        // either character through here turns the per-feature filter into
-        // a directive-injection bypass (e.g. `fullscreen: "*; camera *"`
-        // would smuggle a `camera *` grant past the spec-feature check
-        // above). `,` is the corresponding separator in HTTP-header
-        // Permissions-Policy syntax and is rejected for symmetry.
-        if (/[;,]/.test(k) || /[;,]/.test(allowlist)) continue;
-        // Reject whitespace in the KEY too. A key like `"camera *"`
-        // doesn't equal the spec key `"camera"`, so the spec-feature
-        // filter above lets it through; the join produces
-        // `camera * *`, which the browser parses as a `camera` grant
-        // — bypassing `permissions.allow` as the single source of
-        // truth for the 4 spec permissions. (Values legitimately
-        // contain whitespace for multi-token allowlists like
-        // `"'self' https://example.com"`, so the whitespace rule
-        // applies only to keys.)
-        if (/\s/.test(k)) continue;
-        allowList.push(`${k} ${allowlist}`);
-      }
-    }
-    return allowList.join("; ");
-  }, [permissions, allowFeatures]);
+  const outerAllowAttribute = useMemo(
+    () => buildOuterAllowAttribute({ permissions, allowFeatures }),
+    [permissions, allowFeatures],
+  );
 
   // Outer iframe `sandbox=` value.
   //
@@ -310,36 +276,10 @@ export const SandboxedIframe = forwardRef<
   //
   // `undefined` vs `[]` matters here: `[]` is the explicit "spec-minimum
   // only" intent, mirroring the canonicalizer's preservation contract.
-  const outerSandboxAttribute = useMemo(() => {
-    const tokens = new Set<string>();
-    if (sandboxAttrs !== undefined) {
-      tokens.add("allow-scripts");
-      tokens.add("allow-same-origin");
-      for (const t of sandboxAttrs) {
-        const trimmed = t.trim();
-        if (trimmed.length === 0) continue;
-        // Reject tokens with internal whitespace. A profile (or custom-
-        // token input) that smuggles `"allow-forms allow-popups-to-
-        // escape-sandbox"` would otherwise land in the Set as one entry
-        // but the join(" ") below would emit it as two real sandbox
-        // flags — silently widening the iframe grant beyond what the
-        // editor/matrix display. Reject is safer than split: the entry
-        // visibly does nothing (user notices) instead of taking effect
-        // invisibly.
-        if (/\s/.test(trimmed)) continue;
-        tokens.add(trimmed);
-      }
-    } else {
-      for (const t of sandbox.split(/\s+/)) {
-        if (t.length > 0) tokens.add(t);
-      }
-      // Defense in depth: spec-mandated tokens are always present even
-      // if a caller passes a malformed `sandbox` prop.
-      tokens.add("allow-scripts");
-      tokens.add("allow-same-origin");
-    }
-    return Array.from(tokens).sort().join(" ");
-  }, [sandbox, sandboxAttrs]);
+  const outerSandboxAttribute = useMemo(
+    () => buildOuterSandboxAttribute({ sandbox, sandboxAttrs }),
+    [sandbox, sandboxAttrs],
+  );
 
   const resourceReadyKey = useMemo(
     () =>
