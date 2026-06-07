@@ -2530,60 +2530,51 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(hasSystemEntry).toBe(false);
     });
 
-    it("prepends the resolved system prompt to persisted messages (PR 4d review — Codex P2)", async () => {
-      // Codex P2 review fix: pre-4d the system rode along as the first
-      // entry in `conversationMessages` and was naturally persisted via
-      // the messages-array path. PR 4d dropped that push to align the
-      // streamText wire shape with chat-v2; persistence had no
-      // dedicated `systemPrompt` slot on `appendEvalTurnTrace`, so the
-      // resolved system prompt was lost from the persisted transcript.
-      //
-      // Fix: prepend the resolved value as a `role: "system"` message
-      // at PERSISTENCE TIME (not in `conversationMessages` — the wire
-      // shape stays chat-aligned, no double-send). This restores the
-      // pre-4d persistence shape exactly: first message is
-      // `role: "system"` with the resolved content.
+    it("passes the resolved system prompt to appendEvalTurnTrace.systemPrompt (chatSessions.systemPrompt)", async () => {
+      // Pre-this-PR: the resolved system was spliced into the persisted
+      // `messages` array as a leading `{role:"system",...}` entry,
+      // because `appendEvalTurnTrace` had no dedicated `systemPrompt`
+      // slot. This PR adds the slot (backend-side) and threads the
+      // value through as a top-level arg on the action call, persisted
+      // to `chatSessions.systemPrompt` with first-write-wins semantics.
+      // The persisted `messages` array no longer carries a leading
+      // system entry (the wire shape and the persisted shape now agree
+      // on "system carried out-of-band").
       await runWithSuiteHostConfig({
         systemPrompt: "Resolved system prompt for persistence",
       });
 
-      const hasSystemPrefix = (msgs: unknown): boolean => {
-        if (!Array.isArray(msgs) || msgs.length === 0) return false;
-        const first = msgs[0] as { role?: string; content?: unknown };
-        if (first?.role !== "system") return false;
-        if (typeof first.content === "string") {
-          return first.content === "Resolved system prompt for persistence";
-        }
-        if (Array.isArray(first.content)) {
-          return first.content.some(
-            (part: any) =>
-              part?.type === "text" &&
-              part.text === "Resolved system prompt for persistence",
-          );
-        }
-        return false;
-      };
       const anyCallCarriesIt = convexClient.action.mock.calls.some((call) => {
+        if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
         const payload = call[1] as Record<string, unknown> | undefined;
-        if (!payload) return false;
-        if (hasSystemPrefix(payload.messages)) return true;
-        const turn = payload.turn as
-          | { sessionMessages?: unknown }
-          | undefined;
-        if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
-        return false;
+        return (
+          payload?.systemPrompt === "Resolved system prompt for persistence"
+        );
       });
       expect(anyCallCarriesIt).toBe(true);
+
+      // And the persisted `turn.sessionMessages` no longer carries the
+      // system as a leading message — the new wire shape moved it to
+      // the top-level field.
+      const appendCalls = convexClient.action.mock.calls.filter(
+        (call) => call[0] === "testSuites:appendEvalTurnTrace",
+      );
+      for (const call of appendCalls) {
+        const payload = call[1] as Record<string, unknown> | undefined;
+        const turn = payload?.turn as
+          | { sessionMessages?: Array<{ role?: string }> }
+          | undefined;
+        const first = turn?.sessionMessages?.[0];
+        expect(first?.role).not.toBe("system");
+      }
     });
 
-    it("prepends the resolved system to the backend runner's persisted transcript (PR 4d review — Codex P2 / Cursor Medium)", async () => {
-      // Codex P2 / Cursor Medium: `runIterationViaBackend` sends the
-      // resolved system to the model via `runAssistantTurn`'s
-      // `systemPrompt:` arg, but the engine's returned message history
-      // doesn't carry a system entry. `appendEvalTurnTrace` has no
-      // dedicated `systemPrompt` slot, so the persisted transcript
-      // omits a prompt that affected the model. Fix: prepend at
-      // persistence time, mirroring the local runner's fix.
+    it("passes the resolved system to appendEvalTurnTrace.systemPrompt in the backend runner", async () => {
+      // `runIterationViaBackend` sends the resolved system to the model
+      // via `runAssistantTurn`'s `systemPrompt:` arg. With the new
+      // dedicated slot on `appendEvalTurnTrace`, the persisted
+      // transcript carries it via `chatSessions.systemPrompt` (no
+      // leading `{role:"system",...}` entry in the messages array).
       const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
@@ -2640,32 +2631,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           },
         });
 
-        const hasSystemPrefix = (msgs: unknown): boolean => {
-          if (!Array.isArray(msgs) || msgs.length === 0) return false;
-          const first = msgs[0] as { role?: string; content?: unknown };
-          if (first?.role !== "system") return false;
-          if (typeof first.content === "string") {
-            return first.content === "Backend suite default";
-          }
-          if (Array.isArray(first.content)) {
-            return first.content.some(
-              (part: any) =>
-                part?.type === "text" &&
-                part.text === "Backend suite default",
-            );
-          }
-          return false;
-        };
         const anyCallCarriesIt = convexClient.action.mock.calls.some(
           (call) => {
+            if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
             const payload = call[1] as Record<string, unknown> | undefined;
-            if (!payload) return false;
-            if (hasSystemPrefix(payload.messages)) return true;
-            const turn = payload.turn as
-              | { sessionMessages?: unknown }
-              | undefined;
-            if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
-            return false;
+            return payload?.systemPrompt === "Backend suite default";
           },
         );
         expect(anyCallCarriesIt).toBe(true);
@@ -2729,34 +2699,15 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const wireMessages = streamCall.messages as Array<{ role: string }>;
       expect(wireMessages.some((m) => m.role === "system")).toBe(false);
 
-      // Persistence shape: first message is the resolved system,
-      // matching the non-stream runner's prefix.
-      const hasSystemPrefix = (msgs: unknown): boolean => {
-        if (!Array.isArray(msgs) || msgs.length === 0) return false;
-        const first = msgs[0] as { role?: string; content?: unknown };
-        if (first?.role !== "system") return false;
-        if (typeof first.content === "string") {
-          return first.content === "Stream-runner suite default";
-        }
-        if (Array.isArray(first.content)) {
-          return first.content.some(
-            (part: any) =>
-              part?.type === "text" &&
-              part.text === "Stream-runner suite default",
-          );
-        }
-        return false;
-      };
+      // Persistence shape: the resolved system flows through
+      // `appendEvalTurnTrace.systemPrompt` (persisted to
+      // `chatSessions.systemPrompt`), not as a leading system entry
+      // in the messages array.
       const persistedCarriesIt = convexClient.action.mock.calls.some(
         (call) => {
+          if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
           const payload = call[1] as Record<string, unknown> | undefined;
-          if (!payload) return false;
-          if (hasSystemPrefix(payload.messages)) return true;
-          const turn = payload.turn as
-            | { sessionMessages?: unknown }
-            | undefined;
-          if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
-          return false;
+          return payload?.systemPrompt === "Stream-runner suite default";
         },
       );
       expect(persistedCarriesIt).toBe(true);
