@@ -82,13 +82,14 @@ export type SharedChatWidgetSnapshotPayload = {
 };
 
 /**
- * Structurally identical to `OpenAiAppsCapabilities` in
- * `client/src/lib/client-styles/types.ts` (and to the matching shape on
- * `EvalTraceWidgetSnapshot`). All three are wire-level mirrors of the
- * Convex `injectedOpenAiCompatCapabilitiesValidator` — kept separate
- * because the client-styles file lives in `client/` and can't be
- * imported from shared/. A future cleanup could move the canonical
- * definition here and have the client-side alias re-export.
+ * Wire shape for the `window.openai` shim capability matrix persisted
+ * with a widget snapshot. Mirrors the Convex
+ * `injectedOpenAiCompatCapabilitiesValidator`.
+ *
+ * Canonical structural type for this matrix across the inspector:
+ * `client/src/lib/client-styles/types.ts` re-exports it as
+ * `OpenAiAppsCapabilities` (the name used by the widget-debug UI, which
+ * groups capabilities by app type) so client + server agree on one shape.
  */
 export type InjectedOpenAiCompatCapabilities = {
   callTool?: boolean;
