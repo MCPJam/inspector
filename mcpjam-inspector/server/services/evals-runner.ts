@@ -1968,6 +1968,12 @@ const runIterationViaBackend = async ({
   const backendCustomProviders = orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
     : undefined;
+  // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
+  // the `prepareChatV2` try) so the catch path and the assignment
+  // inside the try are both in scope. Stays `undefined` if prepareChatV2
+  // throws — the setup-failure persistence path doesn't need a system
+  // prefix.
+  let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -1982,6 +1988,13 @@ const runIterationViaBackend = async ({
         : {}),
       priorMessages: [],
     });
+    // PR 4d review fix (Codex P2 / Cursor Medium): stash the resolved
+    // system prompt for the persistence prefix below. The engine
+    // (`runAssistantTurn`) sends it to the model via its `systemPrompt:`
+    // arg, but the returned message history doesn't carry a system entry
+    // and `appendEvalTurnTrace` has no `systemPrompt` slot. Prepend at
+    // persistence time — same shape as the local runners' Codex-P2 fix.
+    backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
@@ -2042,6 +2055,8 @@ const runIterationViaBackend = async ({
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
+  // `prepareChatV2` try.
 
   // Eval supplies its bearer token via `convexAuthToken`. The engine wraps it
   // into the Convex `/stream` (or `/stream/org`) request the same way live
@@ -2372,13 +2387,26 @@ const runIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
+  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
+  // system at persistence so the backend's transcript carries it.
+  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
+  const persistedBackendMessages: ModelMessage[] =
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...messageHistory,
+        ]
+      : messageHistory;
 
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    messages: persistedBackendMessages,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3079,6 +3107,24 @@ const streamIterationWithAiSdk = async ({
   // `runIterationWithAiSdk`. Empty when `prepareChatV2` throws before
   // returning.
   let streamEnhancedSystemPromptForPersist: string | undefined = undefined;
+  // PR 4d review fix (Cursor Low "Stream snapshots drop system prompt"):
+  // PR 4d dropped the `conversationMessages.push({role:"system"})` in
+  // this runner, but `buildTraceSnapshotEvent` reads from those arrays
+  // mid-run — live SSE traces during a streamed quick run no longer
+  // include the resolved system until the final persistence prepend.
+  // Wrap message slices with the system prefix everywhere the SSE
+  // snapshot consumes them so trace UI viewers see the system as the
+  // first message throughout the run.
+  const withSystemPrefix = (msgs: ModelMessage[]): ModelMessage[] =>
+    streamEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: streamEnhancedSystemPromptForPersist,
+          },
+          ...msgs,
+        ]
+      : msgs;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -3226,7 +3272,7 @@ const streamIterationWithAiSdk = async ({
               turnIndex: promptIndex,
               stepIndex: activeCompletedStepCount - 1,
               snapshotKind: "step_finish",
-              messages: snapshotMessages,
+              messages: withSystemPrefix(snapshotMessages),
               spans: [...recordedSpans, ...activeTraceCtx!.recordedSpans],
               actualToolCalls: extractToolCallsFromConversation({
                 messages: snapshotMessages,
@@ -3319,7 +3365,7 @@ const streamIterationWithAiSdk = async ({
         buildTraceSnapshotEvent({
           turnIndex: promptIndex,
           snapshotKind: "turn_finish",
-          messages: conversationMessages,
+          messages: withSystemPrefix(conversationMessages),
           spans: recordedSpans,
           actualToolCalls: extractToolCallsFromConversation({
             messages: conversationMessages,
@@ -3522,7 +3568,7 @@ const streamIterationWithAiSdk = async ({
           ? { stepIndex: activeCompletedStepCount - 1 }
           : {}),
         snapshotKind: "failure",
-        messages: failMessages,
+        messages: withSystemPrefix(failMessages),
         spans: recordedSpans,
         actualToolCalls: extractToolCallsFromConversation({
           messages: failMessages,
@@ -3755,6 +3801,12 @@ const streamIterationViaBackend = async ({
   const backendCustomProviders = orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
     : undefined;
+  // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
+  // the `prepareChatV2` try) so the catch path and the assignment
+  // inside the try are both in scope. Stays `undefined` if prepareChatV2
+  // throws — the setup-failure persistence path doesn't need a system
+  // prefix.
+  let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -3769,6 +3821,9 @@ const streamIterationViaBackend = async ({
         : {}),
       priorMessages: [],
     });
+    // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
+    // prefix shape as the non-stream backend runner.
+    backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
@@ -3857,6 +3912,8 @@ const streamIterationViaBackend = async ({
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
+  // `prepareChatV2` try.
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
     const promptTurn = promptTurns[promptIndex]!;
     const promptToolsCalled: ToolCall[] = [];
@@ -4459,13 +4516,26 @@ const streamIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
+  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
+  // system at persistence so the backend's transcript carries it.
+  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
+  const persistedBackendMessages: ModelMessage[] =
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...messageHistory,
+        ]
+      : messageHistory;
 
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    messages: persistedBackendMessages,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),

@@ -2576,6 +2576,104 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(anyCallCarriesIt).toBe(true);
     });
 
+    it("prepends the resolved system to the backend runner's persisted transcript (PR 4d review — Codex P2 / Cursor Medium)", async () => {
+      // Codex P2 / Cursor Medium: `runIterationViaBackend` sends the
+      // resolved system to the model via `runAssistantTurn`'s
+      // `systemPrompt:` arg, but the engine's returned message history
+      // doesn't carry a system entry. `appendEvalTurnTrace` has no
+      // dedicated `systemPrompt` slot, so the persisted transcript
+      // omits a prompt that affected the model. Fix: prepend at
+      // persistence time, mirroring the local runner's fix.
+      const assistantTurnModule = await import("../../../utils/assistant-turn");
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockResolvedValueOnce({
+          messages: [
+            { role: "user", content: "Hello" } as any,
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "Backend response" }],
+            } as any,
+          ],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          turnTrace: {
+            turnId: "t_1",
+            promptIndex: 0,
+            startedAt: 0,
+            endedAt: 10,
+            modelId: "anthropic/claude-haiku-4.5",
+            spans: [],
+          },
+        } as any);
+
+      try {
+        await runEvalSuiteWithAiSdk({
+          suiteId: "suite-1",
+          runId: null,
+          config: {
+            tests: [
+              {
+                title: "Backend system prefix",
+                query: "Hello",
+                runs: 1,
+                model: "claude-haiku-4.5",
+                provider: "anthropic",
+                expectedToolCalls: [],
+                promptTurns: [
+                  { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+                ],
+                testCaseId: "case-backend-sys",
+              },
+            ],
+            environment: { servers: ["srv-1"] },
+          },
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          mcpClientManager: mcpClientManager as any,
+          testCaseId: "case-backend-sys",
+          suiteHostConfig: {
+            systemPrompt: "Backend suite default",
+          },
+        });
+
+        const hasSystemPrefix = (msgs: unknown): boolean => {
+          if (!Array.isArray(msgs) || msgs.length === 0) return false;
+          const first = msgs[0] as { role?: string; content?: unknown };
+          if (first?.role !== "system") return false;
+          if (typeof first.content === "string") {
+            return first.content === "Backend suite default";
+          }
+          if (Array.isArray(first.content)) {
+            return first.content.some(
+              (part: any) =>
+                part?.type === "text" &&
+                part.text === "Backend suite default",
+            );
+          }
+          return false;
+        };
+        const anyCallCarriesIt = convexClient.action.mock.calls.some(
+          (call) => {
+            const payload = call[1] as Record<string, unknown> | undefined;
+            if (!payload) return false;
+            if (hasSystemPrefix(payload.messages)) return true;
+            const turn = payload.turn as
+              | { sessionMessages?: unknown }
+              | undefined;
+            if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
+            return false;
+          },
+        );
+        expect(anyCallCarriesIt).toBe(true);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
     it("aligns streamIterationWithAiSdk with the chat wire shape (PR 4d review — CodeRabbit)", async () => {
       // CodeRabbit Major review fix: pre-fix, the streaming runner
       // pushed the system into `conversationMessages` AND omitted
