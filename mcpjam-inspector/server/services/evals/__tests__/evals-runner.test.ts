@@ -2395,4 +2395,147 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     // through buildIterationUsageMetadata).
     expect(updatePayload.tokensUsed).toBe(18);
   });
+
+  describe("PR 4d — suite hostConfig systemPrompt resolution", () => {
+    // PR 4d of the engine consolidation
+    // (`~/mcpjam-docs/unification.md`): eval was reading
+    // `advancedConfig.system` only and ignoring
+    // `suiteHostConfig.systemPrompt` / `.temperature`. The eval client
+    // deliberately omits suite defaults from per-case `advancedConfig`
+    // (comment at `client/src/components/evals/use-eval-handlers.ts:302`)
+    // on the understanding that the runtime applies them. PR 4d closes
+    // that gap by routing the resolution through the shared
+    // `resolveExecutionContext` helper with `override-wins` precedence
+    // — per-case stays authoritative; suite default fills the gap.
+
+    async function runWithSuiteHostConfig(
+      suiteHostConfig: Record<string, unknown> | null,
+      caseAdvancedConfig?: Record<string, unknown>,
+    ) {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-1",
+              ...(caseAdvancedConfig
+                ? { advancedConfig: caseAdvancedConfig }
+                : {}),
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+        suiteHostConfig,
+      });
+    }
+
+    it("uses suiteHostConfig.systemPrompt when advancedConfig.system is absent (gap closure)", async () => {
+      // **Behavior change** locked here: pre-PR-4d this test would have
+      // seen `system: ""` (or undefined) on the streamText call because
+      // the runner ignored `suiteHostConfig.systemPrompt`. Post-4d the
+      // suite default flows through.
+      await runWithSuiteHostConfig({
+        systemPrompt: "Suite-default system prompt",
+      });
+
+      const streamTextCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamTextCall).toBeDefined();
+      // `prepareChatV2` is stubbed to passthrough — `prepared.enhancedSystemPrompt`
+      // equals the input `systemPrompt`. Helper sends it via the `system:`
+      // field per PR 4d (drops the `""` quirk).
+      expect(streamTextCall.system).toBe("Suite-default system prompt");
+    });
+
+    it("per-case advancedConfig.system overrides suiteHostConfig.systemPrompt", async () => {
+      await runWithSuiteHostConfig(
+        { systemPrompt: "Suite default" },
+        { system: "Per-case override" },
+      );
+
+      const streamTextCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamTextCall).toBeDefined();
+      expect(streamTextCall.system).toBe("Per-case override");
+    });
+
+    it("falls back gracefully when suiteHostConfig is null and advancedConfig.system is absent", async () => {
+      // Quick-run paths that don't load a suite hostConfig pass `null` /
+      // `undefined`; the resolver returns the override (undefined here)
+      // and downstream code emits no `system:` field.
+      await runWithSuiteHostConfig(null);
+
+      const streamTextCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamTextCall).toBeDefined();
+      // With no source for systemPrompt, the helper's
+      // `normalizeSystemPromptForProvider(undefined)` returns undefined
+      // and streamText doesn't receive a `system:` field.
+      expect(streamTextCall.system).toBeUndefined();
+    });
+
+    it("uses suiteHostConfig.temperature when advancedConfig.temperature is absent", async () => {
+      await runWithSuiteHostConfig({
+        temperature: 0.42,
+      });
+
+      const streamTextCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamTextCall).toBeDefined();
+      expect(streamTextCall.temperature).toBe(0.42);
+    });
+
+    it("per-case advancedConfig.temperature overrides suiteHostConfig.temperature", async () => {
+      await runWithSuiteHostConfig(
+        { temperature: 0.42 },
+        { temperature: 0.99 },
+      );
+
+      const streamTextCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamTextCall).toBeDefined();
+      expect(streamTextCall.temperature).toBe(0.99);
+    });
+
+    it("does NOT push the system message into conversationMessages anymore (drops PR 4b quirk)", async () => {
+      // PR 4b pushed the resolved system prompt as a `role: "system"`
+      // message into `conversationMessages` and passed `systemPrompt: ""`
+      // to runDirectChatTurn. PR 4d aligns with chat-v2 — system goes
+      // via the helper's `systemPrompt:` field, never as a message.
+      // Persisted transcript must NOT contain a `role: "system"` entry.
+      await runWithSuiteHostConfig({
+        systemPrompt: "Test system prompt",
+      });
+
+      const noSystemRoleInPersistedMessages = (msgs: unknown): boolean => {
+        if (!Array.isArray(msgs)) return true;
+        return !msgs.some((m: any) => m?.role === "system");
+      };
+      const allCallsLackSystemRole = convexClient.action.mock.calls.every(
+        (call) => {
+          const payload = call[1] as Record<string, unknown> | undefined;
+          if (!payload) return true;
+          if (!noSystemRoleInPersistedMessages(payload.messages)) return false;
+          const turn = payload.turn as
+            | { sessionMessages?: unknown }
+            | undefined;
+          if (turn && !noSystemRoleInPersistedMessages(turn.sessionMessages))
+            return false;
+          return true;
+        },
+      );
+      expect(allCallsLackSystemRole).toBe(true);
+    });
+  });
 });

@@ -32,6 +32,7 @@ import {
   consumeDirectChatTurnHeadless,
   runDirectChatTurn,
 } from "../utils/direct-chat-turn";
+import { resolveExecutionContext } from "../utils/host-execution-context";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
@@ -227,6 +228,13 @@ export type RunEvalSuiteOptions = {
    * cross-host dashboard.
    */
   hostExecutionPolicy?: HostExecutionPolicy;
+  /**
+   * Raw suite hostConfig record. PR 4d threads this through so per-iteration
+   * runners can resolve CONFIG fields (`systemPrompt` / `temperature` /
+   * `selectedServerIds`) via `resolveExecutionContext` — the runner used
+   * to read `advancedConfig.system` only and ignore the suite default.
+   */
+  suiteHostConfig?: Record<string, unknown> | null;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -910,6 +918,23 @@ type RunIterationBaseParams = {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  /**
+   * Raw suite hostConfig record — the same one the route layer feeds
+   * to `extractHostExecutionPolicy` for the `hostPolicy` field above.
+   * PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`)
+   * threads this through so per-iteration runners can resolve CONFIG
+   * fields (`systemPrompt` / `temperature` / `selectedServerIds`) off
+   * it via `resolveExecutionContext` — the runner used to read
+   * `advancedConfig.system` only, leaving the suite-default systemPrompt
+   * unused at runtime even though the eval client deliberately omits
+   * it from per-case `advancedConfig` (see comment at
+   * `client/src/components/evals/use-eval-handlers.ts:302`).
+   *
+   * Optional so quick-run paths that don't load a suite hostConfig keep
+   * working — the resolver treats `null`/`undefined` as "no host opinion;
+   * use overrides as-is."
+   */
+  suiteHostConfig?: Record<string, unknown> | null;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1092,6 +1117,7 @@ const runIterationWithAiSdk = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1141,18 +1167,44 @@ const runIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
+  // PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // resolve `systemPrompt` and `temperature` via the shared
+  // `resolveExecutionContext` so the suite-level hostConfig's
+  // `systemPrompt` / `temperature` act as defaults under the per-case
+  // `advancedConfig` overrides. Pre-4d the runner ignored
+  // `suiteHostConfig.systemPrompt` / `.temperature` entirely — even
+  // though the eval client deliberately omits suite defaults from per-case
+  // advancedConfig (see comment at
+  // `client/src/components/evals/use-eval-handlers.ts:302`) on the
+  // understanding that the runtime applies them. `override-wins`
+  // precedence keeps per-case overrides authoritative; the hostConfig
+  // fills the gap when the per-case value is absent.
+  //
+  // `withHostContextSystemPrompt` runs AFTER the resolver because
+  // `{{var}}` substitution context is per-RUN
+  // (`test.hostConfigOverride.hostContext`), not part of the suite
+  // hostConfig.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const system = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const modelRuntime = resolveEvalModelRuntime({
@@ -1242,12 +1294,21 @@ const runIterationWithAiSdk = async ({
       customProviders: modelRuntime.customProviders,
       priorMessages: [],
     });
-    if (prepared.enhancedSystemPrompt) {
-      conversationMessages.push({
-        role: "system",
-        content: prepared.enhancedSystemPrompt,
-      });
-    }
+    // PR 4d of the engine consolidation: drop the PR 4b
+    // `systemPrompt: ""` quirk. Pre-4d, eval pushed
+    // `prepared.enhancedSystemPrompt` as a `role: "system"` message into
+    // `conversationMessages` and passed `systemPrompt: ""` to the
+    // helper — `normalizeSystemPromptForProvider("")` resolved to
+    // `undefined` so streamText received the system via messages, not
+    // the dedicated `system:` field. That worked but was a latent
+    // footgun: any refactor of `normalizeSystemPromptForProvider` to
+    // emit `""` would have double-sent the system. Match chat's shape —
+    // `enhancedSystemPrompt` flows to `runDirectChatTurn` via the
+    // `systemPrompt:` argument below; `conversationMessages` no longer
+    // carries a system message entry. The persisted transcript still
+    // shows the system because the helper assembles it via the
+    // `system:` field and the chatbox/eval persistence pipeline
+    // stamps `systemPrompt` as its own column.
 
     const llmModel = createLlmModel(
       modelDefinition,
@@ -1301,11 +1362,12 @@ const runIterationWithAiSdk = async ({
       // Eval owns failure detection + persistence + grading, layered
       // on top of `consumeDirectChatTurnHeadless`'s assembled return.
       //
-      // `systemPrompt: ""` is intentional: eval keeps the system message
-      // inside `conversationMessages` (so the persisted transcript still
-      // includes it for the UI), so we don't pass it separately to
-      // streamText. `normalizeSystemPromptForProvider("")` returns
-      // `undefined`, so the helper skips the `system:` field.
+      // PR 4d: `systemPrompt: prepared.enhancedSystemPrompt` matches
+      // chat's shape — the helper passes it to streamText via the
+      // dedicated `system:` field. `conversationMessages` no longer
+      // contains a system message; the persisted transcript carries
+      // the system via its own column (chatSession.systemPrompt /
+      // testIteration column), same as chat's path.
       // PR 4b review fix (Cursor "Partial messages never mirrored" +
       // Codex P2): the legacy `generateText` loop updated
       // `activePartialResponseMessages` and `activeCompletedStepCount`
@@ -1324,7 +1386,7 @@ const runIterationWithAiSdk = async ({
         llmModel,
         modelId: test.model,
         messageHistory: activePromptInputMessages,
-        systemPrompt: "",
+        systemPrompt: prepared.enhancedSystemPrompt ?? "",
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
@@ -1734,6 +1796,7 @@ const runIterationViaBackend = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1783,18 +1846,31 @@ const runIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  // PR 4d of the engine consolidation: same resolver shape as
+  // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
+  // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
+  // applies {{var}} substitution on the resolved value.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const systemPrompt = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
@@ -2318,6 +2394,8 @@ const runTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
+  /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
+  suiteHostConfig?: Record<string, unknown> | null;
 }) => {
   const {
     test,
@@ -2339,6 +2417,7 @@ const runTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    suiteHostConfig,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2445,6 +2524,7 @@ const runTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2480,6 +2560,7 @@ const runTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2509,6 +2590,7 @@ const runTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      suiteHostConfig,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2532,6 +2614,7 @@ export const runEvalSuiteWithAiSdk = async ({
   compareRunId,
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
+  suiteHostConfig,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2633,6 +2716,7 @@ export const runEvalSuiteWithAiSdk = async ({
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
+        suiteHostConfig,
       }),
     );
 
@@ -2797,6 +2881,7 @@ const streamIterationWithAiSdk = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2847,18 +2932,44 @@ const streamIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
+  // PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // resolve `systemPrompt` and `temperature` via the shared
+  // `resolveExecutionContext` so the suite-level hostConfig's
+  // `systemPrompt` / `temperature` act as defaults under the per-case
+  // `advancedConfig` overrides. Pre-4d the runner ignored
+  // `suiteHostConfig.systemPrompt` / `.temperature` entirely — even
+  // though the eval client deliberately omits suite defaults from per-case
+  // advancedConfig (see comment at
+  // `client/src/components/evals/use-eval-handlers.ts:302`) on the
+  // understanding that the runtime applies them. `override-wins`
+  // precedence keeps per-case overrides authoritative; the hostConfig
+  // fills the gap when the per-case value is absent.
+  //
+  // `withHostContextSystemPrompt` runs AFTER the resolver because
+  // `{{var}}` substitution context is per-RUN
+  // (`test.hostConfigOverride.hostContext`), not part of the suite
+  // hostConfig.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const system = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const modelRuntime = resolveEvalModelRuntime({
@@ -3430,6 +3541,7 @@ const streamIterationViaBackend = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3480,18 +3592,31 @@ const streamIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  // PR 4d of the engine consolidation: same resolver shape as
+  // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
+  // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
+  // applies {{var}} substitution on the resolved value.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const systemPrompt = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
@@ -4321,6 +4446,8 @@ export const streamTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for the stream run. */
   toolSignals?: ToolExposureSignals;
+  /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
+  suiteHostConfig?: Record<string, unknown> | null;
 }) => {
   const {
     test,
@@ -4343,6 +4470,7 @@ export const streamTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    suiteHostConfig,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -4453,6 +4581,7 @@ export const streamTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4489,6 +4618,7 @@ export const streamTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4519,6 +4649,7 @@ export const streamTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      suiteHostConfig,
     });
     outcomes.push(iterationOutcome);
   }

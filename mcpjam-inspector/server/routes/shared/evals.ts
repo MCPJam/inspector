@@ -964,6 +964,11 @@ export async function runEvalsWithManager(
     recorder,
     suiteInjectOpenAiCompat,
     hostExecutionPolicy: suiteHostPolicy,
+    // PR 4d: thread the raw suite hostConfig record into the runner so
+    // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
+    // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
+    // is the POLICY subset extracted upstream; this is the rest.
+    suiteHostConfig,
   });
 
   return {
@@ -1137,6 +1142,8 @@ export async function runEvalTestCaseWithManager(
     compareRunId,
     suiteInjectOpenAiCompat,
     hostExecutionPolicy: suiteHostPolicy,
+    // PR 4d: see comment on the suite-run wire-up site above.
+    suiteHostConfig,
   });
 
   const expectedIterationId =
@@ -1513,6 +1520,12 @@ export async function streamEvalTestCaseWithManager(
           compareRunId,
           injectOpenAiCompat: suiteInjectOpenAiCompat,
           hostPolicy: suiteHostPolicy,
+          // PR 4d: thread the raw hostConfig for the streamTestCase path
+          // so its runners (`streamIterationWithAiSdk` /
+          // `streamIterationViaBackend`) can resolve CONFIG fields via
+          // `resolveExecutionContext`. PR 5 will reduce these runners
+          // further; the threading still applies in the meantime.
+          suiteHostConfig,
           toolSignals: streamToolSignals,
           emit: (event: EvalStreamEvent) => {
             try {
