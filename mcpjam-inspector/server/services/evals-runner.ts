@@ -1,11 +1,15 @@
 import {
-  generateText,
   streamText,
   type ModelMessage,
   type Tool as AiTool,
   type ToolChoice,
   stepCountIs,
 } from "ai";
+import {
+  commitNewlyLoaded,
+  gateToolsToActiveSubset,
+  resolveActiveToolNames,
+} from "@/shared/progressive-tool-discovery";
 import {
   evaluateMultiTurnResults,
   type EvaluationResult,
@@ -1003,32 +1007,6 @@ function hasExplicitModelApiKeys(
   return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
 }
 
-function readBackendUsage(usage: unknown): {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-} {
-  const record =
-    usage && typeof usage === "object"
-      ? (usage as Record<string, unknown>)
-      : {};
-  const inputTokens =
-    typeof record.inputTokens === "number"
-      ? record.inputTokens
-      : typeof record.promptTokens === "number"
-        ? record.promptTokens
-        : 0;
-  const outputTokens =
-    typeof record.outputTokens === "number"
-      ? record.outputTokens
-      : typeof record.completionTokens === "number"
-        ? record.completionTokens
-        : 0;
-  const totalTokens =
-    typeof record.totalTokens === "number" ? record.totalTokens : 0;
-  return { inputTokens, outputTokens, totalTokens };
-}
-
 function resolveOrgTargetForEval(
   test: EvalTestCase,
   explicitTarget?: ResolveOrgModelConfigTarget,
@@ -1237,6 +1215,14 @@ const runIterationWithAiSdk = async ({
   let activeCompletedStepCount = 0;
   let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
     null;
+  // PR 4 of the engine consolidation: the new streamText-based per-turn
+  // loop sets `iterationError` in-line (no-new-messages, non-tool error
+  // span — see the failure-detection block in the loop below) and
+  // expects the post-loop finalize to consume it for the verdict gate.
+  // Hoisted so both the try-loop branches and the outer catch can
+  // assign.
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
 
   try {
     // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
@@ -1278,13 +1264,69 @@ const runIterationWithAiSdk = async ({
       );
     }
 
+    // PR 4 of the engine consolidation: swap `generateText` for
+    // `streamText` (the same driver chat's `streamDirectChatWithLiveTrace`
+    // uses for user-API-key models). Two correctness wins matter most:
+    //
+    //  - **Active-tool gating** finally applies to local-BYOK evals.
+    //    `gateToolsToActiveSubset` + `prepareStep` returning `activeTools`
+    //    is what makes progressive discovery's `search_mcp_tools` /
+    //    `load_mcp_tools` meta-tools meaningful — without them eval
+    //    advertised the full tool set every step and the meta-tools were
+    //    decorative. PR 1 closed the advertisement side; PR 4 closes the
+    //    enforcement side.
+    //  - **Eval-correctness invariants from PR 3 review carry over.**
+    //    Push user prompt to `conversationMessages` BEFORE the driver
+    //    call so a failed turn still persists "which turn errored." Use
+    //    `abortSignal.aborted` (not just thrown `AbortError`) as the
+    //    cancellation signal. Detect failures via the three signals
+    //    (`!turnTrace` shape, no-new-messages, non-tool error span).
+    //    Filter the error-span walk to non-tool categories so tool
+    //    errors flow through the existing `failOnToolError` gate.
+    //
+    // The driver stays inline rather than getting its own helper.
+    // Chat's `streamDirectChatWithLiveTrace` couples the streamText
+    // options with a Hono SSE writer + Response construction; a clean
+    // extraction is its own refactor (won't drop spans, won't drop the
+    // hosted-org wire shape) and PR 4 is not the place. PR 5 or a
+    // follow-up can extract `runDirectChatTurn` when the stream eval
+    // variants need the same code.
+    const localIsAborted = () => abortSignal?.aborted === true;
+    const returnLocalCancelled = () => ({
+      evaluation: evaluateMultiTurnResults(
+        promptTurns,
+        toolsCalledByPrompt,
+        test.isNegativeTest,
+        test.matchOptions,
+      ),
+      iterationId: undefined,
+    });
+
     for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+      // Cancellation between turns: bail without recording. Matches the
+      // legacy generateText-based runner's behavior and the PR 3 invariant.
+      if (localIsAborted()) {
+        logger.debug(
+          "[evals] local-BYOK iteration aborted between turns; skipping record",
+        );
+        return returnLocalCancelled();
+      }
+
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
-      activePromptInputMessages = [
-        ...conversationMessages,
-        { role: "user", content: promptTurn.prompt },
-      ];
+
+      // PR 3 invariant (Cursor "Failed turn omits user transcript"): push
+      // the user prompt to the running conversation BEFORE the driver
+      // call so a failed turn still records WHICH turn errored. The
+      // engine's input slice is read from `conversationMessages` at this
+      // point.
+      conversationMessages.push({
+        role: "user",
+        content: promptTurn.prompt,
+      });
+      const messageCountBeforeTurn = conversationMessages.length;
+      activePromptInputMessages = [...conversationMessages];
+
       activePartialResponseMessages = [];
       activeCompletedStepCount = 0;
       activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
@@ -1294,10 +1336,29 @@ const runIterationWithAiSdk = async ({
         promptIndex,
       );
 
-      const result = await generateText({
+      // Active-tool gating: matches chat's `streamDirectChatWithLiveTrace`
+      // shape. With progressive discovery enabled, `gateToolsToActiveSubset`
+      // wraps each non-active tool's `execute` to throw a structured
+      // "not loaded" error — the AI SDK surfaces that as an error
+      // tool-result the model can recover from via `load_mcp_tools`. Plus
+      // `prepareStep` below returns the active set in `activeTools` so the
+      // model only SEES the loaded subset per step. Pre-PR-4 eval skipped
+      // both gates — meta-tools were advertised but the model could still
+      // call any underlying MCP tool without first loading it. PR 1's
+      // notes called this out as the local-BYOK correctness gap; PR 4
+      // closes it.
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        prepared.progressivePlan,
+        () => prepared.discoveryState,
+      ) as typeof tracedTools;
+
+      let currentStepIndex = 0;
+      const turnAborted = () => abortSignal?.aborted === true;
+      const result = streamText({
         model: llmModel,
         messages: activePromptInputMessages,
-        tools: tracedTools,
+        tools: executableTools,
         stopWhen: stepCountIs(20),
         ...(prepared.resolvedTemperature == null
           ? {}
@@ -1308,7 +1369,7 @@ const runIterationWithAiSdk = async ({
         ...(abortSignal ? { abortSignal } : {}),
         experimental_telemetry: {
           isEnabled: true,
-          functionId: "evals.generateText",
+          functionId: "evals.streamText",
           recordInputs: false,
           recordOutputs: false,
           metadata: {
@@ -1324,11 +1385,23 @@ const runIterationWithAiSdk = async ({
           },
         },
         prepareStep: ({ stepNumber }) => {
+          currentStepIndex = stepNumber;
           registerAiSdkPrepareStep(activeTraceCtx!, stepNumber, {
             modelId: test.model,
             promptIndex,
           });
-          return undefined;
+          if (
+            prepared.progressivePlan?.enabled &&
+            prepared.discoveryState
+          ) {
+            commitNewlyLoaded(prepared.discoveryState);
+            const active = resolveActiveToolNames(
+              prepared.progressivePlan,
+              prepared.discoveryState,
+            );
+            return { activeTools: active };
+          }
+          return {};
         },
         onStepFinish: async (step) => {
           activeCompletedStepCount += 1;
@@ -1362,12 +1435,65 @@ const runIterationWithAiSdk = async ({
             status: "ok",
           });
         },
-        onFinish: async () => {
-          /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
+        onError: ({ error }) => {
+          // streamText surfaces step errors through `onError` instead of
+          // throwing. AbortError on an in-flight stream is treated as
+          // silent cancellation (handled by the post-await
+          // `localIsAborted()` check below); other errors get recorded
+          // as eval-trace error spans so the failure-detection pass can
+          // see them. Don't throw from here — that crashes the AI SDK's
+          // internal teardown.
+          if (turnAborted()) {
+            return;
+          }
+          const failAt = Date.now();
+          finalizeAiSdkTraceOnFailure(activeTraceCtx!, failAt, {
+            completedStepCount: activeCompletedStepCount,
+            lastStepEndedAt: activeTraceCtx!.lastStepClosedEndAt,
+            modelId: test.model,
+            promptIndex,
+          });
+          logger.error("[evals] streamText step error", error);
         },
       });
 
-      const finalMessagesRaw = result.response?.messages as
+      // Consume the stream so `streamText`'s terminal promises resolve.
+      // We don't need the chunks (no SSE consumer); `consumeStream`
+      // drives the agent loop to completion and triggers `onStepFinish`
+      // / `onError` / etc. side-effects.
+      try {
+        await result.consumeStream();
+      } catch (error) {
+        // AbortError reaches here only when the abortSignal fired before
+        // any onError hook was wired; mirror the legacy runner's
+        // top-level catch shape so the outer try/catch handles it.
+        if (error instanceof Error && error.name === "AbortError") {
+          throw error;
+        }
+        // streamText routes other stream-level errors through `onError`
+        // above; if something escapes (rare — typically an internal SDK
+        // bug or a bad onChunk callback), let the outer catch handle it.
+        throw error;
+      }
+
+      // PR 3 invariant (Cursor "Abort no longer skips persistence"):
+      // streamText can swallow AbortError silently (it cancels the
+      // underlying fetch and the terminal promises resolve with
+      // whatever was captured before the abort). Check the signal
+      // directly so a cancelled run isn't persisted as a cycle
+      // failure.
+      if (localIsAborted()) {
+        logger.debug(
+          "[evals] local-BYOK iteration aborted mid-turn; skipping record",
+        );
+        return returnLocalCancelled();
+      }
+
+      const finalResponse = await result.response;
+      const finalSteps = await result.steps;
+      const finalUsage = await result.totalUsage;
+      const finalFinishReason = await result.finishReason;
+      const finalMessagesRaw = finalResponse?.messages as
         | ModelMessage[]
         | undefined;
       const promptResponseMessages =
@@ -1379,13 +1505,56 @@ const runIterationWithAiSdk = async ({
         patchAiSdkRecordedSpansMessageRangesFromSteps(
           activeTraceCtx.recordedSpans,
           activePromptInputMessages.length,
-          result.steps,
+          finalSteps,
           promptIndex,
         );
       }
 
+      // PR 3 failure-detection shape (three signals):
+      //
+      //  (a) No new messages → driver returned nothing (network failure
+      //      that fell through onError, model returned empty, ...).
+      //  (b) Non-tool error span captured during the run (LLM step
+      //      failure, scrub failure, ...). Tool error spans (category
+      //      "tool") flow through the existing `failOnToolError` gate
+      //      below — DON'T treat them as cycle failures here.
+      //
+      // (`!turnTrace` from PR 3's runIterationViaBackend doesn't apply
+      // here: streamText doesn't surface a separate `turnTrace`; the
+      // signal eval owns is `activeTraceCtx.recordedSpans` + the
+      // returned response.)
+      if (promptResponseMessages.length === 0) {
+        iterationError =
+          "Stream returned no content (local-BYOK driver failed)";
+        logger.error(
+          "[evals] streamText returned no new messages this turn; treating as cycle failure",
+        );
+        // Drain the partial state we DO have so the persisted iteration
+        // shows what completed before the break.
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push([]);
+        break;
+      }
+      const stepErrorSpan = activeTraceCtx.recordedSpans.find(
+        (span) => span.status === "error" && span.category !== "tool",
+      );
+      if (stepErrorSpan) {
+        iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+        logger.error(
+          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push(
+          extractToolCallsFromConversation({
+            steps: finalSteps,
+            messages: promptResponseMessages,
+          }),
+        );
+        break;
+      }
+
       const promptToolsCalled = extractToolCallsFromConversation({
-        steps: result.steps,
+        steps: finalSteps,
         messages: promptResponseMessages,
       });
       toolsCalledByPrompt.push(promptToolsCalled);
@@ -1396,13 +1565,23 @@ const runIterationWithAiSdk = async ({
         ...promptResponseMessages,
       ];
 
+      // `streamText` exposes the cross-step accumulated usage via
+      // `result.totalUsage` (already awaited above into `finalUsage`).
+      // The legacy `generateText` exposed it as `result.usage`; same
+      // numbers, different name.
       accumulatedUsage.inputTokens =
-        (accumulatedUsage.inputTokens ?? 0) + (result.usage?.inputTokens ?? 0);
+        (accumulatedUsage.inputTokens ?? 0) + (finalUsage?.inputTokens ?? 0);
       accumulatedUsage.outputTokens =
         (accumulatedUsage.outputTokens ?? 0) +
-        (result.usage?.outputTokens ?? 0);
+        (finalUsage?.outputTokens ?? 0);
       accumulatedUsage.totalTokens =
-        (accumulatedUsage.totalTokens ?? 0) + (result.usage?.totalTokens ?? 0);
+        (accumulatedUsage.totalTokens ?? 0) + (finalUsage?.totalTokens ?? 0);
+
+      // Note: `finalFinishReason` is read above but not threaded into
+      // the recorder today. Eval's verdict gate uses tool-call matching
+      // + `iterationError` + predicates, not finishReason. If a future
+      // gate needs it, it's already in scope.
+      void finalFinishReason;
 
       activeTraceCtx = null;
       activePromptInputMessages = [];
@@ -1446,6 +1625,12 @@ const runIterationWithAiSdk = async ({
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
+      // PR 4 (mirrors PR 3 invariant): if the per-turn loop set
+      // `iterationError` via the failure-detection branch (no new
+      // messages, non-tool error span), feed it to the gate so a
+      // failed cycle doesn't sneak through as a verdict pass on
+      // negative tests / zero-expected-tool cases.
+      iterationError,
       failOnToolError,
       predicateResults,
     });
@@ -1476,6 +1661,8 @@ const runIterationWithAiSdk = async ({
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
+      ...(iterationError ? { error: iterationError } : {}),
+      ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
       resultSource: "reported" as const,
       metadata: {
         ...iterationMetadataBase,
@@ -1632,7 +1819,13 @@ const runIterationViaBackend = async ({
   mcpClientManager,
   recorder,
   testCaseId,
-  convexHttpUrl,
+  // `convexHttpUrl` is in the RunIterationBackendParams type because the
+  // legacy per-step fetch loop used it. PR 3 swapped that loop for
+  // `runAssistantTurn`, which reads `process.env.CONVEX_HTTP_URL` for
+  // its own fetch — so the runner-level param is dead here. Kept in the
+  // type signature (no API churn) but no longer destructured. PR 4 review
+  // nit. The streaming variant still uses it (legacy backend loop —
+  // PR 5).
   convexAuthToken,
   modelId,
   modelDefinition,
