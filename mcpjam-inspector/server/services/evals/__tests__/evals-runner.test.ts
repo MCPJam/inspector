@@ -3185,6 +3185,55 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
+    it("records `tokensUsed` when streaming fails with zero completed steps (PR 5a review round 2 — Cursor Medium)", async () => {
+      // Cursor PR 5a review round 2: the delta-update in
+      // `onStepSnapshot` only captures usage for COMPLETED steps. If
+      // the stream resolves with zero completed steps (model returned
+      // empty / network error fell through), `accumulatedUsage` stays
+      // at the pre-turn baseline. The no-content failure branch then
+      // persists `tokensUsed: 0` even when `handle.result.totalUsage`
+      // reports billed tokens. PR 4b's non-stream runner reads
+      // `headless.totalUsage` before failure branches; PR 5a now
+      // mirrors that by awaiting `handle.result.totalUsage` post-stream
+      // and reconciling before the failure detection.
+      streamTextMock.mockReset();
+      streamTextMock.mockReturnValueOnce({
+        // Empty fullStream — onStepSnapshot never fires.
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: [],
+        }),
+        // Model billed tokens despite zero completed steps.
+        totalUsage: Promise.resolve({
+          inputTokens: 9,
+          outputTokens: 4,
+          totalTokens: 13,
+        }),
+        finishReason: Promise.resolve("stop"),
+        consumeStream: async () => {},
+      });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      await runStreamCase({ emitCollector: emitted });
+
+      // Iteration was persisted as a soft failure (no-content branch
+      // fired) AND `tokensUsed` reflects the real billed totalUsage.
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as {
+        tokensUsed?: number;
+        error?: string;
+      };
+      expect(payload.error).toEqual(
+        expect.stringContaining("Stream returned no content"),
+      );
+      expect(payload.tokensUsed).toBe(13);
+    });
+
     it("emits the existing fullStream → SSE event vocabulary via the shared adapter (PR 5a)", async () => {
       // Lock the byte-shape contract: the events emitted from the
       // streaming runner's terminal stream still match the existing

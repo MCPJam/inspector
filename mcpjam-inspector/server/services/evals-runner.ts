@@ -3378,6 +3378,28 @@ const streamIterationWithAiSdk = async ({
           return returnLocalCancelled();
         }
 
+      // Cursor PR 5a review round 2 fix (Medium "Streaming omits
+      // totalUsage before failures"): the per-step delta-update inside
+      // `onStepSnapshot` only captures usage for steps where the
+      // snapshot fired. If the stream resolves with zero completed
+      // steps — the same path the no-content failure branch handles —
+      // `accumulatedUsage` stays at the pre-turn baseline even when
+      // `handle.result.totalUsage` reports billed tokens. The
+      // non-stream runner (PR 4b) reads `headless.totalUsage` and
+      // merges before failure branches; PR 5a now does the same.
+      // Reconciles to the canonical post-stream total so failure
+      // branches + finishParams see the real billed value.
+      const finalTurnUsage = await handle.result.totalUsage;
+      accumulatedUsage.inputTokens =
+        accumulatedUsageBeforeTurn.inputTokens +
+        (finalTurnUsage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        accumulatedUsageBeforeTurn.outputTokens +
+        (finalTurnUsage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        accumulatedUsageBeforeTurn.totalTokens +
+        (finalTurnUsage?.totalTokens ?? 0);
+
       // After stream completes, resolve the helper's terminal promises.
       const steps = await handle.result.steps;
       const responseObj = await handle.result.response;
