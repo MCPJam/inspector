@@ -326,7 +326,16 @@ export function runDirectChatTurn(
     () => discoveryState,
   ) as ToolSet;
 
-  const result = streamText({
+  // Cursor PR 4a review #2 / CodeRabbit "outside-diff": the original
+  // inline code at the chat-v2.ts call site caught synchronous
+  // `streamText` failures and removed the abort listener. The helper
+  // owns the listener now, so it must own that cleanup too — otherwise
+  // a sync throw (provider config error, ToolSet shape validation, …)
+  // leaks the listener and the SSE caller has no handle to call
+  // `cleanup()` against.
+  let result: ReturnType<typeof streamText>;
+  try {
+    result = streamText({
     model: llmModel,
     messages: messageHistory,
     ...(temperature !== undefined ? { temperature } : {}),
@@ -516,6 +525,10 @@ export function runDirectChatTurn(
       }
     },
   });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 
   return {
     result,

@@ -196,7 +196,19 @@ function streamDirectChatWithLiveTrace(options: {
 
   const stream = createUIMessageStream({
     onError: (error) => {
-      if (handle?.isAborted() || isAbortError(error)) {
+      // Cursor PR 4a review #1: the top-level `onError` can fire BEFORE
+      // `execute` runs (e.g., stream creation failure), or for an
+      // error that isn't `AbortError`. The pre-refactor code captured
+      // `aborted` from an abort-listener attached at function entry so
+      // either condition still suppressed formatting. Mirror that by
+      // reading `abortSignal?.aborted` directly here — `handle` may be
+      // undefined and `isAbortError` only matches the throw shape, not
+      // a generic provider error that arrived after the signal flipped.
+      if (
+        abortSignal?.aborted ||
+        handle?.isAborted() ||
+        isAbortError(error)
+      ) {
         return "";
       }
       logger.error("[mcp/chat-v2] stream error", error);

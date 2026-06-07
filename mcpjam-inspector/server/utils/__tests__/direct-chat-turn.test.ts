@@ -248,6 +248,38 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     });
   });
 
+  it("removes the abort listener on synchronous streamText throw (PR 4a review)", async () => {
+    // Cursor PR 4a review #2 / CodeRabbit "outside-diff": the pre-refactor
+    // inline code at chat-v2's call site try/caught the synchronous
+    // `streamText` call and removed the abort listener. The helper owns
+    // the listener now, so it must own that cleanup — otherwise a sync
+    // throw leaks the listener and the SSE caller has no handle to
+    // call `cleanup()` against.
+    streamTextMock.mockImplementationOnce(() => {
+      throw new Error("synthetic sync provider error");
+    });
+
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, "addEventListener");
+    const removeSpy = vi.spyOn(controller.signal, "removeEventListener");
+
+    expect(() =>
+      runDirectChatTurn({
+        llmModel: { id: "mock" } as any,
+        modelId: "gpt-4-turbo",
+        messageHistory: [{ role: "user", content: "Hi" } as any],
+        systemPrompt: "s",
+        tools: {} as any,
+        abortSignal: controller.signal,
+      }),
+    ).toThrow(/synthetic sync provider error/);
+
+    // The listener that was attached during construction must be removed
+    // on throw — same number of adds and removes.
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("does not mutate the caller's messageHistory array", async () => {
     // PR 4a invariant (carry-over): `streamText` holds a reference to
     // `messages` and accumulates step responses internally. If the
