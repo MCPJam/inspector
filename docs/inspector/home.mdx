@@ -63,6 +63,32 @@ To create a client:
 
 The **What's new** card shows a timeline of recent platform updates — new features, changes, and releases — so you can stay current without leaving the app.
 
+## MCPJam Agent panel
+
+The MCPJam Agent is a persistent chat panel that lets you ask questions about docs, evals, and tools without leaving your current tab. It is available on every tab — Playground, Evals, Clients, and others — so you can keep a conversation going while you work.
+
+### Opening the panel
+
+- Click the **sparkle (✦) button** in the top-right header bar.
+- Press **⌘\\** (Mac) or **Ctrl+\\** (Windows / Linux) from anywhere in the app. The shortcut is ignored when focus is inside a text input, textarea, or content-editable field.
+
+### Using the panel
+
+- **New chat** — Click **New chat** in the panel header to start a fresh conversation.
+- **Resume a session** — Previously started sessions are listed in the panel's home view. Click one to continue.
+- **Resize** — Drag the left edge of the panel to adjust its width. The minimum width is 360 px; the maximum is 50% of the viewport. Dragging below the minimum snaps the panel closed.
+- **Close** — Click the **✕** button in the panel header, or press the keyboard shortcut again.
+
+### Persistence
+
+The panel's open state, width, and active session are saved to your browser's local storage and restored on reload. Conversations persist server-side, so you can close and reopen the panel without losing your chat history.
+
+On mobile viewports (below 768 px) the panel opens as a full-width drawer instead of an inline side panel.
+
+<Note>
+The MCPJam Agent panel is available to accounts with the Home tab enabled.
+</Note>
+
 ## What's next
 
 - [Projects](/inspector/projects) — create and manage projects for your servers
