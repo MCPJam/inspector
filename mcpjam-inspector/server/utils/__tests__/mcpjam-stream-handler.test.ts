@@ -75,6 +75,13 @@ vi.mock("../mcpjam-tool-helpers", () => ({
 vi.mock("../logger", () => ({
   logger: {
     error: vi.fn(),
+    // PR 5b-pre review fix (CodeRabbit Minor): the callback try/catch
+    // path calls `logger.warn` on a callback throw. The mock must
+    // include `warn` so the path is faithfully exercised (without
+    // this, calling `logger.warn` would have thrown TypeError and the
+    // catch-block-doesn't-propagate test would have validated against
+    // a mock-shape side effect instead of the real behavior).
+    warn: vi.fn(),
   },
 }));
 
@@ -1829,6 +1836,128 @@ describe("mcpjam-stream-handler", () => {
         inputTokens: 4,
         outputTokens: 6,
         totalTokens: 10,
+      });
+    });
+
+    it("fires `onToolResult` for denied tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
+      // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes a
+      // `tool_result` trace event inline (not via `emitToolResults`)
+      // when the user denies a tool call on a resumed approval turn.
+      // Pre-fix the inline path skipped `onToolResult` even though the
+      // emitToolResults path fired it for approved + auto-deny cases —
+      // PR 5b eval wiring would miss SSE events for denied tools on
+      // resumed turns. Fixed in this PR by mirroring the callback
+      // invocation at the inline trace event site.
+      const stepOne = [
+        {
+          type: "tool-input-available",
+          toolCallId: "call-denied-1",
+          toolName: "delete_things",
+          input: { id: 42 },
+        },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "ok denied" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      let call = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        const events = call === 0 ? stepOne : stepTwo;
+        call += 1;
+        return createSseResponse(events);
+      });
+
+      // The resumed-approval shape: client sends back an assistant
+      // message with a `tool-approval-request` part + a corresponding
+      // `tool-approval-response` part marked denied. `handlePendingApprovals`
+      // processes this BEFORE the per-step loop runs, so the
+      // `emitToolResults` path isn't hit — the denial trace event +
+      // callback fire from inside `handlePendingApprovals` itself.
+      // Same resumed-approval shape as the existing "preserves spliced
+      // denial tool results" test in this file: the approval-response
+      // lives in a tool-role message, not bundled into the assistant
+      // message (mirrors how the client posts the approval response on
+      // the next round trip).
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-denied-1",
+              toolName: "delete_things",
+              input: { id: 42 },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-1",
+              toolCallId: "call-denied-1",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-1",
+              approved: false,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      const onToolResult = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          delete_things: { _serverId: "destructive-server" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({
+            delete_things: {},
+          }),
+        } as any,
+        requireToolApproval: true,
+        onToolResult,
+      });
+
+      await lastExecution;
+
+      // The denial path fired `onToolResult` with the
+      // user-denied-by-user error shape.
+      expect(onToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolCallId: "call-denied-1",
+          toolName: "delete_things",
+          isError: true,
+          stepIndex: expect.any(Number),
+          promptIndex: 0,
+        }),
+      );
+      const deniedCall = onToolResult.mock.calls.find(
+        (c) => c[0]?.toolCallId === "call-denied-1",
+      );
+      expect(deniedCall?.[0]?.output).toEqual({
+        type: "error-text",
+        value: "Tool execution denied by user.",
       });
     });
 

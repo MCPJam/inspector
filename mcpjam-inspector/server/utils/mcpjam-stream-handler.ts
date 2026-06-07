@@ -1266,6 +1266,39 @@ async function handlePendingApprovals(
           },
           errorText: "Tool execution denied by user.",
         });
+        // PR 5b-pre review fix (Cursor Medium "Denied approval skips
+        // onToolResult"): the denial path writes the trace event
+        // inline without going through `emitToolResults`, so the
+        // `onToolResult` callback wasn't firing. Auto-deny via
+        // `processOneStep` does fire it through the
+        // `emitToolResults` → callback chain; denial via
+        // `handlePendingApprovals` needs the symmetric call here so
+        // PR 5b's eval wiring sees `tool_result` SSE events for
+        // denied tools on resumed approval turns.
+        if (onToolResult) {
+          try {
+            onToolResult({
+              toolCallId,
+              toolName,
+              output: {
+                type: "error-text",
+                value: "Tool execution denied by user.",
+              },
+              isError: true,
+              stepIndex,
+              promptIndex: traceTurn.promptIndex,
+              serverId: undefined,
+            });
+          } catch (error) {
+            logger.warn(
+              "[mcpjam-stream-handler] onToolResult callback failed (denial path)",
+              {
+                error:
+                  error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
+        }
       }
 
       const part: ToolResultPart = {
