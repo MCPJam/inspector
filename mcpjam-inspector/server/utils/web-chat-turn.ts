@@ -53,6 +53,7 @@ import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
   stampSenderUserIdsOnSessionMessages,
+  type ChatOrigin,
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
@@ -77,6 +78,13 @@ export interface WebChatTurnPersistContext {
   projectId: string;
   /** Closed union per `chatIngestion/common.ts`. */
   sourceType: "chatbox" | "direct";
+  /**
+   * Closed union per backend `chatOriginValidator`. Required at this boundary
+   * so a new caller can't skip choosing one — `sourceType` answers the
+   * persistence/billing bucket; `origin` answers the product surface
+   * (training-data discriminator).
+   */
+  origin: ChatOrigin;
   /** Only set when sourceType === "chatbox". */
   surface?: "preview" | "share_link";
   chatboxId?: string;
@@ -290,6 +298,7 @@ export async function streamWebChatTurn(
         modelSource,
         projectId: persist.projectId,
         sourceType: persist.sourceType,
+        origin: persist.origin,
         ...(isChatboxSession && persist.surface
           ? { surface: persist.surface }
           : {}),

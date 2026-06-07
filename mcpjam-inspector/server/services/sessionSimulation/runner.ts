@@ -563,6 +563,11 @@ async function runOneSession(args: {
         authHeader,
         projectId,
         sourceType: "chatbox",
+        // Synthetic chatbox simulation — distinguished from real chatbox
+        // traffic by the `synthetic: true` flag already on the row, not by
+        // origin. Training filters should combine `origin === 'chatbox'`
+        // with `synthetic !== true` to keep these out.
+        origin: "chatbox",
         surface: "share_link",
         chatboxId,
         sessionMessages: messageHistory,
@@ -606,6 +611,7 @@ async function runOneSession(args: {
         authHeader,
         projectId,
         sourceType: "chatbox",
+        origin: "chatbox",
         surface: "share_link",
         chatboxId,
         sessionMessages: messageHistory,

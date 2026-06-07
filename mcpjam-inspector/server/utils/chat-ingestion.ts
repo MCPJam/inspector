@@ -139,6 +139,16 @@ export interface PersistedTurnTrace {
   modelId: string;
 }
 
+// Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
+// boundary so a new surface can't be added without explicitly choosing one.
+// Backend still accepts undefined for historical-row compatibility; the
+// inspector pins to the closed set.
+export type ChatOrigin =
+  | "playground"
+  | "mcpjam_agent"
+  | "chatbox"
+  | "eval";
+
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
@@ -146,6 +156,7 @@ interface PersistChatSessionOptions {
   authHeader?: string;
   projectId?: string;
   sourceType?: "chatbox" | "direct" | "eval";
+  origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   chatboxId?: string;
@@ -337,6 +348,7 @@ export async function persistChatSessionToConvex(
         modelSource: options.modelSource,
         ...(options.projectId ? { projectId: options.projectId } : {}),
         ...(options.sourceType ? { sourceType: options.sourceType } : {}),
+        origin: options.origin,
         ...(options.directVisibility
           ? { directVisibility: options.directVisibility }
           : {}),
@@ -421,6 +433,7 @@ export async function persistChatSessionToConvex(
           failureKind,
           statusCode: response.status,
           sourceType: options.sourceType,
+          origin: options.origin,
         });
       } else {
         const logMessage =
@@ -437,6 +450,7 @@ export async function persistChatSessionToConvex(
         reqLogger.event("chat.session.persist.failed", {
           failureKind: "timeout",
           sourceType: options.sourceType,
+          origin: options.origin,
         });
       } else {
         logger.warn(
@@ -451,7 +465,11 @@ export async function persistChatSessionToConvex(
       const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
       reqLogger.event(
         "chat.session.persist.failed",
-        { failureKind: "exception", sourceType: options.sourceType },
+        {
+          failureKind: "exception",
+          sourceType: options.sourceType,
+          origin: options.origin,
+        },
         { error: error instanceof Error ? error : undefined }
       );
     } else {

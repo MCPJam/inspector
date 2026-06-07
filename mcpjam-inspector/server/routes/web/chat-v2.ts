@@ -263,6 +263,10 @@ chatV2.post("/", async (c) => {
 
     try {
       const sourceType = isChatboxSession ? "chatbox" : "direct";
+      // Mirrors the sourceType branch — chatbox surface stays "chatbox", the
+      // non-chatbox case is the inspector playground. The docs agent has its
+      // own route (mcpjam-agent.ts) and never lands here.
+      const origin = isChatboxSession ? "chatbox" : "playground";
       const isDirectChat = !isChatboxSession;
 
       return await streamWebChatTurn({
@@ -290,6 +294,7 @@ chatV2.post("/", async (c) => {
           chatSessionId: body.chatSessionId,
           projectId: hostedBody.projectId,
           sourceType,
+          origin,
           ...(isChatboxSession && surface ? { surface } : {}),
           chatboxId,
           accessVersion,
