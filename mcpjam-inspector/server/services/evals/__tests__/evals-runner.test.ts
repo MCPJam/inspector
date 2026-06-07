@@ -4057,12 +4057,31 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             promptIndex: 0,
             stepIndex: 0,
           });
+          // PR 5b-followup-2 review fix (Cursor High "Guardrail
+          // errors ignore captured engine"): after a non-OK Convex
+          // `/stream` response, `processOneStep` returns
+          // `{shouldContinue: false}` — the engine BREAKS the loop,
+          // fires a synthetic finish, sets `runSucceeded = true`, and
+          // returns with `turnTrace` POPULATED. Typical 429 guardrail
+          // turns add no assistant messages either, so the runner
+          // hits the `newMessages.length === 0` branch, NOT the
+          // `!turnTrace` branch. This mock mirrors the real shape so
+          // the test catches the regression where the no-content
+          // branch ignored `lastEngineError`.
           return {
-            // No turnTrace → runner enters the failure-detection branch.
+            // turnTrace populated — runSucceeded=true on the 429 path.
             messages: [{ role: "user", content: "Hello" } as any],
             assistantMessages: [],
             toolCalls: [],
             toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
           } as any;
         });
 
@@ -4102,16 +4121,126 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         }>;
         expect(errorEvents).toHaveLength(1);
         // The eval SSE error event carries the structured guardrail
-        // message — NOT the generic "Backend stream failed during
-        // iteration (engine caught an error mid-turn)" fallback.
+        // message — NOT any of the runner's generic fallbacks for the
+        // three failure branches (`!turnTrace`, no-content, error-span).
         expect(errorEvents[0]!.message).toContain(
           "Daily MCPJam model limit reached",
         );
         expect(errorEvents[0]!.message).not.toContain(
           "Backend stream failed during iteration",
         );
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend step returned no content",
+        );
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend step failed mid-turn",
+        );
         // The raw body is forwarded on `details` so the live UI can
         // show the full JSON when an operator wants to inspect it.
+        expect(errorEvents[0]!.details).toContain('"code":"user_rate_limit"');
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("prefers captured engine error in the error-span failure branch (PR 5b-followup-2 review fix — Cursor High)", async () => {
+      // PR 5b-followup-2 review fix: same shape as the no-content
+      // branch, but for the third failure path — `turnTrace` has a
+      // non-tool error-status span. Without this fix the runner used
+      // the span-name fallback ("Backend step failed mid-turn: <span
+      // name>"), losing the engine's captured guardrail detail.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          opts.onEngineError?.({
+            message:
+              "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+            code: "user_rate_limit",
+            details: "Try again in 30 minutes.",
+            httpStatus: 429,
+            rawText:
+              '{"code":"user_rate_limit","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","details":"Try again in 30 minutes."}',
+            promptIndex: 0,
+            stepIndex: 1,
+          });
+          // Engine produced one good step, then a later step errored.
+          // turnTrace.spans includes a non-tool error span; runner's
+          // error-span branch fires.
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Partial" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [
+                {
+                  category: "step",
+                  status: "error",
+                  name: "llm-step-1",
+                  stepIndex: 1,
+                  promptIndex: 0,
+                  startMs: 200,
+                  endMs: 250,
+                } as any,
+              ],
+            },
+            usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b-followup-2 error-span engine error",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-followup2-errspan-engineerror",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-followup2-errspan-engineerror",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const errorEvents = emitted.filter((e) => e.type === "error") as Array<{
+          message: string;
+          details?: string;
+        }>;
+        expect(errorEvents).toHaveLength(1);
+        expect(errorEvents[0]!.message).toContain(
+          "Daily MCPJam model limit reached",
+        );
+        // Specifically NOT the span-name fallback.
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend step failed mid-turn",
+        );
         expect(errorEvents[0]!.details).toContain('"code":"user_rate_limit"');
       } finally {
         runAssistantTurnSpy.mockRestore();
