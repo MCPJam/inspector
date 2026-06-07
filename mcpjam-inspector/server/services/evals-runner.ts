@@ -602,6 +602,13 @@ async function finishIterationDirectly(
     spans?: EvalTraceSpan[];
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
+    /**
+     * Resolved system prompt for the eval session. Forwarded to
+     * `persistEvalTraceFanout` → `appendEvalTurnTrace.systemPrompt`,
+     * which the backend persists to `chatSessions.systemPrompt` with
+     * first-write-wins semantics.
+     */
+    systemPrompt?: string;
     status?: "completed" | "failed" | "cancelled";
     startedAt?: number;
     error?: string;
@@ -665,6 +672,7 @@ async function finishIterationDirectly(
     spans: params.spans,
     prompts: params.prompts,
     widgetSnapshots: params.widgetSnapshots,
+    systemPrompt: params.systemPrompt,
   });
   // Fall back to the W1 single-call path ONLY when the fanout failed
   // before any turn landed. See recorder.ts / persist-eval-trace.ts.
@@ -1563,25 +1571,24 @@ const runIterationWithAiSdk = async ({
       convexClient,
     });
 
-    // PR 4d review fix (Codex P2): prepend the resolved system prompt
-    // so persisted eval transcripts carry it. The streamText `system:`
-    // field already covered the wire shape to the model; this restores
-    // the pre-4d persistence shape (first message is `role: "system"`)
-    // for downstream consumers of `appendEvalTurnTrace.sessionMessages`
-    // and the legacy `testIteration.blob` fallback.
-    const persistedMessages: ModelMessage[] = enhancedSystemPromptForPersist
-      ? [
-          { role: "system", content: enhancedSystemPromptForPersist },
-          ...conversationMessages,
-        ]
-      : conversationMessages;
-
+    // PR (this change): the resolved system prompt now flows through
+    // `appendEvalTurnTrace.systemPrompt` (persisted to
+    // `chatSessions.systemPrompt`, first-write-wins). The
+    // persistence-side `{role:"system",...}` prepend on `messages` was
+    // removed — the wire shape and the persisted shape now agree on
+    // "system carried out-of-band". Live SSE `trace_snapshot` events
+    // still apply the prefix via `withSystemPrefix` closures in the
+    // streaming runners (different consumer: live test-runner UI vs.
+    // stored transcript).
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage,
-      messages: persistedMessages,
+      messages: conversationMessages,
+      ...(enhancedSystemPromptForPersist
+        ? { systemPrompt: enhancedSystemPromptForPersist }
+        : {}),
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -1690,21 +1697,11 @@ const runIterationWithAiSdk = async ({
       mcpClientManager,
       convexClient,
     });
-    // PR 4d review fix (Codex P2): same prefix as the success path — if
-    // `prepared` ran far enough to populate
-    // `enhancedSystemPromptForPersist`, surface the resolved system in
-    // the persisted failure transcript. Catches that fire BEFORE
-    // `prepareChatV2` returned leave the prefix empty (no system to
-    // persist anyway). Applied only in `runIterationWithAiSdk`; the
-    // streaming variant still pushes the system into
-    // `conversationMessages` itself (PR 5 territory).
-    const persistedFailMessages: ModelMessage[] = enhancedSystemPromptForPersist
-      ? [
-          { role: "system", content: enhancedSystemPromptForPersist },
-          ...failMessages,
-        ]
-      : failMessages;
-
+    // PR (this change): the resolved system prompt now flows through
+    // `appendEvalTurnTrace.systemPrompt`. Same threading as the success
+    // path. Catches that fire BEFORE `prepareChatV2` returned leave the
+    // value `undefined` — backend's first-write-wins tolerates a never-
+    // set systemPrompt cleanly.
     const failParams = {
       iterationId,
       passed: false,
@@ -1714,7 +1711,10 @@ const runIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: persistedFailMessages,
+      messages: failMessages,
+      ...(enhancedSystemPromptForPersist
+        ? { systemPrompt: enhancedSystemPromptForPersist }
+        : {}),
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -2329,26 +2329,19 @@ const runIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
-  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
-  // system at persistence so the backend's transcript carries it.
-  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
-  const persistedBackendMessages: ModelMessage[] =
-    backendEnhancedSystemPromptForPersist
-      ? [
-          {
-            role: "system",
-            content: backendEnhancedSystemPromptForPersist,
-          },
-          ...messageHistory,
-        ]
-      : messageHistory;
-
+  // PR (this change): the resolved system prompt now flows through
+  // `appendEvalTurnTrace.systemPrompt` (persisted to
+  // `chatSessions.systemPrompt`, first-write-wins). Engine still sends
+  // it via `runAssistantTurn`'s `systemPrompt:` arg for the model wire.
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: persistedBackendMessages,
+    messages: messageHistory,
+    ...(backendEnhancedSystemPromptForPersist
+      ? { systemPrompt: backendEnhancedSystemPromptForPersist }
+      : {}),
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3541,26 +3534,20 @@ const streamIterationWithAiSdk = async ({
       mcpClientManager,
       convexClient,
     });
-    // PR 4d review fix (CodeRabbit): prepend the resolved system at
-    // persistence time so the streamed eval's transcript matches the
-    // non-stream runner's shape (`role: "system"` first entry).
-    const persistedStreamMessages: ModelMessage[] =
-      streamEnhancedSystemPromptForPersist
-        ? [
-            {
-              role: "system",
-              content: streamEnhancedSystemPromptForPersist,
-            },
-            ...conversationMessages,
-          ]
-        : conversationMessages;
-
+    // PR (this change): the resolved system prompt now flows through
+    // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix`
+    // closure above still applies the prefix to LIVE SSE
+    // `trace_snapshot` events for the test-runner UI (different
+    // consumer than the stored transcript).
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage: usageFinal,
-      messages: persistedStreamMessages,
+      messages: conversationMessages,
+      ...(streamEnhancedSystemPromptForPersist
+        ? { systemPrompt: streamEnhancedSystemPromptForPersist }
+        : {}),
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3698,20 +3685,9 @@ const streamIterationWithAiSdk = async ({
       details: errorDetails,
     });
 
-    // PR 4d review fix (CodeRabbit): mirror the non-stream runner — if
-    // `prepared` populated the resolved system prompt before the throw,
-    // prepend it to the persisted failure transcript.
-    const persistedStreamFailMessages: ModelMessage[] =
-      streamEnhancedSystemPromptForPersist
-        ? [
-            {
-              role: "system",
-              content: streamEnhancedSystemPromptForPersist,
-            },
-            ...failMessages,
-          ]
-        : failMessages;
-
+    // PR (this change): the resolved system prompt now flows through
+    // `appendEvalTurnTrace.systemPrompt`. Same threading as the
+    // success path.
     const failParams = {
       iterationId,
       passed: false,
@@ -3721,7 +3697,10 @@ const streamIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: persistedStreamFailMessages,
+      messages: failMessages,
+      ...(streamEnhancedSystemPromptForPersist
+        ? { systemPrompt: streamEnhancedSystemPromptForPersist }
+        : {}),
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -4690,26 +4669,20 @@ const streamIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
-  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
-  // system at persistence so the backend's transcript carries it.
-  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
-  const persistedBackendMessages: ModelMessage[] =
-    backendEnhancedSystemPromptForPersist
-      ? [
-          {
-            role: "system",
-            content: backendEnhancedSystemPromptForPersist,
-          },
-          ...messageHistory,
-        ]
-      : messageHistory;
-
+  // PR (this change): the resolved system prompt now flows through
+  // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
+  // above still applies the prefix to LIVE SSE `trace_snapshot` events
+  // for the test-runner UI (different consumer than the stored
+  // transcript).
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: persistedBackendMessages,
+    messages: messageHistory,
+    ...(backendEnhancedSystemPromptForPersist
+      ? { systemPrompt: backendEnhancedSystemPromptForPersist }
+      : {}),
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),

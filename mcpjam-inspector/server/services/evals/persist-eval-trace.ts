@@ -193,6 +193,15 @@ export async function persistEvalTraceFanout(args: {
    * server-side, not here.
    */
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
+  /**
+   * Resolved system prompt for the eval session. Persisted to
+   * `chatSessions.systemPrompt` by the backend with **first-write-wins**
+   * semantics — the value is invariant per eval session, so subsequent
+   * per-turn calls carrying the same field are ignored. Replaces the
+   * pre-PR persistence-side `{role:"system", ...}` prepend each runner
+   * used to splice into `messages` at finalize.
+   */
+  systemPrompt?: string;
 }): Promise<FanoutResult> {
   const turns = sliceTraceIntoTurns({
     messages: args.messages,
@@ -240,6 +249,12 @@ export async function persistEvalTraceFanout(args: {
           ...(args.displayLabel ? { displayLabel: args.displayLabel } : {}),
           startedAt,
           lastActivityAt: now,
+          // First-write-wins on the backend; safe to send on every turn
+          // call. Replaces the pre-PR persistence-side prepend each
+          // runner used to splice into `messages` at finalize.
+          ...(args.systemPrompt !== undefined
+            ? { systemPrompt: args.systemPrompt }
+            : {}),
           turn: {
             promptIndex: turn.promptIndex,
             turnStartedAt: now,
