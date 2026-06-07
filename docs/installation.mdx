@@ -18,6 +18,20 @@ MCPJam Inspector runs three ways: a hosted web app, a desktop app for Mac and Wi
   </Card>
 </CardGroup>
 
+### Which one do I need?
+
+| Capability | Web App | Desktop | Terminal (`npx`) | Docker |
+| --- | :---: | :---: | :---: | :---: |
+| Install required | None | Mac/Windows download | Node.js | Docker |
+| HTTPS MCP servers | ✓ | ✓ | ✓ | ✓ |
+| HTTP MCP servers | — | ✓ | ✓ | ✓ |
+| Local STDIO servers | — | ✓ | ✓ | ✓ (with `--` args) |
+| Skills | — | ✓ | ✓ | ✓ |
+| Shareable server URLs | ✓ | — | — | — |
+| Auto-updates to latest | ✓ | Manual install | Per-run (`@latest`) | Per-tag pull |
+
+If your server is local (running on `localhost`), the web app cannot reach it — pick **Desktop** or **Terminal**. If you want teammates to one-click into the same server, pick **Web App**.
+
 ## Web app
 
 Go to [app.mcpjam.com](https://app.mcpjam.com) in your browser. No install required. The web app accepts HTTPS MCP server URLs only — for HTTP or local STDIO servers, use the desktop or terminal options below. See [Hosted App](/hosted/overview) for more.
@@ -113,6 +127,12 @@ This will open the MCPJam inspector and connect to a STDIO using the commands yo
     ```bash
     # Starts MCPJam inspector with a FastMCP server
     npx @mcpjam/inspector@latest uv run fastmcp run /path/to/your/server.py
+    ```
+
+    This command assumes [`uv`](https://docs.astral.sh/uv/) is installed and on your PATH. If you see `Unknown command: uv` (fish), `command not found: uv` (bash/zsh), or `'uv' is not recognized` (Windows), install it first:
+
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
   </Tab>
   
