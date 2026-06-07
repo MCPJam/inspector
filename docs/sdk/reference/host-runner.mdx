@@ -1,30 +1,30 @@
 ---
-title: "TestAgent"
-description: "API reference for TestAgent"
+title: "HostRunner"
+description: "API reference for HostRunner"
 icon: "book"
 ---
 
-The `TestAgent` class runs prompts with MCP tools enabled. It handles the multi-step prompt loop and returns rich result objects.
+The `HostRunner` class runs prompts with MCP tools enabled. It handles the multi-step prompt loop and returns rich result objects.
 
 ## Import
 
 ```typescript
-import { TestAgent } from "@mcpjam/sdk";
+import { HostRunner } from "@mcpjam/sdk";
 ```
 
 ## Constructor
 
 ```typescript
-new TestAgent(options: TestAgentOptions)
+new HostRunner(options: HostRunnerOptions)
 ```
 
 ### Parameters
 
-<ParamField path="options" type="TestAgentOptions" required>
+<ParamField path="options" type="HostRunnerOptions" required>
   Configuration for the test agent.
 </ParamField>
 
-### TestAgentOptions
+### HostRunnerOptions
 
 | Property          | Type                             | Required | Default     | Description                                                   |
 | ----------------- | -------------------------------- | -------- | ----------- | ------------------------------------------------------------- |
@@ -41,7 +41,7 @@ new TestAgent(options: TestAgentOptions)
 ### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -52,19 +52,19 @@ const agent = new TestAgent({
 ```
 
 <Info>
-  **MCP Apps, traces, and `mcpClientManager`:** MCP App widgets are backed by HTML served from an MCP **resource** (`ui.resourceUri`), not by the tool’s JSON result alone. After each tool call, `TestAgent` uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch that HTML and attach **`widgetSnapshots`** to the [`PromptResult`](/sdk/reference/prompt-result). When you upload results to MCPJam, those snapshots are stored so the Evals trace viewer can **replay the widget offline**. If you omit `mcpClientManager`, prompts still run and tools still execute — but **`widgetSnapshots` stay empty** and uploaded traces will only contain messages and spans (no embedded app replay). Passing `manager` is also what enables **replay credential** capture for authenticated HTTP servers when reporting to MCPJam.
+  **MCP Apps, traces, and `mcpClientManager`:** MCP App widgets are backed by HTML served from an MCP **resource** (`ui.resourceUri`), not by the tool’s JSON result alone. After each tool call, `HostRunner` uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch that HTML and attach **`widgetSnapshots`** to the [`PromptResult`](/sdk/reference/prompt-result). When you upload results to MCPJam, those snapshots are stored so the Evals trace viewer can **replay the widget offline**. If you omit `mcpClientManager`, prompts still run and tools still execute — but **`widgetSnapshots` stay empty** and uploaded traces will only contain messages and spans (no embedded app replay). Passing `manager` is also what enables **replay credential** capture for authenticated HTTP servers when reporting to MCPJam.
 </Info>
 
 ---
 
 ## Methods
 
-### prompt()
+### run()
 
 Sends a prompt to the LLM and returns the result.
 
 ```typescript
-prompt(
+run(
   message: string,
   options?: PromptOptions
 ): Promise<PromptResult>
@@ -85,7 +85,7 @@ Use [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapsho
 | ------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `context`           | `PromptResult \| PromptResult[]`                                    | Previous result(s) for multi-turn conversations                                                                                                                                       |
 | `abortSignal`       | `AbortSignal`                                                       | Cancels the prompt runtime when aborted                                                                                                                                               |
-| `stopWhen`          | `StopCondition<ToolSet> \| Array<StopCondition<ToolSet>>`           | Additional conditions for the multi-step prompt loop. Tools still execute normally. `TestAgent` always applies `stepCountIs(maxSteps)` as a safety guard.                             |
+| `stopWhen`          | `StopCondition<ToolSet> \| Array<StopCondition<ToolSet>>`           | Additional conditions for the multi-step prompt loop. Tools still execute normally. `HostRunner` always applies `stepCountIs(maxSteps)` as a safety guard.                             |
 | `timeout`           | `number \| { totalMs?: number; stepMs?: number; chunkMs?: number }` | Bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each generation step, and `chunkMs` is accepted for parity but is mainly relevant to streaming APIs. |
 | `timeoutMs`         | `number`                                                            | Shortcut for a total prompt timeout in milliseconds                                                                                                                                   |
 | `stopAfterToolCall` | `string \| string[]`                                                | Short-circuits the named tool(s) with a stub result and stops after the step where they were called. Tool names and args are still captured in the `PromptResult`.                    |
@@ -100,23 +100,23 @@ Use [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapsho
 import { hasToolCall } from "@mcpjam/sdk";
 
 // Simple prompt
-const result = await agent.prompt("Add 2 and 3");
+const result = await agent.run("Add 2 and 3");
 
 // Multi-turn conversation
-const r1 = await agent.prompt("Create a task called 'Test'");
-const r2 = await agent.prompt("Mark it complete", { context: r1 });
+const r1 = await agent.run("Create a task called 'Test'");
+const r2 = await agent.run("Mark it complete", { context: r1 });
 
 // Multiple context items
-const r3 = await agent.prompt("Show summary", { context: [r1, r2] });
+const r3 = await agent.run("Show summary", { context: [r1, r2] });
 
 // Stop the loop after the step where a tool is called
-const r4 = await agent.prompt("Search for tasks", {
+const r4 = await agent.run("Search for tasks", {
   stopWhen: hasToolCall("search_tasks"),
 });
 console.log(r4.hasToolCall("search_tasks"));
 
 // Bound prompt runtime
-const r5 = await agent.prompt("Run a long workflow", {
+const r5 = await agent.run("Run a long workflow", {
   timeout: { totalMs: 10_000, stepMs: 2_500 },
 });
 
@@ -125,7 +125,7 @@ if (r5.hasError()) {
 }
 
 // Exit early after selecting a tool, without waiting for the real MCP call
-const r6 = await agent.prompt("Search for tasks", {
+const r6 = await agent.run("Search for tasks", {
   stopAfterToolCall: "search_tasks",
   timeoutMs: 5_000,
 });
@@ -133,7 +133,7 @@ console.log(r6.getToolArguments("search_tasks"));
 ```
 
 <Note>
-  `prompt()` never throws exceptions. Errors are captured in the `PromptResult`.
+  `run()` never throws exceptions. Errors are captured in the `PromptResult`.
   Check `result.hasError()` to detect failures.
 </Note>
 
@@ -208,7 +208,7 @@ Add custom OpenAI or Anthropic-compatible endpoints.
 ### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "my-litellm/gpt-4",
   apiKey: process.env.LITELLM_API_KEY,
@@ -234,7 +234,7 @@ The MCP tools available to the agent. Obtained from `MCPClientManager.getTools()
 
 ```typescript
 const tools = await manager.getTools();
-const agent = new TestAgent({ tools, ... });
+const agent = new HostRunner({ tools, ... });
 ```
 
 ### model
@@ -291,7 +291,7 @@ Set this to `true` when your widget is written against the OpenAI Apps SDK (i.e.
 
 ```typescript
 // Testing an OpenAI Apps SDK widget (ChatGPT / Copilot host)
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "openai/gpt-4o",
   apiKey: process.env.OPENAI_API_KEY,
@@ -300,7 +300,7 @@ const agent = new TestAgent({
 });
 
 // Testing a SEP-1865 widget (Claude / Cursor / Codex host) — default
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -325,21 +325,21 @@ Use `stopWhen` to control whether the agent starts another step after the curren
 import { hasToolCall } from "@mcpjam/sdk";
 
 // Stop after the step where "search_tasks" is called
-const result = await agent.prompt("Find my open tasks", {
+const result = await agent.run("Find my open tasks", {
   stopWhen: hasToolCall("search_tasks"),
 });
 
 expect(result.hasToolCall("search_tasks")).toBe(true);
 
 // Stop after any of multiple conditions
-const result2 = await agent.prompt("Do something", {
+const result2 = await agent.run("Do something", {
   stopWhen: [hasToolCall("tool_a"), hasToolCall("tool_b")],
 });
 ```
 
 <Info>
   `stopWhen` does not skip tool execution. It controls whether the prompt loop
-  continues after the current step completes, and `TestAgent` also applies
+  continues after the current step completes, and `HostRunner` also applies
   `stepCountIs(maxSteps)` as a safety guard.
 </Info>
 
@@ -347,21 +347,21 @@ const result2 = await agent.prompt("Do something", {
 
 ## Bound Prompt Runtime with timeout
 
-Use `timeout` when you want to bound how long `TestAgent.prompt()` can run:
+Use `timeout` when you want to bound how long `HostRunner.run()` can run:
 
 ```typescript
-const result = await agent.prompt("Run a long workflow", {
+const result = await agent.run("Run a long workflow", {
   timeout: 10_000,
 });
 
-const result2 = await agent.prompt("Run a long workflow", {
+const result2 = await agent.run("Run a long workflow", {
   timeout: { totalMs: 10_000, stepMs: 2_500, chunkMs: 1_000 },
 });
 ```
 
 <Info>
   `chunkMs` is accepted for parity, but it is mainly useful for streaming APIs.
-  For `TestAgent.prompt()`, `number`, `totalMs`, and `stepMs` are the main
+  For `HostRunner.run()`, `number`, `totalMs`, and `stepMs` are the main
   settings to focus on.
 </Info>
 
@@ -370,7 +370,7 @@ const result2 = await agent.prompt("Run a long workflow", {
 ## Complete Example
 
 ```typescript
-import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner } from "@mcpjam/sdk";
 
 async function main() {
   // Setup
@@ -383,7 +383,7 @@ async function main() {
   await manager.connectToServer("everything");
 
   // Create agent (pass manager when you need widget snapshots or MCPJam replay configs)
-  const agent = new TestAgent({
+  const agent = new HostRunner({
     tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -394,12 +394,12 @@ async function main() {
   });
 
   // Single prompt
-  const r1 = await agent.prompt("What is 15 + 27?");
+  const r1 = await agent.run("What is 15 + 27?");
   console.log(r1.getText());
   console.log("Tools:", r1.toolsCalled());
 
   // Multi-turn
-  const r2 = await agent.prompt("Now multiply that by 2", { context: r1 });
+  const r2 = await agent.run("Now multiply that by 2", { context: r1 });
   console.log(r2.getText());
 
   // Error handling

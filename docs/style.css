@@ -193,14 +193,80 @@ code, pre, kbd, samp {
   line-height: 1.45 !important;
 }
 
-/* Code block container — Mintlify's css-variables theme (set in
-   docs.json) drives Shiki from --mint-* vars that the sync script
-   feeds from the design-system --code-* palette. */
+/* Code block container — Mintlify's css-variables Shiki theme (set in
+   docs.json) drives tokens from --mint-token-* vars, but Maple paints the
+   codeblock chrome from a SEPARATE var, --mint-background, used by the
+   .bg-codeblock Tailwind utility AND a tab-panel inline style
+   ("background-color: var(--mint-background)"). Maple ships no light-mode
+   value for it, so blocks render dark even in light mode. The wrapper
+   <div class="code-block ..."> also hardcodes "text-gray-50" and the class
+   "codeblock-dark" regardless of theme.
+
+   Fix: feed --mint-background per mode, then override the always-dark text
+   color on the wrapper so tab labels + fallback tokens read on cream. */
+:root {
+  --mint-background: var(--mcj-paper-2);
+}
+.dark, [data-theme="dark"] {
+  --mint-background: oklch(0.2213 0.0038 106.707);
+}
+
+/* Codeblock chrome (wrapper, pre, tab-panel root). */
 code-block,
-pre {
+pre,
+.shiki,
+.code-block,
+[data-component-part="code-block-root"] {
+  background: var(--mint-background) !important;
   border: none !important;
   border-radius: var(--mcj-radius);
   box-shadow: none !important;
+}
+
+/* Kill the hardcoded "text-gray-50" so unstyled tokens + tab labels read
+   ink-strong on cream in light, near-white on dark slab in dark. */
+:root .code-block {
+  color: var(--mcj-ink-strong) !important;
+}
+.dark .code-block,
+[data-theme="dark"] .code-block {
+  color: oklch(0.92 0.01 95) !important;
+}
+
+/* Tab bar (CodeGroup) — inactive tabs muted; active inherits the orange
+   underline from the tablist rule earlier in this file. */
+.code-block .nav-tabs-item:not([data-state="active"]):not([aria-selected="true"]) {
+  color: var(--mcj-ink-muted) !important;
+}
+
+/* Scrollbar thumbs — Maple uses white/20 which disappears on cream.
+   Restore the warm rail token treatment in light. */
+:root [data-component-part="code-block-root"] {
+  scrollbar-color: var(--mcj-rule-strong) transparent;
+}
+:root [data-component-part="code-block-root"]::-webkit-scrollbar-thumb {
+  background: var(--mcj-rule-strong) !important;
+}
+
+/* Codeblock header row (filename + copy/AI buttons) — Maple hardcodes
+   text-gray-300/400 on these, which ghosts out on cream. Pull from the
+   design system: muted ink for the filename, ink-strong on hover, and a
+   hairline rule below so the header reads as a caption, not floating type. */
+[data-component-part="code-block-header"] {
+  color: var(--mcj-ink-muted) !important;
+  border-bottom: 1px solid var(--mcj-rule) !important;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.78rem !important;
+  letter-spacing: 0.01em;
+}
+[data-component-part="code-block-header-filename"],
+[data-component-part="code-block-header-filename"] * {
+  color: var(--mcj-ink-muted) !important;
+}
+.dark [data-component-part="code-block-header"],
+[data-theme="dark"] [data-component-part="code-block-header"] {
+  border-bottom-color: var(--mcj-rule) !important;
 }
 
 /* Shiki's css-variables theme only exposes a subset of token types
@@ -230,23 +296,31 @@ pre::-webkit-scrollbar-thumb {
 }
 pre::-webkit-scrollbar-thumb:hover { background: var(--mcj-ink-muted); }
 
-/* Copy button — Mintlify Maple hides it until hover; pin it to always
-   visible at ink-muted contrast like the Claude API docs. Selector net
-   covers the variants Mintlify renders (button + a11y-labeled span). */
-:is(pre, code-block, figure[data-rehype-pretty-code-figure]) :is(button, [role="button"], [aria-label*="opy" i], [aria-label*="lipboard" i]) {
+/* Copy button — Mintlify Maple hides it until hover and renders the SVG
+   with hardcoded text-white/40, which goes invisible on cream paper.
+   Pin it to always visible at ink-muted contrast like the Claude API docs.
+   Selector net covers Maple's copy-code-button (in the code-block-header),
+   plus any aria-labeled copy/clipboard control in pre/code-block wrappers. */
+:is(pre, code-block, .code-block, figure[data-rehype-pretty-code-figure], [data-component-part="code-block-header"]) :is(button, [role="button"], [aria-label*="opy" i], [aria-label*="lipboard" i]),
+[data-testid="copy-code-button"] {
   opacity: 1 !important;
   color: var(--mcj-ink-muted) !important;
   background: transparent !important;
   border: none !important;
   transition: color 120ms ease-out, background 120ms ease-out;
 }
-:is(pre, code-block, figure[data-rehype-pretty-code-figure]) :is(button, [role="button"], [aria-label*="opy" i], [aria-label*="lipboard" i]):hover {
+:is(pre, code-block, .code-block, figure[data-rehype-pretty-code-figure], [data-component-part="code-block-header"]) :is(button, [role="button"], [aria-label*="opy" i], [aria-label*="lipboard" i]):hover,
+[data-testid="copy-code-button"]:hover {
   color: var(--mcj-ink-strong) !important;
   background: var(--mcj-paper-3) !important;
 }
-/* Force the icon glyph itself to inherit (some themes inline-style SVGs) */
-:is(pre, code-block) :is(button, [role="button"]) svg {
+/* Force the icon glyph to inherit — Maple hardcodes text-white/40 on the
+   SVG via Tailwind, overriding the button's color. */
+:is(pre, code-block, .code-block, [data-component-part="code-block-header"]) :is(button, [role="button"]) svg,
+[data-testid="copy-code-button"] svg,
+[data-testid="copy-code-button"] svg * {
   color: inherit !important;
+  stroke: currentColor !important;
   opacity: 1 !important;
 }
 
@@ -309,6 +383,57 @@ card:hover,
 .card:hover {
   border-color: var(--mcj-orange);
   transform: none; /* kill maple's lift */
+}
+
+/* ── Accordion / details ────────────────────────────────────────────────────
+   Maple paints `<details class="accordion">` with `bg-background-light
+   dark:bg-codeblock`, so in dark mode every accordion adopts the codeblock
+   near-black — making them read as code slabs instead of card surfaces.
+   Hover on the summary also reaches for gray-100 / gray-800.
+
+   Design: the GROUP owns the shell (paper-2 fill, hairline border, rounded
+   corners, clip overflow). Each <details> is a transparent row separated
+   from siblings by a single hairline. No per-item borders or radii — that
+   was causing concentric rounded rectangles in light mode. */
+.accordion-group {
+  background: var(--mcj-paper-2) !important;
+  border: 1px solid var(--mcj-rule) !important;
+  border-radius: var(--mcj-radius) !important;
+  overflow: hidden;
+  box-shadow: none !important;
+}
+
+details.accordion,
+.accordion-group > details {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+}
+
+.accordion-group > details + details {
+  border-top: 1px solid var(--mcj-rule) !important;
+}
+
+/* Summary row (the clickable header). Strip Maple's gray-100/gray-800
+   hover; use paper-3 so the row reads as a hovered surface. */
+details.accordion > summary,
+.accordion-group summary[data-component-part="accordion-button"] {
+  background: transparent !important;
+  color: var(--mcj-ink-strong) !important;
+  font-weight: 500;
+  border-radius: 0 !important;
+}
+details.accordion > summary:hover,
+.accordion-group summary[data-component-part="accordion-button"]:hover {
+  background: var(--mcj-paper-3) !important;
+  color: var(--mcj-ink-strong) !important;
+}
+
+/* Open accordion body inherits the group paper; ensure prose reads ink */
+details.accordion[open] > :not(summary) {
+  color: var(--mcj-ink) !important;
 }
 
 /* ── Buttons / CTAs — match product's Add Server button ─────────────────── */

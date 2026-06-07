@@ -140,15 +140,13 @@ export type MCPJamReportingConfig = {
   expectedIterations?: number;
   tags?: string[];
   /**
-   * Host configuration that drove this eval run. When provided, the
-   * reporter computes a content-addressed hash internally and attaches it
-   * to the upload so the backend can dedupe / link to a stored
-   * `hostConfigsV2` row. The hash is never set by the caller — supply the
-   * raw `Host` and let the SDK fingerprint it.
-   *
-   * Wire-level send (the `hostConfigHash` field on each `EvalResultInput`)
-   * is implemented in a follow-up stage; in this SDK release the field is
-   * accepted but not yet propagated to `/sdk/v1/evals/*` ingestion.
+   * Host configuration that drove this eval run. Wire-level send is active
+   * when the backend advertises capability `evalsHostConfig` (see
+   * `GET /sdk/v1/info`). When `iteration.hostSnapshot` is present (Stage
+   * 4 per-iteration capture), it takes precedence; this field is the
+   * fallback for executors that don't expose `getHostSnapshot` and runs
+   * without per-iteration capture. The reporter computes the content
+   * hash internally — callers never set `hostConfigHash`.
    */
   host?: import("./host-config/host.js").Host;
 };
@@ -158,6 +156,19 @@ export type ReportEvalResultsInput = MCPJamReportingConfig & {
   results: EvalResultInput[];
   agent?: {
     getServerReplayConfigs?: () => MCPServerReplayConfig[] | undefined;
+  };
+  /**
+   * Optional executor surface used by Stage 5 host-config wire pickup as
+   * a fallback when no per-iteration `hostSnapshot` and no
+   * {@link MCPJamReportingConfig.host} were supplied. Structurally typed
+   * so any object exposing `getHostSnapshot()` (e.g. `HostRunner`,
+   * `HostRuntime`) qualifies — the reporter never holds a reference
+   * beyond reading the snapshot.
+   */
+  executor?: {
+    getHostSnapshot?: () =>
+      | import("./host-config/public-types.js").HostJson
+      | undefined;
   };
   mcpClientManager?: MCPClientManager;
 };

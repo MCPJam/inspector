@@ -5,6 +5,38 @@ import {
   ServerWithName,
 } from "./app-types";
 import type { ProjectClientConfig } from "@/lib/client-config";
+import {
+  describeError,
+  isNormalizedError,
+  type NormalizedError,
+} from "@mcpjam/sdk/browser";
+
+/**
+ * Helper used by failure-path reducer branches: when the dispatcher
+ * supplied a richer `normalized` block (e.g. forwarded from a
+ * `WebApiError` or hosted-route envelope) use it; otherwise derive one
+ * from the message string so every failure-path writer ends up with a
+ * usable `lastNormalizedError` for the ErrorCard renderer.
+ *
+ * Re-validates the incoming `normalized` shape — `webPost` populates it
+ * from any object in the response body, so a partial payload (older
+ * server, schema drift, proxy mangling) would otherwise be stored and
+ * later shadow the real message at the renderer (which prefers
+ * `lastNormalizedError` over `lastError`). Invalid shapes fall through
+ * to the message-string derivation, which always produces a complete
+ * block via `describeError`.
+ *
+ * Returning `undefined` for empty messages keeps the reducer free of
+ * synthetic "unknown error" entries that would obscure healthy state.
+ */
+function resolveNormalized(
+  message: string | undefined,
+  normalized: NormalizedError | undefined,
+): NormalizedError | undefined {
+  if (isNormalizedError(normalized)) return normalized;
+  if (!message) return undefined;
+  return describeError(new Error(message));
+}
 
 const setStatus = (
   server: ServerWithName,
@@ -94,6 +126,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastConnectionTime: new Date(),
         retryCount: 0,
         lastError: undefined,
+        lastNormalizedError: undefined,
         lastOAuthTrace: action.oauthTrace,
         oauthTokens: action.tokens,
         enabled: true,
@@ -134,6 +167,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           [action.name]: setStatus(existing, "failed", {
             retryCount: existing.retryCount,
             lastError: action.error,
+            lastNormalizedError: resolveNormalized(
+              action.error,
+              action.normalized,
+            ),
             lastOAuthTrace: action.oauthTrace,
           }),
         },
@@ -184,6 +221,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           [action.name]: setStatus(existing, "disconnected", {
             enabled: false,
             lastError: action.error ?? existing.lastError,
+            lastNormalizedError: action.error
+              ? resolveNormalized(action.error, action.normalized)
+              : existing.lastNormalizedError,
           }),
         },
         selectedServer: nextSelected,

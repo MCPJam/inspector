@@ -56,7 +56,7 @@ matchToolCalls(expected: string[], actual: string[]): boolean
 #### Example
 
 ```typescript
-const result = await agent.prompt("Add 2+3, then multiply by 4");
+const result = await agent.run("Add 2+3, then multiply by 4");
 // toolsCalled() = ["add", "multiply"]
 
 matchToolCalls(["add", "multiply"], result.toolsCalled()); // true
@@ -183,7 +183,7 @@ matchNoToolCalls(actual: string[]): boolean
 #### Example
 
 ```typescript
-const result = await agent.prompt("What is the capital of France?");
+const result = await agent.run("What is the capital of France?");
 matchNoToolCalls(result.toolsCalled()); // true (if no tools called)
 ```
 
@@ -218,7 +218,7 @@ matchToolCallWithArgs(
 #### Example
 
 ```typescript
-const result = await agent.prompt("Add 2 and 3");
+const result = await agent.run("Add 2 and 3");
 
 matchToolCallWithArgs("add", { a: 2, b: 3 }, result.getToolCalls()); // true
 matchToolCallWithArgs("add", { a: 2 }, result.getToolCalls());       // false (missing b)
@@ -372,12 +372,12 @@ import { matchToolCalls, matchToolCallWithArgs } from "@mcpjam/sdk";
 
 describe("Calculator", () => {
   it("calls add for addition", async () => {
-    const result = await agent.prompt("Add 5 and 3");
+    const result = await agent.run("Add 5 and 3");
     expect(matchToolCalls(["add"], result.toolsCalled())).toBe(true);
   });
 
   it("passes correct arguments", async () => {
-    const result = await agent.prompt("Add 10 and 20");
+    const result = await agent.run("Add 10 and 20");
     expect(
       matchToolCallWithArgs("add", { a: 10, b: 20 }, result.getToolCalls())
     ).toBe(true);
@@ -393,7 +393,7 @@ import { EvalTest, matchToolCallsSubset } from "@mcpjam/sdk";
 const test = new EvalTest({
   name: "multi-step",
   test: async (agent) => {
-    const result = await agent.prompt("Add 2+3, then multiply by 4");
+    const result = await agent.run("Add 2+3, then multiply by 4");
     return matchToolCallsSubset(["add", "multiply"], result.toolsCalled());
   },
 });
@@ -444,7 +444,7 @@ evaluateToolCalls(
 ```typescript
 import { evaluateToolCalls } from "@mcpjam/sdk";
 
-const result = await agent.prompt("Create a task called 'Deploy' with high priority");
+const result = await agent.run("Create a task called 'Deploy' with high priority");
 
 const match = evaluateToolCalls(
   [{ toolName: "createTask", arguments: { priority: "high" } }],

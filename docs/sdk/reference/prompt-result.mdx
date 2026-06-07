@@ -4,15 +4,15 @@ description: "API reference for PromptResult"
 icon: "book"
 ---
 
-The `PromptResult` class wraps every response from `TestAgent.prompt()`. It provides methods to inspect tool calls, performance metrics, errors, and conversation history.
+The `PromptResult` class wraps every response from `HostRunner.run()`. It provides methods to inspect tool calls, performance metrics, errors, and conversation history.
 
 ## Import
 
 ```typescript
-// PromptResult is returned by TestAgent.prompt()
+// PromptResult is returned by HostRunner.run()
 // You don't import it directly
 
-const result = await agent.prompt("...");
+const result = await agent.run("...");
 // result is a PromptResult
 ```
 
@@ -35,7 +35,7 @@ readonly text: string
 #### Example
 
 ```typescript
-const result = await agent.prompt("What is 2 + 2?");
+const result = await agent.run("What is 2 + 2?");
 console.log(result.text); // "2 + 2 equals 4."
 ```
 
@@ -58,7 +58,7 @@ toolsCalled(): string[]
 #### Example
 
 ```typescript
-const result = await agent.prompt("Add 2 and 3, then multiply by 4");
+const result = await agent.run("Add 2 and 3, then multiply by 4");
 console.log(result.toolsCalled()); // ["add", "multiply"]
 ```
 
@@ -394,18 +394,18 @@ getWidgetSnapshots(): EvalWidgetSnapshotInput[]
 
 #### Returns
 
-`EvalWidgetSnapshotInput[]` — metadata plus inline HTML (before upload) or storage ids after reporting. Empty if no MCP App tools ran or if [`TestAgent`](/sdk/reference/test-agent) was created **without** [`mcpClientManager`](/sdk/reference/test-agent#parameters).
+`EvalWidgetSnapshotInput[]` — metadata plus inline HTML (before upload) or storage ids after reporting. Empty if no MCP App tools ran or if [`HostRunner`](/sdk/reference/host-runner) was created **without** [`mcpClientManager`](/sdk/reference/host-runner#parameters).
 
 #### Why the manager matters
 
-MCP App UIs reference HTML via **`ui.resourceUri`**. That HTML is fetched with MCP **`resources/read`**, which only the connected [`MCPClientManager`](/sdk/reference/mcp-client-manager) can perform. The model’s tool **result** is not a substitute for that document, so **`getWidgetSnapshots()` stays empty unless you pass the same `manager` into `new TestAgent({ …, mcpClientManager: manager })`**.
+MCP App UIs reference HTML via **`ui.resourceUri`**. That HTML is fetched with MCP **`resources/read`**, which only the connected [`MCPClientManager`](/sdk/reference/mcp-client-manager) can perform. The model’s tool **result** is not a substitute for that document, so **`getWidgetSnapshots()` stays empty unless you pass the same `manager` into `new HostRunner({ …, mcpClientManager: manager })`**.
 
 When you report results to MCPJam (for example via [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) or [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result)), snapshots are uploaded and linked from the trace so the dashboard can **replay widgets offline**.
 
 #### Example
 
 ```typescript
-const result = await agent.prompt("Open the chart widget");
+const result = await agent.run("Open the chart widget");
 
 const snapshots = result.getWidgetSnapshots();
 console.log("Snapshots:", snapshots.length);
@@ -437,13 +437,13 @@ See [Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-a
 Pass `PromptResult` as context for multi-turn conversations.
 
 ```typescript
-const r1 = await agent.prompt("Create a project");
+const r1 = await agent.run("Create a project");
 
 // Single result as context
-const r2 = await agent.prompt("Add a task", { context: r1 });
+const r2 = await agent.run("Add a task", { context: r1 });
 
 // Multiple results as context
-const r3 = await agent.prompt("Show summary", { context: [r1, r2] });
+const r3 = await agent.run("Show summary", { context: [r1, r2] });
 ```
 
 ---
@@ -451,7 +451,7 @@ const r3 = await agent.prompt("Show summary", { context: [r1, r2] });
 ## Complete Example
 
 ```typescript
-const result = await agent.prompt("Add 100 and 200");
+const result = await agent.run("Add 100 and 200");
 
 // Response
 console.log("Text:", result.text);
@@ -490,4 +490,4 @@ console.log("Messages:", result.getMessages().length);
 
 - [Testing with LLMs](/sdk/concepts/testing-with-llms) - Conceptual guide
 - [Validators Reference](/sdk/reference/validators) - Assert tool calls
-- [TestAgent Reference](/sdk/reference/test-agent) - Agent configuration
+- [HostRunner Reference](/sdk/reference/host-runner) - Agent configuration

@@ -1,0 +1,527 @@
+---
+title: "Error code reference"
+description: "What every MCPJam Inspector error code means, the likely causes, and the next step to fix it."
+icon: "shield-alert"
+---
+
+This page is the source of truth for the error messages MCPJam Inspector surfaces. Every error rendered in the inspector deep-links to one of the sections below.
+
+If you arrived here from an ErrorCard's "Learn more" link, the page should already be scrolled to the right section. Otherwise, use the index below.
+
+## JSON-RPC codes
+
+These come from the MCP transport itself. Numeric codes are defined by the [JSON-RPC 2.0 spec](https://www.jsonrpc.org/specification#error_object) plus a handful of MCP-specific extensions.
+
+| Code | Anchor |
+| --- | --- |
+| `-32700` | [Parse error](#parse-error) |
+| `-32600` | [Invalid request](#invalid-request) |
+| `-32601` | [Method not found](#method-not-found) |
+| `-32602` | [Invalid params](#invalid-params) |
+| `-32603` | [Internal error](#internal-error) |
+| `-32000` | [Connection closed](#connection-closed) |
+| `-32001` | [Request timed out](#request-timeout) / [Header mismatch](#header-mismatch) |
+| `-32004` | [Unsupported protocol version](#unsupported-protocol-version) |
+| `-32042` | [URL elicitation required](#url-elicitation-required) |
+
+### Parse error
+
+`-32700 — jsonrpc/parse_error`
+
+The server returned a payload the client could not parse as JSON-RPC.
+
+**Likely causes**
+- Server emitted invalid JSON on the response channel.
+- A proxy or middleware mangled the response body.
+- The STDIO server emitted log output on stdout instead of stderr.
+
+**Next steps**
+- Check the server's stdout/stderr for unintended log output.
+- Use the inspector's Traffic Log to inspect the raw response.
+
+### Invalid request
+
+`-32600 — jsonrpc/invalid_request`
+
+The server rejected the payload as not a well-formed JSON-RPC request.
+
+**Likely causes**
+- Client sent a request shape the server's MCP runtime does not accept.
+- Outdated server SDK that disagrees with the protocol version advertised.
+
+**Next steps**
+- Verify the negotiated MCP protocol version.
+- Update the server's MCP SDK.
+
+### Method not found
+
+`-32601 — jsonrpc/method_not_found`
+
+The server does not implement the JSON-RPC method that was called.
+
+**Likely causes**
+- The server hasn't implemented the requested MCP method.
+- Client and server are on incompatible MCP protocol versions.
+- The capability you expected was not advertised in `initialize`.
+
+**Next steps**
+- Check the server's advertised capabilities in the connection info modal.
+- Confirm the protocol version negotiated at `initialize`.
+
+### Invalid params
+
+`-32602 — jsonrpc/invalid_params`
+
+The server rejected the request parameters.
+
+**Likely causes**
+- Required field is missing from the call.
+- Field type does not match the tool's input schema.
+- Server-side validator is stricter than the published schema.
+
+**Next steps**
+- Re-check the tool's input schema in the Tools tab.
+- Compare your call payload against the schema in the inspector.
+
+### Internal error
+
+`-32603 — jsonrpc/internal_error`
+
+The server hit an unexpected error while handling the request.
+
+**Likely causes**
+- Unhandled exception inside the server's tool/resource/prompt handler.
+- Downstream dependency (database, API) failed during the call.
+
+**Next steps**
+- Check the server's logs around the time of the error.
+- Retry the request once the server is healthy.
+
+### Connection closed
+
+`-32000 — jsonrpc/connection_closed`
+
+The underlying transport closed before the response could be delivered.
+
+**Likely causes**
+- STDIO server process exited or crashed mid-request.
+- HTTP server dropped the streaming connection.
+- Network blip between the inspector and the server.
+
+**Next steps**
+- Restart the server and reconnect.
+- Check the server logs for a crash or exit message.
+
+**Inspector-specific:** the inspector synthesizes this code when an active transport goes away mid-request. If you see it on every call, the server is probably exiting immediately after startup — check for a fatal log.
+
+### Request timeout
+
+`-32001 — jsonrpc/request_timeout`
+
+The server did not respond within the configured request timeout.
+
+**Likely causes**
+- Server is overloaded or stuck on the operation.
+- Long-running tool call exceeds the inspector's per-request timeout.
+- Network latency between client and server.
+
+**Next steps**
+- Increase the per-server request timeout in the Servers tab.
+- Use MCP `tasks/*` for operations that legitimately run long.
+
+### Header mismatch
+
+`-32001 — jsonrpc/header_mismatch`
+
+The server returned an `MCP-Protocol-Version` header that does not match what the client negotiated.
+
+**Likely causes**
+- Server is enforcing a different protocol version than the one negotiated at `initialize`.
+- A proxy stripped or rewrote the `MCP-Protocol-Version` header.
+
+**Next steps**
+- Verify the server's protocol-version pinning in the connection settings.
+- If you set an explicit protocol version per server, ensure it matches what the server advertises.
+
+> The `-32001` code is overloaded between `request_timeout` and `header_mismatch`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+
+### Unsupported protocol version
+
+`-32004 — jsonrpc/unsupported_protocol_version`
+
+The server does not support any protocol version this inspector offered.
+
+**Likely causes**
+- Server pinned to a newer MCP draft your inspector build does not understand.
+- Server pinned to a legacy version this build dropped support for.
+
+**Next steps**
+- Update the inspector to a newer build.
+- Check the supported versions list in the server's `initialize` response.
+
+### URL elicitation required
+
+`-32042 — jsonrpc/url_elicitation_required`
+
+The server needs the user to visit an external URL to complete the operation.
+
+**Likely causes**
+- Server requested a URL elicitation (OAuth, payment, confirmation).
+- Operation cannot proceed until the user opens the URL in a browser.
+
+**Next steps**
+- Open the elicited URL and complete the flow.
+- Re-issue the request after the external step completes.
+
+---
+
+## Transport errors
+
+These come from the OS or the HTTP stack. Most of them are recoverable.
+
+### ECONNREFUSED
+
+`transport/econnrefused`
+
+Nothing is listening on the host and port the server URL points at.
+
+**Likely causes**
+- Server isn't running.
+- Port number is wrong in the server URL.
+- Server is bound to a different interface (e.g. only `127.0.0.1` but you're connecting via the LAN IP).
+
+**Next steps**
+- Start the server.
+- Double-check the URL's host and port.
+- For Docker/containers, confirm the port is published to your host.
+
+### ECONNRESET
+
+`transport/econnreset`
+
+The remote side closed the TCP connection abruptly.
+
+**Likely causes**
+- Server process crashed mid-request.
+- Intermediate proxy or load balancer dropped the connection.
+- Server hit an OS-level resource limit.
+
+**Next steps**
+- Inspect the server logs for a crash.
+- Retry the request.
+
+### ETIMEDOUT
+
+`transport/etimedout`
+
+The OS-level TCP connection attempt did not complete in time.
+
+**Likely causes**
+- Wrong host/port in the server URL.
+- Firewall is silently dropping packets.
+- Server is overloaded and never accepted the connection.
+
+**Next steps**
+- Verify the URL is reachable from your machine (e.g. `curl`).
+- Check firewall / VPN rules.
+
+### ENOTFOUND
+
+`transport/enotfound`
+
+DNS lookup failed for the server's hostname.
+
+**Likely causes**
+- Hostname is misspelled in the URL.
+- DNS resolver is misconfigured.
+- You're offline.
+
+**Next steps**
+- Confirm the hostname in the URL is correct.
+- Try resolving the host with `nslookup` or `dig`.
+
+### EAI again
+
+`transport/eai_again`
+
+DNS resolution failed with a transient error.
+
+**Likely causes**
+- Local DNS resolver is overloaded or restarting.
+- Upstream DNS server is briefly unavailable.
+
+**Next steps**
+- Wait a few seconds and retry.
+- Switch to a different DNS resolver if this persists.
+
+### Undici transport error
+
+`transport/undici`
+
+The underlying HTTP client (undici / fetch) reported a low-level transport failure. Common subcodes: `UND_ERR_SOCKET`, `UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_HEADERS_TIMEOUT`.
+
+**Likely causes**
+- Server closed the connection mid-response.
+- TLS handshake failed.
+- Socket-level error during streaming.
+
+**Next steps**
+- Inspect the Traffic Log for the failed request.
+- Verify the server's TLS certificate is valid.
+
+### Fetch failed
+
+`transport/fetch_failed`
+
+The HTTP request never produced a response.
+
+**Likely causes**
+- Server is unreachable (offline, wrong URL, blocked by firewall).
+- TLS handshake failed (self-signed cert, expired cert).
+- Mixed-content block (HTTPS page calling HTTP endpoint in browser).
+
+**Next steps**
+- Open the URL in a browser to confirm it loads.
+- If self-signed, install the certificate or switch to a trusted one.
+
+### Socket hang up
+
+`transport/socket_hang_up`
+
+The server closed the connection without sending a response.
+
+**Likely causes**
+- Server crashed or restarted during the request.
+- Reverse proxy timed the request out.
+
+**Next steps**
+- Retry the request.
+- Check server-side logs for the crash.
+
+---
+
+## Auth & OAuth
+
+For the difference between the three "API key" concepts (LLM provider keys, MCPJam API keys, Playground BYOK), see [API keys](/reference/api-keys).
+
+### Unauthorized 401
+
+`auth/http_401`
+
+The server requires authentication that wasn't provided or is no longer valid.
+
+**Likely causes**
+- Missing or expired bearer token.
+- OAuth access token expired and refresh failed.
+- Server changed its required authentication scheme.
+
+**Next steps**
+- Re-authenticate using the **Reconnect** button on the server card.
+- If using OAuth, run through the OAuth flow again from Servers.
+
+### Forbidden 403
+
+`auth/http_403`
+
+You authenticated successfully but lack permission for the operation.
+
+**Likely causes**
+- OAuth scopes granted don't cover the requested operation.
+- Server-side ACL blocks this account.
+
+**Next steps**
+- Re-run OAuth and request the additional scopes if the server allows.
+- Ask the server admin to grant the necessary permissions.
+
+### OAuth refresh failed
+
+`auth/oauth_refresh_failed`
+
+An expired OAuth access token could not be refreshed.
+
+**Likely causes**
+- Refresh token was revoked.
+- Refresh token expired.
+- Server returned `invalid_grant` to the refresh attempt.
+
+**Next steps**
+- Click **Reconnect** on the server card to run a fresh OAuth flow.
+
+### Missing bearer
+
+`auth/missing_bearer`
+
+The API call did not include the required `Authorization: Bearer ...` header.
+
+**Likely causes**
+- Inspector session expired.
+- Sign-in token failed to attach to the request.
+
+**Next steps**
+- Refresh the page and sign in again.
+
+### OAuth invalid grant
+
+`oauth/invalid_grant`
+
+The OAuth server rejected the authorization code or refresh token.
+
+**Likely causes**
+- Authorization code was already redeemed.
+- Refresh token was revoked.
+- Authorization code expired (typical lifetime ~60s).
+
+**Next steps**
+- Start the OAuth flow again from the server card.
+
+### OAuth invalid client
+
+`oauth/invalid_client`
+
+The OAuth server does not recognize the client credentials.
+
+**Likely causes**
+- Client was deleted on the authorization server.
+- Dynamic registration cache is stale.
+- `client_id` was rotated server-side.
+
+**Next steps**
+- Re-register the client (Reconnect from the server card triggers DCR if supported).
+
+### OAuth redirect mismatch
+
+`oauth/redirect_mismatch`
+
+The redirect URI in the request does not match the one registered with the OAuth server.
+
+**Likely causes**
+- Authorization server requires the inspector's callback URL to be registered explicitly.
+- Server's allow-list is wrong.
+
+**Next steps**
+- Add the inspector's callback URL to the OAuth server's allowed redirects.
+- Verify the inspector's base URL hasn't changed.
+
+### OAuth well-known unreachable
+
+`oauth/well_known_unreachable`
+
+The OAuth `.well-known` discovery endpoint could not be fetched.
+
+**Likely causes**
+- Authorization server is down.
+- Wrong issuer URL.
+- CORS blocks the discovery request from the browser.
+
+**Next steps**
+- Confirm the issuer URL in the server config.
+- Open the `.well-known/openid-configuration` (or `oauth-authorization-server`) URL in a browser.
+
+---
+
+## Inspector-specific
+
+These come from the inspector's own SDK runtime.
+
+### Not yet supported in stateless
+
+`sdk/not_yet_supported_in_stateless`
+
+The inspector's stateless HTTP transport does not yet implement this MCP operation.
+
+**Likely causes**
+- Operation requires a server-initiated channel (subscriptions, MRTR) the stateless preview transport hasn't wired up yet.
+
+**Next steps**
+- Switch the server to the legacy stateful transport in its protocol-mode toggle.
+
+### Stateless requires HTTP
+
+`sdk/stateless_requires_http`
+
+Stateless mode can only be used with an HTTP-transport server, not STDIO.
+
+**Likely causes**
+- You enabled the stateless protocol toggle on a stdio server.
+
+**Next steps**
+- Disable the stateless toggle for stdio servers.
+
+### Paginated tool / header discovery unsupported
+
+`sdk/paginated_tool_header_discovery_unsupported`
+
+Paginated tools discovery cannot run alongside per-request header overrides on this transport.
+
+**Likely causes**
+- Conflicting combination of progressive tool discovery + per-server header overrides.
+
+**Next steps**
+- Disable progressive tool discovery for this server, or move headers into the server config.
+
+---
+
+## Provider errors
+
+Errors from the LLM provider running behind the playground.
+
+### Provider invalid tool name
+
+`provider/invalid_tool_name`
+
+An LLM provider rejected a tool name (Anthropic's strict tool-name validator is the most common source).
+
+**Likely causes**
+- Tool name contains characters or length the provider does not allow.
+- Two attached servers expose tools whose namespaced names collide after sanitization.
+
+**Next steps**
+- Rename the offending tool on the server.
+- Detach one of the colliding servers from the chat surface.
+
+### Provider auth error
+
+`provider/auth_error`
+
+Your LLM provider rejected the API key for this request.
+
+**Likely causes**
+- Key is missing.
+- Key is invalid or revoked.
+- Key is for a different environment (project, region).
+
+**Next steps**
+- Add or update your API key under **Settings → LLM Providers**.
+- Verify the key in the provider's dashboard.
+
+### Provider quota
+
+`provider/quota`
+
+Your LLM provider rejected the request because you hit a rate limit or quota.
+
+**Likely causes**
+- Daily/monthly quota exhausted.
+- Per-minute rate limit exceeded.
+- Free tier limits hit.
+
+**Next steps**
+- Wait for the limit window to reset.
+- Upgrade your provider plan.
+- Switch to a different provider in Settings.
+
+---
+
+## Unknown error
+
+`internal/unknown`
+
+An error occurred that the inspector could not classify.
+
+**Likely causes**
+- Unhandled error path.
+- New error class the inspector hasn't been taught about yet.
+
+**Next steps**
+- Open the details panel of the ErrorCard and copy the raw message.
+- File an issue with the raw message so we can add it to the catalog.

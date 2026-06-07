@@ -2,8 +2,10 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import { CheckCircle, Info, ExternalLink, Clock3 } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
+import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { ErrorCard } from "@/components/ui/error-card";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
@@ -11,6 +13,13 @@ import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 interface ResultsPanelProps {
   error: string;
+  /**
+   * Rich describe-error block accompanying `error` when the source
+   * surfaced one (server-side `jsonError` in /api/mcp/tools/execute
+   * always populates it now). Falls back to `describeError(error)`
+   * inside the ErrorCard when absent.
+   */
+  normalizedError?: NormalizedError | null;
   result: CallToolResult | null;
   structuredContentValid: boolean | undefined;
   toolMeta?: Record<string, any>;
@@ -26,6 +35,7 @@ interface ResultsPanelProps {
 
 export function ResultsPanel({
   error,
+  normalizedError,
   result,
   structuredContentValid,
   toolMeta,
@@ -90,9 +100,7 @@ export function ResultsPanel({
       {/* Content - fills remaining space */}
       {error ? (
         <div className="flex-1 p-4">
-          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {error}
-          </div>
+          <ErrorCard error={normalizedError ?? error} defaultOpen />
         </div>
       ) : rawResult ? (
         <div className="flex-1 min-h-0 p-4 flex flex-col gap-4">

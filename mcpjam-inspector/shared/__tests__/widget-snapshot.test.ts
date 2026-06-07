@@ -1,0 +1,239 @@
+import { describe, expect, test } from "vitest";
+import type { EvalTraceWidgetSnapshot } from "../eval-trace";
+import {
+  evalTraceSnapshotToPayload,
+  normalizeWidgetCsp,
+  sanitizeWidgetForBackend,
+  type SharedChatWidgetSnapshotPayload,
+} from "../widget-snapshot";
+
+function makeEvalSnap(
+  overrides: Partial<EvalTraceWidgetSnapshot> = {},
+): EvalTraceWidgetSnapshot {
+  return {
+    toolCallId: "call-1",
+    toolName: "create_view",
+    protocol: "mcp-apps",
+    serverId: "excalidraw",
+    toolMetadata: {},
+    widgetHtmlBlobId: "html-blob-1",
+    ...overrides,
+  };
+}
+
+describe("normalizeWidgetCsp", () => {
+  test("picks string-array fields and drops non-string entries", () => {
+    expect(
+      normalizeWidgetCsp({
+        connectDomains: ["a.com", "b.com"],
+        resourceDomains: ["good.com", 123 as unknown as string, null],
+        unknownField: "ignored",
+      }),
+    ).toEqual({
+      connectDomains: ["a.com", "b.com"],
+      resourceDomains: ["good.com"],
+    });
+  });
+
+  test("returns undefined for non-object input", () => {
+    expect(normalizeWidgetCsp(null)).toBeUndefined();
+    expect(normalizeWidgetCsp(undefined)).toBeUndefined();
+    expect(normalizeWidgetCsp("string")).toBeUndefined();
+    expect(normalizeWidgetCsp(42)).toBeUndefined();
+  });
+
+  test("returns undefined when no recognized fields survive normalization", () => {
+    // Empty record, record with only non-string-array fields, or record
+    // with empty arrays — all collapse to absent CSP. Callers depend on
+    // absent vs `{}` being distinguishable (backend mutations treat them
+    // differently in the widgetCsp validator path).
+    expect(normalizeWidgetCsp({})).toBeUndefined();
+    expect(normalizeWidgetCsp({ unrelated: "x" })).toBeUndefined();
+    expect(normalizeWidgetCsp({ connectDomains: [] })).toBeUndefined();
+  });
+});
+
+describe("sanitizeWidgetForBackend", () => {
+  test("escapes $-prefixed keys inside widgetPermissions", () => {
+    const payload: SharedChatWidgetSnapshotPayload = {
+      toolCallId: "c",
+      toolName: "t",
+      serverId: "s",
+      widgetHtmlBlobId: "b",
+      uiType: "mcp-apps",
+      widgetPermissions: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        properties: {
+          clipboard: {
+            $ref: "#/definitions/Capability",
+          },
+        },
+      },
+    };
+    const out = sanitizeWidgetForBackend(payload);
+    const perms = out.widgetPermissions as Record<string, any>;
+    expect(perms.$schema).toBeUndefined();
+    expect(perms.__convexReserved__schema).toBe(
+      "https://json-schema.org/draft/2020-12/schema",
+    );
+    expect(perms.properties.clipboard.$ref).toBeUndefined();
+    expect(perms.properties.clipboard.__convexReserved__ref).toBe(
+      "#/definitions/Capability",
+    );
+  });
+
+  test("is a no-op for payloads with no reserved keys", () => {
+    const payload: SharedChatWidgetSnapshotPayload = {
+      toolCallId: "c",
+      toolName: "t",
+      serverId: "s",
+      widgetHtmlBlobId: "b",
+      uiType: "openai-apps",
+      widgetCsp: { connectDomains: ["a.com"] },
+      widgetPermissive: true,
+      prefersBorder: false,
+    };
+    expect(sanitizeWidgetForBackend(payload)).toEqual(payload);
+  });
+});
+
+describe("evalTraceSnapshotToPayload", () => {
+  test("maps protocol → uiType and forwards friendly serverId verbatim", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({ protocol: "openai-apps", serverId: "my-server" }),
+    );
+    expect(out).not.toBeNull();
+    expect(out!.uiType).toBe("openai-apps");
+    expect(out!.serverId).toBe("my-server");
+    // `protocol` is the source-side field name; the payload doesn't
+    // carry it through under either name.
+    expect((out as unknown as Record<string, unknown>).protocol).toBeUndefined();
+  });
+
+  test("returns null when widgetHtmlBlobId is missing", () => {
+    expect(
+      evalTraceSnapshotToPayload(
+        makeEvalSnap({ widgetHtmlBlobId: undefined }),
+      ),
+    ).toBeNull();
+  });
+
+  test("normalizes widgetCsp via normalizeWidgetCsp", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        widgetCsp: {
+          connectDomains: ["a.com"],
+          resourceDomains: ["good.com", 99 as unknown as string],
+          extra: "x",
+        },
+      }),
+    );
+    expect(out!.widgetCsp).toEqual({
+      connectDomains: ["a.com"],
+      resourceDomains: ["good.com"],
+    });
+  });
+
+  test("forwards optional fields when set, omits when absent", () => {
+    const withAll = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        resourceUri: "ui://x",
+        widgetPermissions: { camera: true },
+        widgetPermissive: true,
+        prefersBorder: false,
+      }),
+    );
+    expect(withAll).toMatchObject({
+      resourceUri: "ui://x",
+      widgetPermissions: { camera: true },
+      widgetPermissive: true,
+      prefersBorder: false,
+    });
+
+    const minimal = evalTraceSnapshotToPayload(makeEvalSnap());
+    expect(minimal!.resourceUri).toBeUndefined();
+    expect(minimal!.widgetPermissions).toBeUndefined();
+    expect(minimal!.widgetPermissive).toBeUndefined();
+    expect(minimal!.prefersBorder).toBeUndefined();
+  });
+
+  test("forwards injectedOpenAiCompat + capabilities when compat is true", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: true,
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+          sendFollowUpMessage: false,
+          requestDisplayMode: "fullscreen-only",
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBe(true);
+    expect(out!.injectedOpenAiCompatCapabilities).toEqual({
+      callTool: true,
+      sendFollowUpMessage: false,
+      requestDisplayMode: "fullscreen-only",
+    });
+  });
+
+  test("drops capabilities when injectedOpenAiCompat is false (no shim injected ⇒ no surface)", () => {
+    // A buggy producer could attach a capability matrix to a snapshot
+    // where the shim wasn't actually injected. Persisting that would let
+    // replay hash the matrix and treat the surface as different than
+    // the shim-less HTML actually represents.
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: false,
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBe(false);
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("drops capabilities when injectedOpenAiCompat is undefined", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompatCapabilities: {
+          callTool: true,
+        },
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("omits OpenAI compat fields when absent (pre-feature snapshot)", () => {
+    const out = evalTraceSnapshotToPayload(makeEvalSnap());
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+    expect(out!.injectedOpenAiCompatCapabilities).toBeUndefined();
+  });
+
+  test("omits injectedOpenAiCompat when the source value is non-boolean", () => {
+    // EvalTraceWidgetSnapshot types it as `boolean | undefined`, but a
+    // round-tripped JSON snapshot could theoretically carry `null` from
+    // a misbehaved producer. We intentionally drop non-boolean values
+    // rather than forwarding them and tripping the Convex validator.
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        injectedOpenAiCompat: null as unknown as boolean,
+      }),
+    );
+    expect(out!.injectedOpenAiCompat).toBeUndefined();
+  });
+
+  test("drops toolMetadata and widgetHtmlUrl (backend stores them elsewhere or not at all)", () => {
+    const out = evalTraceSnapshotToPayload(
+      makeEvalSnap({
+        toolMetadata: { someKey: "value" },
+        widgetHtmlUrl: "http://example.test/widget",
+      }),
+    );
+    expect((out as unknown as Record<string, unknown>).toolMetadata)
+      .toBeUndefined();
+    expect((out as unknown as Record<string, unknown>).widgetHtmlUrl)
+      .toBeUndefined();
+  });
+});

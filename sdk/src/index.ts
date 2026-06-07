@@ -415,6 +415,24 @@ export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 // Skill reference (SKILL.md content for agent brief generation)
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 
+// Error describer — single source of truth for friendly error titles,
+// likely causes, next steps, and docs anchors. Browser-safe; mirrored on
+// `@mcpjam/sdk/browser` so client code can call `describeError` without
+// dragging in Node-only deps.
+export {
+  describeError,
+  describeAsSlug,
+  isNormalizedError,
+  ERROR_CATALOG,
+  extractNodeErrno,
+  RETRYABLE_NODE_ERROR_CODES,
+} from "./error-describer/index.js";
+export type {
+  NormalizedError,
+  ErrorCatalogEntry,
+  ErrorCatalogSlug,
+} from "./error-describer/index.js";
+
 // OAuth conformance
 export {
   OAuthConformanceTest,

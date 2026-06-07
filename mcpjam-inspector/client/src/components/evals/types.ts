@@ -225,6 +225,21 @@ export type EvalIteration = {
   iterationNumber: number;
   updatedAt: number;
   blob?: string;
+  /**
+   * PR-4 R6: present on iterations whose transcript was written via the
+   * unified chatSessions path (eval→chatSessions writer flag on).
+   * Trace-repair candidate selection considers iterations with either
+   * `blob` or `chatSessionId` as trace-bearing — both source paths feed
+   * the source-aware `getTestIterationBlob` action.
+   */
+  chatSessionId?: string;
+  /**
+   * PR-4 R6: set when the inspector's fanout-failure fallback flipped
+   * the iteration to legacy-only reads. Doesn't change trace-repair
+   * eligibility — readers still get a usable transcript via
+   * `getTestIterationBlob` regardless of which source feeds it.
+   */
+  preferLegacyBlob?: boolean;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   result: "pending" | "passed" | "failed" | "cancelled";
   actualToolCalls: Array<{

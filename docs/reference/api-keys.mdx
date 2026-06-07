@@ -1,0 +1,61 @@
+---
+title: "API keys"
+description: "The three different things called 'API key' in MCPJam, and when you need each one."
+icon: "key"
+---
+
+The word "API key" gets used for three distinct things in MCPJam. This page disambiguates them so you can tell which one a given error message is talking about.
+
+## 1. LLM provider key
+
+A secret you obtained from an LLM provider (OpenAI, Anthropic, Google, xAI, Groq, Mistral, etc.). The inspector uses it to call that provider's chat completion API on your behalf.
+
+**Where it lives:** **Settings → LLM Providers**.
+
+**When it's used:** Every time you send a chat message in the Playground tab against a provider model that isn't MCPJam's free hosted model.
+
+**Errors you might see**
+- "Invalid API key for OpenAI / Anthropic / ..." → the key is wrong, expired, or for a different project.
+- "MCPJam model limit reached" — different problem, see [common errors](/troubleshooting/common-errors#mcpjam-model-limit-reached). Add an LLM provider key to bypass the free quota.
+
+**You do NOT need:** an LLM provider key to run inspector probes (Tools tab, Resources tab, Prompts tab, OAuth Debugger, conformance suites). Those only talk to MCP servers.
+
+## 2. `MCPJAM_API_KEY` (CLI auth)
+
+A token issued by the MCPJam hosted backend for headless usage of the `@mcpjam/cli` and `@mcpjam/sdk`.
+
+**Where it lives:** `~/.mcpjam/config.json` after running `mcpjam login`, or as the `MCPJAM_API_KEY` environment variable in CI.
+
+**When it's used:**
+- `mcpjam` CLI commands that talk to the hosted backend (publishing reports, fetching org-scoped server configs).
+- `@mcpjam/sdk` evals submitting traces to your org workspace.
+
+**Errors you might see**
+- "Missing or invalid bearer token" → `MCPJAM_API_KEY` is unset or rotated. Re-run `mcpjam login` or refresh the env var.
+
+## 3. Playground BYOK (Bring Your Own Key)
+
+A per-server bearer token used to authenticate the inspector against an HTTP MCP server that requires `Authorization: Bearer ...`. The inspector forwards it to that one server only.
+
+**Where it lives** (two equivalent ways to set it — pick whichever fits your workflow):
+
+- **Servers card → Headers field** in the inspector UI. Stored locally per project; never sent anywhere except the server URL.
+- **`config.json`** under `mcpServers.<name>.headers.Authorization`, shaped exactly like the HTTP example on the [Installation](/installation) page. The inspector reads this on startup and treats it the same as a UI-entered header.
+
+Either form ends up populating the same per-server request header. Pick the UI for quick experimentation; pick `config.json` when you want the token version-controlled or shared across a team's checkout (typically via env-var substitution like `"Authorization": "Bearer ${MY_SERVER_TOKEN}"`).
+
+**When it's used:** Every request the inspector makes to that MCP server.
+
+**Errors you might see**
+- `auth/http_401` → the token is missing, expired, or rejected by the server. See [Unauthorized 401](/troubleshooting/error-codes#unauthorized-401).
+- `auth/http_403` → the token is recognized but lacks permission. See [Forbidden 403](/troubleshooting/error-codes#forbidden-403).
+
+## Quick reference
+
+| Concept | Stored in | Used for | "Invalid key" error path |
+| --- | --- | --- | --- |
+| LLM provider key | Settings → LLM Providers | Playground chat | `provider/auth_error` |
+| `MCPJAM_API_KEY` | `~/.mcpjam/config.json` or env | CLI / SDK auth to MCPJam backend | `auth/missing_bearer` |
+| Playground BYOK | Per-server card | MCP server requests | `auth/http_401`, `auth/http_403` |
+
+If you're not sure which one a particular error is referring to, open the ErrorCard's details panel and check the raw `code` / `slug` against the table above.

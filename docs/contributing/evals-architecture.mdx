@@ -8,6 +8,74 @@ icon: "flask-conical"
 
 The Evals system in MCPJam Inspector is a comprehensive testing framework designed to evaluate MCP (Model Context Protocol) server implementations. This guide provides a deep dive into the architecture, data flows, and key components to help you contribute effectively.
 
+<Note>
+**Heads up.** Some of the diagrams and file paths below predate the chat-v2 / hostConfig consolidation. The current architecture is summarized in the [HostConfig consolidation](#hostconfig-consolidation) section directly below; treat that as the canonical reference when it conflicts with the older sections.
+</Note>
+
+## HostConfig consolidation
+
+The Playground (live chat) and Evals share a single, portable `hostConfig` core that lives in `@mcpjam/sdk/host-config/`. Everything that drives an LLM-plus-MCP loop — host style, model, sandbox/permission policy, OpenAI-Apps compat, tool-visibility, MCP server selection — flows through one canonical shape and one hash.
+
+```
+@mcpjam/sdk/host-config/
+  types.ts          # HostConfigInputV2, HostJson, CspDomainSet, …
+  canonicalize.ts   # canonicalizeHostConfigV2 — byte-stable JSON
+  hash.ts           # computeHostConfigHashV2 — sha256(canonical)
+  defaults.ts       # emptyHostConfigInputV2, resolveEffectiveMcpProtocolVersion, …
+  host-policy.ts    # extractHostExecutionPolicy, buildHostIterationMetadata
+  compat-runtime.ts # resolveOpenAiCompatForHostConfig
+  tool-visibility.ts# filterAppOnlyTools, applyVisibilityPolicyAndCountSignals
+  sdk-evals-normalizer.ts # normalizeSdkEvalHostConfigForWire (Stage 5)
+```
+
+This module is the **one source of truth**. The MCPJam backend imports the canonicalizer + hasher directly from `@mcpjam/sdk/host-config/internal`; see `mcpjam-backend/convex/lib/hostConfigV2.ts` — the file is a thin Convex-bound wrapper (server-scope validation, `Id<'servers'>` boundary cast) over the SDK functions, not a parallel implementation.
+
+**Two boundaries inside the inspector consume this module:**
+
+- **Outbound (backend → target MCP server).** The eval runner builds an `MCPClientManager`, connects to the suite's servers, and drives an `HostRunner` over the resolved host. Imports:
+  - `extractHostExecutionPolicy` / `buildHostIterationMetadata` from `@mcpjam/sdk/host-config/internal` (Stage 3) — was previously `server/services/evals/host-execution-policy.ts`; the local file is now deleted.
+  - `resolveOpenAiCompatForHostConfig` from `@mcpjam/sdk/host-config/internal` (Stage 3) — was previously the local `compat-runtime.ts`; only the Convex-bound `loadSuiteHostConfig` remains in the inspector.
+  - `filterAppOnlyTools` from `@mcpjam/sdk/host-config/internal` (Stage 3) — same predicate the chat-v2 path uses, no fork.
+- **Inbound (frontend → backend).** The eval results API persists per-iteration `hostConfigId` rows that reference the same `hostConfigs` table the chatbox/playground writes.
+
+The Playground's chat-v2 path consumes the same module — playground and evals are two surfaces over the same configuration vocabulary; see [playground-architecture.mdx](./playground-architecture#hostconfig-consolidation) for the live-path side of the same picture.
+
+### `HostRunner`, `HostRuntime`, `HostExecutor` (Stage 4 rename)
+
+Inside `@mcpjam/sdk`, the executor surface was renamed in 1.11 to align with MCP spec vocabulary:
+
+- `TestAgent` → `HostRunner` — synchronous executor over a host snapshot with tools pre-resolved.
+- `EvalAgent` → `HostExecutor` — interface implemented by both `HostRunner` and `HostRuntime`.
+- `.prompt()` → `.run()` on the interface and both impls.
+- `Host.addServer()` → `Host.requireServer()`.
+- `HostRuntime` (new) — live binding of a `Host` to an `MCPClientManager` (`host.withManager(manager, { apiKey })`). Snapshots the live host on every `.run()`; stateless across turns.
+- `EvalTest.run` / `EvalSuite.run` parameter renamed `agent` → `executor`.
+
+`EvalTest` and `EvalSuite` accept any `HostExecutor`, so an external user can run the same eval against their own runtime as long as it implements `getHostSnapshot?.()`.
+
+### Per-iteration host metadata + Stage 5 wire-send
+
+`HostRunner` snapshots the host once at construction; `HostRuntime` re-snapshots on every `.run()`, so mid-eval mutation to the bound `Host` is captured per-iteration. Each `IterationResult` carries `hostSnapshot?: HostJson` and a derived metadata stamp (`buildHostSnapshotMetadata`) that is additively merged into `EvalResultInput.metadata` (existing keys are never overwritten — conflicting host keys are namespaced under `host.<key>`).
+
+When the MCPJam backend advertises the `evalsHostConfig` capability at `GET /sdk/v1/info`, the SDK eval reporter additionally sends `{ hostConfig, hostConfigHash }` at the run boundary:
+
+- `POST /sdk/v1/evals/runs/start` (chunked path) — body includes the pair when the capability probe succeeds and iteration snapshots are homogeneous.
+- `POST /sdk/v1/evals/report` (one-shot path) — same.
+- `POST /sdk/v1/evals/runs/:id/iterations` (chunked append) and `POST /sdk/v1/evals/runs/:id/finalize` — **never** carry the pair (per-run, not per-batch).
+
+Source order, run-level only: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Pass-1 homogeneity gate: send only when all available iteration snapshots canonicalize to the same hash; heterogeneous runs omit (per-iteration wire support is a later stage). Capability probe is **fail-safe to "no capability"** on any error.
+
+`hostConfigHash` is a transport-integrity check — the backend re-runs `normalizeSdkEvalHostConfigForWire → canonicalizeHostConfigV2 → computeHostConfigHashV2` and rejects on mismatch. It is **not** the persisted storage id; suite-resolved Convex `Id<'servers'>` are layered on top at storage time, so the persisted `hostConfigsV2` row's hash differs from the wire hash by design.
+
+### Two distinct sandbox layers
+
+- The persisted host-config sandbox shape (`mcpProfile.apps.sandbox.csp` + `.permissions`) is **allowlist-only** — there is no `deny` field. This is the shape the backend stores and the canonicalizer hashes.
+- The SDK runtime CSP **resolver** (`sandbox-policy.ts`) carries `deny` plus a hosted clamp for render-time enforcement. It is NOT the same type; the two share only leaf subtypes (`SandboxCspMode`, `SandboxPermissionsMode`, four-directive domain-set).
+
+A canonicalize-time guard in the SDK rejects sandbox shapes that leak a `deny` key. Don't reuse `SandboxCspPolicy` / `SandboxPermissionsPolicy` for persisted host configs.
+
+---
+
 ## Overview
 
 The Evals system allows developers to:

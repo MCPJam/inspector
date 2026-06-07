@@ -95,6 +95,9 @@ export type RequestEventMap = {
     failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
     statusCode?: number;
     sourceType?: "chatbox" | "direct" | "eval";
+    // Product-surface discriminator carried alongside sourceType so PostHog
+    // can pivot persist failures by surface without rejoining to chatSessions.
+    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval";
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";

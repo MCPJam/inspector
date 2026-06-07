@@ -22,7 +22,7 @@ That's it — both `EvalTest` and `EvalSuite` will auto-save results when this k
 
 `MCPJAM_API_KEY` enables result uploads.
 
-**Attach the connected `MCPClientManager` to [`TestAgent`](/sdk/reference/test-agent)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
+**Attach the connected `MCPClientManager` to [`HostRunner`](/sdk/reference/host-runner)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
 
 1. **MCP App / widget replay in Evals traces** — After each MCP App tool call, the agent uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch HTML from the tool’s `ui.resourceUri` and fills [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result). Without the manager, traces still upload (messages + spans) but **widgets will not replay** in the dashboard. The tool’s JSON result alone is not enough for offline iframe replay.
 2. **Replay credentials (authenticated HTTP MCP)** — The SDK can persist server connection details for debugging and reruns. You do not need to build a second secret object yourself; replay config is derived automatically when the agent or manager is attached.
@@ -46,7 +46,7 @@ await test.run(agent, {
 For authenticated HTTP servers:
 
 ```typescript
-import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner } from "@mcpjam/sdk";
 
 const manager = new MCPClientManager({
   asana: {
@@ -59,7 +59,7 @@ const manager = new MCPClientManager({
 
 await manager.connectToServer("asana");
 
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools: await manager.getTools(),
   model: "openai/gpt-4o-mini",
   apiKey: process.env.OPENAI_API_KEY!,
@@ -154,7 +154,7 @@ Most users should pass `agent` or `mcpClientManager` and let the SDK derive repl
 
 When replay configs are inferred from `agent` or `mcpClientManager`, the SDK limits them to the `serverNames` you attach to the run when `serverNames` is provided.
 
-**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) — not only on `TestAgent` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
+**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) — not only on `HostRunner` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
 
 ## CI Metadata
 

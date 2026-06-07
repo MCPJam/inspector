@@ -537,14 +537,14 @@ for (const tool of allTools) {
   console.log(`${tool.name}: ${tool.description}`);
 }
 
-// Use with TestAgent
-const agent = new TestAgent({
+// Use with HostRunner
+const agent = new HostRunner({
   tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const result = await agent.prompt("Add 2 and 3");
+const result = await agent.run("Add 2 and 3");
 console.log(result.getText());
 ```
 
@@ -609,7 +609,7 @@ const response = await generateText({
 ## Complete Example
 
 ```typescript
-import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner } from "@mcpjam/sdk";
 
 async function main() {
   const manager = new MCPClientManager({
@@ -641,13 +641,13 @@ async function main() {
     console.log("Asana tools:", asanaTools.tools.length);
 
     // Create agent with all tools
-    const agent = new TestAgent({
+    const agent = new HostRunner({
       tools: await manager.getTools(),
       model: "anthropic/claude-sonnet-4-20250514",
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    const result = await agent.prompt("Add 2 and 3");
+    const result = await agent.run("Add 2 and 3");
     console.log(result.getText());
   } finally {
     await manager.disconnectServer("math");
@@ -659,4 +659,4 @@ async function main() {
 ## Related
 
 - [Connecting to Servers](/sdk/concepts/connecting-servers) - Conceptual guide
-- [TestAgent Reference](/sdk/reference/test-agent) - Use tools with LLMs
+- [HostRunner Reference](/sdk/reference/host-runner) - Use tools with LLMs

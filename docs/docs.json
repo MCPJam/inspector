@@ -40,7 +40,9 @@
           "getting-started",
           "installation",
           "hosted/overview",
-          "troubleshooting/common-errors"
+          "troubleshooting/common-errors",
+          "troubleshooting/error-codes",
+          "changelog/overview"
         ]
       },
       {
@@ -48,19 +50,35 @@
         "icon": "binoculars",
         "groups": [
           {
-            "group": "Features",
-            "icon": "star",
+            "group": "Connect",
+            "icon": "plug",
             "pages": [
               "inspector/home",
-              "inspector/playground",
               "inspector/clients",
-              "inspector/protocol-versions",
-              "inspector/guided-oauth",
-              "inspector/xaa-debugger",
-              "inspector/tools-prompts-resources",
-              "inspector/evals",
               "inspector/projects",
+              "inspector/protocol-versions"
+            ]
+          },
+          {
+            "group": "MCP Apps",
+            "icon": "layout-dashboard",
+            "pages": [
+              "inspector/playground",
               "inspector/views",
+              "inspector/evals",
+              "inspector/host-templates"
+            ]
+          },
+          {
+            "group": "Auth & Conformance",
+            "icon": "shield-check",
+            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+          },
+          {
+            "group": "Primitives",
+            "icon": "puzzle",
+            "pages": [
+              "inspector/tools-prompts-resources",
               "inspector/skills"
             ]
           },
@@ -104,6 +122,7 @@
       {
         "tab": "SDK",
         "icon": "code",
+        "tag": "v1",
         "groups": [
           {
             "group": "Get Started",
@@ -126,7 +145,7 @@
             "icon": "book",
             "pages": [
               "sdk/reference/mcp-client-manager",
-              "sdk/reference/test-agent",
+              "sdk/reference/host-runner",
               "sdk/reference/prompt-result",
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
@@ -135,7 +154,8 @@
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
-              "sdk/reference/apps-conformance"
+              "sdk/reference/apps-conformance",
+              "reference/api-keys"
             ]
           }
         ]
@@ -169,7 +189,8 @@
     { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
     { "source": "/inspector/chat", "destination": "/inspector/playground" },
     { "source": "/inspector/app-builder", "destination": "/inspector/playground" },
-    { "source": "/inspector/test-cases", "destination": "/inspector/evals" }
+    { "source": "/inspector/test-cases", "destination": "/inspector/evals" },
+    { "source": "/sdk/reference/test-agent", "destination": "/sdk/reference/host-runner" }
   ],
   "navbar": {
     "links": [
