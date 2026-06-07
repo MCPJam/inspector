@@ -89,6 +89,7 @@ import {
 } from "../utils/chat-v2-orchestration.js";
 import { runAssistantTurn } from "../utils/assistant-turn.js";
 import type {
+  MCPJamEngineErrorEvent,
   MCPJamStepFinishEvent,
   MCPJamToolCallEvent,
   MCPJamToolResultEvent,
@@ -4131,6 +4132,17 @@ const streamIterationViaBackend = async ({
       return out;
     };
 
+    // PR 5b-followup-2: capture the engine's structured-error event
+    // when the Convex `/stream` response is non-OK (429 daily-cap,
+    // hosted-model errors, ...) or when an in-stream catch fires. The
+    // engine writes a generic `error` UI chunk to the no-op writer
+    // (because `streamSink: "none"`); the callback gives us the
+    // parsed `{ code?, message, details? }` shape so failure-detection
+    // branches below can surface the actual reason on the eval SSE
+    // error event instead of dropping the detail with the generic
+    // "Backend stream failed during iteration" fallback.
+    let lastEngineError: MCPJamEngineErrorEvent | undefined;
+
     // Engine callbacks → SSE events. These mirror the events the old
     // inline backend stream loop emitted from its chunk-processing
     // switch:
@@ -4144,6 +4156,9 @@ const streamIterationViaBackend = async ({
     //                        caveat. After firing, the partial-response
     //                        accumulators reset so the next step starts
     //                        fresh.
+    //  - `onEngineError`   → captures the structured guardrail error
+    //                        body for use in the failure-detection
+    //                        fallback (PR 5b-followup-2).
     //
     // `promptToolsCalled` mirrors the legacy local accumulator; the
     // engine's `messageHistory` is the source of truth post-turn, so
@@ -4242,10 +4257,18 @@ const streamIterationViaBackend = async ({
       // user prompt) PLUS the in-flight partial response built from
       // the chunk-event accumulators — without this, mid-turn step
       // snapshots show only the user prompt even though `tool_call` /
-      // `text_delta` SSE already fired. Spans accumulate on
-      // `traceCtx.recordedSpans` (tool spans) + the engine's own LLM
-      // step spans (delivered on `turnResult.turnTrace.spans` AFTER
-      // the turn finishes).
+      // `text_delta` SSE already fired. Spans:
+      //  - `capturedSpans`        — prior turns' merged spans.
+      //  - `traceCtx.recordedSpans` — this turn's tool-instrumentation
+      //                              spans from `wrapToolSetForEvalTrace`.
+      //  - `event.turnSpans`      — PR 5b-followup-2: this turn's
+      //                              engine-recorded LLM-step + tool
+      //                              spans, snapshot at step settlement
+      //                              (closes Cursor PR 5b "Step
+      //                              snapshots omit LLM spans"). Without
+      //                              this the live trace UI lost
+      //                              per-step LLM timing for
+      //                              multi-step hosted streaming evals.
       const snapshotMessages = [
         ...messageHistory,
         ...buildPartialResponseMessages(),
@@ -4256,7 +4279,11 @@ const streamIterationViaBackend = async ({
           stepIndex: event.stepIndex,
           snapshotKind: "step_finish",
           messages: withSystemPrefix(snapshotMessages),
-          spans: [...capturedSpans, ...traceCtx.recordedSpans],
+          spans: [
+            ...capturedSpans,
+            ...traceCtx.recordedSpans,
+            ...event.turnSpans,
+          ],
           actualToolCalls: extractToolCallsFromConversation({
             messages: snapshotMessages,
           }),
@@ -4274,6 +4301,14 @@ const streamIterationViaBackend = async ({
       // naturally on the next prompt-turn iteration; no double-count
       // risk because `messageHistory` is replaced with the engine's
       // canonical post-turn transcript below before the next iteration.
+    };
+    // PR 5b-followup-2: capture the engine's structured-error event.
+    // The callback fires at the same site that emits the writer-side
+    // `error` UI chunk; capturing here lets the failure-detection
+    // branches below surface guardrail detail (429 daily-cap text,
+    // hosted-model setup errors, ...) on the eval SSE error event.
+    const onEngineError = (event: MCPJamEngineErrorEvent) => {
+      lastEngineError = event;
     };
 
     // `runAssistantTurn` call shape mirrors `runIterationViaBackend`
@@ -4328,6 +4363,7 @@ const streamIterationViaBackend = async ({
         onToolCall,
         onToolResult,
         onStepFinish,
+        onEngineError,
       });
     } catch (error) {
       // Cancellation: bail without recording. AbortError can surface
@@ -4453,10 +4489,23 @@ const streamIterationViaBackend = async ({
     //   (c) Engine succeeded and produced content, but a later step
     //       errored (non-tool error span on `turnTrace.spans`).
     if (!turnResult.turnTrace) {
-      iterationError =
-        "Backend stream failed during iteration (engine caught an error mid-turn)";
+      // PR 5b-followup-2: prefer the engine's captured structured
+      // error when present. Closes Cursor PR 5b "Stream guardrail
+      // errors lose detail" — without this, 429 daily-cap users saw
+      // the generic fallback below instead of the actual reason
+      // ("Daily MCPJam model limit reached. Use BYOK or try again
+      // tomorrow."). When no engine error was captured (true engine
+      // catch shape vs. a missed `onEngineError` site), keep the
+      // generic fallback for diagnostic clarity.
+      if (lastEngineError) {
+        iterationError = lastEngineError.message;
+        iterationErrorDetails = lastEngineError.rawText;
+      } else {
+        iterationError =
+          "Backend stream failed during iteration (engine caught an error mid-turn)";
+      }
       logger.error(
-        `[evals] runAssistantTurn (stream) returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${newMessages.length > 0})`,
+        `[evals] runAssistantTurn (stream) returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${newMessages.length > 0}, engineError=${lastEngineError ? lastEngineError.code ?? "uncoded" : "none"})`,
       );
       emit(
         buildTraceSnapshotEvent({
@@ -4473,14 +4522,34 @@ const streamIterationViaBackend = async ({
           usage: accumulatedUsage,
         }),
       );
-      emit({ type: "error", message: iterationError });
+      emit({
+        type: "error",
+        message: iterationError,
+        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
+      });
       break;
     }
     if (newMessages.length === 0) {
-      iterationError =
-        "Backend step returned no content (stream error or empty response)";
+      // PR 5b-followup-2 review fix (Cursor High "Guardrail errors
+      // ignore captured engine"): non-OK Convex `/stream` responses
+      // make `processOneStep` return `{shouldContinue: false}` — the
+      // engine breaks the loop, fires a synthetic finish chunk, sets
+      // `runSucceeded = true`, and surfaces a populated `turnTrace`.
+      // 429-shaped guardrail turns also add no assistant messages, so
+      // this branch fires (NOT the `!turnTrace` branch above). The
+      // captured `lastEngineError` is the actual reason ("Daily
+      // MCPJam model limit reached…"); the generic "Backend step
+      // returned no content" message loses it. Prefer the engine
+      // event here too.
+      if (lastEngineError) {
+        iterationError = lastEngineError.message;
+        iterationErrorDetails = lastEngineError.rawText;
+      } else {
+        iterationError =
+          "Backend step returned no content (stream error or empty response)";
+      }
       logger.error(
-        "[evals] runAssistantTurn (stream) produced no new messages this turn; treating as cycle failure",
+        `[evals] runAssistantTurn (stream) produced no new messages this turn; treating as cycle failure (engineError=${lastEngineError ? lastEngineError.code ?? "uncoded" : "none"})`,
       );
       emit(
         buildTraceSnapshotEvent({
@@ -4497,7 +4566,11 @@ const streamIterationViaBackend = async ({
           usage: accumulatedUsage,
         }),
       );
-      emit({ type: "error", message: iterationError });
+      emit({
+        type: "error",
+        message: iterationError,
+        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
+      });
       break;
     }
     // Cursor / Codex PR 5a review fix applied here too: filter to
@@ -4514,9 +4587,20 @@ const streamIterationViaBackend = async ({
         !(span as { toolCallId?: string }).toolCallId,
     );
     if (stepErrorSpan) {
-      iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
+      // PR 5b-followup-2 review fix: same shape as the no-content
+      // branch above — a captured engine error is more informative
+      // than the span-name fallback. The error-span case fires for
+      // later-step failures after partial success (engine logged an
+      // `error`-category span via `pushAiSdkTrailingErrorSpan` or
+      // similar); if `onEngineError` also fired, prefer it.
+      if (lastEngineError) {
+        iterationError = lastEngineError.message;
+        iterationErrorDetails = lastEngineError.rawText;
+      } else {
+        iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
+      }
       logger.error(
-        `[evals] runAssistantTurn (stream) turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+        `[evals] runAssistantTurn (stream) turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category} engineError=${lastEngineError ? lastEngineError.code ?? "uncoded" : "none"})`,
       );
       emit(
         buildTraceSnapshotEvent({
@@ -4533,7 +4617,11 @@ const streamIterationViaBackend = async ({
           usage: accumulatedUsage,
         }),
       );
-      emit({ type: "error", message: iterationError });
+      emit({
+        type: "error",
+        message: iterationError,
+        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
+      });
       break;
     }
 

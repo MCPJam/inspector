@@ -200,6 +200,63 @@ export interface MCPJamStepFinishEvent {
    * wire-up decide.
    */
   settledWithError: boolean;
+  /**
+   * PR 5b-followup-2: snapshot of the engine's per-turn spans as of
+   * step settlement. The engine accumulates LLM-step + tool spans on
+   * `traceTurn.turnSpans` while the agentic loop runs but only
+   * surfaces them post-turn via `PersistedTurnTrace.spans`. Eval's
+   * mid-turn `step_finish` `trace_snapshot` (Cursor #5b "Step
+   * snapshots omit LLM spans") would otherwise show only prior-turn
+   * spans + the runner's local tool-instrumentation spans, dropping
+   * the active turn's engine-recorded per-step LLM timing. The shape
+   * is a SNAPSHOT (defensive copy) — callers may retain it across
+   * step boundaries without race risk against the engine's continued
+   * mutation of `traceTurn.turnSpans`. Empty array when the engine
+   * has no spans yet for this turn (failed first step, etc).
+   */
+  turnSpans: EvalTraceSpan[];
+}
+
+/**
+ * PR 5b-followup-2: structured error event fired when the engine
+ * catches an error mid-step and routes it through the writer as an
+ * `error` UI chunk. Eval's backend stream runner consumes this to
+ * surface guardrail detail (e.g. 429 daily-cap "Daily MCPJam model
+ * limit reached. Use BYOK or try again tomorrow.") on its `error`
+ * SSE event — without the callback, `streamSink: "none"` consumers
+ * only see the engine's generic fallback message because the UI
+ * chunk goes to the no-op writer.
+ *
+ * Three fire sites in the engine:
+ *  1. Non-OK Convex `/stream` HTTP response in `processOneStep` —
+ *     structured fields populated when the body parsed as
+ *     `{ code?, error, details? }` (the standard guardrail shape).
+ *  2. `processStream` / tool-execution catch in `processOneStep` —
+ *     `message` only (decode / tool-throw error).
+ *  3. Outer agentic-loop catch in `runChatEngineLoop` — `message`
+ *     only (anything else that escaped the per-step handlers).
+ */
+export interface MCPJamEngineErrorEvent {
+  /**
+   * Human-readable display message. For site (1) when the body
+   * parsed structured, this is `"<error> <details>"`; otherwise the
+   * raw response text or the Error.message.
+   */
+  message: string;
+  /** Structured error code when the body parsed as a guardrail response. */
+  code?: string;
+  /** Structured details string when the body parsed as a guardrail response. */
+  details?: string;
+  /** HTTP status when the error came from a non-OK response (site 1 only). */
+  httpStatus?: number;
+  /**
+   * Raw response body / `Error.message` text — always present for
+   * logging / debugging. Callers should prefer `message` for display.
+   */
+  rawText: string;
+  promptIndex: number;
+  /** Step index when fired inside `processOneStep`; omitted for site (3). */
+  stepIndex?: number;
 }
 
 export interface MCPJamHandlerOptions {
@@ -261,6 +318,19 @@ export interface MCPJamHandlerOptions {
    * `step_finish` SSE event. Chat / synthetic omit.
    */
   onStepFinish?: (event: MCPJamStepFinishEvent) => void;
+  /**
+   * PR 5b-followup-2: structured-error callback. Fires when the
+   * engine catches a non-OK Convex `/stream` response (e.g. 429 daily
+   * spend cap), a `processStream` / tool-execution throw, or any
+   * outer agentic-loop error — i.e. every site that emits a writer
+   * `error` UI chunk + a trace `error` event. For non-OK responses,
+   * the structured `{ code?, error, details? }` body is parsed and
+   * populated on the event so `streamSink: "none"` consumers (eval's
+   * backend stream runner) can surface guardrail detail on their own
+   * error SSE event instead of dropping the actual reason. Chat /
+   * synthetic omit; the writer-side error chunk still fires regardless.
+   */
+  onEngineError?: (event: MCPJamEngineErrorEvent) => void;
   /**
    * Override the Convex endpoint path for the per-step LLM call.
    * Defaults to "/stream". Org BYOK chat uses "/stream/org".
@@ -360,6 +430,11 @@ interface StepContext {
   onToolCall?: (event: MCPJamToolCallEvent) => void;
   onToolResult?: (event: MCPJamToolResultEvent) => void;
   onStepFinish?: (event: MCPJamStepFinishEvent) => void;
+  // PR 5b-followup-2: structured-error callback. Fires at every site
+  // that emits a writer `error` UI chunk (non-OK Convex response in
+  // processOneStep, processStream/tool-execution catch, outer
+  // agentic-loop catch). Optional.
+  onEngineError?: (event: MCPJamEngineErrorEvent) => void;
   abortSignal?: AbortSignal;
 }
 
@@ -758,6 +833,66 @@ function safelyEmitLiveTextDelta(
 }
 
 /**
+ * PR 5b-followup-2: parse a Convex `/stream` non-OK response body as
+ * the standard guardrail JSON shape `{ code?, error, details? }`.
+ * Falls back to a generic `<status> <text>` message when the body
+ * isn't structured. Mirrors the legacy
+ * `describeBackendStreamError` shape that lived in
+ * evals-runner before PR 5b's collapse — moved into the engine here
+ * so `onEngineError` consumers see the same parsed display message.
+ */
+function parseEngineErrorBody(
+  status: number | undefined,
+  bodyText: string
+): { message: string; code?: string; details?: string } {
+  try {
+    const body = JSON.parse(bodyText) as {
+      code?: string;
+      error?: string;
+      details?: string;
+    };
+    if (body?.error) {
+      return {
+        message: body.details ? `${body.error} ${body.details}` : body.error,
+        ...(body.code ? { code: body.code } : {}),
+        ...(body.details ? { details: body.details } : {}),
+      };
+    }
+  } catch {
+    // body wasn't JSON — fall through to generic shape
+  }
+  return {
+    message:
+      status !== undefined
+        ? `Backend stream error: ${status} ${bodyText}`
+        : bodyText,
+  };
+}
+
+/**
+ * PR 5b-followup-2: safe-fire wrapper for `onEngineError`. Mirrors
+ * the chunk-callback shape (try/catch + `logger.warn`) so a buggy
+ * eval emitter can't crash the agentic loop.
+ */
+function safelyEmitEngineError(
+  onEngineError: ((event: MCPJamEngineErrorEvent) => void) | undefined,
+  event: MCPJamEngineErrorEvent
+) {
+  if (!onEngineError) return;
+  try {
+    void Promise.resolve(onEngineError(event)).catch((error) => {
+      logger.warn("[mcpjam-stream-handler] onEngineError callback failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    logger.warn("[mcpjam-stream-handler] onEngineError callback failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Process the SSE stream from Convex and extract content parts.
  * Forwards relevant chunks to the client while building up the message content.
  */
@@ -830,11 +965,31 @@ async function processStream(
       if (done) break;
 
       if (!value?.success) {
-        writer.write({
-          type: "error",
-          errorText: value?.error?.message ?? "stream parse failed",
-        });
-        break;
+        // PR 5b-followup-2 review fix (CodeRabbit Major "Parser failures
+        // still bypass onEngineError and the real failure path"): the
+        // pre-fix shape wrote an error UI chunk and `break`'d out of
+        // the loop. processStream then returned NORMALLY with whatever
+        // contentParts had accumulated, processOneStep ran its
+        // post-stream epilogue, and the outer agentic loop marked the
+        // turn successful (runSucceeded = true) — `onEngineError`
+        // never fired and the eval runner's failure detection didn't
+        // trip. Throw instead so the failure lands in
+        // `runChatEngineLoop`'s outer catch, which fires
+        // `onEngineError` (site #3), writes the error+turn_finish
+        // trace events, and skips the success epilogue. The thrown
+        // Error carries the parser's message so the engine-error
+        // contract stays consistent.
+        const parseErr = (value as { error?: unknown })?.error;
+        throw parseErr instanceof Error
+          ? parseErr
+          : new Error(
+              typeof parseErr === "object" &&
+              parseErr !== null &&
+              "message" in parseErr &&
+              typeof (parseErr as { message?: unknown }).message === "string"
+                ? (parseErr as { message: string }).message
+                : "stream parse failed",
+            );
       }
 
       const chunk = value.value as UIMessageChunk & {
@@ -1500,6 +1655,8 @@ async function processOneStep(
     // MCPJamHandlerOptions through runChatEngineLoop).
     onToolCall,
     onToolResult,
+    // PR 5b-followup-2 structured-error callback.
+    onEngineError,
   } = ctx;
 
   // Pick the active tool subset for this step. In non-progressive mode
@@ -1678,6 +1835,23 @@ async function processOneStep(
       errorText,
     });
     writer.write({ type: "error", errorText });
+    // PR 5b-followup-2: surface the structured guardrail body to
+    // `streamSink: "none"` consumers (eval backend stream runner). The
+    // writer-side `error` chunk above is fire-and-forget here; the
+    // callback gives the eval runner the parsed
+    // `{ code?, error, details? }` shape so it can show the actual
+    // 429 reason on its SSE error event instead of the generic
+    // "Backend stream failed during iteration" fallback.
+    const parsed = parseEngineErrorBody(res.status, errorText);
+    safelyEmitEngineError(onEngineError, {
+      message: parsed.message,
+      ...(parsed.code ? { code: parsed.code } : {}),
+      ...(parsed.details ? { details: parsed.details } : {}),
+      httpStatus: res.status,
+      rawText: errorText,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+    });
     return { shouldContinue: false, didEmitFinish: false };
   }
 
@@ -2080,6 +2254,17 @@ async function processOneStep(
         errorText,
       });
       writer.write({ type: "error", errorText });
+      // PR 5b-followup-2: surface the error to `streamSink: "none"`
+      // consumers (eval backend stream runner). The processStream /
+      // tool-execution catch path doesn't have a structured body, so
+      // `message` is just the error text; `code` / `details` /
+      // `httpStatus` are omitted.
+      safelyEmitEngineError(onEngineError, {
+        message: errorText,
+        rawText: errorText,
+        promptIndex: traceTurn.promptIndex,
+        stepIndex,
+      });
       return { shouldContinue: false, didEmitFinish: false };
     }
 
@@ -2199,6 +2384,8 @@ export async function runChatEngineLoop(
     onToolCall,
     onToolResult,
     onStepFinish,
+    // PR 5b-followup-2 callback.
+    onEngineError,
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
@@ -2440,6 +2627,10 @@ export async function runChatEngineLoop(
             // tool-result emission (onToolResult) sites fire them.
             onToolCall,
             onToolResult,
+            // PR 5b-followup-2: structured-error callback. Fires from
+            // the two `processOneStep` error sites (non-OK Convex
+            // response + processStream/tool catch).
+            onEngineError,
             abortSignal,
           });
 
@@ -2478,6 +2669,11 @@ export async function runChatEngineLoop(
                     }
                   : undefined,
                 settledWithError,
+                // PR 5b-followup-2: defensive copy so callers can
+                // retain the snapshot across step boundaries without
+                // racing against engine mutation of traceTurn.turnSpans
+                // on the next step.
+                turnSpans: [...traceTurn.turnSpans],
               });
             } catch (error) {
               logger.warn(
@@ -2579,6 +2775,14 @@ export async function runChatEngineLoop(
           safeWriter.write({
             type: "error",
             errorText,
+          });
+          // PR 5b-followup-2: surface to `streamSink: "none"` consumers.
+          // Site (3) — outer agentic-loop catch. No structured body,
+          // no stepIndex.
+          safelyEmitEngineError(onEngineError, {
+            message: errorText,
+            rawText: errorText,
+            promptIndex: traceTurn.promptIndex,
           });
         }
       } finally {

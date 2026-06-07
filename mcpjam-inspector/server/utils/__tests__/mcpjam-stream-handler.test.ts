@@ -1899,6 +1899,220 @@ describe("mcpjam-stream-handler", () => {
       );
     });
 
+    it("includes `turnSpans` snapshot on each `onStepFinish` invocation (PR 5b-followup-2 — Cursor 'Step snapshots omit LLM spans')", async () => {
+      // PR 5b-followup-2: the engine accumulates LLM-step + tool spans
+      // on `traceTurn.turnSpans` during the agentic loop but only
+      // surfaced them post-turn via `PersistedTurnTrace.spans`. The
+      // followup exposes a defensive-copy snapshot on
+      // `MCPJamStepFinishEvent.turnSpans` so eval's mid-turn step
+      // snapshots can include the active turn's per-step LLM timing.
+      // Lock the engine surface: every `onStepFinish` invocation
+      // carries `turnSpans: EvalTraceSpan[]`, and successive
+      // invocations see the running set grow (defensive copy means
+      // earlier event snapshots stay frozen).
+      const stepOne = [
+        { type: "text-start", id: "text-0" },
+        { type: "text-delta", id: "text-0", delta: "step1" },
+        { type: "text-end", id: "text-0" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+        },
+      ];
+      let fetchCall = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        fetchCall += 1;
+        return createSseResponse(stepOne);
+      });
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onStepFinish = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Hi" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onStepFinish,
+      });
+
+      await lastExecution;
+
+      expect(onStepFinish).toHaveBeenCalledTimes(1);
+      const event = onStepFinish.mock.calls[0]?.[0];
+      // `turnSpans` is REQUIRED — always present, even when the engine
+      // hasn't recorded any spans for this turn yet (the LLM-step span
+      // for the completed step IS recorded though, so we expect at
+      // least one entry).
+      expect(Array.isArray(event.turnSpans)).toBe(true);
+      expect(event.turnSpans.length).toBeGreaterThan(0);
+      // Defensive copy: mutating the event's array must not affect
+      // the engine's internal traceTurn.turnSpans on subsequent steps.
+      const originalLength = event.turnSpans.length;
+      event.turnSpans.push({ name: "intruder" } as any);
+      // Engine wouldn't be running anymore, but the contract holds:
+      // the array we received was a fresh copy.
+      expect(event.turnSpans.length).toBe(originalLength + 1);
+      void fetchCall;
+    });
+
+    it("fires `onEngineError` with structured guardrail body on non-OK Convex response (PR 5b-followup-2 — Cursor 'Stream guardrail errors lose detail')", async () => {
+      // PR 5b-followup-2: before this followup, `streamSink: "none"`
+      // consumers (eval backend stream runner) lost structured 429 /
+      // daily-cap / hosted-model setup error detail because the
+      // writer-side `error` UI chunk went to the no-op writer. Engine
+      // now also fires `onEngineError({code, message, details,
+      // httpStatus, rawText})` at the same site with the parsed
+      // `{ code?, error, details? }` body so eval can surface the
+      // actual guardrail reason on its own error SSE event.
+      const structuredBody = JSON.stringify({
+        code: "user_rate_limit",
+        error: "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        details: "Try again in 30 minutes.",
+      });
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(structuredBody, {
+          status: 429,
+          statusText: "Too Many Requests",
+        }),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Rate-limit me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      // Display message is the parsed "error + details" shape (matches
+      // the legacy describeBackendStreamError output that lived in
+      // evals-runner before PR 5b's collapse).
+      expect(event.message).toContain("Daily MCPJam model limit reached");
+      expect(event.message).toContain("Try again in 30 minutes");
+      // Structured fields populated from the parsed body.
+      expect(event.code).toBe("user_rate_limit");
+      expect(event.details).toBe("Try again in 30 minutes.");
+      expect(event.httpStatus).toBe(429);
+      // Raw body is always present for debugging.
+      expect(event.rawText).toBe(structuredBody);
+      // Correlation fields.
+      expect(event.promptIndex).toBe(0);
+      expect(event.stepIndex).toBe(0);
+    });
+
+    it("fires `onEngineError` with raw text on non-OK response with non-JSON body (PR 5b-followup-2)", async () => {
+      // The parser falls back to a generic `Backend stream error: <status> <text>`
+      // when the body isn't structured JSON. `code` and `details` are
+      // omitted; `rawText` carries the original body for diagnostic use.
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response("upstream broke", {
+          status: 500,
+          statusText: "Internal Server Error",
+        }),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Fail me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      expect(event.message).toBe("Backend stream error: 500 upstream broke");
+      expect(event.code).toBeUndefined();
+      expect(event.details).toBeUndefined();
+      expect(event.httpStatus).toBe(500);
+      expect(event.rawText).toBe("upstream broke");
+    });
+
+    it("fires `onEngineError` (via outer catch) when SSE parser fails mid-stream (PR 5b-followup-2 review — CodeRabbit Major 'Parser failures bypass onEngineError')", async () => {
+      // CodeRabbit followup-2 review fix: the pre-fix
+      // `if (!value?.success)` branch in processStream wrote an error
+      // chunk and broke the read loop, then returned NORMALLY — so
+      // the outer agentic loop synthesized a finish and marked the
+      // turn successful (`runSucceeded = true`), and `onEngineError`
+      // never fired. Eval consumers lost the failure signal entirely.
+      //
+      // Fix: throw from the parse-failure branch so it lands in
+      // runChatEngineLoop's outer catch, which fires `onEngineError`
+      // (site #3) and writes the error+turn_finish trace events.
+      //
+      // Lock: feed a stream that decodes successfully (200 OK) but
+      // emits a chunk the schema rejects. Assert `onEngineError`
+      // fires once with the parser's message.
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          // Valid SSE framing, but the data payload is not parseable
+          // JSON. `parseJsonEventStream` surfaces this as
+          // `{ success: false, error: SyntaxError | ZodError }`.
+          `data: not-json-at-all-{{{\n\n`,
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "parse-fail me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      // The fix: parse failures now route through site #3
+      // (outer agentic-loop catch) instead of silently breaking the
+      // read loop. `onEngineError` MUST fire — pre-fix this was zero.
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      // Outer-catch site doesn't carry httpStatus / code / details —
+      // those only populate at site #1 (non-OK Convex response).
+      expect(event.httpStatus).toBeUndefined();
+      expect(event.code).toBeUndefined();
+      expect(event.details).toBeUndefined();
+      expect(event.stepIndex).toBeUndefined();
+      // The parser's message is preserved (Zod or whatever the
+      // schema validator reports). Either way, NOT the success path.
+      expect(typeof event.message).toBe("string");
+      expect(event.message.length).toBeGreaterThan(0);
+      expect(event.rawText).toBe(event.message);
+    });
+
     it("fires `onToolCall` for approved tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
       // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes
       // `tool-input-available` UI chunks for resumed APPROVED tools

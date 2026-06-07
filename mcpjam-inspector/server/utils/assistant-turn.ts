@@ -154,6 +154,15 @@ export interface RunAssistantTurnOptions {
   onToolCall?: MCPJamHandlerOptions["onToolCall"];
   onToolResult?: MCPJamHandlerOptions["onToolResult"];
   onStepFinish?: MCPJamHandlerOptions["onStepFinish"];
+  /**
+   * PR 5b-followup-2: structured-error pass-through. Eval's backend
+   * stream runner uses this to surface guardrail detail (429
+   * daily-cap, hosted-model setup errors, etc.) on its `error` SSE
+   * event — `streamSink: "none"` consumers don't otherwise see the
+   * structured Convex `/stream` response body because the writer-side
+   * `error` chunk goes to the no-op writer. Chat / synthetic omit.
+   */
+  onEngineError?: MCPJamHandlerOptions["onEngineError"];
 
   /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
@@ -332,6 +341,8 @@ function buildHandlerOptions(
     ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
     ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
     ...(opts.onStepFinish ? { onStepFinish: opts.onStepFinish } : {}),
+    // PR 5b-followup-2: pass-through structured-error callback.
+    ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.endpointPath ? { endpointPath: opts.endpointPath } : {}),
     ...(opts.extraHeaders ? { extraHeaders: opts.extraHeaders } : {}),
     ...(opts.authContext.clientIp !== undefined &&
