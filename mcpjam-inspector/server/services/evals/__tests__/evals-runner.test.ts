@@ -990,53 +990,57 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       iterationId: "iter-failed-setup",
     });
 
-    await expect(
-      runEvalSuiteWithAiSdk({
-        suiteId: "suite-1",
-        runId: null,
-        config: {
-          tests: [
-            {
-              title: "Case",
-              query: "Hello",
-              runs: 1,
-              model: "gpt-4-turbo",
-              provider: "openai",
-              expectedToolCalls: [],
-              promptTurns: [
-                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
-              ],
-              testCaseId: "case-1",
-            },
-          ],
-          environment: { servers: ["srv-1"] },
-        },
-        modelApiKeys: { openai: "sk-test" },
-        convexClient: convexClient as any,
-        convexHttpUrl: "https://example.convex.site",
-        convexAuthToken: "token",
-        mcpClientManager: mcpClientManager as any,
-        testCaseId: "case-1",
-      }),
-    ).resolves.toBeDefined();
+    try {
+      await expect(
+        runEvalSuiteWithAiSdk({
+          suiteId: "suite-1",
+          runId: null,
+          config: {
+            tests: [
+              {
+                title: "Case",
+                query: "Hello",
+                runs: 1,
+                model: "gpt-4-turbo",
+                provider: "openai",
+                expectedToolCalls: [],
+                promptTurns: [
+                  { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+                ],
+                testCaseId: "case-1",
+              },
+            ],
+            environment: { servers: ["srv-1"] },
+          },
+          modelApiKeys: { openai: "sk-test" },
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          mcpClientManager: mcpClientManager as any,
+          testCaseId: "case-1",
+        }),
+      ).resolves.toBeDefined();
 
-    expect(prepareSpy).toHaveBeenCalled();
+      expect(prepareSpy).toHaveBeenCalled();
 
-    const updateCall = convexClient.action.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestIteration",
-    );
-    expect(updateCall).toBeDefined();
-    const payload = updateCall![1] as Record<string, unknown>;
-    expect(payload.status).toBe("failed");
-    expect(payload.result).toBe("failed");
-    expect(payload.error).toEqual(expect.stringContaining("Invalid tool name"));
-    expect(payload.iterationId).toBe("iter-failed-setup");
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      expect(payload.status).toBe("failed");
+      expect(payload.result).toBe("failed");
+      expect(payload.error).toEqual(
+        expect.stringContaining("Invalid tool name"),
+      );
+      expect(payload.iterationId).toBe("iter-failed-setup");
 
-    // The runner must NOT have called generateText — the failure happens
-    // before any model invocation.
-    expect(generateTextMock).not.toHaveBeenCalled();
-
-    prepareSpy.mockRestore();
+      // The runner must NOT have called generateText — the failure happens
+      // before any model invocation.
+      expect(generateTextMock).not.toHaveBeenCalled();
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 
   it("does not count a negative-test setup failure as a suite pass", async () => {
@@ -1057,43 +1061,45 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       iterationId: "iter-negative-setup-fail",
     });
 
-    await runEvalSuiteWithAiSdk({
-      suiteId: "suite-1",
-      runId: null,
-      config: {
-        tests: [
-          {
-            title: "Negative case",
-            query: "Hello",
-            runs: 1,
-            model: "gpt-4-turbo",
-            provider: "openai",
-            isNegativeTest: true,
-            expectedToolCalls: [],
-            promptTurns: [
-              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
-            ],
-            testCaseId: "case-neg",
-          },
-        ],
-        environment: { servers: ["srv-1"] },
-      },
-      modelApiKeys: { openai: "sk-test" },
-      convexClient: convexClient as any,
-      convexHttpUrl: "https://example.convex.site",
-      convexAuthToken: "token",
-      mcpClientManager: mcpClientManager as any,
-      testCaseId: "case-neg",
-    });
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Negative case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              isNegativeTest: true,
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-neg",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-neg",
+      });
 
-    const updateCall = convexClient.action.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestIteration",
-    );
-    expect(updateCall).toBeDefined();
-    const payload = updateCall![1] as Record<string, unknown>;
-    expect(payload.result).toBe("failed");
-    expect(payload.status).toBe("failed");
-
-    prepareSpy.mockRestore();
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      expect(payload.result).toBe("failed");
+      expect(payload.status).toBe("failed");
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 });
