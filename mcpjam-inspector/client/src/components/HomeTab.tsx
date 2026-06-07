@@ -297,17 +297,29 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex max-w-5xl flex-col gap-8 px-8 pb-20 pt-14">
-        {/* Greeting */}
-        <header className="flex flex-col gap-2">
-          <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            {dateLabel}
-          </p>
-          <h1 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[40px]">
-            {greeting},{" "}
-            <span className="font-semibold text-muted-foreground">
-              {firstName}
-            </span>
-          </h1>
+        {/* Greeting + org stats */}
+        <header className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              {dateLabel}
+            </p>
+            <h1 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[40px]">
+              {greeting},{" "}
+              <span className="font-semibold text-muted-foreground">
+                {firstName}
+              </span>
+            </h1>
+          </div>
+          <OrgStatsStrip
+            memberCount={isLoading ? null : data!.memberCount}
+            projectCount={isLoading ? null : data!.projects.length}
+            totalServerCount={isLoading ? null : data!.totalServerCount}
+            evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
+            toolExecutionCount={toolExecutionCount?.value ?? null}
+            toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
+            messagesSentCount={messagesSentCount?.value ?? null}
+            messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
+          />
         </header>
 
         <McpjamAgentHero
@@ -322,29 +334,15 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
           ready={Boolean(projectId)}
         />
 
-        {/* Slim stats — pills with dot separators */}
-        <OrgStatsStrip
-          memberCount={isLoading ? null : data!.memberCount}
-          projectCount={isLoading ? null : data!.projects.length}
-          totalServerCount={isLoading ? null : data!.totalServerCount}
-          evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
-          toolExecutionCount={toolExecutionCount?.value ?? null}
-          toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
-          messagesSentCount={messagesSentCount?.value ?? null}
-          messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
-        />
-
         {/* What's new — release feed with hover preview + click-to-expand modal. */}
         <ProductUpdatesRow />
 
-        {/* Hero card */}
-        <RecommendedServers
-          servers={data?.recommendedServers}
-          projectId={projectId}
-        />
-
-        {/* Secondary cards */}
-        <div className="grid gap-5">
+        {/* Recommended servers + clients */}
+        <div className="grid gap-5 lg:grid-cols-2 lg:items-stretch">
+          <RecommendedServers
+            servers={data?.recommendedServers}
+            projectId={projectId}
+          />
           <RecommendedClients projectId={projectId} />
         </div>
       </div>

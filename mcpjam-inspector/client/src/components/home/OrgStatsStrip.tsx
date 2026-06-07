@@ -1,7 +1,7 @@
 import {
   Users,
   FolderOpen,
-  Plug,
+  Server,
   FlaskConical,
   Zap,
   MessageSquare,
@@ -102,7 +102,7 @@ export function OrgStatsStrip({
       />
       <Sep />
       <Stat
-        icon={Plug}
+        icon={Server}
         value={totalServerCount}
         label={totalServerCount === 1 ? "server" : "servers"}
         onClick={() => navigate("/servers")}

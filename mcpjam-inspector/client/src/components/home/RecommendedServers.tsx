@@ -2,26 +2,22 @@ import { useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import {
-  Sparkles,
   Loader2,
   Plus,
-  ArrowUpRight,
   Box,
   Wrench,
   Database,
   MessageSquareText,
   Server,
 } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Card,
   CardHeader,
   CardTitle,
   CardDescription,
-  CardAction,
   CardContent,
 } from "@mcpjam/design-system/card";
-import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
 import { useAppNavigate, routePaths } from "@/lib/app-navigation";
 
 interface RecommendedServer {
@@ -97,32 +93,17 @@ export function RecommendedServers({
 
   return (
     <Card className="gap-0 overflow-hidden py-0">
-      <CardHeader className="px-6 pb-5 pt-6">
-        <div className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15">
-          <Sparkles className="size-[18px]" strokeWidth={1.75} />
-        </div>
-        <CardTitle className="mt-3 text-[15px] tracking-[-0.005em]">
+      <CardHeader className="px-6 pb-3 pt-5">
+        <CardTitle className="flex items-center gap-2 text-[15px] tracking-[-0.005em]">
+          <Server className="size-4 text-muted-foreground" strokeWidth={1.75} />
           Recommended servers
         </CardTitle>
         <CardDescription className="text-[12.5px]">
           Hand-picked MCP servers to test with your clients.
         </CardDescription>
-        <CardAction>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => navigate(routePaths.servers)}
-          >
-            Browse all
-            <ArrowUpRight />
-          </Button>
-        </CardAction>
       </CardHeader>
 
-      <div className="border-t border-border/60" />
-
-      <CardContent className="px-3 py-2">
+      <CardContent className="px-3 pb-3 pt-1">
         {servers === undefined ? (
           <ul aria-busy="true" aria-label="Loading recommended servers">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -164,17 +145,9 @@ export function RecommendedServers({
                     <CategoryIcon className="size-[18px]" strokeWidth={1.75} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-[14px] font-medium tracking-[-0.005em] text-foreground">
-                        {server.name}
-                      </p>
-                      <Badge
-                        variant="secondary"
-                        className="h-5 px-1.5 text-[10.5px] font-medium tracking-wide text-muted-foreground"
-                      >
-                        {server.category}
-                      </Badge>
-                    </div>
+                    <p className="truncate text-[14px] font-medium tracking-[-0.005em] text-foreground">
+                      {server.name}
+                    </p>
                     <p className="mt-0.5 truncate text-[12.5px] text-muted-foreground">
                       {server.description}
                     </p>

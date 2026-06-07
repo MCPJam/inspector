@@ -4,6 +4,7 @@ import type {
   McpUiStyles,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import type { InjectedOpenAiCompatCapabilities } from "@/shared/widget-snapshot";
 
 /**
  * Persistable shape for a custom loading indicator. Built-in hosts ship
@@ -173,22 +174,13 @@ export interface HostMcpProfile {
  * widgets that test `if (window.openai.selectFiles)` must see
  * `undefined` to take their fallback path). `setOpenInAppUrl` is typed
  * and implemented by the OpenAI-compatible runtime.
+ *
+ * Re-exports the wire-shape definition from `shared/widget-snapshot.ts`
+ * (`InjectedOpenAiCompatCapabilities`) so client + server agree on a
+ * single structural type. The local `OpenAiAppsCapabilities` name is
+ * preserved for client-side call sites that group the matrix by app type.
  */
-export type OpenAiAppsCapabilities = {
-  callTool?: boolean;
-  sendFollowUpMessage?: boolean;
-  setWidgetState?: boolean;
-  requestDisplayMode?: "all" | "fullscreen-only" | "none";
-  notifyIntrinsicHeight?: boolean;
-  openExternal?: boolean;
-  setOpenInAppUrl?: boolean;
-  requestModal?: boolean;
-  uploadFile?: boolean;
-  selectFiles?: boolean;
-  getFileDownloadUrl?: boolean;
-  requestCheckout?: boolean;
-  requestClose?: boolean;
-};
+export type OpenAiAppsCapabilities = InjectedOpenAiCompatCapabilities;
 
 /**
  * Fully-resolved per-method surface — preset merged with user overrides,
