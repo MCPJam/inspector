@@ -125,7 +125,7 @@ describe("persistEvalTraceFanout", () => {
       prompts,
     });
 
-    expect(result).toEqual({ persisted: true });
+    expect(result).toEqual({ persisted: true, turnsWritten: 3 });
 
     const appendCalls = calls.filter(
       (c) => c.ref === "testSuites:appendEvalTurnTrace",
@@ -248,7 +248,56 @@ describe("persistEvalTraceFanout", () => {
       prompts: undefined,
     });
 
-    expect(result).toEqual({ persisted: false, error });
+    expect(result).toEqual({ persisted: false, turnsWritten: 0, error });
+  });
+
+  test("reports turnsWritten when fanout fails after N successful writes", async () => {
+    // Mid-stream failure: turn 0 succeeds, turn 1 throws. Caller uses
+    // turnsWritten > 0 to skip the W1 fallback (would orphan turn 0).
+    const error = new Error("network blip on turn 1");
+    let appendCount = 0;
+    const action = vi.fn(async (ref: string) => {
+      if (ref !== "testSuites:appendEvalTurnTrace") {
+        throw new Error(`unexpected action ${ref}`);
+      }
+      appendCount += 1;
+      if (appendCount === 2) throw error;
+      return { skipped: false };
+    });
+    const client = { action } as unknown as ConvexHttpClient;
+
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "s0",
+        name: "step",
+        category: "step",
+        startMs: 1,
+        endMs: 2,
+        promptIndex: 0,
+      },
+      {
+        id: "s1",
+        name: "step",
+        category: "step",
+        startMs: 3,
+        endMs: 4,
+        promptIndex: 1,
+      },
+    ];
+    const result = await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [
+        { role: "user", content: "q0" } as ModelMessage,
+        { role: "assistant", content: "a0" } as ModelMessage,
+        { role: "user", content: "q1" } as ModelMessage,
+        { role: "assistant", content: "a1" } as ModelMessage,
+      ],
+      spans,
+      prompts: undefined,
+    });
+
+    expect(result).toEqual({ persisted: false, turnsWritten: 1, error });
   });
 
   test("falls back when the backend reports skipped:true", async () => {
@@ -286,7 +335,7 @@ describe("persistEvalTraceFanout", () => {
       prompts: undefined,
     });
 
-    expect(result).toEqual({ persisted: true });
+    expect(result).toEqual({ persisted: true, turnsWritten: 1 });
     const appendCalls = calls.filter(
       (c) => c.ref === "testSuites:appendEvalTurnTrace",
     );

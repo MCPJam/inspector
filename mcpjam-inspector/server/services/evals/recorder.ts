@@ -289,22 +289,24 @@ export const createSuiteRunRecorder = ({
         prompts,
         widgetSnapshots,
       });
-      if (fanout?.persisted === false) {
+      // Fall back to the W1 single-call path ONLY when the fanout failed
+      // before any turn landed. With turns already written, re-sending
+      // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
+      // orphan turns 1..N. See persist-eval-trace.ts for the contract.
+      const useW1Fallback =
+        fanout.persisted === false && fanout.turnsWritten === 0;
+      if (fanout.persisted === false) {
         logger.warn(
-          "[evals] persistEvalTraceFanout failed; falling back to forced-legacy-blob path",
-          { iterationId, error: fanout.error.message },
+          useW1Fallback
+            ? "[evals] persistEvalTraceFanout failed before any turn landed; falling back to W1 single-call save"
+            : "[evals] persistEvalTraceFanout failed mid-stream; iteration finalized without re-attempting (would orphan partial turns)",
+          {
+            iterationId,
+            turnsWritten: fanout.turnsWritten,
+            error: fanout.error.message,
+          },
         );
       }
-      const sendTraceFieldsToUpdate = fanout?.persisted !== true;
-      // When the fanout failed mid-stream we MUST force the backend
-      // into the legacy blob path. Otherwise `updateTestIteration`
-      // re-enters the chatSessions W1 path with `promptIndex: 0` +
-      // full transcript, which would overwrite any partial turn rows
-      // the fanout already wrote and possibly fight an existing lock.
-      // The escape hatch makes the iteration replayable from
-      // `testIteration.blob` while the partial chatSessions data is
-      // left inert (source-aware reader tolerates absence).
-      const forceLegacyTraceBlob = fanout?.persisted === false;
 
       // PR-2 review #5 (Cursor "Update failure after successful fanout"):
       // track whether the iteration is gone so we don't waste a lock
@@ -319,8 +321,7 @@ export const createSuiteRunRecorder = ({
           result,
           actualToolCalls: sanitizeForConvexTransport(toolsCalled),
           tokensUsed: usage.totalTokens ?? 0,
-          ...(forceLegacyTraceBlob ? { forceLegacyTraceBlob: true } : {}),
-          ...(sendTraceFieldsToUpdate
+          ...(useW1Fallback
             ? {
                 messages: sanitizeForConvexTransport(messages),
                 ...(spans?.length
