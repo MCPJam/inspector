@@ -423,6 +423,10 @@ export function registerHostBridgeHandlers(
   // view-initiated teardown by leaving the handler unassigned.
   if ((getMatrix?.() ?? null)?.requestTeardown !== false) {
     bridge.onrequestteardown = async () => {
+      // Capture the teardown target BEFORE awaiting: the renderer adapter backs
+      // `getToolCallId` with a live ref, so a prop swap during the round-trip
+      // could otherwise unmount a newer widget than the one that asked to close.
+      const toolCallId = currentToolCallId();
       onWidgetDebug?.("ui-to-host", "ui/notifications/request-teardown", {});
       try {
         await bridge.teardownResource({});
@@ -433,7 +437,7 @@ export function registerHostBridgeHandlers(
           error: err instanceof Error ? err.message : String(err),
         });
       }
-      callbacks.onRequestTeardown?.(currentToolCallId());
+      callbacks.onRequestTeardown?.(toolCallId);
     };
   }
 }

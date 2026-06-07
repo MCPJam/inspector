@@ -24,8 +24,16 @@ export function getToolVisibility(
   const visibility = ui?.visibility;
   if (!Array.isArray(visibility)) return ["model", "app"];
 
-  const normalized = visibility.filter(
-    (scope): scope is "model" | "app" => scope === "model" || scope === "app",
+  // Dedupe: a payload like `["model", "model"]` must not make
+  // `isVisibleToModelOnly` (which checks `length === 1`) return false and
+  // silently weaken the model-only block the shared bridge enforces.
+  const normalized = Array.from(
+    new Set(
+      visibility.filter(
+        (scope): scope is "model" | "app" =>
+          scope === "model" || scope === "app",
+      ),
+    ),
   );
   return normalized.length > 0 ? normalized : ["model", "app"];
 }

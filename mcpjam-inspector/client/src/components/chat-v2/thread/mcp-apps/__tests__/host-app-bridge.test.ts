@@ -306,6 +306,14 @@ describe("tool visibility helpers", () => {
       false,
     );
   });
+  it("dedupes repeated scopes so model-only stays enforced", () => {
+    expect(getToolVisibility({ ui: { visibility: ["model", "model"] } })).toEqual(
+      ["model"],
+    );
+    expect(
+      isVisibleToModelOnly({ ui: { visibility: ["model", "model"] } }),
+    ).toBe(true);
+  });
 });
 
 /* ------------------------------------------------------------------ *
