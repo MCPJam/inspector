@@ -9,7 +9,7 @@
  * navigation between tabs without unmounting the in-flight `useChat`
  * instance.
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
 import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
@@ -61,12 +61,25 @@ export function AgentSidePanelMount({
 
   // Even when the flag is off, an already-persisted `isOpen=true` should not
   // be honored — the entry point is hidden, so a stale stored value must not
-  // leave the panel showing.
+  // leave the panel showing. Gate on the explicit `false` so the brief window
+  // where `useFeatureFlagEnabled` returns `undefined` during PostHog hydration
+  // doesn't silently close a panel the user reopened across reloads.
   useEffect(() => {
-    if (!homeEnabled && isOpen) {
+    if (homeEnabled === false && isOpen) {
       useAgentPanelStore.getState().setOpen(false);
     }
   }, [homeEnabled, isOpen]);
+
+  // Switching projects must drop the active session pointer — sessions are
+  // project-scoped on the backend, so reusing an id from a different project
+  // would post under the wrong project or 404 on hydration. Skip the very
+  // first render so the persisted sessionId survives reload.
+  const lastProjectIdRef = useRef<string | null>(projectId);
+  useEffect(() => {
+    if (lastProjectIdRef.current === projectId) return;
+    lastProjectIdRef.current = projectId;
+    useAgentPanelStore.getState().setActiveSessionId(null);
+  }, [projectId]);
 
   if (!homeEnabled) return null;
 

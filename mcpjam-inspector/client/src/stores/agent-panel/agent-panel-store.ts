@@ -156,4 +156,13 @@ if (isWindowAvailable()) {
       activeSessionId: next.activeSessionId,
     });
   });
+
+  // Re-clamp width when the viewport shrinks. Without this, a width persisted
+  // at a larger viewport size would exceed the 50vw cap and overflow the main
+  // layout. `setWidth` is a no-op when the clamped value equals the current
+  // one, so this is cheap when the viewport grows or stays the same.
+  window.addEventListener("resize", () => {
+    const { width, setWidth } = useAgentPanelStore.getState();
+    setWidth(width);
+  });
 }
