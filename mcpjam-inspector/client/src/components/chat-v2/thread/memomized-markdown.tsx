@@ -6,7 +6,7 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { Streamdown } from "streamdown";
+import { Streamdown, defaultUrlTransform, type UrlTransform } from "streamdown";
 
 // Per-surface markdown rendering knobs for surfaces that inline content
 // authored elsewhere — e.g. the MCPJam Agent home, which streams docs from
@@ -52,14 +52,19 @@ export function MarkdownLinkBaseProvider({
   );
 }
 
-function buildUrlTransform(base: string | null) {
+function buildUrlTransform(base: string | null): UrlTransform | undefined {
   if (!base) return undefined;
   const trimmed = base.replace(/\/$/, "");
-  return (url: string) => {
+  // Only the root-relative rewrite is custom; every other href falls through
+  // to Streamdown's defaultUrlTransform so dangerous protocols
+  // (`javascript:`, `vbscript:`, non-image `data:`, …) are still stripped.
+  // Without this delegation a model-emitted `[x](javascript:alert(1))` on a
+  // `trustLinks` surface would render as a clickable anchor.
+  return (url, key, node) => {
     if (url.startsWith("/") && !url.startsWith("//")) {
       return trimmed + url;
     }
-    return url;
+    return defaultUrlTransform(url, key, node);
   };
 }
 
