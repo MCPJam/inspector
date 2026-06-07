@@ -3315,4 +3315,725 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       );
     });
   });
+
+  describe("PR 5b — streamIterationViaBackend on runAssistantTurn + engine callbacks", () => {
+    // PR 5b replaces the inline `while (steps < MAX_STEPS)` Convex
+    // /stream loop in `streamIterationViaBackend` with a single
+    // `runAssistantTurn` call per turn, wired to the engine callbacks
+    // added in PR 5b-pre (onToolCall / onToolResult / onStepFinish)
+    // plus the existing `onLiveTextDelta` for text deltas. The legacy
+    // event vocabulary (text_delta / tool_call / tool_result /
+    // step_finish / trace_snapshot / turn_finish) is preserved so
+    // streamTestCase SSE consumers see the same byte shape.
+
+    it("emits the canonical SSE event vocabulary from engine callbacks (PR 5b)", async () => {
+      // Lock the byte-shape contract for the backend variant: the
+      // runner threads `onLiveTextDelta`, `onToolCall`, `onToolResult`,
+      // and `onStepFinish` into `runAssistantTurn`. The engine fires
+      // them in-order during the turn; the runner emits the matching
+      // SSE events. After the turn finishes, the runner emits
+      // turn_finish + trace_snapshot.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Fire the engine callbacks in the order the real engine
+          // would, then return the assembled turnResult.
+          opts.onLiveTextDelta?.("Working");
+          opts.onToolCall?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            input: { q: "status" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            output: { ok: true },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b SSE vocabulary",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-vocab",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-vocab",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        // CodeRabbit PR 5b review (nit): use ordered-index assertions,
+        // not arrayContaining — the latter accepts out-of-order
+        // regressions, but this test is supposed to lock the SSE event
+        // SEQUENCE the legacy inline loop emitted.
+        const types = emitted.map((e) => e.type as string);
+        const firstIndex = (t: string) => types.indexOf(t);
+        expect(firstIndex("turn_start")).toBeGreaterThanOrEqual(0);
+        expect(firstIndex("text_delta")).toBeGreaterThan(
+          firstIndex("turn_start"),
+        );
+        expect(firstIndex("tool_call")).toBeGreaterThan(
+          firstIndex("text_delta"),
+        );
+        expect(firstIndex("tool_result")).toBeGreaterThan(
+          firstIndex("tool_call"),
+        );
+        expect(firstIndex("step_finish")).toBeGreaterThan(
+          firstIndex("tool_result"),
+        );
+        expect(firstIndex("trace_snapshot")).toBeGreaterThan(
+          firstIndex("step_finish"),
+        );
+        expect(firstIndex("turn_finish")).toBeGreaterThan(
+          firstIndex("trace_snapshot"),
+        );
+        // Spot-check the data shapes carried on the events.
+        expect(emitted).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "text_delta",
+              content: "Working",
+            }),
+            expect.objectContaining({
+              type: "tool_call",
+              toolName: "search",
+              toolCallId: "call-1",
+            }),
+            expect.objectContaining({
+              type: "tool_result",
+              toolCallId: "call-1",
+              isError: false,
+            }),
+          ]),
+        );
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("emits per-step usage delta on step_finish SSE, not cumulative (PR 5b review — Cursor Medium #1)", async () => {
+      // Cursor PR 5b review fix: the engine reports turn-cumulative
+      // usage on each `onStepFinish` (`event.turnUsage`), but the
+      // legacy inline loop emitted PER-STEP token counts on
+      // `step_finish` SSE. Mid-turn step_finish SSEs from a multi-step
+      // hosted eval turn would otherwise show inflated counts vs the
+      // local-BYOK stream path / `consumeFullStreamAsEvalEvents`.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Two settled-OK steps. Step 1: 10 in / 5 out cumulative.
+          // Step 2: 25 in / 13 out cumulative (i.e. step 2 contributed
+          // +15 in / +8 out). Emitted step_finish SSEs must show the
+          // PER-STEP deltas, not the cumulative.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            settledWithError: false,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 25, outputTokens: 13, totalTokens: 38 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 25, outputTokens: 13, totalTokens: 38 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b step usage delta",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-usage-delta",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-usage-delta",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishEvents = emitted.filter(
+          (e) => e.type === "step_finish",
+        ) as Array<{
+          stepNumber: number;
+          usage: { inputTokens: number; outputTokens: number };
+        }>;
+        expect(stepFinishEvents).toHaveLength(2);
+        // Step 1 delta = cumulative-step-1 (no prior).
+        expect(stepFinishEvents[0]!.usage).toEqual({
+          inputTokens: 10,
+          outputTokens: 5,
+        });
+        // Step 2 delta = cumulative-step-2 − cumulative-step-1.
+        expect(stepFinishEvents[1]!.usage).toEqual({
+          inputTokens: 15,
+          outputTokens: 8,
+        });
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("includes in-flight assistant + tool content on mid-turn step_finish trace_snapshot (PR 5b review — Cursor Medium #2)", async () => {
+      // Cursor PR 5b review fix: mid-turn `step_finish` trace_snapshot
+      // would otherwise copy only `messageHistory`, which doesn't roll
+      // forward from `turnResult.messages` until AFTER `runAssistantTurn`
+      // returns. Live UI consumers watching SSE would see empty
+      // assistant transcripts mid-turn even though `tool_call` /
+      // `text_delta` SSE already fired. Mirror PR 5a's
+      // `activePartialResponseMessages` pattern: synthesize the
+      // partial response from chunk-event accumulators and stitch into
+      // mid-turn snapshots.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Stream text + tool call + tool result, then settle the
+          // step. The step_finish trace_snapshot must include the
+          // in-flight assistant text + tool-call + tool-result content.
+          opts.onLiveTextDelta?.("Looking up status");
+          opts.onToolCall?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            input: { q: "status" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            output: { ok: true, items: 3 },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b mid-turn snapshot fidelity",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-snap-fidelity",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-snap-fidelity",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        // The mid-turn step_finish trace_snapshot must carry the
+        // in-flight assistant content (text + tool-call) AND the
+        // synthetic tool-result message.
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        );
+        expect(stepFinishSnapshots.length).toBeGreaterThan(0);
+        const snap = stepFinishSnapshots[0] as {
+          trace: { messages: Array<{ role: string; content: unknown }> };
+        };
+        const messages = snap.trace.messages;
+        const assistantMsg = messages.find((m) => m.role === "assistant");
+        expect(assistantMsg).toBeDefined();
+        const assistantContent = assistantMsg!.content as Array<{
+          type: string;
+          text?: string;
+          toolCallId?: string;
+          toolName?: string;
+        }>;
+        expect(assistantContent).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "text",
+              text: "Looking up status",
+            }),
+            expect.objectContaining({
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "search",
+            }),
+          ]),
+        );
+        const toolMsg = messages.find((m) => m.role === "tool");
+        expect(toolMsg).toBeDefined();
+        const toolContent = toolMsg!.content as Array<{
+          type: string;
+          toolCallId?: string;
+        }>;
+        expect(toolContent).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "tool-result",
+              toolCallId: "call-1",
+            }),
+          ]),
+        );
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("accumulates partial response across multi-step turns; step 2 snapshot retains step 1 content (PR 5b review followup)", async () => {
+      // Original PR 5b fix for Cursor #2 reset the partial-response
+      // accumulators inside `onStepFinish`, which corrupted step N's
+      // snapshot by dropping step 1..N-1's assistant/tool content
+      // (`messageHistory` doesn't roll forward from `turnResult.messages`
+      // until AFTER `runAssistantTurn` returns, so during the turn the
+      // accumulators are the ONLY source of in-flight content).
+      // Lock the followup fix: a step-2 snapshot must carry BOTH
+      // step-1 AND step-2 partial assistant + tool content.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Step 1: model says "Step1 text", calls tool A, gets a result.
+          opts.onLiveTextDelta?.("Step1 text");
+          opts.onToolCall?.({
+            toolCallId: "call-a",
+            toolName: "search",
+            input: { q: "first" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-a",
+            toolName: "search",
+            output: { ok: true, step: 1 },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            settledWithError: false,
+          });
+          // Step 2: model says "Step2 text", calls tool B, gets a result.
+          opts.onLiveTextDelta?.("Step2 text");
+          opts.onToolCall?.({
+            toolCallId: "call-b",
+            toolName: "lookup",
+            input: { q: "second" },
+            stepIndex: 1,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-b",
+            toolName: "lookup",
+            output: { ok: true, step: 2 },
+            isError: false,
+            stepIndex: 1,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b cumulative partials across steps",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-multistep-snap",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-multistep-snap",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        ) as Array<{
+          stepIndex?: number;
+          trace: { messages: Array<{ role: string; content: unknown }> };
+        }>;
+        // Exactly one step_finish snapshot per settled-OK step.
+        expect(stepFinishSnapshots).toHaveLength(2);
+
+        // Step 2 snapshot must carry BOTH step 1 + step 2 partials.
+        const step2Snap = stepFinishSnapshots.find(
+          (s) => s.stepIndex === 1,
+        );
+        expect(step2Snap).toBeDefined();
+        const step2Messages = step2Snap!.trace.messages;
+
+        // Find the assistant message — should be a single rolling
+        // assistant with text + 2 tool-call parts (both steps' calls).
+        const assistantMsg = step2Messages.find((m) => m.role === "assistant");
+        expect(assistantMsg).toBeDefined();
+        const assistantContent = assistantMsg!.content as Array<{
+          type: string;
+          text?: string;
+          toolCallId?: string;
+          toolName?: string;
+        }>;
+        // Text from both steps must be present (concatenated rolling
+        // assistant text).
+        const textParts = assistantContent.filter((p) => p.type === "text");
+        expect(textParts.length).toBeGreaterThan(0);
+        const combinedText = textParts.map((p) => p.text ?? "").join("");
+        expect(combinedText).toContain("Step1 text");
+        expect(combinedText).toContain("Step2 text");
+        // Both tool calls must be present.
+        const toolCallParts = assistantContent.filter(
+          (p) => p.type === "tool-call",
+        );
+        expect(toolCallParts.map((p) => p.toolCallId).sort()).toEqual([
+          "call-a",
+          "call-b",
+        ]);
+
+        // Both tool-result messages must be present (one per call).
+        const toolMessages = step2Messages.filter((m) => m.role === "tool");
+        const allToolResultCallIds = toolMessages.flatMap((m) =>
+          (m.content as Array<{ type: string; toolCallId?: string }>)
+            .filter((p) => p.type === "tool-result")
+            .map((p) => p.toolCallId),
+        );
+        expect(allToolResultCallIds.sort()).toEqual(["call-a", "call-b"]);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("does NOT emit step_finish SSE when onStepFinish fires with settledWithError=true (PR 5b — Marcelo caveat)", async () => {
+      // Marcelo's PR 5b-pre review caveat: `MCPJamStepFinishEvent`
+      // settles with `settledWithError` carrying the engine's
+      // step-level OK/error state. The runner must NOT translate a
+      // failed-step settle into a `step_finish` SSE event — failed
+      // backend steps already surface via the failure detection paths
+      // (no `turnTrace`, error span on turnTrace, etc). Emitting
+      // step_finish for failed steps would surface a "step succeeded"
+      // SSE event to live UI consumers when the step actually failed.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Engine settled with error — runner must NOT emit
+          // step_finish SSE for this step.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+            settledWithError: true,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b settledWithError gate",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-settle-gate",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-settle-gate",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishEvents = emitted.filter(
+          (e) => e.type === "step_finish",
+        );
+        expect(stepFinishEvents).toHaveLength(0);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("passes `streamSink: 'none'` and `persistMode: 'caller'` to runAssistantTurn (PR 5b contract)", async () => {
+      // PR 5b contract bullet: the backend stream runner drives the
+      // engine in headless mode and owns its own caller-side
+      // persistence (recorder + verdict + locking semantics). This
+      // locks the call shape so a future refactor doesn't
+      // accidentally flip it to `streamSink: "ui"` or
+      // `persistMode: "handler"`, which would double-persist or
+      // wedge the SSE writer.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockResolvedValueOnce({
+          messages: [
+            { role: "user", content: "Hello" } as any,
+            { role: "assistant", content: "Done" } as any,
+          ],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          turnTrace: {
+            turnId: "t_1",
+            promptIndex: 0,
+            startedAt: 0,
+            endedAt: 10,
+            modelId: "anthropic/claude-haiku-4.5",
+            spans: [],
+          },
+        } as any);
+
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b call shape",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-callshape",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-callshape",
+          suiteId: "suite-1",
+          runId: null,
+          emit: () => {},
+        } as any);
+
+        expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+        const call = runAssistantTurnSpy.mock.calls[0]![0]!;
+        expect(call.streamSink).toBe("none");
+        expect(call.persistMode).toBe("caller");
+        expect(call.sourceType).toBe("eval");
+        expect(call.approvalMode).toBe("auto-deny");
+        // The four engine-callback wires that PR 5b adds.
+        expect(typeof call.onLiveTextDelta).toBe("function");
+        expect(typeof call.onToolCall).toBe("function");
+        expect(typeof call.onToolResult).toBe("function");
+        expect(typeof call.onStepFinish).toBe("function");
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+  });
 });
