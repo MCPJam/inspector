@@ -12,6 +12,7 @@
 import { useEffect, useRef } from "react";
 import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
 import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
+import { useAppReady } from "@/hooks/use-app-ready";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 
 interface AgentSidePanelMountProps {
@@ -72,14 +73,28 @@ export function AgentSidePanelMount({
 
   // Switching projects must drop the active session pointer — sessions are
   // project-scoped on the backend, so reusing an id from a different project
-  // would post under the wrong project or 404 on hydration. Skip the very
-  // first render so the persisted sessionId survives reload.
-  const lastProjectIdRef = useRef<string | null>(projectId);
+  // would post under the wrong project or 404 on hydration. Two things this
+  // guard has to avoid:
+  //   1. The initial render (would clear the persisted sessionId on reload).
+  //   2. The bootstrap window where `activeProjectId` flips from a synthetic
+  //      local-fallback id to the real Convex-scoped id — that's normal
+  //      hydration, not a user-initiated switch.
+  // Gating on `useAppReady().status === "ready"` covers (2), and a seeded
+  // ref covers (1) post-ready.
+  const appReady = useAppReady();
+  const lastProjectIdRef = useRef<string | null>(null);
+  const projectIdSeededRef = useRef(false);
   useEffect(() => {
+    if (appReady.status !== "ready") return;
+    if (!projectIdSeededRef.current) {
+      projectIdSeededRef.current = true;
+      lastProjectIdRef.current = projectId;
+      return;
+    }
     if (lastProjectIdRef.current === projectId) return;
     lastProjectIdRef.current = projectId;
     useAgentPanelStore.getState().setActiveSessionId(null);
-  }, [projectId]);
+  }, [appReady.status, projectId]);
 
   if (!homeEnabled) return null;
 
