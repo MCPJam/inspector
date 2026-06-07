@@ -3047,6 +3047,144 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
+    it("emits failure trace_snapshot + error event before break on no-content cycle failure (PR 5a review — Cursor Medium)", async () => {
+      // PR 5a review fix: the no-content branch sets `iterationError`
+      // and persists via `status:"completed"` + `error`, but without
+      // emitting the SSE failure signal the live test-runner UI sees
+      // a turn_start without any matching terminal event. Lock the
+      // failure SSE shape: a `trace_snapshot` of `snapshotKind:"failure"`
+      // AND a `type:"error"` event fire before the loop breaks.
+      const emitted: Array<Record<string, unknown>> = [];
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce(() => ({
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: [],
+        }),
+        totalUsage: Promise.resolve({
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+        }),
+        finishReason: Promise.resolve("stop"),
+        consumeStream: async () => {},
+      }));
+
+      await runStreamCase({ emitCollector: emitted });
+
+      const failureSnapshot = emitted.find(
+        (e) =>
+          e?.type === "trace_snapshot" &&
+          (e as { snapshotKind?: string }).snapshotKind === "failure",
+      );
+      const errorEvent = emitted.find((e) => e?.type === "error");
+      expect(failureSnapshot).toBeDefined();
+      expect(errorEvent).toBeDefined();
+      expect((errorEvent as { message: string }).message).toEqual(
+        expect.stringContaining("Stream returned no content"),
+      );
+    });
+
+    it("does NOT treat tool-error child spans (with toolCallId) as cycle failure (PR 5a review — Codex P2)", async () => {
+      // Codex P2 review fix: `wrapToolSetForEvalTrace` records a failed
+      // tool call as a `category:"tool"` span PLUS a child
+      // `category:"error"` span carrying `toolCallId`/`toolName`. The
+      // pre-fix filter `category !== "tool"` matched the child and set
+      // `iterationError` even when `advancedConfig.failOnToolError` was
+      // `false`. The fix also excludes spans with `toolCallId`. This
+      // test simulates the dual-span shape and asserts no
+      // `iterationError` is recorded.
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((options: any) => {
+        // Fire onStepFinish so the helper's onStepSnapshot fires and
+        // accumulatedUsage / partial state mirror.
+        void options.onStepFinish?.({
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          response: {
+            messages: [
+              { role: "assistant", content: "Recovered from tool failure." },
+            ],
+          },
+        });
+        return {
+          fullStream: (async function* () {})(),
+          steps: Promise.resolve([]),
+          response: Promise.resolve({
+            modelId: "gpt-4-turbo",
+            messages: [
+              { role: "assistant", content: "Recovered from tool failure." },
+            ],
+          }),
+          totalUsage: Promise.resolve({
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          }),
+          finishReason: Promise.resolve("stop"),
+          consumeStream: async () => {},
+        };
+      });
+
+      // Force the helper's traceContext to contain a tool-error child
+      // span shape via the direct-chat-turn module's exported helpers.
+      // Simpler approach: stub the trace capture so the runner sees the
+      // recordedSpans we want.
+      const traceCaptureModule = await import(
+        "../eval-trace-capture"
+      );
+      const realCreate = traceCaptureModule.createAiSdkEvalTraceContext;
+      const spy = vi
+        .spyOn(traceCaptureModule, "createAiSdkEvalTraceContext")
+        .mockImplementation((runStartedAt: number) => {
+          const ctx = realCreate(runStartedAt);
+          // Tool failure shape per eval-trace-capture.ts:241-275: the
+          // `category:"tool"` span has status:"error" AND a child
+          // `category:"error"` carries toolCallId/toolName.
+          ctx.recordedSpans.push({
+            id: "tool-tc_1",
+            name: "lookup",
+            category: "tool",
+            status: "error",
+            toolCallId: "tc_1",
+            toolName: "lookup",
+            startMs: 0,
+            endMs: 10,
+          } as any);
+          ctx.recordedSpans.push({
+            id: "tool-err-tc_1",
+            name: "lookup error",
+            category: "error",
+            status: "error",
+            toolCallId: "tc_1",
+            toolName: "lookup",
+            startMs: 0,
+            endMs: 10,
+          } as any);
+          return ctx;
+        });
+
+      try {
+        await runStreamCase({
+          caseAdvancedConfig: { failOnToolError: false },
+        });
+
+        const updateCall = convexClient.action.mock.calls.find(
+          (c) => c[0] === "testSuites:updateTestIteration",
+        );
+        expect(updateCall).toBeDefined();
+        const payload = updateCall![1] as Record<string, unknown>;
+        // Load-bearing assertion: `iterationError` must NOT be set
+        // just because the child error-span exists. The filter excludes
+        // any span carrying `toolCallId` so tool errors stay routed
+        // through `failOnToolError`.
+        expect(payload.error).toBeFalsy();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     it("emits the existing fullStream → SSE event vocabulary via the shared adapter (PR 5a)", async () => {
       // Lock the byte-shape contract: the events emitted from the
       // streaming runner's terminal stream still match the existing

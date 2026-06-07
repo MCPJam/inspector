@@ -1409,6 +1409,12 @@ const runIterationWithAiSdk = async ({
         llmModel,
         modelId: test.model,
         messageHistory: activePromptInputMessages,
+        // Cursor PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): anchor trace span offsets to the iteration start so
+        // multi-turn timelines don't collapse to start-at-zero per
+        // turn. The helper defaults to `Date.now()` for the chat /
+        // single-turn case.
+        traceStartedAt: runStartedAt,
         systemPrompt: prepared.enhancedSystemPrompt ?? "",
         ...(prepared.resolvedTemperature == null
           ? {}
@@ -1520,7 +1526,20 @@ const runIterationWithAiSdk = async ({
         break;
       }
       const stepErrorSpan = activeTraceCtx.recordedSpans.find(
-        (span) => span.status === "error" && span.category !== "tool",
+        // Codex PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): when a tool call fails, `wrapToolSetForEvalTrace`
+        // records BOTH a `category:"tool"` span AND a child
+        // `category:"error"` span carrying `toolCallId`/`toolName`
+        // (see eval-trace-capture.ts:258-275). The simple
+        // `category !== "tool"` filter catches the child error span
+        // and treats failed tool calls as cycle failures even when
+        // `advancedConfig.failOnToolError === false`. Excluding any
+        // span associated with a tool (carries `toolCallId`) restores
+        // the intended deferral to the `failOnToolError` gate.
+        (span) =>
+          span.status === "error" &&
+          span.category !== "tool" &&
+          !(span as { toolCallId?: string }).toolCallId,
       );
       if (stepErrorSpan) {
         iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
@@ -3244,6 +3263,12 @@ const streamIterationWithAiSdk = async ({
         llmModel,
         modelId: test.model,
         messageHistory: activePromptInputMessages,
+        // Cursor PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): anchor trace span offsets to the iteration start so
+        // multi-turn timelines don't collapse to start-at-zero per
+        // turn. The helper defaults to `Date.now()` for the chat /
+        // single-turn case.
+        traceStartedAt: runStartedAt,
         systemPrompt: prepared.enhancedSystemPrompt ?? "",
         ...(prepared.resolvedTemperature == null
           ? {}
@@ -3325,26 +3350,33 @@ const streamIterationWithAiSdk = async ({
       // used.
       activeTraceCtx = handle.traceContext;
 
-      // Drive the stream via the shared adapter — emits text_delta /
-      // tool_call / tool_result / step_finish SSE events. The runner
-      // owns the step counter via `getStepIndex` so the adapter stays
-      // stateless.
-      await consumeFullStreamAsEvalEvents(handle.result.fullStream, {
-        emit,
-        getStepIndex: () => activeCompletedStepCount,
-      });
+      // Cursor PR 5a review fix (Low "Stream throw skips handle
+      // cleanup"): wrap the stream drain + terminal-promise reads in a
+      // try/finally so `handle.cleanup()` always runs (idempotent), even
+      // when `consumeFullStreamAsEvalEvents` or any subsequent await
+      // throws into the outer catch. The abort listener inside the
+      // helper would otherwise leak when control jumps to a scope where
+      // `handle` is unreachable.
+      try {
+        // Drive the stream via the shared adapter — emits text_delta /
+        // tool_call / tool_result / step_finish SSE events. The runner
+        // owns the step counter via `getStepIndex` so the adapter stays
+        // stateless.
+        await consumeFullStreamAsEvalEvents(handle.result.fullStream, {
+          emit,
+          getStepIndex: () => activeCompletedStepCount,
+        });
 
-      // PR 5a abort check (mirror PR 4b): streamText can swallow
-      // AbortError silently when the underlying fetch is cancelled.
-      // Check the outer signal directly after the for-await loop
-      // resolves so cancelled runs drop without persisting.
-      if (handle.isAborted() || localIsAborted()) {
-        logger.debug(
-          "[evals] streaming local-BYOK iteration aborted mid-turn; skipping record",
-        );
-        handle.cleanup();
-        return returnLocalCancelled();
-      }
+        // PR 5a abort check (mirror PR 4b): streamText can swallow
+        // AbortError silently when the underlying fetch is cancelled.
+        // Check the outer signal directly after the for-await loop
+        // resolves so cancelled runs drop without persisting.
+        if (handle.isAborted() || localIsAborted()) {
+          logger.debug(
+            "[evals] streaming local-BYOK iteration aborted mid-turn; skipping record",
+          );
+          return returnLocalCancelled();
+        }
 
       // After stream completes, resolve the helper's terminal promises.
       const steps = await handle.result.steps;
@@ -3385,11 +3417,45 @@ const streamIterationWithAiSdk = async ({
         );
         recordedSpans.push(...activeTraceCtx.recordedSpans);
         toolsCalledByPrompt.push([]);
+        // Cursor PR 5a review fix (Medium "Soft failure skips streaming
+        // error events"): emit the failure trace_snapshot + error event
+        // before `break` so live SSE consumers see the failure signal
+        // immediately. Without these, a turn that already emitted
+        // `turn_start` ends silently from the consumer's POV.
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            ...(activeCompletedStepCount > 0
+              ? { stepIndex: activeCompletedStepCount - 1 }
+              : {}),
+            snapshotKind: "failure",
+            messages: withSystemPrefix(activePromptInputMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: activePromptInputMessages,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
+        emit({ type: "error", message: iterationError });
         handle.cleanup();
         break;
       }
       const stepErrorSpan = activeTraceCtx.recordedSpans.find(
-        (span) => span.status === "error" && span.category !== "tool",
+        // Codex PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): when a tool call fails, `wrapToolSetForEvalTrace`
+        // records BOTH a `category:"tool"` span AND a child
+        // `category:"error"` span carrying `toolCallId`/`toolName`
+        // (see eval-trace-capture.ts:258-275). The simple
+        // `category !== "tool"` filter catches the child error span
+        // and treats failed tool calls as cycle failures even when
+        // `advancedConfig.failOnToolError === false`. Excluding any
+        // span associated with a tool (carries `toolCallId`) restores
+        // the intended deferral to the `failOnToolError` gate.
+        (span) =>
+          span.status === "error" &&
+          span.category !== "tool" &&
+          !(span as { toolCallId?: string }).toolCallId,
       );
       if (stepErrorSpan) {
         iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
@@ -3411,6 +3477,25 @@ const streamIterationWithAiSdk = async ({
           ...activePromptInputMessages,
           ...promptResponseMessages,
         ];
+        // Cursor PR 5a review fix (Medium "Soft failure skips
+        // streaming error events"): emit the failure trace_snapshot +
+        // error event before `break` (mirror the no-msg branch above).
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            ...(activeCompletedStepCount > 0
+              ? { stepIndex: activeCompletedStepCount - 1 }
+              : {}),
+            snapshotKind: "failure",
+            messages: withSystemPrefix(conversationMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: conversationMessages,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
+        emit({ type: "error", message: iterationError });
         handle.cleanup();
         break;
       }
@@ -3429,27 +3514,34 @@ const streamIterationWithAiSdk = async ({
       // Note: `accumulatedUsage` was updated incrementally via
       // `onStepSnapshot`; no post-loop merge needed.
 
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          snapshotKind: "turn_finish",
-          messages: withSystemPrefix(conversationMessages),
-          spans: recordedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: conversationMessages,
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            snapshotKind: "turn_finish",
+            messages: withSystemPrefix(conversationMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: conversationMessages,
+            }),
+            usage: accumulatedUsage,
           }),
-          usage: accumulatedUsage,
-        }),
-      );
+        );
 
-      handle.cleanup();
+        activeTraceCtx = null;
+        activePromptInputMessages = [];
+        activePartialResponseMessages = [];
+        activeCompletedStepCount = 0;
 
-      activeTraceCtx = null;
-      activePromptInputMessages = [];
-      activePartialResponseMessages = [];
-      activeCompletedStepCount = 0;
-
-      emit({ type: "turn_finish", turnIndex: promptIndex });
+        emit({ type: "turn_finish", turnIndex: promptIndex });
+      } finally {
+        // Cursor PR 5a review fix (Low "Stream throw skips handle
+        // cleanup"): unconditional cleanup. Idempotent (the helper
+        // tracks `listenerAttached`), so the existing explicit
+        // `handle.cleanup()` calls inside the failure branches above
+        // are now safe redundancies — kept there for symmetry with
+        // PR 4b's pattern, but the real guarantee is here.
+        handle.cleanup();
+      }
     }
 
     const evaluation = evaluateMultiTurnResults(
