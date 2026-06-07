@@ -69,6 +69,7 @@ describe("chat-ingestion", () => {
       chatboxId: "cbx_test",
       accessVersion: 1,
       sourceType: "chatbox",
+      origin: "chatbox",
       surface: "share_link",
       sessionMessages: [
         {
@@ -188,6 +189,7 @@ describe("chat-ingestion", () => {
       modelId: "openai/gpt-oss-120b",
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
+      origin: "playground",
       startedAt: 1,
     });
 
@@ -242,6 +244,7 @@ describe("chat-ingestion", () => {
       modelId: "openai/gpt-oss-120b",
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
+      origin: "playground",
       startedAt: 1,
       timeoutMs: 50,
     });
@@ -283,6 +286,7 @@ describe("chat-ingestion", () => {
       modelId: "openai/gpt-oss-120b",
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
+      origin: "playground",
       startedAt: 1,
       expectedVersion: 6,
     });
@@ -313,6 +317,7 @@ describe("chat-ingestion", () => {
         authHeader: "Bearer t",
         startedAt: 1,
         sourceType: "chatbox",
+        origin: "chatbox",
       },
       c
     );
@@ -340,6 +345,7 @@ describe("chat-ingestion", () => {
         authHeader: "Bearer t",
         startedAt: 1,
         sourceType: "direct",
+        origin: "playground",
       },
       c
     );
@@ -376,6 +382,7 @@ describe("chat-ingestion", () => {
         modelId: "m",
         modelSource: "mcpjam",
         authHeader: "Bearer t",
+        origin: "playground",
         startedAt: 1,
         timeoutMs: 50,
       },
@@ -403,6 +410,7 @@ describe("chat-ingestion", () => {
         modelId: "m",
         modelSource: "mcpjam",
         authHeader: "Bearer t",
+        origin: "playground",
         startedAt: 1,
       },
       c
@@ -433,6 +441,7 @@ describe("chat-ingestion", () => {
       modelSource: "byok",
       authHeader: "Bearer bearer-token",
       sourceType: "direct",
+      origin: "playground",
       startedAt: 1,
       hostConfig,
     });
@@ -450,6 +459,7 @@ describe("chat-ingestion", () => {
       modelSource: "byok",
       authHeader: "Bearer bearer-token",
       sourceType: "direct",
+      origin: "playground",
       startedAt: 1,
     });
 
@@ -466,6 +476,7 @@ describe("chat-ingestion", () => {
       modelSource: "byok",
       authHeader: "Bearer bearer-token",
       sourceType: "direct",
+      origin: "playground",
       startedAt: 1,
     });
     expect(global.fetch).toHaveBeenCalledTimes(1);
@@ -482,6 +493,7 @@ describe("chat-ingestion", () => {
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
       sourceType: "direct",
+      origin: "playground",
       directVisibility: "project",
       startedAt: 1,
     });

@@ -1,12 +1,15 @@
 /**
  * McpjamAgentThread — full conversation surface for the MCPJam Agent.
  *
- * Wraps `useMcpjamAgentSession` and reuses the chat-v2 thread presenters
- * (`TranscriptThread`). Renders a continue-conversation input row at the
- * bottom that calls back into the hook's `submit()`.
+ * Wraps `useMcpjamAgentSession` and mounts the chat-v2 `Thread` (the same
+ * wrapper `ChatTabV2` uses) inside a `<StickToBottom>` viewport, so the
+ * agent inherits autoscroll-while-streaming, the scroll-to-bottom button,
+ * the standalone thinking indicator, MCP Apps widget surfaces, and the
+ * fullscreen chat overlay infrastructure without reimplementing any of it.
  *
- * Verified that `TranscriptThread` accepts `UIMessage[]` directly (`messages`
- * prop) — no shared-code refactor needed.
+ * `minimalMode` strips the inspector/debugging affordances (save-as-test-case,
+ * save-view, prompts popover, attachments toolbar, etc.) — appropriate for
+ * this conversational helper surface.
  */
 import {
   useCallback,
@@ -16,11 +19,22 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Loader2, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
+import { StickToBottom } from "use-stick-to-bottom";
 import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { cn } from "@/lib/utils";
-import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
+import { Thread } from "@/components/chat-v2/thread";
+import { MarkdownLinkBaseProvider } from "@/components/chat-v2/thread/memomized-markdown";
+import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
+import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
+import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
+import {
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-client-style-context";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useMcpjamAgentSession } from "@/hooks/use-mcpjam-agent-session";
 import {
   appendRecentMcpjamAgentSession,
@@ -34,6 +48,14 @@ export interface McpjamAgentThreadProps {
   organizationId: string | null;
   /** Telemetry surface. */
   surface: string;
+  /**
+   * Visual mode. `"card"` (default) is the embedded rounded card used inside
+   * a wider page. `"full"` is the PostHog/Attio-style takeover: no border,
+   * fills the parent, composer pinned to the bottom. `"sidebar"` is the
+   * right-side panel surface: fills the parent like `"full"` but without
+   * the centered max-width column — the panel itself is already narrow.
+   */
+  variant?: "card" | "full" | "sidebar";
   className?: string;
 }
 
@@ -42,6 +64,7 @@ export function McpjamAgentThread({
   projectId,
   organizationId,
   surface: _surface,
+  variant = "card",
   className,
 }: McpjamAgentThreadProps) {
   const session = useMcpjamAgentSession({
@@ -52,6 +75,35 @@ export function McpjamAgentThread({
 
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Peek at the hero-stashed pending prompt at mount so we can render an
+  // optimistic user bubble during the hydrate → autosubmit window. Without
+  // this, the user sees the brand mark centered on an empty surface and
+  // wonders if their submit landed. We only PEEK here (read, don't remove)
+  // — the autosubmit effect below is still the authoritative consumer that
+  // also writes the `mcpjam:agent-pending` key, so removing it twice would
+  // race the autosubmit.
+  const [optimisticPending] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem(
+        `mcpjam:agent-pending:${sessionId}`
+      );
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { fresh?: unknown }).fresh === true &&
+        typeof (parsed as { text?: unknown }).text === "string"
+      ) {
+        return (parsed as { text: string }).text;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
 
   const isStreaming =
     session.status === "submitted" || session.status === "streaming";
@@ -68,8 +120,6 @@ export function McpjamAgentThread({
       if (!isReady) return;
       session.submit(trimmed);
       setDraft("");
-      // Refresh the local registry so the title reflects the most recent
-      // exchange (best-effort — purely for the home-page pill).
       const existing = loadRecentMcpjamAgentSessions().find(
         (s) => s.id === sessionId
       );
@@ -106,8 +156,6 @@ export function McpjamAgentThread({
     [draft, handleSubmit]
   );
 
-  // Once hydration completes and the thread has messages, scroll the input
-  // into view so the user can keep typing.
   useEffect(() => {
     if (session.hydrating) return;
     requestAnimationFrame(() => {
@@ -159,8 +207,6 @@ export function McpjamAgentThread({
         isFresh = (parsed as { fresh?: unknown }).fresh === true;
       }
     } catch {
-      // Legacy plain-string payload — refuse to autosubmit (see comment
-      // above).
       pendingText = "";
       isFresh = false;
     }
@@ -169,86 +215,181 @@ export function McpjamAgentThread({
     }
   }, [handleSubmit, isReady, session.hydrating, sessionId]);
 
-  return (
-    <div
+  const isFull = variant === "full";
+  const isSidebar = variant === "sidebar";
+  const fillsParent = isFull || isSidebar;
+  // The takeover surface centers content in a max-w-4xl column; the sidebar
+  // surface is already narrow, so it fills the available width instead.
+  const contentColumnClassName = isSidebar
+    ? "min-w-0 w-full px-4 pt-6 pb-8 space-y-6"
+    : "min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6";
+  const composerColumnClassName = isSidebar
+    ? "w-full mb-4 px-3"
+    : "mx-auto w-full max-w-4xl mb-6 px-4";
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const shellStyle = getChatboxShellStyle("mcpjam", themeMode);
+
+  const composer = (
+    <form
+      onSubmit={onFormSubmit}
       className={cn(
-        "flex min-h-[36rem] flex-col gap-4 rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
-        className
+        "relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow",
+        // Match Thread's content column (max-w-4xl + px-4) so the composer
+        // sits exactly under the message column. Sidebar fills its parent.
+        fillsParent && composerColumnClassName
       )}
     >
-      <div className="flex-1 overflow-y-auto">
-        {session.hydrating ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            Loading conversation…
-          </div>
-        ) : session.messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Ask anything to start the conversation.
-          </div>
-        ) : session.model ? (
-          <TranscriptThread
-            chatSessionId={sessionId}
-            messages={session.messages}
-            model={session.model}
-            toolsMetadata={{}}
-            toolServerMap={{}}
-            sendFollowUpMessage={handleSubmit}
-            isLoading={isStreaming}
-          />
+      <TextareaAutosize
+        ref={textareaRef}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={isReady ? "Continue the conversation…" : "Loading…"}
+        minRows={2}
+        maxRows={8}
+        className="min-h-[3rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
+      />
+      <div className="flex items-center justify-end gap-2 px-1 pt-1">
+        {isStreaming ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => session.stop()}
+            className="h-8 gap-1.5 rounded-full px-3"
+          >
+            <Square className="h-3.5 w-3.5" aria-hidden />
+            <span>Stop</span>
+          </Button>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Resolving model…
-          </div>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={draft.trim().length === 0 || !isReady}
+            title={isReady ? undefined : "Loading project and model…"}
+            className="h-8 gap-1.5 rounded-full px-3"
+          >
+            <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+            <span>Send</span>
+          </Button>
         )}
       </div>
+    </form>
+  );
 
-      <form
-        onSubmit={onFormSubmit}
-        className="relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow"
+  // Hydration / model-resolution placeholders — keep these in the host-style
+  // shell so the brand chrome is consistent with the loaded state. We render
+  // the composer below them so the user can start typing while we wait.
+  // Show the optimistic bubble only when there's nothing real yet — once
+  // `session.messages` has the user message the real Thread takes over and
+  // the optimistic UI unmounts.
+  const showOptimisticPending =
+    optimisticPending != null && session.messages.length === 0;
+
+  let body: React.ReactNode;
+  if (showOptimisticPending) {
+    // Hero → submit landing: render the user's pending text in the same
+    // column the real chat uses, plus the brand thinking indicator below.
+    // No "Loading conversation…" text — the user just wants to see their
+    // message land.
+    body = (
+      <div className="flex flex-1 flex-col min-h-0 overflow-y-auto">
+        <div className={contentColumnClassName}>
+          <UserMessageBubble>
+            <p className="whitespace-pre-wrap">{optimisticPending}</p>
+          </UserMessageBubble>
+          <div className="text-sm text-muted-foreground">
+            <LoadingIndicatorContent />
+          </div>
+        </div>
+      </div>
+    );
+  } else if (session.hydrating) {
+    // Resumed session (no optimistic pending): the user came from the
+    // Recent Chat pill or a direct URL, so brand-marker-only is fine.
+    body = (
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        <LoadingIndicatorContent />
+      </div>
+    );
+  } else if (session.messages.length === 0) {
+    body = (
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        Ask anything to start the conversation.
+      </div>
+    );
+  } else if (!session.model) {
+    body = (
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        Resolving model…
+      </div>
+    );
+  } else {
+    // The real chat surface: chat-v2 `Thread` (with widget hosts, fullscreen
+    // overlay, standalone thinking indicator) inside a `<StickToBottom>` so
+    // streaming output auto-scrolls and the scroll-to-bottom button appears
+    // when the user scrolls up — matching `ChatTabV2.tsx:2483`.
+    body = (
+      <StickToBottom
+        className="relative flex flex-1 flex-col min-h-0"
+        resize="smooth"
+        initial="smooth"
       >
-        <TextareaAutosize
-          ref={textareaRef}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={isReady ? "Continue the conversation…" : "Loading…"}
-          minRows={2}
-          maxRows={8}
-          className="min-h-[3rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
-        />
-        <div className="flex items-center justify-end gap-2 px-1 pt-1">
-          {isStreaming ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => session.stop()}
-              className="h-8 gap-1.5 rounded-full px-3"
+        <div className="relative flex-1 min-h-0">
+          <StickToBottom.Content className="flex flex-col min-h-0">
+            <Thread
+              chatSessionId={sessionId}
+              messages={session.messages}
+              model={session.model}
+              toolsMetadata={{}}
+              toolServerMap={{}}
+              sendFollowUpMessage={handleSubmit}
+              isLoading={isStreaming}
+              minimalMode
+              // Match `Thread`'s standalone-thinking-indicator wrapper
+              // (`thread.tsx:368` uses `max-w-4xl mx-auto px-4`) so the dots
+              // sit in the same column as the would-be assistant message
+              // instead of floating ~64px to the left of it.
+              contentClassName={contentColumnClassName}
+            />
+          </StickToBottom.Content>
+          <ScrollToBottomButton />
+        </div>
+      </StickToBottom>
+    );
+  }
+
+  return (
+    <MarkdownLinkBaseProvider base="https://docs.mcpjam.com" trustLinks>
+      <ChatboxHostStyleProvider value="mcpjam">
+        <ChatboxHostThemeProvider value={themeMode}>
+        <div
+          className={cn(
+            "chatbox-host-shell flex flex-col gap-4 min-h-0",
+            fillsParent
+              ? "h-full"
+              : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
+            className
+          )}
+          data-host-style="mcpjam"
+          style={shellStyle}
+        >
+          {body}
+          {composer}
+          {session.error && (
+            <p
+              className={cn(
+                "text-xs text-destructive",
+                isFull && "mx-auto w-full max-w-4xl px-4",
+                isSidebar && "w-full px-3"
+              )}
             >
-              <Square className="h-3.5 w-3.5" aria-hidden />
-              <span>Stop</span>
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              size="sm"
-              disabled={draft.trim().length === 0 || !isReady}
-              title={isReady ? undefined : "Loading project and model…"}
-              className="h-8 gap-1.5 rounded-full px-3"
-            >
-              <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-              <span>Send</span>
-            </Button>
+              {session.error.message ?? "Something went wrong."}
+            </p>
           )}
         </div>
-      </form>
-
-      {session.error && (
-        <p className="text-xs text-destructive">
-          {session.error.message ?? "Something went wrong."}
-        </p>
-      )}
-    </div>
+        </ChatboxHostThemeProvider>
+      </ChatboxHostStyleProvider>
+    </MarkdownLinkBaseProvider>
   );
 }
