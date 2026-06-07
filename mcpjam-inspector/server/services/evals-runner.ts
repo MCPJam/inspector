@@ -32,6 +32,7 @@ import {
   consumeDirectChatTurnHeadless,
   runDirectChatTurn,
 } from "../utils/direct-chat-turn";
+import { consumeFullStreamAsEvalEvents } from "./evals/stream-adapter";
 import { resolveExecutionContext } from "../utils/host-execution-context";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
@@ -1408,6 +1409,12 @@ const runIterationWithAiSdk = async ({
         llmModel,
         modelId: test.model,
         messageHistory: activePromptInputMessages,
+        // Cursor PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): anchor trace span offsets to the iteration start so
+        // multi-turn timelines don't collapse to start-at-zero per
+        // turn. The helper defaults to `Date.now()` for the chat /
+        // single-turn case.
+        traceStartedAt: runStartedAt,
         systemPrompt: prepared.enhancedSystemPrompt ?? "",
         ...(prepared.resolvedTemperature == null
           ? {}
@@ -1519,7 +1526,20 @@ const runIterationWithAiSdk = async ({
         break;
       }
       const stepErrorSpan = activeTraceCtx.recordedSpans.find(
-        (span) => span.status === "error" && span.category !== "tool",
+        // Codex PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): when a tool call fails, `wrapToolSetForEvalTrace`
+        // records BOTH a `category:"tool"` span AND a child
+        // `category:"error"` span carrying `toolCallId`/`toolName`
+        // (see eval-trace-capture.ts:258-275). The simple
+        // `category !== "tool"` filter catches the child error span
+        // and treats failed tool calls as cycle failures even when
+        // `advancedConfig.failOnToolError === false`. Excluding any
+        // span associated with a tool (carries `toolCallId`) restores
+        // the intended deferral to the `failOnToolError` gate.
+        (span) =>
+          span.status === "error" &&
+          span.category !== "tool" &&
+          !(span as { toolCallId?: string }).toolCallId,
       );
       if (stepErrorSpan) {
         iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
@@ -3107,6 +3127,16 @@ const streamIterationWithAiSdk = async ({
   let activeCompletedStepCount = 0;
   let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
     null;
+  // PR 5a of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // streaming-runner equivalents of PR 4b's `iterationError` /
+  // `iterationErrorDetails` hoists. The streaming runner historically
+  // threw on driver failures and relied on the outer catch; PR 5a
+  // adopts the non-stream runner's three-signal failure detection
+  // (no-new-messages, non-tool error span) which records the failure
+  // via `status:"completed"` + `error` on `finishParams` so the run
+  // continues to complete cleanly while flagging the failure.
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
   // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
   // success + catch paths can prepend the resolved system prompt to
   // the messages array. Mirrors `enhancedSystemPromptForPersist` in
@@ -3174,21 +3204,33 @@ const streamIterationWithAiSdk = async ({
       );
     }
 
+    // PR 5a abort helpers — mirror the non-stream runner's pattern so
+    // a cancellation between consume and check drops the iteration
+    // record without persisting cancelled state.
+    const localIsAborted = () => abortSignal?.aborted === true;
+    const returnLocalCancelled = () => ({
+      evaluation: evaluateMultiTurnResults(
+        promptTurns,
+        toolsCalledByPrompt,
+        test.isNegativeTest,
+        test.matchOptions,
+      ),
+      iterationId: undefined,
+    });
+
     for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+      if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
-      activePromptInputMessages = [
-        ...conversationMessages,
-        { role: "user", content: promptTurn.prompt },
-      ];
+      // PR 5a invariant (mirror PR 4b round 2): push the user prompt to
+      // `conversationMessages` BEFORE the driver call so a failed turn
+      // still records the prompt in the persisted transcript. Without
+      // this, suite UI shows an empty failed iteration that's
+      // unactionable.
+      conversationMessages.push({ role: "user", content: promptTurn.prompt });
+      activePromptInputMessages = [...conversationMessages];
       activePartialResponseMessages = [];
       activeCompletedStepCount = 0;
-      activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
-      const tracedTools = wrapToolSetForEvalTrace(
-        prepared.allTools,
-        activeTraceCtx,
-        promptIndex,
-      );
 
       emit({
         type: "turn_start",
@@ -3196,22 +3238,49 @@ const streamIterationWithAiSdk = async ({
         prompt: promptTurn.prompt,
       });
 
-      const result = streamText({
-        model: llmModel,
-        messages: activePromptInputMessages,
-        ...(prepared.enhancedSystemPrompt
-          ? { system: prepared.enhancedSystemPrompt }
-          : {}),
-        tools: tracedTools,
-        stopWhen: stepCountIs(20),
+      // PR 5a: drive `runDirectChatTurn`. The helper owns the streamText
+      // config, span recording, abort wiring, progressive-discovery
+      // gating, and prepareStep. Eval owns SSE event emission (via the
+      // adapter on `handle.result.fullStream`), failure detection,
+      // persistence, and grading.
+      //
+      // `traceEvents.onStepSnapshot` is the eval-side per-step hook:
+      // increment step counter, mirror partial state (so the outer
+      // catch + no-msg fallback can persist a partial transcript),
+      // update accumulatedUsage from `traceTurn.turnUsage` delta (so
+      // mid-run `trace_snapshot` events show running totals, and the
+      // PR 4b "totalUsage merged BEFORE failure branches" invariant
+      // holds — each completed step's usage lands before the next
+      // potential failure branch fires), and emit the `trace_snapshot`
+      // SSE event with `withSystemPrefix` applied.
+      const promptInputLength = activePromptInputMessages.length;
+      const accumulatedUsageBeforeTurn = {
+        inputTokens: accumulatedUsage.inputTokens,
+        outputTokens: accumulatedUsage.outputTokens,
+        totalTokens: accumulatedUsage.totalTokens,
+      };
+      const handle = runDirectChatTurn({
+        llmModel,
+        modelId: test.model,
+        messageHistory: activePromptInputMessages,
+        // Cursor PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): anchor trace span offsets to the iteration start so
+        // multi-turn timelines don't collapse to start-at-zero per
+        // turn. The helper defaults to `Date.now()` for the chat /
+        // single-turn case.
+        traceStartedAt: runStartedAt,
+        systemPrompt: prepared.enhancedSystemPrompt ?? "",
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
+        tools: prepared.allTools,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+        ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
           : {}),
-        ...(abortSignal ? { abortSignal } : {}),
-        experimental_telemetry: {
+        experimentalTelemetry: {
           isEnabled: true,
           functionId: "evals.streamText",
           recordInputs: false,
@@ -3228,116 +3297,112 @@ const streamIterationWithAiSdk = async ({
             promptIndex,
           },
         },
-        prepareStep: ({ stepNumber }) => {
-          registerAiSdkPrepareStep(activeTraceCtx!, stepNumber, {
-            modelId: test.model,
-            promptIndex,
-          });
-          return undefined;
-        },
-        onStepFinish: async (step) => {
-          activeCompletedStepCount += 1;
-          const stepFinishedAt = Date.now();
-          accumulatedUsage.inputTokens += step.usage?.inputTokens ?? 0;
-          accumulatedUsage.outputTokens += step.usage?.outputTokens ?? 0;
-          accumulatedUsage.totalTokens += step.usage?.totalTokens ?? 0;
-          const responseMessages = step.response?.messages ?? [];
-          const responseMessageCountBeforeAppend =
-            activePartialResponseMessages.length;
-          const messageStartIndex =
-            responseMessages.length > 0
-              ? activePromptInputMessages.length +
-                responseMessageCountBeforeAppend
-              : undefined;
-          appendDedupedModelMessages(
-            activePartialResponseMessages,
-            responseMessages as ModelMessage[],
-          );
-          const appendedMessageCount =
-            activePartialResponseMessages.length -
-            responseMessageCountBeforeAppend;
-          const messageEndIndex =
-            messageStartIndex != null && appendedMessageCount > 0
-              ? messageStartIndex + appendedMessageCount - 1
-              : undefined;
-          emitAiSdkOnStepFinish(activeTraceCtx!, stepFinishedAt, {
-            modelId: step.response?.modelId ?? test.model,
-            inputTokens: step.usage?.inputTokens,
-            outputTokens: step.usage?.outputTokens,
-            totalTokens: step.usage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-            status: "ok",
-          });
-          const snapshotMessages = [
-            ...activePromptInputMessages,
-            ...activePartialResponseMessages,
-          ];
-          emit(
-            buildTraceSnapshotEvent({
-              turnIndex: promptIndex,
-              stepIndex: activeCompletedStepCount - 1,
-              snapshotKind: "step_finish",
-              messages: withSystemPrefix(snapshotMessages),
-              spans: [...recordedSpans, ...activeTraceCtx!.recordedSpans],
-              actualToolCalls: extractToolCallsFromConversation({
-                messages: snapshotMessages,
+        traceEvents: {
+          onStepSnapshot: ({ traceHistory, traceTurn }) => {
+            activeCompletedStepCount += 1;
+            // Slice from `promptInputLength` to get just this turn's
+            // running response (PR 4d pattern).
+            activePartialResponseMessages = traceHistory.slice(
+              promptInputLength,
+            ) as ModelMessage[];
+            // Recompute accumulatedUsage from this turn's cumulative
+            // usage so far + the snapshot taken at turn start. This
+            // keeps the running total correct across multi-turn runs
+            // AND across the failure branches below (since the
+            // accumulated value is up-to-date by the time the
+            // for-await loop returns).
+            accumulatedUsage.inputTokens =
+              accumulatedUsageBeforeTurn.inputTokens +
+              (traceTurn.turnUsage?.inputTokens ?? 0);
+            accumulatedUsage.outputTokens =
+              accumulatedUsageBeforeTurn.outputTokens +
+              (traceTurn.turnUsage?.outputTokens ?? 0);
+            accumulatedUsage.totalTokens =
+              accumulatedUsageBeforeTurn.totalTokens +
+              (traceTurn.turnUsage?.totalTokens ?? 0);
+            const snapshotMessages = [
+              ...activePromptInputMessages,
+              ...activePartialResponseMessages,
+            ];
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                stepIndex: activeCompletedStepCount - 1,
+                snapshotKind: "step_finish",
+                messages: withSystemPrefix(snapshotMessages),
+                // Spans available on `traceTurn.turnSpans` so we don't
+                // need to reach into the closed-over handle, which the
+                // arrow function can't reference yet during option
+                // construction.
+                spans: [...recordedSpans, ...traceTurn.turnSpans],
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: snapshotMessages,
+                }),
+                usage: accumulatedUsage,
               }),
-              usage: accumulatedUsage,
-            }),
-          );
-        },
-        onFinish: async () => {
-          /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
+            );
+          },
         },
       });
+      // `runDirectChatTurn` exposes its internal traceContext so eval
+      // can fold its spans into `recordedSpans` after each turn,
+      // matching the per-turn cadence the old in-runner `activeTraceCtx`
+      // used.
+      activeTraceCtx = handle.traceContext;
 
-      // Consume the full stream and emit events
-      for await (const part of result.fullStream) {
-        switch (part.type) {
-          case "text-delta":
-            emit({ type: "text_delta", content: part.text });
-            break;
-          case "tool-call":
-            emit({
-              type: "tool_call",
-              toolName: part.toolName,
-              toolCallId: part.toolCallId,
-              args: (part.input ?? {}) as Record<string, unknown>,
-            });
-            break;
-          case "tool-result":
-            emit({
-              type: "tool_result",
-              toolCallId: part.toolCallId,
-              result: part.output,
-              isError: false,
-            });
-            break;
-          case "tool-error":
-            emit({
-              type: "tool_result",
-              toolCallId: part.toolCallId,
-              result: part.error,
-              isError: true,
-            });
-            break;
-          case "finish-step":
-            emit({
-              type: "step_finish",
-              stepNumber: activeCompletedStepCount,
-              usage: {
-                inputTokens: part.usage?.inputTokens ?? 0,
-                outputTokens: part.usage?.outputTokens ?? 0,
-              },
-            });
-            break;
+      // Cursor PR 5a review fix (Low "Stream throw skips handle
+      // cleanup"): wrap the stream drain + terminal-promise reads in a
+      // try/finally so `handle.cleanup()` always runs (idempotent), even
+      // when `consumeFullStreamAsEvalEvents` or any subsequent await
+      // throws into the outer catch. The abort listener inside the
+      // helper would otherwise leak when control jumps to a scope where
+      // `handle` is unreachable.
+      try {
+        // Drive the stream via the shared adapter — emits text_delta /
+        // tool_call / tool_result / step_finish SSE events. The runner
+        // owns the step counter via `getStepIndex` so the adapter stays
+        // stateless.
+        await consumeFullStreamAsEvalEvents(handle.result.fullStream, {
+          emit,
+          getStepIndex: () => activeCompletedStepCount,
+        });
+
+        // PR 5a abort check (mirror PR 4b): streamText can swallow
+        // AbortError silently when the underlying fetch is cancelled.
+        // Check the outer signal directly after the for-await loop
+        // resolves so cancelled runs drop without persisting.
+        if (handle.isAborted() || localIsAborted()) {
+          logger.debug(
+            "[evals] streaming local-BYOK iteration aborted mid-turn; skipping record",
+          );
+          return returnLocalCancelled();
         }
-      }
 
-      // After stream completes, resolve the promises on the streamText result
-      const steps = await result.steps;
-      const responseObj = await result.response;
+      // Cursor PR 5a review round 2 fix (Medium "Streaming omits
+      // totalUsage before failures"): the per-step delta-update inside
+      // `onStepSnapshot` only captures usage for steps where the
+      // snapshot fired. If the stream resolves with zero completed
+      // steps — the same path the no-content failure branch handles —
+      // `accumulatedUsage` stays at the pre-turn baseline even when
+      // `handle.result.totalUsage` reports billed tokens. The
+      // non-stream runner (PR 4b) reads `headless.totalUsage` and
+      // merges before failure branches; PR 5a now does the same.
+      // Reconciles to the canonical post-stream total so failure
+      // branches + finishParams see the real billed value.
+      const finalTurnUsage = await handle.result.totalUsage;
+      accumulatedUsage.inputTokens =
+        accumulatedUsageBeforeTurn.inputTokens +
+        (finalTurnUsage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        accumulatedUsageBeforeTurn.outputTokens +
+        (finalTurnUsage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        accumulatedUsageBeforeTurn.totalTokens +
+        (finalTurnUsage?.totalTokens ?? 0);
+
+      // After stream completes, resolve the helper's terminal promises.
+      const steps = await handle.result.steps;
+      const responseObj = await handle.result.response;
       const finalMessagesRaw = responseObj?.messages as
         | ModelMessage[]
         | undefined;
@@ -3355,6 +3420,108 @@ const streamIterationWithAiSdk = async ({
         );
       }
 
+      // PR 5a failure-detection (mirror PR 4b / 4d three-signal shape):
+      //   (a) No new messages → driver returned nothing (network
+      //       failure, model returned empty, …).
+      //   (b) Non-tool error span captured during the run (LLM step
+      //       failure, scrub failure, …). Tool error spans
+      //       (category "tool") flow through the existing
+      //       `failOnToolError` gate below — DON'T treat them as cycle
+      //       failures here.
+      // `accumulatedUsage` is already up-to-date from the last
+      // `onStepSnapshot`, so failure branches inherit correct token
+      // totals (PR 4b "totalUsage before failure" invariant).
+      if (promptResponseMessages.length === 0) {
+        iterationError =
+          "Stream returned no content (local-BYOK driver failed)";
+        logger.error(
+          "[evals] streamText returned no new messages this turn; treating as cycle failure",
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push([]);
+        // Cursor PR 5a review fix (Medium "Soft failure skips streaming
+        // error events"): emit the failure trace_snapshot + error event
+        // before `break` so live SSE consumers see the failure signal
+        // immediately. Without these, a turn that already emitted
+        // `turn_start` ends silently from the consumer's POV.
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            ...(activeCompletedStepCount > 0
+              ? { stepIndex: activeCompletedStepCount - 1 }
+              : {}),
+            snapshotKind: "failure",
+            messages: withSystemPrefix(activePromptInputMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: activePromptInputMessages,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
+        emit({ type: "error", message: iterationError });
+        handle.cleanup();
+        break;
+      }
+      const stepErrorSpan = activeTraceCtx.recordedSpans.find(
+        // Codex PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): when a tool call fails, `wrapToolSetForEvalTrace`
+        // records BOTH a `category:"tool"` span AND a child
+        // `category:"error"` span carrying `toolCallId`/`toolName`
+        // (see eval-trace-capture.ts:258-275). The simple
+        // `category !== "tool"` filter catches the child error span
+        // and treats failed tool calls as cycle failures even when
+        // `advancedConfig.failOnToolError === false`. Excluding any
+        // span associated with a tool (carries `toolCallId`) restores
+        // the intended deferral to the `failOnToolError` gate.
+        (span) =>
+          span.status === "error" &&
+          span.category !== "tool" &&
+          !(span as { toolCallId?: string }).toolCallId,
+      );
+      if (stepErrorSpan) {
+        iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+        logger.error(
+          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push(
+          extractToolCallsFromConversation({
+            steps,
+            messages: promptResponseMessages,
+          }),
+        );
+        // PR 4b review fix (Cursor "Step error drops assistant
+        // transcript"): merge the partial response into
+        // `conversationMessages` so persisted iterations include
+        // whatever the model produced before the failure.
+        conversationMessages = [
+          ...activePromptInputMessages,
+          ...promptResponseMessages,
+        ];
+        // Cursor PR 5a review fix (Medium "Soft failure skips
+        // streaming error events"): emit the failure trace_snapshot +
+        // error event before `break` (mirror the no-msg branch above).
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            ...(activeCompletedStepCount > 0
+              ? { stepIndex: activeCompletedStepCount - 1 }
+              : {}),
+            snapshotKind: "failure",
+            messages: withSystemPrefix(conversationMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: conversationMessages,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
+        emit({ type: "error", message: iterationError });
+        handle.cleanup();
+        break;
+      }
+
       const promptToolsCalled = extractToolCallsFromConversation({
         steps,
         messages: promptResponseMessages,
@@ -3366,26 +3533,37 @@ const streamIterationWithAiSdk = async ({
         ...activePromptInputMessages,
         ...promptResponseMessages,
       ];
+      // Note: `accumulatedUsage` was updated incrementally via
+      // `onStepSnapshot`; no post-loop merge needed.
 
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          snapshotKind: "turn_finish",
-          messages: withSystemPrefix(conversationMessages),
-          spans: recordedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: conversationMessages,
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            snapshotKind: "turn_finish",
+            messages: withSystemPrefix(conversationMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: conversationMessages,
+            }),
+            usage: accumulatedUsage,
           }),
-          usage: accumulatedUsage,
-        }),
-      );
+        );
 
-      activeTraceCtx = null;
-      activePromptInputMessages = [];
-      activePartialResponseMessages = [];
-      activeCompletedStepCount = 0;
+        activeTraceCtx = null;
+        activePromptInputMessages = [];
+        activePartialResponseMessages = [];
+        activeCompletedStepCount = 0;
 
-      emit({ type: "turn_finish", turnIndex: promptIndex });
+        emit({ type: "turn_finish", turnIndex: promptIndex });
+      } finally {
+        // Cursor PR 5a review fix (Low "Stream throw skips handle
+        // cleanup"): unconditional cleanup. Idempotent (the helper
+        // tracks `listenerAttached`), so the existing explicit
+        // `handle.cleanup()` calls inside the failure branches above
+        // are now safe redundancies — kept there for symmetry with
+        // PR 4b's pattern, but the real guarantee is here.
+        handle.cleanup();
+      }
     }
 
     const evaluation = evaluateMultiTurnResults(
@@ -3424,6 +3602,11 @@ const streamIterationWithAiSdk = async ({
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
+      // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
+      // via the failure-detection branch, feed it to the gate so a
+      // failed cycle doesn't sneak through as a verdict pass on
+      // negative tests / zero-expected-tool cases.
+      iterationError,
       failOnToolError,
       predicateResults,
     });
@@ -3467,6 +3650,12 @@ const streamIterationWithAiSdk = async ({
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
+      // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
+      // via the failure-detection branch, surface it on the persisted
+      // iteration via `status:"completed"` + `error` — the run
+      // completed cleanly but the cycle failed.
+      ...(iterationError ? { error: iterationError } : {}),
+      ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
       resultSource: "reported" as const,
       metadata: {
         ...iterationMetadataBase,
@@ -3813,6 +4002,25 @@ const streamIterationViaBackend = async ({
   // throws — the setup-failure persistence path doesn't need a system
   // prefix.
   let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
+  // PR 5a folds in the deferred 4d Cursor-Low fix: mid-run SSE
+  // snapshot events (`buildTraceSnapshotEvent`) in this streaming
+  // backend variant read from `messageHistory` directly. PR 4d
+  // round 2 added a `withSystemPrefix` closure to
+  // `streamIterationWithAiSdk` but deferred the equivalent here.
+  // The full runner-engine collapse stays for PR 5b; the
+  // snapshot-prefix shape is small and isolated, so it folds into
+  // PR 5a alongside the local stream rewrite. Closes the
+  // "live-on-main UI gap" risk entry in unification.md.
+  const withSystemPrefix = (msgs: ModelMessage[]): ModelMessage[] =>
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...msgs,
+        ]
+      : msgs;
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -3997,7 +4205,7 @@ const streamIterationViaBackend = async ({
               turnIndex: promptIndex,
               stepIndex,
               snapshotKind: "failure",
-              messages: messageHistory,
+              messages: withSystemPrefix(messageHistory),
               spans: capturedSpans,
               actualToolCalls: extractToolCallsFromConversation({
                 messages: messageHistory,
@@ -4031,7 +4239,7 @@ const streamIterationViaBackend = async ({
               turnIndex: promptIndex,
               stepIndex,
               snapshotKind: "failure",
-              messages: messageHistory,
+              messages: withSystemPrefix(messageHistory),
               spans: capturedSpans,
               actualToolCalls: extractToolCallsFromConversation({
                 messages: messageHistory,
@@ -4128,7 +4336,7 @@ const streamIterationViaBackend = async ({
               turnIndex: promptIndex,
               stepIndex,
               snapshotKind: "failure",
-              messages: messageHistory,
+              messages: withSystemPrefix(messageHistory),
               spans: capturedSpans,
               actualToolCalls: extractToolCallsFromConversation({
                 messages: messageHistory,
@@ -4317,7 +4525,7 @@ const streamIterationViaBackend = async ({
                 turnIndex: promptIndex,
                 stepIndex,
                 snapshotKind: "failure",
-                messages: messageHistory,
+                messages: withSystemPrefix(messageHistory),
                 spans: capturedSpans,
                 actualToolCalls: extractToolCallsFromConversation({
                   messages: messageHistory,
@@ -4373,7 +4581,7 @@ const streamIterationViaBackend = async ({
             turnIndex: promptIndex,
             stepIndex,
             snapshotKind: "step_finish",
-            messages: messageHistory,
+            messages: withSystemPrefix(messageHistory),
             spans: capturedSpans,
             actualToolCalls: extractToolCallsFromConversation({
               messages: messageHistory,
@@ -4437,7 +4645,7 @@ const streamIterationViaBackend = async ({
             turnIndex: promptIndex,
             stepIndex,
             snapshotKind: "failure",
-            messages: messageHistory,
+            messages: withSystemPrefix(messageHistory),
             spans: capturedSpans,
             actualToolCalls: extractToolCallsFromConversation({
               messages: messageHistory,
@@ -4462,7 +4670,7 @@ const streamIterationViaBackend = async ({
       buildTraceSnapshotEvent({
         turnIndex: promptIndex,
         snapshotKind: "turn_finish",
-        messages: messageHistory,
+        messages: withSystemPrefix(messageHistory),
         spans: capturedSpans,
         actualToolCalls: extractToolCallsFromConversation({
           messages: messageHistory,

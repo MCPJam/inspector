@@ -204,6 +204,18 @@ export interface RunDirectChatTurnOptions {
    */
   onPersistError?: (error: unknown) => void;
   /**
+   * Optional anchor timestamp for trace span offsets. The internal
+   * `createAiSdkEvalTraceContext` uses this as the `runStartedAt` ms
+   * epoch when computing `createOffsetInterval(ctx.runStartedAt, ...)`
+   * offsets. Default is `Date.now()` at helper construction time.
+   *
+   * Multi-turn eval callers MUST pass the ITERATION start time so all
+   * turn spans share the same epoch — otherwise each turn's spans
+   * collapse to start-at-zero and the trace UI timeline mis-renders
+   * multi-turn runs as overlapping. Cursor PR 5a review fix.
+   */
+  traceStartedAt?: number;
+  /**
    * Optional AI SDK `toolChoice`. Eval forwards `advancedConfig.toolChoice`
    * here; chat currently never sets it. Held outside `traceEvents` because
    * it's a model-call parameter, not a trace concern.
@@ -277,6 +289,7 @@ export function runDirectChatTurn(
     onPersistError,
     toolChoice,
     experimentalTelemetry,
+    traceStartedAt,
   } = options;
 
   // Separate array for tracing — we must NOT mutate `messageHistory` because
@@ -285,15 +298,20 @@ export function runDirectChatTurn(
   // Responses API rejects duplicates by id).
   const traceHistory = [...messageHistory];
   const initialMessageHistoryLength = messageHistory.length;
+  // Cursor PR 5a review fix: multi-turn trace anchor. Use the
+  // caller-supplied anchor when present so all turn spans share one
+  // epoch; default to `Date.now()` for the single-turn / chat case.
+  const turnStartedAt = Date.now();
+  const traceAnchor = traceStartedAt ?? turnStartedAt;
   const traceTurn: DirectChatTurnTraceTurn = {
     turnId: generateLiveTraceTurnId(),
     promptIndex: getPromptIndex(messageHistory),
     promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
-    turnStartedAt: Date.now(),
+    turnStartedAt,
     turnSpans: [],
     turnUsage: undefined,
   };
-  const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
+  const traceContext = createAiSdkEvalTraceContext(traceAnchor);
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
   let turnFinished = false;
