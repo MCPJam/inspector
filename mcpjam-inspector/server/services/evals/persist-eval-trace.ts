@@ -35,23 +35,24 @@ import {
  * turn) is deferred to a follow-up. The data shape and reader fidelity
  * are identical between the two cadences.
  *
- * Return values:
- *   - `{ persisted: true }`: trace was written via chatSessions;
- *     caller should call `updateTestIteration` with status/result
- *     and metadata ONLY — no `messages` / `spans` / `prompts` /
- *     `widgetSnapshots`. Passing trace fields after a successful
- *     fanout would re-fire `persistEvalTraceAction` on
- *     `updateTestIteration`'s W1 path and either be a silent no-op
- *     against the now-locked session or, worse, EVAL_SESSION_LOCKED
- *     if any turn index doesn't match.
- *   - `{ persisted: false, error }`: the per-turn fanout failed mid-
- *     stream. Caller should finalize the iteration WITHOUT re-sending
- *     trace fields to `updateTestIteration`. Re-entering W1 with
- *     `promptIndex: 0` + the full transcript would overwrite any
- *     partial turn rows the fanout already wrote and orphan the rest.
- *     The legacy-blob fallback that used to recover this case was
- *     removed in PR-6 — partial chatSessions data is now the recoverable
- *     state.
+ * Return values (`turnsWritten` counts turn-trace rows the backend
+ * acknowledged):
+ *   - `{ persisted: true, turnsWritten }`: every turn was written.
+ *     Caller should call `updateTestIteration` with status/result and
+ *     metadata ONLY. Passing trace fields would re-fire
+ *     `persistEvalTraceAction` on the W1 path and either silently
+ *     no-op against the now-locked session or throw EVAL_SESSION_LOCKED.
+ *   - `{ persisted: false, turnsWritten: 0, error }`: fanout failed
+ *     BEFORE any turn landed. Caller should fall back to the W1
+ *     single-call path by passing `messages`/`spans`/`prompts`/
+ *     `widgetSnapshots` to `updateTestIteration`. The backend writes a
+ *     fresh chatSessions row at `promptIndex: 0` with the full
+ *     transcript. No orphan risk because no turn-trace rows exist yet.
+ *   - `{ persisted: false, turnsWritten: N (>0), error }`: fanout
+ *     failed mid-stream after N turns wrote successfully. Caller must
+ *     NOT re-send trace fields — W1 would overwrite turn 0 and orphan
+ *     turns 1..N-1. The partial chatSessions row stays as-is; the
+ *     reader tolerates it.
  *
  * Widgets: forwarded on the LAST turn call so they persist once at
  * finalize. Inspector capture (`captureMcpAppWidgetSnapshots`) supplies
@@ -165,8 +166,8 @@ function serializeWidgetsForBackend(
 }
 
 type FanoutResult =
-  | { persisted: true }
-  | { persisted: false; error: Error };
+  | { persisted: true; turnsWritten: number }
+  | { persisted: false; turnsWritten: number; error: Error };
 
 export async function persistEvalTraceFanout(args: {
   convexClient: ConvexHttpClient;
@@ -219,6 +220,7 @@ export async function persistEvalTraceFanout(args: {
   // finalized iteration. Idempotent on retry per PR-1 lock semantics
   // (same-promptIndex re-write before lock = patch in place, no-op
   // after lock).
+  let turnsWritten = 0;
   try {
     for (let i = 0; i < turns.length; i++) {
       const turn = turns[i]!;
@@ -253,20 +255,23 @@ export async function persistEvalTraceFanout(args: {
       )) as { skipped?: boolean } | undefined;
       // If the backend reports `skipped: true`, the flag flipped off
       // between our cache check and the per-turn call. Bail out so the
-      // caller can fall back to the legacy path.
+      // caller can decide whether to fall back to the W1 single-call path.
       if (result?.skipped === true) {
         return {
           persisted: false,
+          turnsWritten,
           error: new Error(
             "appendEvalTurnTrace returned skipped:true; flag turned off mid-fanout",
           ),
         };
       }
+      turnsWritten += 1;
     }
-    return { persisted: true };
+    return { persisted: true, turnsWritten };
   } catch (error) {
     return {
       persisted: false,
+      turnsWritten,
       error: error instanceof Error ? error : new Error(String(error)),
     };
   }

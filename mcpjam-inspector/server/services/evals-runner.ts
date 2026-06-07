@@ -739,12 +739,23 @@ async function finishIterationDirectly(
     prompts: params.prompts,
     widgetSnapshots: params.widgetSnapshots,
   });
-  if (fanout?.persisted === false) {
+  // Fall back to the W1 single-call path ONLY when the fanout failed
+  // before any turn landed. See recorder.ts / persist-eval-trace.ts.
+  const useW1Fallback =
+    fanout.persisted === false && fanout.turnsWritten === 0;
+  if (fanout.persisted === false) {
     logger.warn(
-      "[evals] persistEvalTraceFanout failed (quick run); iteration finalized without re-attempting the chatSessions write",
-      { iterationId: params.iterationId, error: fanout.error.message },
+      useW1Fallback
+        ? "[evals] persistEvalTraceFanout failed before any turn landed (quick run); falling back to W1 single-call save"
+        : "[evals] persistEvalTraceFanout failed mid-stream (quick run); iteration finalized without re-attempting (would orphan partial turns)",
+      {
+        iterationId: params.iterationId,
+        turnsWritten: fanout.turnsWritten,
+        error: fanout.error.message,
+      },
     );
   }
+
   // PR-2 review #5 (Cursor "Update failure after successful fanout"):
   // track iteration-gone state so the lock can fire even when the
   // update throws a transient error. Mirrors recorder.finishIteration.
@@ -756,6 +767,24 @@ async function finishIterationDirectly(
       status: iterationStatus,
       actualToolCalls: sanitizeForConvexTransport(params.toolsCalled),
       tokensUsed: params.usage.totalTokens ?? 0,
+      ...(useW1Fallback
+        ? {
+            messages: sanitizeForConvexTransport(params.messages),
+            ...(params.spans?.length
+              ? { spans: sanitizeForConvexTransport(params.spans) }
+              : {}),
+            ...(params.prompts?.length
+              ? { prompts: sanitizeForConvexTransport(params.prompts) }
+              : {}),
+            ...(params.widgetSnapshots?.length
+              ? {
+                  widgetSnapshots: sanitizeForConvexTransport(
+                    params.widgetSnapshots,
+                  ),
+                }
+              : {}),
+          }
+        : {}),
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,

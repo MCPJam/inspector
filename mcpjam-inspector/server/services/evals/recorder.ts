@@ -289,20 +289,25 @@ export const createSuiteRunRecorder = ({
         prompts,
         widgetSnapshots,
       });
-      if (fanout?.persisted === false) {
+      // Fall back to the W1 single-call path ONLY when the fanout failed
+      // before any turn landed. With turns already written, re-sending
+      // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
+      // orphan turns 1..N. See persist-eval-trace.ts for the contract.
+      const useW1Fallback =
+        fanout.persisted === false && fanout.turnsWritten === 0;
+      if (fanout.persisted === false) {
         logger.warn(
-          "[evals] persistEvalTraceFanout failed; iteration finalized without re-attempting the chatSessions write",
-          { iterationId, error: fanout.error.message },
+          useW1Fallback
+            ? "[evals] persistEvalTraceFanout failed before any turn landed; falling back to W1 single-call save"
+            : "[evals] persistEvalTraceFanout failed mid-stream; iteration finalized without re-attempting (would orphan partial turns)",
+          {
+            iterationId,
+            turnsWritten: fanout.turnsWritten,
+            error: fanout.error.message,
+          },
         );
       }
-      // We never re-send trace fields to updateTestIteration:
-      //   - `persisted === true`: fanout already wrote per-turn rows; W1
-      //     would duplicate at promptIndex: 0.
-      //   - `persisted === false`: fanout failed mid-stream and may have
-      //     left partial turn rows; re-firing W1 would overwrite turn 0
-      //     and orphan turns 1..N. The legacy-blob fallback that used to
-      //     recover this case was removed in PR-6.
-      //
+
       // PR-2 review #5 (Cursor "Update failure after successful fanout"):
       // track whether the iteration is gone so we don't waste a lock
       // call on a deleted session, AND so the lock fires even when
@@ -316,6 +321,23 @@ export const createSuiteRunRecorder = ({
           result,
           actualToolCalls: sanitizeForConvexTransport(toolsCalled),
           tokensUsed: usage.totalTokens ?? 0,
+          ...(useW1Fallback
+            ? {
+                messages: sanitizeForConvexTransport(messages),
+                ...(spans?.length
+                  ? { spans: sanitizeForConvexTransport(spans) }
+                  : {}),
+                ...(prompts?.length
+                  ? { prompts: sanitizeForConvexTransport(prompts) }
+                  : {}),
+                ...(widgetSnapshots?.length
+                  ? {
+                      widgetSnapshots:
+                        sanitizeForConvexTransport(widgetSnapshots),
+                    }
+                  : {}),
+              }
+            : {}),
           error,
           errorDetails,
           resultSource,
