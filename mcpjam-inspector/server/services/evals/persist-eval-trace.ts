@@ -18,8 +18,7 @@ import {
  *
  * Both `recorder.finishIteration` (multi-iteration suite runs) and
  * `finishIterationDirectly` (quick runs without a recorder) receive the
- * final accumulated transcript at end-of-iteration. When the backend
- * flag `USE_EVAL_CHAT_SESSIONS_WRITER` is on, we want N
+ * final accumulated transcript at end-of-iteration. We want N
  * `chatSessionTurnTraces` rows for an N-turn iteration so downstream
  * readers (eval-diff, judge, server-quality, the unified Sessions
  * viewer) can address each turn individually. This helper slices the
@@ -37,8 +36,6 @@ import {
  * are identical between the two cadences.
  *
  * Return values:
- *   - `null`: flag is off; caller should run today's legacy path
- *     (single `updateTestIteration` call with full trace fields).
  *   - `{ persisted: true }`: trace was written via chatSessions;
  *     caller should call `updateTestIteration` with status/result
  *     and metadata ONLY — no `messages` / `spans` / `prompts` /
@@ -50,19 +47,10 @@ import {
  *   - `{ persisted: false, error }`: the per-turn fanout failed mid-
  *     stream. Caller should fall back to a forced-legacy-blob call by
  *     passing `forceLegacyTraceBlob: true` to `updateTestIteration`,
- *     which bypasses the backend's W1 chatSessions path even when the
- *     flag is on. Without that escape hatch the legacy fallback would
- *     re-enter the chatSessions writer with `promptIndex: 0` + full
- *     transcript, overwriting any partially-fanned-out turn rows.
- *
- * Flag-cache caveat: the cached `enabled` value is process-latched.
- * If the inspector starts before the backend deploys the
- * `isEvalChatSessionsWriterEnabled` action it caches `false`
- * permanently; a subsequent flag flip on the backend will not take
- * effect until the inspector process restarts. Same for the opposite
- * direction (cached `true` won't downgrade if the backend flips off).
- * Acceptable trade-off for a process-scoped feature flag; document
- * this in the deploy runbook before flipping the flag in prod.
+ *     which bypasses the backend's W1 chatSessions path. Without that
+ *     escape hatch the legacy fallback would re-enter the chatSessions
+ *     writer with `promptIndex: 0` + full transcript, overwriting any
+ *     partially-fanned-out turn rows.
  *
  * Widgets: forwarded on the LAST turn call so they persist once at
  * finalize. Inspector capture (`captureMcpAppWidgetSnapshots`) supplies
@@ -73,43 +61,6 @@ import {
  * blob upload failed, are dropped — the persist call must not fail
  * over a single bad widget.
  */
-
-let cachedFlagEnabled: boolean | null = null;
-let inFlightFlagQuery: Promise<boolean> | null = null;
-
-export async function isEvalChatSessionsWriterEnabled(
-  convexClient: ConvexHttpClient,
-): Promise<boolean> {
-  if (cachedFlagEnabled !== null) return cachedFlagEnabled;
-  if (inFlightFlagQuery) return inFlightFlagQuery;
-
-  inFlightFlagQuery = (async () => {
-    try {
-      const result = (await convexClient.action(
-        "testSuites:isEvalChatSessionsWriterEnabled" as any,
-        {},
-      )) as { enabled: boolean } | undefined;
-      cachedFlagEnabled = result?.enabled === true;
-      return cachedFlagEnabled;
-    } catch (error) {
-      logger.warn(
-        "[evals] Failed to query USE_EVAL_CHAT_SESSIONS_WRITER flag; assuming off",
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-      cachedFlagEnabled = false;
-      return false;
-    } finally {
-      inFlightFlagQuery = null;
-    }
-  })();
-  return inFlightFlagQuery;
-}
-
-/** Test-only hook. Reset the cache between tests. */
-export function __resetEvalChatSessionsWriterFlagCacheForTests(): void {
-  cachedFlagEnabled = null;
-  inFlightFlagQuery = null;
-}
 
 type TurnSlice = {
   promptIndex: number;
@@ -213,7 +164,6 @@ function serializeWidgetsForBackend(
 }
 
 type FanoutResult =
-  | null
   | { persisted: true }
   | { persisted: false; error: Error };
 
@@ -242,9 +192,6 @@ export async function persistEvalTraceFanout(args: {
    */
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
 }): Promise<FanoutResult> {
-  const enabled = await isEvalChatSessionsWriterEnabled(args.convexClient);
-  if (!enabled) return null;
-
   const turns = sliceTraceIntoTurns({
     messages: args.messages,
     spans: args.spans ?? [],
