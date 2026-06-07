@@ -184,7 +184,11 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   if (sessionParam) {
     return (
       <div className="flex h-full flex-col bg-background">
-        <div className="flex items-center justify-end px-4 pt-3">
+        <div className="flex items-center justify-between border-b border-border/40 px-4 py-2">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <img src="/mcp_jam.svg" alt="" aria-hidden className="h-5 w-5" />
+            <span>MCPJam Agent</span>
+          </div>
           <Button
             type="button"
             variant="ghost"

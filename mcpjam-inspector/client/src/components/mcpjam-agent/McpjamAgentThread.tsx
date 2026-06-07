@@ -11,16 +11,29 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Loader2, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { cn } from "@/lib/utils";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
+import {
+  getLastRenderableConversationMessage,
+  hasRenderableConversationContent,
+} from "@/components/chat-v2/thread/thread-helpers";
+import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicator";
+import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
+import {
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-client-style-context";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useMcpjamAgentSession } from "@/hooks/use-mcpjam-agent-session";
 import {
   appendRecentMcpjamAgentSession,
@@ -177,98 +190,134 @@ export function McpjamAgentThread({
   }, [handleSubmit, isReady, session.hydrating, sessionId]);
 
   const isFull = variant === "full";
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const shellStyle = getChatboxShellStyle("mcpjam", themeMode);
 
+  // Mirror `Thread`'s standalone-thinking-indicator gating: the MCPJam-family
+  // transcript paints the brand mark in the FOOTER of the last assistant
+  // message, but only after that message exists. Between "user sent" and
+  // "first assistant token", we need a standalone indicator — otherwise
+  // streaming feels dead (which is what the user reported).
+  const lastRenderableMessage = useMemo(
+    () => getLastRenderableConversationMessage(session.messages),
+    [session.messages]
+  );
+  const hasVisibleAssistantResponse =
+    lastRenderableMessage?.role === "assistant" &&
+    hasRenderableConversationContent(lastRenderableMessage);
+  const shouldShowStandaloneThinking =
+    isStreaming && !hasVisibleAssistantResponse && session.model != null;
+
+  // The chat-v2 transcript and `LoadingIndicatorContent` resolve their
+  // chrome (avatar, bubbles, thinking dot, fonts) from the chatbox host
+  // context. Declaring the MCPJam host style here makes the agent thread
+  // visually distinct from the regular `ChatTabV2` surface even when the
+  // resolved model is `anthropic` (which would otherwise dress this up
+  // as Claude).
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-4",
-        isFull
-          ? "h-full"
-          : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
-        className
-      )}
-    >
-      <div
-        className={cn(
-          "flex-1 overflow-y-auto",
-          isFull && "mx-auto w-full max-w-3xl px-6 pt-6"
-        )}
-      >
-        {session.hydrating ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            Loading conversation…
+    <ChatboxHostStyleProvider value="mcpjam">
+      <ChatboxHostThemeProvider value={themeMode}>
+        <div
+          className={cn(
+            "chatbox-host-shell flex flex-col gap-4",
+            isFull
+              ? "h-full"
+              : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
+            className
+          )}
+          data-host-style="mcpjam"
+          style={shellStyle}
+        >
+          <div
+            className={cn(
+              "flex-1 overflow-y-auto",
+              isFull && "mx-auto w-full max-w-3xl px-6 pt-6"
+            )}
+          >
+            {session.hydrating ? (
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                <LoadingIndicatorContent />
+                <span>Loading conversation…</span>
+              </div>
+            ) : session.messages.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Ask anything to start the conversation.
+              </div>
+            ) : session.model ? (
+              <>
+                <TranscriptThread
+                  chatSessionId={sessionId}
+                  messages={session.messages}
+                  model={session.model}
+                  toolsMetadata={{}}
+                  toolServerMap={{}}
+                  sendFollowUpMessage={handleSubmit}
+                  isLoading={isStreaming}
+                />
+                {shouldShowStandaloneThinking && (
+                  <div className="mt-2 px-2">
+                    <ThinkingIndicator model={session.model} />
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Resolving model…
+              </div>
+            )}
           </div>
-        ) : session.messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Ask anything to start the conversation.
-          </div>
-        ) : session.model ? (
-          <TranscriptThread
-            chatSessionId={sessionId}
-            messages={session.messages}
-            model={session.model}
-            toolsMetadata={{}}
-            toolServerMap={{}}
-            sendFollowUpMessage={handleSubmit}
-            isLoading={isStreaming}
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Resolving model…
-          </div>
-        )}
-      </div>
 
-      <form
-        onSubmit={onFormSubmit}
-        className={cn(
-          "relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow",
-          isFull && "mx-auto w-full max-w-3xl mb-6 px-2"
-        )}
-      >
-        <TextareaAutosize
-          ref={textareaRef}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={isReady ? "Continue the conversation…" : "Loading…"}
-          minRows={2}
-          maxRows={8}
-          className="min-h-[3rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
-        />
-        <div className="flex items-center justify-end gap-2 px-1 pt-1">
-          {isStreaming ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => session.stop()}
-              className="h-8 gap-1.5 rounded-full px-3"
-            >
-              <Square className="h-3.5 w-3.5" aria-hidden />
-              <span>Stop</span>
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              size="sm"
-              disabled={draft.trim().length === 0 || !isReady}
-              title={isReady ? undefined : "Loading project and model…"}
-              className="h-8 gap-1.5 rounded-full px-3"
-            >
-              <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-              <span>Send</span>
-            </Button>
+          <form
+            onSubmit={onFormSubmit}
+            className={cn(
+              "relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow",
+              isFull && "mx-auto w-full max-w-3xl mb-6 px-2"
+            )}
+          >
+            <TextareaAutosize
+              ref={textareaRef}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={isReady ? "Continue the conversation…" : "Loading…"}
+              minRows={2}
+              maxRows={8}
+              className="min-h-[3rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
+            />
+            <div className="flex items-center justify-end gap-2 px-1 pt-1">
+              {isStreaming ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => session.stop()}
+                  className="h-8 gap-1.5 rounded-full px-3"
+                >
+                  <Square className="h-3.5 w-3.5" aria-hidden />
+                  <span>Stop</span>
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={draft.trim().length === 0 || !isReady}
+                  title={isReady ? undefined : "Loading project and model…"}
+                  className="h-8 gap-1.5 rounded-full px-3"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+                  <span>Send</span>
+                </Button>
+              )}
+            </div>
+          </form>
+
+          {session.error && (
+            <p className="text-xs text-destructive">
+              {session.error.message ?? "Something went wrong."}
+            </p>
           )}
         </div>
-      </form>
-
-      {session.error && (
-        <p className="text-xs text-destructive">
-          {session.error.message ?? "Something went wrong."}
-        </p>
-      )}
-    </div>
+      </ChatboxHostThemeProvider>
+    </ChatboxHostStyleProvider>
   );
 }
