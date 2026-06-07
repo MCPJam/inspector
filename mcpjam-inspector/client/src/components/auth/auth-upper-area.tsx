@@ -9,6 +9,7 @@ import {
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { AgentSidePanelTrigger } from "@/components/mcpjam-agent/AgentSidePanelTrigger";
 import { GlobalClientBar } from "@/components/clients/GlobalClientBar";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { GlobalHostBarProps } from "@/components/Header";
@@ -85,6 +86,7 @@ export function AuthUpperArea({
           </a>
         </Button>
         {communityLinks}
+        <AgentSidePanelTrigger />
         <NotificationBell />
         {!user && !isLoading && (
           <>

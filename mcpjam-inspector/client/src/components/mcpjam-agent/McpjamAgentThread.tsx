@@ -51,9 +51,11 @@ export interface McpjamAgentThreadProps {
   /**
    * Visual mode. `"card"` (default) is the embedded rounded card used inside
    * a wider page. `"full"` is the PostHog/Attio-style takeover: no border,
-   * fills the parent, composer pinned to the bottom.
+   * fills the parent, composer pinned to the bottom. `"sidebar"` is the
+   * right-side panel surface: fills the parent like `"full"` but without
+   * the centered max-width column — the panel itself is already narrow.
    */
-  variant?: "card" | "full";
+  variant?: "card" | "full" | "sidebar";
   className?: string;
 }
 
@@ -214,6 +216,16 @@ export function McpjamAgentThread({
   }, [handleSubmit, isReady, session.hydrating, sessionId]);
 
   const isFull = variant === "full";
+  const isSidebar = variant === "sidebar";
+  const fillsParent = isFull || isSidebar;
+  // The takeover surface centers content in a max-w-4xl column; the sidebar
+  // surface is already narrow, so it fills the available width instead.
+  const contentColumnClassName = isSidebar
+    ? "min-w-0 w-full px-4 pt-6 pb-8 space-y-6"
+    : "min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6";
+  const composerColumnClassName = isSidebar
+    ? "w-full mb-4 px-3"
+    : "mx-auto w-full max-w-4xl mb-6 px-4";
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const shellStyle = getChatboxShellStyle("mcpjam", themeMode);
 
@@ -223,8 +235,8 @@ export function McpjamAgentThread({
       className={cn(
         "relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow",
         // Match Thread's content column (max-w-4xl + px-4) so the composer
-        // sits exactly under the message column.
-        isFull && "mx-auto w-full max-w-4xl mb-6 px-4"
+        // sits exactly under the message column. Sidebar fills its parent.
+        fillsParent && composerColumnClassName
       )}
     >
       <TextareaAutosize
@@ -282,7 +294,7 @@ export function McpjamAgentThread({
     // message land.
     body = (
       <div className="flex flex-1 flex-col min-h-0 overflow-y-auto">
-        <div className="min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6">
+        <div className={contentColumnClassName}>
           <UserMessageBubble>
             <p className="whitespace-pre-wrap">{optimisticPending}</p>
           </UserMessageBubble>
@@ -338,7 +350,7 @@ export function McpjamAgentThread({
               // (`thread.tsx:368` uses `max-w-4xl mx-auto px-4`) so the dots
               // sit in the same column as the would-be assistant message
               // instead of floating ~64px to the left of it.
-              contentClassName="min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6"
+              contentClassName={contentColumnClassName}
             />
           </StickToBottom.Content>
           <ScrollToBottomButton />
@@ -354,7 +366,7 @@ export function McpjamAgentThread({
         <div
           className={cn(
             "chatbox-host-shell flex flex-col gap-4 min-h-0",
-            isFull
+            fillsParent
               ? "h-full"
               : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
             className
@@ -368,7 +380,8 @@ export function McpjamAgentThread({
             <p
               className={cn(
                 "text-xs text-destructive",
-                isFull && "mx-auto w-full max-w-4xl px-4"
+                isFull && "mx-auto w-full max-w-4xl px-4",
+                isSidebar && "w-full px-3"
               )}
             >
               {session.error.message ?? "Something went wrong."}
