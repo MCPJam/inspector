@@ -32,6 +32,7 @@ import {
   consumeDirectChatTurnHeadless,
   runDirectChatTurn,
 } from "../utils/direct-chat-turn";
+import { resolveExecutionContext } from "../utils/host-execution-context";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
@@ -227,6 +228,13 @@ export type RunEvalSuiteOptions = {
    * cross-host dashboard.
    */
   hostExecutionPolicy?: HostExecutionPolicy;
+  /**
+   * Raw suite hostConfig record. PR 4d threads this through so per-iteration
+   * runners can resolve CONFIG fields (`systemPrompt` / `temperature` /
+   * `selectedServerIds`) via `resolveExecutionContext` — the runner used
+   * to read `advancedConfig.system` only and ignore the suite default.
+   */
+  suiteHostConfig?: Record<string, unknown> | null;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -916,6 +924,23 @@ type RunIterationBaseParams = {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  /**
+   * Raw suite hostConfig record — the same one the route layer feeds
+   * to `extractHostExecutionPolicy` for the `hostPolicy` field above.
+   * PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`)
+   * threads this through so per-iteration runners can resolve CONFIG
+   * fields (`systemPrompt` / `temperature` / `selectedServerIds`) off
+   * it via `resolveExecutionContext` — the runner used to read
+   * `advancedConfig.system` only, leaving the suite-default systemPrompt
+   * unused at runtime even though the eval client deliberately omits
+   * it from per-case `advancedConfig` (see comment at
+   * `client/src/components/evals/use-eval-handlers.ts:302`).
+   *
+   * Optional so quick-run paths that don't load a suite hostConfig keep
+   * working — the resolver treats `null`/`undefined` as "no host opinion;
+   * use overrides as-is."
+   */
+  suiteHostConfig?: Record<string, unknown> | null;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1098,6 +1123,7 @@ const runIterationWithAiSdk = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1147,18 +1173,44 @@ const runIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
+  // PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // resolve `systemPrompt` and `temperature` via the shared
+  // `resolveExecutionContext` so the suite-level hostConfig's
+  // `systemPrompt` / `temperature` act as defaults under the per-case
+  // `advancedConfig` overrides. Pre-4d the runner ignored
+  // `suiteHostConfig.systemPrompt` / `.temperature` entirely — even
+  // though the eval client deliberately omits suite defaults from per-case
+  // advancedConfig (see comment at
+  // `client/src/components/evals/use-eval-handlers.ts:302`) on the
+  // understanding that the runtime applies them. `override-wins`
+  // precedence keeps per-case overrides authoritative; the hostConfig
+  // fills the gap when the per-case value is absent.
+  //
+  // `withHostContextSystemPrompt` runs AFTER the resolver because
+  // `{{var}}` substitution context is per-RUN
+  // (`test.hostConfigOverride.hostContext`), not part of the suite
+  // hostConfig.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const system = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const modelRuntime = resolveEvalModelRuntime({
@@ -1231,6 +1283,21 @@ const runIterationWithAiSdk = async ({
   // tool cases.
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
+  // PR 4d review fix (Codex P2 "Persist the resolved system prompt with
+  // eval traces"): chat ships the system via the helper's `system:`
+  // field, but eval's persistence path (`finishIteration` →
+  // `persistEvalTraceFanout`'s `appendEvalTurnTrace` payload) has no
+  // dedicated `systemPrompt` slot. Pre-4d, the system rode along as
+  // the first entry in `conversationMessages` and was naturally
+  // persisted. PR 4d dropped that push to align with chat's wire shape,
+  // and accidentally removed the only path the persistence layer had
+  // for capturing it. Hoist the resolved system prompt to outer scope
+  // so we can prepend it to the messages array AT PERSISTENCE TIME
+  // (not in `conversationMessages` — that stays system-free so the
+  // streamText `system:` field isn't double-sent). The persisted
+  // shape now matches pre-4d (system is the first message in
+  // `messages`) while the wire shape stays chat-aligned.
+  let enhancedSystemPromptForPersist: string | undefined = undefined;
 
   try {
     // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
@@ -1248,12 +1315,22 @@ const runIterationWithAiSdk = async ({
       customProviders: modelRuntime.customProviders,
       priorMessages: [],
     });
-    if (prepared.enhancedSystemPrompt) {
-      conversationMessages.push({
-        role: "system",
-        content: prepared.enhancedSystemPrompt,
-      });
-    }
+    // PR 4d of the engine consolidation: drop the PR 4b
+    // `systemPrompt: ""` quirk. Pre-4d, eval pushed
+    // `prepared.enhancedSystemPrompt` as a `role: "system"` message into
+    // `conversationMessages` and passed `systemPrompt: ""` to the
+    // helper — `normalizeSystemPromptForProvider("")` resolved to
+    // `undefined` so streamText received the system via messages, not
+    // the dedicated `system:` field. That worked but was a latent
+    // footgun: any refactor of `normalizeSystemPromptForProvider` to
+    // emit `""` would have double-sent the system. Match chat's shape —
+    // `enhancedSystemPrompt` flows to `runDirectChatTurn` via the
+    // `systemPrompt:` argument below; `conversationMessages` no longer
+    // carries a system message entry. PR 4d review fix (Codex P2):
+    // hoist the resolved value so it can be prepended to the messages
+    // array at persistence time, since eval's wire shape to Convex
+    // (`appendEvalTurnTrace`) has no dedicated `systemPrompt` slot.
+    enhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
 
     const llmModel = createLlmModel(
       modelDefinition,
@@ -1307,11 +1384,12 @@ const runIterationWithAiSdk = async ({
       // Eval owns failure detection + persistence + grading, layered
       // on top of `consumeDirectChatTurnHeadless`'s assembled return.
       //
-      // `systemPrompt: ""` is intentional: eval keeps the system message
-      // inside `conversationMessages` (so the persisted transcript still
-      // includes it for the UI), so we don't pass it separately to
-      // streamText. `normalizeSystemPromptForProvider("")` returns
-      // `undefined`, so the helper skips the `system:` field.
+      // PR 4d: `systemPrompt: prepared.enhancedSystemPrompt` matches
+      // chat's shape — the helper passes it to streamText via the
+      // dedicated `system:` field. `conversationMessages` no longer
+      // contains a system message; the persisted transcript carries
+      // the system via its own column (chatSession.systemPrompt /
+      // testIteration column), same as chat's path.
       // PR 4b review fix (Cursor "Partial messages never mirrored" +
       // Codex P2): the legacy `generateText` loop updated
       // `activePartialResponseMessages` and `activeCompletedStepCount`
@@ -1330,7 +1408,7 @@ const runIterationWithAiSdk = async ({
         llmModel,
         modelId: test.model,
         messageHistory: activePromptInputMessages,
-        systemPrompt: "",
+        systemPrompt: prepared.enhancedSystemPrompt ?? "",
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
@@ -1550,12 +1628,25 @@ const runIterationWithAiSdk = async ({
       convexClient,
     });
 
+    // PR 4d review fix (Codex P2): prepend the resolved system prompt
+    // so persisted eval transcripts carry it. The streamText `system:`
+    // field already covered the wire shape to the model; this restores
+    // the pre-4d persistence shape (first message is `role: "system"`)
+    // for downstream consumers of `appendEvalTurnTrace.sessionMessages`
+    // and the legacy `testIteration.blob` fallback.
+    const persistedMessages: ModelMessage[] = enhancedSystemPromptForPersist
+      ? [
+          { role: "system", content: enhancedSystemPromptForPersist },
+          ...conversationMessages,
+        ]
+      : conversationMessages;
+
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage,
-      messages: conversationMessages,
+      messages: persistedMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -1664,6 +1755,20 @@ const runIterationWithAiSdk = async ({
       mcpClientManager,
       convexClient,
     });
+    // PR 4d review fix (Codex P2): same prefix as the success path — if
+    // `prepared` ran far enough to populate
+    // `enhancedSystemPromptForPersist`, surface the resolved system in
+    // the persisted failure transcript. Catches that fire BEFORE
+    // `prepareChatV2` returned leave the prefix empty (no system to
+    // persist anyway). Applied only in `runIterationWithAiSdk`; the
+    // streaming variant still pushes the system into
+    // `conversationMessages` itself (PR 5 territory).
+    const persistedFailMessages: ModelMessage[] = enhancedSystemPromptForPersist
+      ? [
+          { role: "system", content: enhancedSystemPromptForPersist },
+          ...failMessages,
+        ]
+      : failMessages;
 
     const failParams = {
       iterationId,
@@ -1674,7 +1779,7 @@ const runIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: failMessages,
+      messages: persistedFailMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -1740,6 +1845,7 @@ const runIterationViaBackend = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1789,18 +1895,31 @@ const runIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  // PR 4d of the engine consolidation: same resolver shape as
+  // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
+  // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
+  // applies {{var}} substitution on the resolved value.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const systemPrompt = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
@@ -1855,6 +1974,12 @@ const runIterationViaBackend = async ({
   const backendCustomProviders = orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
     : undefined;
+  // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
+  // the `prepareChatV2` try) so the catch path and the assignment
+  // inside the try are both in scope. Stays `undefined` if prepareChatV2
+  // throws — the setup-failure persistence path doesn't need a system
+  // prefix.
+  let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -1869,6 +1994,13 @@ const runIterationViaBackend = async ({
         : {}),
       priorMessages: [],
     });
+    // PR 4d review fix (Codex P2 / Cursor Medium): stash the resolved
+    // system prompt for the persistence prefix below. The engine
+    // (`runAssistantTurn`) sends it to the model via its `systemPrompt:`
+    // arg, but the returned message history doesn't carry a system entry
+    // and `appendEvalTurnTrace` has no `systemPrompt` slot. Prepend at
+    // persistence time — same shape as the local runners' Codex-P2 fix.
+    backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
@@ -1929,6 +2061,8 @@ const runIterationViaBackend = async ({
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
+  // `prepareChatV2` try.
 
   // Eval supplies its bearer token via `convexAuthToken`. The engine wraps it
   // into the Convex `/stream` (or `/stream/org`) request the same way live
@@ -2259,13 +2393,26 @@ const runIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
+  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
+  // system at persistence so the backend's transcript carries it.
+  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
+  const persistedBackendMessages: ModelMessage[] =
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...messageHistory,
+        ]
+      : messageHistory;
 
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    messages: persistedBackendMessages,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -2324,6 +2471,8 @@ const runTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
+  /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
+  suiteHostConfig?: Record<string, unknown> | null;
 }) => {
   const {
     test,
@@ -2345,6 +2494,7 @@ const runTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    suiteHostConfig,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2451,6 +2601,7 @@ const runTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2486,6 +2637,7 @@ const runTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2515,6 +2667,7 @@ const runTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      suiteHostConfig,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2538,6 +2691,7 @@ export const runEvalSuiteWithAiSdk = async ({
   compareRunId,
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
+  suiteHostConfig,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2639,6 +2793,7 @@ export const runEvalSuiteWithAiSdk = async ({
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
+        suiteHostConfig,
       }),
     );
 
@@ -2803,6 +2958,7 @@ const streamIterationWithAiSdk = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2853,18 +3009,44 @@ const streamIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
+  // PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // resolve `systemPrompt` and `temperature` via the shared
+  // `resolveExecutionContext` so the suite-level hostConfig's
+  // `systemPrompt` / `temperature` act as defaults under the per-case
+  // `advancedConfig` overrides. Pre-4d the runner ignored
+  // `suiteHostConfig.systemPrompt` / `.temperature` entirely — even
+  // though the eval client deliberately omits suite defaults from per-case
+  // advancedConfig (see comment at
+  // `client/src/components/evals/use-eval-handlers.ts:302`) on the
+  // understanding that the runtime applies them. `override-wins`
+  // precedence keeps per-case overrides authoritative; the hostConfig
+  // fills the gap when the per-case value is absent.
+  //
+  // `withHostContextSystemPrompt` runs AFTER the resolver because
+  // `{{var}}` substitution context is per-RUN
+  // (`test.hostConfigOverride.hostContext`), not part of the suite
+  // hostConfig.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const system = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const modelRuntime = resolveEvalModelRuntime({
@@ -2925,6 +3107,30 @@ const streamIterationWithAiSdk = async ({
   let activeCompletedStepCount = 0;
   let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
     null;
+  // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
+  // success + catch paths can prepend the resolved system prompt to
+  // the messages array. Mirrors `enhancedSystemPromptForPersist` in
+  // `runIterationWithAiSdk`. Empty when `prepareChatV2` throws before
+  // returning.
+  let streamEnhancedSystemPromptForPersist: string | undefined = undefined;
+  // PR 4d review fix (Cursor Low "Stream snapshots drop system prompt"):
+  // PR 4d dropped the `conversationMessages.push({role:"system"})` in
+  // this runner, but `buildTraceSnapshotEvent` reads from those arrays
+  // mid-run — live SSE traces during a streamed quick run no longer
+  // include the resolved system until the final persistence prepend.
+  // Wrap message slices with the system prefix everywhere the SSE
+  // snapshot consumes them so trace UI viewers see the system as the
+  // first message throughout the run.
+  const withSystemPrefix = (msgs: ModelMessage[]): ModelMessage[] =>
+    streamEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: streamEnhancedSystemPromptForPersist,
+          },
+          ...msgs,
+        ]
+      : msgs;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -2939,12 +3145,17 @@ const streamIterationWithAiSdk = async ({
       customProviders: modelRuntime.customProviders,
       priorMessages: [],
     });
-    if (prepared.enhancedSystemPrompt) {
-      conversationMessages.push({
-        role: "system",
-        content: prepared.enhancedSystemPrompt,
-      });
-    }
+    // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
+    // streamIterationWithAiSdk"): align the streaming local-BYOK runner
+    // with the non-stream variant's chat-aligned shape. Pre-fix this
+    // runner pushed the system into `conversationMessages` AND omitted
+    // `system:` on the `streamText({...})` call below, so a streamed
+    // eval and a non-stream eval of the same case produced different
+    // transcript shapes. Now the system flows via the dedicated
+    // `system:` field, the runner-side `conversationMessages` stays
+    // system-free, and persistence prepends the resolved value at write
+    // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
+    streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
 
     const llmModel = createLlmModel(
       modelDefinition,
@@ -2988,6 +3199,9 @@ const streamIterationWithAiSdk = async ({
       const result = streamText({
         model: llmModel,
         messages: activePromptInputMessages,
+        ...(prepared.enhancedSystemPrompt
+          ? { system: prepared.enhancedSystemPrompt }
+          : {}),
         tools: tracedTools,
         stopWhen: stepCountIs(20),
         ...(prepared.resolvedTemperature == null
@@ -3064,7 +3278,7 @@ const streamIterationWithAiSdk = async ({
               turnIndex: promptIndex,
               stepIndex: activeCompletedStepCount - 1,
               snapshotKind: "step_finish",
-              messages: snapshotMessages,
+              messages: withSystemPrefix(snapshotMessages),
               spans: [...recordedSpans, ...activeTraceCtx!.recordedSpans],
               actualToolCalls: extractToolCallsFromConversation({
                 messages: snapshotMessages,
@@ -3157,7 +3371,7 @@ const streamIterationWithAiSdk = async ({
         buildTraceSnapshotEvent({
           turnIndex: promptIndex,
           snapshotKind: "turn_finish",
-          messages: conversationMessages,
+          messages: withSystemPrefix(conversationMessages),
           spans: recordedSpans,
           actualToolCalls: extractToolCallsFromConversation({
             messages: conversationMessages,
@@ -3228,13 +3442,26 @@ const streamIterationWithAiSdk = async ({
       mcpClientManager,
       convexClient,
     });
+    // PR 4d review fix (CodeRabbit): prepend the resolved system at
+    // persistence time so the streamed eval's transcript matches the
+    // non-stream runner's shape (`role: "system"` first entry).
+    const persistedStreamMessages: ModelMessage[] =
+      streamEnhancedSystemPromptForPersist
+        ? [
+            {
+              role: "system",
+              content: streamEnhancedSystemPromptForPersist,
+            },
+            ...conversationMessages,
+          ]
+        : conversationMessages;
 
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage: usageFinal,
-      messages: conversationMessages,
+      messages: persistedStreamMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3347,7 +3574,7 @@ const streamIterationWithAiSdk = async ({
           ? { stepIndex: activeCompletedStepCount - 1 }
           : {}),
         snapshotKind: "failure",
-        messages: failMessages,
+        messages: withSystemPrefix(failMessages),
         spans: recordedSpans,
         actualToolCalls: extractToolCallsFromConversation({
           messages: failMessages,
@@ -3366,6 +3593,20 @@ const streamIterationWithAiSdk = async ({
       details: errorDetails,
     });
 
+    // PR 4d review fix (CodeRabbit): mirror the non-stream runner — if
+    // `prepared` populated the resolved system prompt before the throw,
+    // prepend it to the persisted failure transcript.
+    const persistedStreamFailMessages: ModelMessage[] =
+      streamEnhancedSystemPromptForPersist
+        ? [
+            {
+              role: "system",
+              content: streamEnhancedSystemPromptForPersist,
+            },
+            ...failMessages,
+          ]
+        : failMessages;
+
     const failParams = {
       iterationId,
       passed: false,
@@ -3375,7 +3616,7 @@ const streamIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: failMessages,
+      messages: persistedStreamFailMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3436,6 +3677,7 @@ const streamIterationViaBackend = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3486,18 +3728,31 @@ const streamIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  // PR 4d of the engine consolidation: same resolver shape as
+  // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
+  // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
+  // applies {{var}} substitution on the resolved value.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const systemPrompt = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
@@ -3552,6 +3807,12 @@ const streamIterationViaBackend = async ({
   const backendCustomProviders = orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
     : undefined;
+  // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
+  // the `prepareChatV2` try) so the catch path and the assignment
+  // inside the try are both in scope. Stays `undefined` if prepareChatV2
+  // throws — the setup-failure persistence path doesn't need a system
+  // prefix.
+  let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -3566,6 +3827,9 @@ const streamIterationViaBackend = async ({
         : {}),
       priorMessages: [],
     });
+    // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
+    // prefix shape as the non-stream backend runner.
+    backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
@@ -3654,6 +3918,8 @@ const streamIterationViaBackend = async ({
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
+  // `prepareChatV2` try.
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
     const promptTurn = promptTurns[promptIndex]!;
     const promptToolsCalled: ToolCall[] = [];
@@ -4256,13 +4522,26 @@ const streamIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
+  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
+  // system at persistence so the backend's transcript carries it.
+  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
+  const persistedBackendMessages: ModelMessage[] =
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...messageHistory,
+        ]
+      : messageHistory;
 
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    messages: persistedBackendMessages,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -4327,6 +4606,8 @@ export const streamTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for the stream run. */
   toolSignals?: ToolExposureSignals;
+  /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
+  suiteHostConfig?: Record<string, unknown> | null;
 }) => {
   const {
     test,
@@ -4349,6 +4630,7 @@ export const streamTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    suiteHostConfig,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -4459,6 +4741,7 @@ export const streamTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4495,6 +4778,7 @@ export const streamTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4525,6 +4809,7 @@ export const streamTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      suiteHostConfig,
     });
     outcomes.push(iterationOutcome);
   }
