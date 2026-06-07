@@ -110,17 +110,13 @@ export function useMcpjamAgentSession(
   // land on an empty thread despite the session being on disk.
   const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
   const [hydrating, setHydrating] = useState<boolean>(Boolean(providedSessionId));
-  const hydrationKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!providedSessionId) {
       setInitialMessages([]);
       setHydrating(false);
-      hydrationKeyRef.current = null;
       return;
     }
-    if (hydrationKeyRef.current === providedSessionId) return;
-    hydrationKeyRef.current = providedSessionId;
     let cancelled = false;
     setHydrating(true);
     (async () => {
