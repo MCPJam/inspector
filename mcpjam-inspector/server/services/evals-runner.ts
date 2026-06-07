@@ -741,13 +741,13 @@ async function finishIterationDirectly(
   });
   if (fanout?.persisted === false) {
     logger.warn(
-      "[evals] persistEvalTraceFanout failed (quick run); falling back to forced-legacy-blob path",
+      "[evals] persistEvalTraceFanout failed (quick run); iteration finalized without re-attempting the chatSessions write",
       { iterationId: params.iterationId, error: fanout.error.message },
     );
   }
-  const sendTraceFieldsToUpdate = fanout?.persisted !== true;
-  // See recorder.ts for the rationale — same fallback escape hatch.
-  const forceLegacyTraceBlob = fanout?.persisted === false;
+  // See recorder.ts for the rationale — only send trace fields when no
+  // fanout was attempted at all.
+  const sendTraceFieldsToUpdate = fanout === undefined;
 
   // PR-2 review #5 (Cursor "Update failure after successful fanout"):
   // track iteration-gone state so the lock can fire even when the
@@ -760,7 +760,6 @@ async function finishIterationDirectly(
       status: iterationStatus,
       actualToolCalls: sanitizeForConvexTransport(params.toolsCalled),
       tokensUsed: params.usage.totalTokens ?? 0,
-      ...(forceLegacyTraceBlob ? { forceLegacyTraceBlob: true } : {}),
       ...(sendTraceFieldsToUpdate
         ? {
             messages: sanitizeForConvexTransport(params.messages),

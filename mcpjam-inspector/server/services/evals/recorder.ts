@@ -291,20 +291,20 @@ export const createSuiteRunRecorder = ({
       });
       if (fanout?.persisted === false) {
         logger.warn(
-          "[evals] persistEvalTraceFanout failed; falling back to forced-legacy-blob path",
+          "[evals] persistEvalTraceFanout failed; iteration finalized without re-attempting the chatSessions write",
           { iterationId, error: fanout.error.message },
         );
       }
-      const sendTraceFieldsToUpdate = fanout?.persisted !== true;
-      // When the fanout failed mid-stream we MUST force the backend
-      // into the legacy blob path. Otherwise `updateTestIteration`
-      // re-enters the chatSessions W1 path with `promptIndex: 0` +
-      // full transcript, which would overwrite any partial turn rows
-      // the fanout already wrote and possibly fight an existing lock.
-      // The escape hatch makes the iteration replayable from
-      // `testIteration.blob` while the partial chatSessions data is
-      // left inert (source-aware reader tolerates absence).
-      const forceLegacyTraceBlob = fanout?.persisted === false;
+      // Only send trace fields when no fanout was attempted at all.
+      // - `persisted === true`: fanout already wrote per-turn rows; the W1
+      //   path would duplicate at promptIndex: 0.
+      // - `persisted === false`: fanout failed mid-stream and may have left
+      //   partial turn rows. Re-firing W1 with promptIndex: 0 + the full
+      //   transcript would overwrite the partial turn 0 and orphan turns
+      //   1..N. We accept the partial chatSessions row instead — the
+      //   legacy-blob fallback that used to recover this case was removed
+      //   in PR-6.
+      const sendTraceFieldsToUpdate = fanout === undefined;
 
       // PR-2 review #5 (Cursor "Update failure after successful fanout"):
       // track whether the iteration is gone so we don't waste a lock
@@ -319,7 +319,6 @@ export const createSuiteRunRecorder = ({
           result,
           actualToolCalls: sanitizeForConvexTransport(toolsCalled),
           tokensUsed: usage.totalTokens ?? 0,
-          ...(forceLegacyTraceBlob ? { forceLegacyTraceBlob: true } : {}),
           ...(sendTraceFieldsToUpdate
             ? {
                 messages: sanitizeForConvexTransport(messages),

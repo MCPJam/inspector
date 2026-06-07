@@ -45,12 +45,13 @@ import {
  *     against the now-locked session or, worse, EVAL_SESSION_LOCKED
  *     if any turn index doesn't match.
  *   - `{ persisted: false, error }`: the per-turn fanout failed mid-
- *     stream. Caller should fall back to a forced-legacy-blob call by
- *     passing `forceLegacyTraceBlob: true` to `updateTestIteration`,
- *     which bypasses the backend's W1 chatSessions path. Without that
- *     escape hatch the legacy fallback would re-enter the chatSessions
- *     writer with `promptIndex: 0` + full transcript, overwriting any
- *     partially-fanned-out turn rows.
+ *     stream. Caller should finalize the iteration WITHOUT re-sending
+ *     trace fields to `updateTestIteration`. Re-entering W1 with
+ *     `promptIndex: 0` + the full transcript would overwrite any
+ *     partial turn rows the fanout already wrote and orphan the rest.
+ *     The legacy-blob fallback that used to recover this case was
+ *     removed in PR-6 — partial chatSessions data is now the recoverable
+ *     state.
  *
  * Widgets: forwarded on the LAST turn call so they persist once at
  * finalize. Inspector capture (`captureMcpAppWidgetSnapshots`) supplies
