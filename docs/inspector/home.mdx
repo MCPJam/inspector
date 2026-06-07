@@ -17,10 +17,33 @@ When you open MCPJam, the Home tab loads at `/home` (also the root `/`). If you 
 With an organization selected, the dashboard shows:
 
 - **Greeting** — a time-aware greeting and today's date.
+- **MCPJam Agent** — an AI assistant you can ask questions about your MCP servers, projects, and the MCPJam platform.
 - **Org stats strip** — live counts for teammates, projects, servers, eval suites, tool executions (last 30 days), and messages sent (last 30 days).
 - **Recommended servers** — a curated list of MCP servers you can connect to your active project with one click.
 - **Recommended clients** — sandbox client templates (Claude, ChatGPT, Cursor) you can create directly from the dashboard.
 - **What's new** — a feed of recent platform releases and changes.
+
+## MCPJam Agent
+
+The Home tab includes an embedded MCPJam Agent chat surface. You can ask it questions about your servers, projects, and the MCPJam platform — it answers using the MCPJam documentation.
+
+### Starting a conversation
+
+Type a question into the agent composer on the Home tab and press **Enter** or click **Send**. When you submit, the Home tab switches to a full-screen conversation view.
+
+### Agent takeover view
+
+Once a session is active, the Home tab becomes a full-screen chat surface:
+
+- The greeting, stats, and recommended cards are hidden while the conversation is open.
+- A top bar shows two controls:
+  - **Back** (arrow icon) — returns to the Home dashboard and ends the current view. The conversation is saved and can be resumed from the recent sessions list.
+  - **New chat** (plus icon) — clears the current thread and opens a fresh composer without leaving the agent surface.
+- The conversation scrolls automatically while the agent is streaming a response. A **scroll-to-bottom** button appears if you scroll up during streaming.
+
+### Resuming a conversation
+
+Recent agent sessions appear as pills on the Home dashboard. Click one to reopen that conversation in the takeover view.
 
 ## Org stats strip
 
