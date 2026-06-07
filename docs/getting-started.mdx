@@ -75,13 +75,15 @@ You should see your server show **Connected** with a green dot in the **Connect*
     No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx` — none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are handled by the hosted backend; the Terminal and Desktop apps store config locally on disk.
   </Accordion>
   <Accordion title="How do I check which version of Inspector I'm running?" icon="tag">
-    From the Terminal install:
+    All three installs (Web, Desktop, Terminal) show the running version in the **Settings** tab under **About**.
+
+    To see what the latest published version on npm is — useful for confirming an `@latest` pull actually moved you forward — run:
 
     ```bash
-    npx @mcpjam/inspector@latest --version
+    npm view @mcpjam/inspector version
     ```
 
-    The Desktop and Web apps update on their own — the version is shown in the **Settings → About** pane. To force the latest Terminal build, the `@latest` tag in `npx @mcpjam/inspector@latest` pulls the most recent release every run.
+    The Desktop and Web apps update on their own. For the Terminal install, the `@latest` tag in `npx @mcpjam/inspector@latest` pulls the most recent release every run.
   </Accordion>
   <Accordion title="Can MCPJam auto-install MCP servers into my repo?" icon="package">
     Not directly — MCPJam doesn't reach into your repo. The closest workflow is **Skills**: install the MCPJam CLI skill into a project so an agent working in that repo knows how to use MCP tools and call MCPJam against your servers. See [Skills](/inspector/skills).
