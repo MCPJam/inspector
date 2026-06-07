@@ -135,6 +135,73 @@ export function warnIfChatAbortSignalMissing(
   );
 }
 
+/**
+ * Event payloads for the chunk-level + step-level callbacks exposed by
+ * the chat engine to its callers. Engine consolidation PR 5b-pre
+ * (`~/mcpjam-docs/unification.md`) adds these so eval's backend stream
+ * runner can wire SSE events from engine signals when PR 5b collapses
+ * `streamIterationViaBackend` onto the shared engine. Chat + synthetic
+ * pass nothing today and are unaffected.
+ *
+ * `promptIndex` mirrors `traceTurn.promptIndex` — eval needs it for
+ * trace span correlation; chat / synthetic ignore it.
+ */
+export interface MCPJamToolCallEvent {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  stepIndex: number;
+  promptIndex: number;
+  serverId: string | undefined;
+}
+
+export interface MCPJamToolResultEvent {
+  toolCallId: string;
+  /** May be undefined when the chunk lacks toolName (older Convex versions). */
+  toolName: string | undefined;
+  output: unknown;
+  /** `true` when the tool execution returned an error result (vs. an OK output). */
+  isError: boolean;
+  stepIndex: number;
+  promptIndex: number;
+  serverId: string | undefined;
+}
+
+export interface MCPJamStepFinishEvent {
+  stepIndex: number;
+  promptIndex: number;
+  /**
+   * Cumulative usage for this TURN as of step completion (the engine
+   * tracks per-turn aggregates, not per-step deltas). Callers compute
+   * per-step deltas across successive `onStepFinish` invocations if
+   * they need them. Undefined when the engine has no usage signal for
+   * this step.
+   */
+  turnUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+  /**
+   * **Step SETTLED, not necessarily successful.** `onStepFinish` fires
+   * once per `processOneStep` return, regardless of outcome — including
+   * the non-OK HTTP / no-body / decode-error branches that emit an
+   * `error` UI chunk + failure trace event and return
+   * `didEmitFinish: false`. Callers that map this to a higher-level
+   * "step succeeded" SSE event (eval's `step_finish`) MUST gate on
+   * `settledWithError === false`, OR consume failure events from the
+   * UI/trace stream and treat `onStepFinish` as a settle-once
+   * notification.
+   *
+   * Marcelo's PR 5b-pre review caveat: if PR 5b wires this directly to
+   * eval `step_finish` SSE, failed backend steps would emit
+   * `step_finish` where the pre-collapse runner only emitted error /
+   * failure trace. Surfacing the settle state on the event lets the
+   * wire-up decide.
+   */
+  settledWithError: boolean;
+}
+
 export interface MCPJamHandlerOptions {
   messages: ModelMessage[];
   modelId: string;
@@ -170,6 +237,30 @@ export interface MCPJamHandlerOptions {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
   onLiveTextDelta?: (delta: string) => void;
+  /**
+   * Engine consolidation PR 5b-pre — fires from the chunk-processing
+   * switch when Convex emits a `tool-input-available` chunk (the AI
+   * SDK v6 equivalent of `tool-call`). Eval's backend stream runner
+   * uses this to emit the `tool_call` SSE event. Chat / synthetic
+   * omit; the engine writer still writes the `tool-input-available`
+   * UI chunk verbatim regardless.
+   */
+  onToolCall?: (event: MCPJamToolCallEvent) => void;
+  /**
+   * Engine consolidation PR 5b-pre — fires from the local tool-result
+   * persistence path AFTER the engine writes the `tool-output-available`
+   * UI chunk and the `tool_result` trace event. Eval's backend stream
+   * runner uses this to emit the `tool_result` SSE event. Chat /
+   * synthetic omit.
+   */
+  onToolResult?: (event: MCPJamToolResultEvent) => void;
+  /**
+   * Engine consolidation PR 5b-pre — fires from `runChatEngineLoop`
+   * after each `processOneStep` returns and the step counter
+   * increments. Eval's backend stream runner uses this to emit the
+   * `step_finish` SSE event. Chat / synthetic omit.
+   */
+  onStepFinish?: (event: MCPJamStepFinishEvent) => void;
   /**
    * Override the Convex endpoint path for the per-step LLM call.
    * Defaults to "/stream". Org BYOK chat uses "/stream/org".
@@ -263,6 +354,12 @@ interface StepContext {
   extraBodyFields?: Record<string, unknown>;
   clientIp?: string | null;
   onLiveTextDelta?: (delta: string) => void;
+  // PR 5b-pre: chunk-level + step-level callbacks. Threaded to the
+  // chunk-processing switch (onToolCall / onToolResult) and to the
+  // step loop (onStepFinish). All optional.
+  onToolCall?: (event: MCPJamToolCallEvent) => void;
+  onToolResult?: (event: MCPJamToolResultEvent) => void;
+  onStepFinish?: (event: MCPJamStepFinishEvent) => void;
   abortSignal?: AbortSignal;
 }
 
@@ -674,7 +771,11 @@ async function processStream(
   requireToolApproval?: boolean,
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
-  progressivePlan?: ProgressiveToolPlan
+  progressivePlan?: ProgressiveToolPlan,
+  // PR 5b-pre: chunk-level callbacks. Optional; only fired when
+  // supplied. Chat / synthetic omit (handler still writes the UI
+  // chunk + trace event unchanged).
+  onToolCall?: (event: MCPJamToolCallEvent) => void
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -832,6 +933,7 @@ async function processStream(
           });
           hasToolCalls = true;
           writer.write({ ...chunk, toolCallId });
+          const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
           writeTraceEvent(writer, {
             type: "tool_call",
             turnId: traceTurn.turnId,
@@ -840,8 +942,28 @@ async function processStream(
             toolCallId,
             toolName: chunk.toolName,
             input: toTraceRecord(chunk.input),
-            serverId: readToolServerId(tools, chunk.toolName),
+            serverId: serverIdForToolCall,
           });
+          // PR 5b-pre: fire chunk-level callback so eval's backend
+          // stream runner (PR 5b) can emit the `tool_call` SSE event.
+          // Chat / synthetic don't supply this callback.
+          if (onToolCall) {
+            try {
+              onToolCall({
+                toolCallId,
+                toolName: chunk.toolName,
+                input: chunk.input,
+                stepIndex,
+                promptIndex: traceTurn.promptIndex,
+                serverId: serverIdForToolCall,
+              });
+            } catch (error) {
+              logger.warn(
+                "[mcpjam-stream-handler] onToolCall callback failed",
+                { error: error instanceof Error ? error.message : String(error) },
+              );
+            }
+          }
 
           if (
             requireToolApproval &&
@@ -900,7 +1022,12 @@ function emitToolResults(
   mcpClientManager: MCPClientManager,
   newMessages: ModelMessage[],
   traceTurn?: LiveTraceTurnContext,
-  stepIndex?: number
+  stepIndex?: number,
+  // PR 5b-pre: optional chunk-level callback so eval's backend stream
+  // runner (PR 5b) can emit the `tool_result` SSE event. Chat /
+  // synthetic don't supply this callback — the UI writer + trace event
+  // still fire unchanged.
+  onToolResult?: (event: MCPJamToolResultEvent) => void
 ) {
   for (const msg of newMessages) {
     if (msg?.role === "tool") {
@@ -967,6 +1094,30 @@ function emitToolResults(
               errorText,
               serverId,
             });
+            // PR 5b-pre: fire chunk-level callback. `isError` matches
+            // the AI SDK's error-text output discriminator (same shape
+            // PR 5a's adapter uses for its `tool_result` SSE event).
+            if (onToolResult) {
+              try {
+                onToolResult({
+                  toolCallId: part.toolCallId,
+                  toolName: toolName ?? part.toolName,
+                  output: outputForUi,
+                  isError: part.output?.type === "error-text",
+                  stepIndex,
+                  promptIndex: traceTurn.promptIndex,
+                  serverId,
+                });
+              } catch (error) {
+                logger.warn(
+                  "[mcpjam-stream-handler] onToolResult callback failed",
+                  {
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  },
+                );
+              }
+            }
           }
         }
       }
@@ -1033,7 +1184,10 @@ async function handlePendingApprovals(
   mcpClientManager: MCPClientManager,
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  // PR 5b-pre: propagate the chunk-level callback so denial /
+  // approved-tool-result emissions also fire it.
+  onToolResult?: (event: MCPJamToolResultEvent) => void
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -1130,6 +1284,39 @@ async function handlePendingApprovals(
           },
           errorText: "Tool execution denied by user.",
         });
+        // PR 5b-pre review fix (Cursor Medium "Denied approval skips
+        // onToolResult"): the denial path writes the trace event
+        // inline without going through `emitToolResults`, so the
+        // `onToolResult` callback wasn't firing. Auto-deny via
+        // `processOneStep` does fire it through the
+        // `emitToolResults` → callback chain; denial via
+        // `handlePendingApprovals` needs the symmetric call here so
+        // PR 5b's eval wiring sees `tool_result` SSE events for
+        // denied tools on resumed approval turns.
+        if (onToolResult) {
+          try {
+            onToolResult({
+              toolCallId,
+              toolName,
+              output: {
+                type: "error-text",
+                value: "Tool execution denied by user.",
+              },
+              isError: true,
+              stepIndex,
+              promptIndex: traceTurn.promptIndex,
+              serverId: undefined,
+            });
+          } catch (error) {
+            logger.warn(
+              "[mcpjam-stream-handler] onToolResult callback failed (denial path)",
+              {
+                error:
+                  error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
+        }
       }
 
       const part: ToolResultPart = {
@@ -1208,7 +1395,8 @@ async function handlePendingApprovals(
       mcpClientManager,
       newMessages,
       traceTurn,
-      stepIndex
+      stepIndex,
+      onToolResult
     );
     didHandle = true;
   }
@@ -1245,6 +1433,10 @@ async function processOneStep(
     traceTurn,
     progressivePlan,
     discoveryState,
+    // PR 5b-pre chunk-level callbacks (optional, propagated from
+    // MCPJamHandlerOptions through runChatEngineLoop).
+    onToolCall,
+    onToolResult,
   } = ctx;
 
   // Pick the active tool subset for this step. In non-progressive mode
@@ -1437,7 +1629,8 @@ async function processOneStep(
     requireToolApproval,
     onLiveTextDelta,
     abortSignal,
-    progressivePlan
+    progressivePlan,
+    onToolCall
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -1557,7 +1750,8 @@ async function processOneStep(
           mcpClientManager,
           denialMessages,
           traceTurn,
-          stepIndex
+          stepIndex,
+          onToolResult
         );
       }
       // Fall through to the normal tool-execution branch below so
@@ -1598,7 +1792,8 @@ async function processOneStep(
           mcpClientManager,
           metaMessages,
           traceTurn,
-          stepIndex
+          stepIndex,
+          onToolResult
         );
         // Promote any ids the model just loaded so a subsequent
         // resumed-after-approval step sees them as loaded.
@@ -1745,7 +1940,8 @@ async function processOneStep(
         mcpClientManager,
         newMessages,
         traceTurn,
-        stepIndex
+        stepIndex,
+        onToolResult
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
@@ -1928,6 +2124,10 @@ export async function runChatEngineLoop(
     sourceType,
     clientIp,
     onLiveTextDelta,
+    // PR 5b-pre callbacks.
+    onToolCall,
+    onToolResult,
+    onStepFinish,
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
@@ -2122,7 +2322,8 @@ export async function runChatEngineLoop(
             mcpClientManager,
             traceTurn,
             effectiveSteps(),
-            abortSignal
+            abortSignal,
+            onToolResult
           );
           if (handled) {
             // Approvals were processed — if there are still unresolved tool
@@ -2162,12 +2363,59 @@ export async function runChatEngineLoop(
             extraBodyFields,
             clientIp,
             onLiveTextDelta,
+            // PR 5b-pre: chunk-level callbacks. Passed through to the
+            // step processor where the chunk-switch (onToolCall) +
+            // tool-result emission (onToolResult) sites fire them.
+            onToolCall,
+            onToolResult,
             abortSignal,
           });
 
           steps++;
           if (didEmitFinish) {
             finishEmitted = true;
+          }
+
+          // PR 5b-pre: step-level callback. Fires after each
+          // `processOneStep` returns and the step counter increments,
+          // so the runner sees one event per completed step in order.
+          // `turnUsage` reads from `traceTurn` so callers can compute
+          // per-step deltas. Wrapped in try/catch to match the chunk
+          // callbacks' shape.
+          if (onStepFinish) {
+            try {
+              // Marcelo's PR 5b-pre review caveat: the engine's
+              // failure branches return `shouldContinue: false` +
+              // `didEmitFinish: false` after emitting an error UI
+              // chunk. We surface this on `settledWithError` so PR 5b's
+              // wire-up can decide whether to map to eval's
+              // `step_finish` SSE event (success-only) or treat the
+              // settle as terminal. The shape: a step that produced a
+              // UI `finish` chunk OR `shouldContinue: true` is a
+              // success; the only failure shape today is
+              // `shouldContinue: false && !didEmitFinish`.
+              const settledWithError = !didEmitFinish && !shouldContinue;
+              onStepFinish({
+                stepIndex: effectiveSteps() - 1,
+                promptIndex: traceTurn.promptIndex,
+                turnUsage: traceTurn.turnUsage
+                  ? {
+                      inputTokens: traceTurn.turnUsage.inputTokens,
+                      outputTokens: traceTurn.turnUsage.outputTokens,
+                      totalTokens: traceTurn.turnUsage.totalTokens,
+                    }
+                  : undefined,
+                settledWithError,
+              });
+            } catch (error) {
+              logger.warn(
+                "[mcpjam-stream-handler] onStepFinish callback failed",
+                {
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
+            }
           }
 
           if (!shouldContinue) {
