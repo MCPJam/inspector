@@ -1450,4 +1450,260 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       runAssistantTurnSpy.mockRestore();
     }
   });
+
+  it("threads maxOutputTokens: 16384 into backend extraBodyFields (PR 3 review round 2)", async () => {
+    // Cursor round-2: the legacy backend per-step Convex body included
+    // `maxOutputTokens: 16384`; the rewritten runner dropped it,
+    // letting hosted backend turns inherit whatever default the
+    // `/stream` handler applies. Restore the cap by merging it into
+    // `extraBodyFields` so it rides through unchanged.
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-max-tokens",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-max-tokens",
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    const request = fetchMock.mock.calls[0]?.[1] as { body?: string };
+    const body = JSON.parse(request.body ?? "{}");
+    expect(body.maxOutputTokens).toBe(16384);
+  });
+
+  it("persists the failing turn's user prompt when an iteration errors mid-turn (PR 3 review round 2)", async () => {
+    // Cursor round-2 ("Failed turn omits user transcript"): when a
+    // turn errors, the failing turn's user prompt must still reach
+    // `messageHistory` so `finishIteration` records WHICH turn
+    // failed. Legacy backend loop pushed the user message at the top
+    // of its per-step loop; this rewrite mirrors that — push before
+    // `runAssistantTurn`. Force a failure by spying on
+    // `runAssistantTurn` to throw, then assert the persisted
+    // transcript contains the user prompt.
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockRejectedValueOnce(new Error("backend down mid-turn"));
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Failing case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                {
+                  id: "turn-1",
+                  prompt: "Critical prompt that errored",
+                  expectedToolCalls: [],
+                },
+              ],
+              testCaseId: "case-fail-transcript",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-fail-transcript",
+      });
+
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const updatePayload = updateCall![1] as Record<string, unknown>;
+      expect(updatePayload.error).toBeTruthy();
+
+      // The user prompt for the failing turn MUST appear in the
+      // persisted transcript — otherwise the trace UI shows a blank
+      // failure with no context about what the user asked.
+      // `persistEvalTraceFanout` writes per-turn messages under
+      // `testSuites:appendEvalTurnTrace`'s `turn.sessionMessages`
+      // field. Walk every action call for any user message whose
+      // content includes the failing turn's prompt.
+      const containsCriticalPrompt = (messages: unknown): boolean => {
+        if (!Array.isArray(messages)) return false;
+        return messages.some((m) => {
+          if (!m || typeof m !== "object") return false;
+          const msg = m as { role?: string; content?: unknown };
+          if (msg.role !== "user") return false;
+          if (typeof msg.content === "string") {
+            return msg.content.includes("Critical prompt");
+          }
+          if (Array.isArray(msg.content)) {
+            return msg.content.some(
+              (part: any) =>
+                part?.type === "text" &&
+                typeof part.text === "string" &&
+                part.text.includes("Critical prompt"),
+            );
+          }
+          return false;
+        });
+      };
+
+      const anyCallHasIt = convexClient.action.mock.calls.some((call) => {
+        const payload = call[1] as Record<string, unknown> | undefined;
+        if (!payload) return false;
+        if (containsCriticalPrompt(payload.messages)) return true;
+        const turn = payload.turn as
+          | { sessionMessages?: unknown }
+          | undefined;
+        if (turn && containsCriticalPrompt(turn.sessionMessages)) return true;
+        return false;
+      });
+      expect(anyCallHasIt).toBe(true);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
+
+  it("treats an error-status span in turnTrace as a cycle failure (PR 3 review round 2)", async () => {
+    // Codex P1 round-2 ("Fail turns when later backend steps error"):
+    // if step 1 produced assistant + tool messages and step 2 errors,
+    // the engine's loop appends the partial success to messages but
+    // also writes an `EvalTraceSpan` with `status:"error"` into
+    // `turnTrace.spans` — without surfacing it via a throw. My
+    // `messages.length` check would PASS in this case. Walk
+    // `turnTrace.spans` for any `status:"error"` span and treat as
+    // cycle failure.
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockResolvedValueOnce({
+        // Mimic step 1 succeeded (assistant + tool messages appended)
+        // and step 2 errored — turnTrace still captured with the
+        // error-status span the engine wrote on the failed step.
+        messages: [
+          { role: "user", content: "Hello" } as any,
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "tc_1",
+                toolName: "lookup",
+                input: {},
+              },
+            ],
+          } as any,
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "tc_1",
+                toolName: "lookup",
+                output: { ok: true },
+              },
+            ],
+          } as any,
+        ],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        turnTrace: {
+          turnId: "t_1",
+          promptIndex: 0,
+          startedAt: 0,
+          endedAt: 1,
+          modelId: "anthropic/claude-haiku-4.5",
+          spans: [
+            {
+              id: "sp_1",
+              name: "step.1.llm",
+              category: "llm",
+              startMs: 0,
+              endMs: 1,
+              status: "ok",
+            },
+            // The smoking gun: the engine recorded a step error here.
+            {
+              id: "sp_2",
+              name: "step.2.llm",
+              category: "llm",
+              startMs: 1,
+              endMs: 2,
+              status: "error",
+            },
+          ],
+        },
+      } as any);
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Mid-turn step error",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-late-step-err",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-late-step-err",
+      });
+
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      // The presence of `error` is the load-bearing assertion (verdict
+      // gating is mocked out — see the "non-OK step" test). Without
+      // the span walk, this would be `undefined`.
+      expect(payload.error).toBeTruthy();
+      expect(String(payload.error)).toMatch(/backend step failed/i);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
 });

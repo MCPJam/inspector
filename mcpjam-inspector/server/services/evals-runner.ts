@@ -1885,26 +1885,36 @@ const runIterationViaBackend = async ({
       promptIndex,
     );
 
-    const inputMessages: ModelMessage[] = [
-      ...messageHistory,
-      { role: "user", content: promptTurn.prompt },
-    ];
+    // Cursor review round-2 fix: push the user prompt into
+    // `messageHistory` BEFORE the engine call so a failed turn still
+    // persists the user side of the transcript. The legacy backend
+    // loop pushed the user message at the top of its per-step while
+    // loop; that meant `finishIteration` saw the user prompt even
+    // when the iteration failed mid-step. Recording the input keeps
+    // the transcript honest about WHICH turn errored.
+    messageHistory.push({
+      role: "user",
+      content: promptTurn.prompt,
+    });
+    const messageCountBeforeTurn = messageHistory.length;
+    const inputMessages: ModelMessage[] = [...messageHistory];
 
-    // Cursor + Codex review fix: thread `toolChoice` through
-    // `extraBodyFields` since the engine's
+    // Cursor + Codex review fix: thread `toolChoice` AND
+    // `maxOutputTokens` through `extraBodyFields` since the engine's
     // `RunAssistantTurnOptions` / `MCPJamHandlerOptions` don't expose
-    // it as a first-class field. The Convex `/stream` (and
-    // `/stream/org`) handlers already accept `toolChoice` in the
-    // request body — the engine spreads `extraBodyFields` into the body
-    // unchanged, so forced-tool / `none` eval cases work the same way
-    // they did on the legacy backend loop and the local-AI-SDK path.
-    const mergedExtraBodyFields =
-      toolChoice || extraBodyFields
-        ? {
-            ...(extraBodyFields ?? {}),
-            ...(toolChoice ? { toolChoice } : {}),
-          }
-        : undefined;
+    // them as first-class fields. The Convex `/stream` (and
+    // `/stream/org`) handlers already accept both in the request body
+    // — the engine spreads `extraBodyFields` into the body unchanged.
+    // `maxOutputTokens: 16384` matches the legacy per-step Convex body
+    // (Cursor round-2 finding "Dropped eval maxOutputTokens limit"):
+    // without it, hosted backend eval turns would inherit the
+    // `/stream` handler's default, which can truncate long multi-step
+    // tool loops differently than the historical eval cap.
+    const mergedExtraBodyFields: Record<string, unknown> = {
+      maxOutputTokens: 16384,
+      ...(extraBodyFields ?? {}),
+      ...(toolChoice ? { toolChoice } : {}),
+    };
 
     let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
     try {
@@ -1932,9 +1942,7 @@ const runIterationViaBackend = async ({
         persistMode: "caller",
         approvalMode: "auto-deny",
         endpointPath,
-        ...(mergedExtraBodyFields
-          ? { extraBodyFields: mergedExtraBodyFields }
-          : {}),
+        extraBodyFields: mergedExtraBodyFields,
         ...(abortSignal ? { abortSignal } : {}),
         maxSteps: MAX_STEPS,
         progressivePlan: prepared.progressivePlan,
@@ -2009,7 +2017,7 @@ const runIterationViaBackend = async ({
     // `passed: true` for tests with no expected tool calls. Map both
     // to `iterationError` so the verdict gate + `lockReason`
     // derivation in the post-loop finalize see the cycle failure.
-    if (turnResult.messages.length <= inputMessages.length) {
+    if (turnResult.messages.length <= messageCountBeforeTurn) {
       iterationError = turnResult.turnTrace
         ? "Backend step returned no content (stream error or empty response)"
         : "Backend stream failed during iteration";
@@ -2034,10 +2042,10 @@ const runIterationViaBackend = async ({
     }
 
     // Extract per-turn tool calls from the new messages only (engine
-    // returns the FULL transcript; slice from `inputMessages.length` to
-    // get just this turn's appended assistant + tool messages so prior
-    // turns' calls aren't double-counted).
-    const newMessages = turnResult.messages.slice(inputMessages.length);
+    // returns the FULL transcript; slice from `messageCountBeforeTurn`
+    // to get just this turn's appended assistant + tool messages so
+    // prior turns' calls aren't double-counted).
+    const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
     const promptToolsCalled = extractToolCallsFromConversation({
       messages: newMessages,
     });
@@ -2048,6 +2056,29 @@ const runIterationViaBackend = async ({
     // turn's assistant/tool messages.
     messageHistory.length = 0;
     messageHistory.push(...turnResult.messages);
+
+    // Codex P1 round-2 fix: catch a backend step error that happened
+    // AFTER messages already grew. The engine emits `EvalTraceSpan`s
+    // with `status: "error"` on per-step failures (see
+    // `pushBackendStepLlmFailureSpans` / `pushBackendStepToolFailureSpans`
+    // in mcpjam-stream-handler.ts), but then synthesizes a finish
+    // chunk and sets `runSucceeded: true` — so neither the catch
+    // branch nor the `messages.length <= messageCountBeforeTurn` check
+    // fires when step 1 succeeded and step 2 errored. Walk
+    // `turnTrace.spans` for any error-status span and treat as a
+    // cycle failure; the partial successful state we just drained
+    // above (tool calls, spans, usage, transcript) stays — eval just
+    // marks the iteration as errored and halts further turns.
+    const stepErrorSpan = turnResult.turnTrace?.spans.find(
+      (span) => span.status === "error",
+    );
+    if (stepErrorSpan) {
+      iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
+      logger.error(
+        `[evals] runAssistantTurn turnTrace has error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+      );
+      break;
+    }
   }
 
   const evaluation = evaluateMultiTurnResults(
