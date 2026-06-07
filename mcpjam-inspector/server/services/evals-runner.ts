@@ -3765,7 +3765,12 @@ const streamIterationViaBackend = async ({
   mcpClientManager,
   recorder,
   testCaseId,
-  convexHttpUrl,
+  // PR 5b: `convexHttpUrl` is in the `RunIterationBackendParams` type
+  // (shared with the non-stream runner + the iterative path) but
+  // unused here — `runAssistantTurn` owns the Convex `/stream` fetch
+  // and reads its base URL from `CONVEX_HTTP_URL` env / the configured
+  // chat-orchestration helpers. Kept on the params type so the caller
+  // shape stays uniform across runners.
   convexAuthToken,
   modelId,
   modelDefinition,
@@ -4258,13 +4263,17 @@ const streamIterationViaBackend = async ({
           usage: accumulatedUsage,
         }),
       );
-      // Reset partial-response accumulators for the next step so the
-      // next step_finish snapshot doesn't double-count this step's
-      // assistant/tool content (which will land in `messageHistory`
-      // via `turnResult.messages` after the turn settles).
-      partialAssistantText = "";
-      partialAssistantToolCalls.length = 0;
-      partialToolResultMessages.length = 0;
+      // NO per-step reset of partial-response accumulators. The
+      // earlier version of this PR cleared them here, which corrupted
+      // step N's snapshot by dropping step 1..N-1's assistant/tool
+      // content — `messageHistory` doesn't roll forward from
+      // `turnResult.messages` until AFTER `runAssistantTurn` returns,
+      // so during the turn the accumulators are the ONLY source of
+      // in-flight content for snapshot fidelity. The accumulators are
+      // per-turn `let`s scoped to this `for` body, so they reset
+      // naturally on the next prompt-turn iteration; no double-count
+      // risk because `messageHistory` is replaced with the engine's
+      // canonical post-turn transcript below before the next iteration.
     };
 
     // `runAssistantTurn` call shape mirrors `runIterationViaBackend`

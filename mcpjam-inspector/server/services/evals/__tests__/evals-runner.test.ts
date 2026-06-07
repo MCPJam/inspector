@@ -3708,6 +3708,178 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }
     });
 
+    it("accumulates partial response across multi-step turns; step 2 snapshot retains step 1 content (PR 5b review followup)", async () => {
+      // Original PR 5b fix for Cursor #2 reset the partial-response
+      // accumulators inside `onStepFinish`, which corrupted step N's
+      // snapshot by dropping step 1..N-1's assistant/tool content
+      // (`messageHistory` doesn't roll forward from `turnResult.messages`
+      // until AFTER `runAssistantTurn` returns, so during the turn the
+      // accumulators are the ONLY source of in-flight content).
+      // Lock the followup fix: a step-2 snapshot must carry BOTH
+      // step-1 AND step-2 partial assistant + tool content.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Step 1: model says "Step1 text", calls tool A, gets a result.
+          opts.onLiveTextDelta?.("Step1 text");
+          opts.onToolCall?.({
+            toolCallId: "call-a",
+            toolName: "search",
+            input: { q: "first" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-a",
+            toolName: "search",
+            output: { ok: true, step: 1 },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            settledWithError: false,
+          });
+          // Step 2: model says "Step2 text", calls tool B, gets a result.
+          opts.onLiveTextDelta?.("Step2 text");
+          opts.onToolCall?.({
+            toolCallId: "call-b",
+            toolName: "lookup",
+            input: { q: "second" },
+            stepIndex: 1,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-b",
+            toolName: "lookup",
+            output: { ok: true, step: 2 },
+            isError: false,
+            stepIndex: 1,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b cumulative partials across steps",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-multistep-snap",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-multistep-snap",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        ) as Array<{
+          stepIndex?: number;
+          trace: { messages: Array<{ role: string; content: unknown }> };
+        }>;
+        // Exactly one step_finish snapshot per settled-OK step.
+        expect(stepFinishSnapshots).toHaveLength(2);
+
+        // Step 2 snapshot must carry BOTH step 1 + step 2 partials.
+        const step2Snap = stepFinishSnapshots.find(
+          (s) => s.stepIndex === 1,
+        );
+        expect(step2Snap).toBeDefined();
+        const step2Messages = step2Snap!.trace.messages;
+
+        // Find the assistant message — should be a single rolling
+        // assistant with text + 2 tool-call parts (both steps' calls).
+        const assistantMsg = step2Messages.find((m) => m.role === "assistant");
+        expect(assistantMsg).toBeDefined();
+        const assistantContent = assistantMsg!.content as Array<{
+          type: string;
+          text?: string;
+          toolCallId?: string;
+          toolName?: string;
+        }>;
+        // Text from both steps must be present (concatenated rolling
+        // assistant text).
+        const textParts = assistantContent.filter((p) => p.type === "text");
+        expect(textParts.length).toBeGreaterThan(0);
+        const combinedText = textParts.map((p) => p.text ?? "").join("");
+        expect(combinedText).toContain("Step1 text");
+        expect(combinedText).toContain("Step2 text");
+        // Both tool calls must be present.
+        const toolCallParts = assistantContent.filter(
+          (p) => p.type === "tool-call",
+        );
+        expect(toolCallParts.map((p) => p.toolCallId).sort()).toEqual([
+          "call-a",
+          "call-b",
+        ]);
+
+        // Both tool-result messages must be present (one per call).
+        const toolMessages = step2Messages.filter((m) => m.role === "tool");
+        const allToolResultCallIds = toolMessages.flatMap((m) =>
+          (m.content as Array<{ type: string; toolCallId?: string }>)
+            .filter((p) => p.type === "tool-result")
+            .map((p) => p.toolCallId),
+        );
+        expect(allToolResultCallIds.sort()).toEqual(["call-a", "call-b"]);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
     it("does NOT emit step_finish SSE when onStepFinish fires with settledWithError=true (PR 5b — Marcelo caveat)", async () => {
       // Marcelo's PR 5b-pre review caveat: `MCPJamStepFinishEvent`
       // settles with `settledWithError` carrying the engine's
