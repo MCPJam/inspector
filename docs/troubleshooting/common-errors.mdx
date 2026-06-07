@@ -21,19 +21,20 @@ Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: 
    Open a second terminal and run the same command you'd ask Inspector to run. If it exits or prints a stack trace, fix that first — Inspector can only attach to a server that stays alive.
 
    ```bash
-   # For STDIO servers
-   /Users/yourname/project/server.py
-   # or whatever the command is
+   # For STDIO servers — run the same command Inspector would run
+   python /Users/yourname/project/server.py
+   # or: uv run --directory /Users/yourname/project mcp.py
+   # or: npx -y @modelcontextprotocol/server-everything
 
    # For HTTP servers
    curl -i http://localhost:PORT/mcp
    ```
 
-   A clean stdio process should sit waiting on stdin; a healthy HTTP server should respond with `405` or `200` to a `GET` (not `Connection refused`).
+   A clean stdio process should sit waiting on stdin; a healthy HTTP server should respond with something other than `Connection refused` (the exact code varies — common responses are `405 Method Not Allowed` for `GET`, `406 Not Acceptable` if Accept headers are missing, or `400 Bad Request` if the server expects a session header).
 
 2. **Right port, right path?**
 
-   `ECONNREFUSED 127.0.0.1:5555` means **nothing is listening on that port** — typo, wrong port, or the server is on `0.0.0.0` but you typed `127.0.0.1` (or vice versa). `SSE error: Non-200 status code (404)` means the port is correct but the path is wrong: most MCP servers mount under `/mcp` or `/sse`, not `/`.
+   `ECONNREFUSED 127.0.0.1:5555` means **nothing is listening on that port** — typo, wrong port, or the server is bound to `127.0.0.1` only while you're calling it via a different hostname (or vice versa). `SSE error: Non-200 status code (404)` means the port is correct but the path is wrong: most MCP servers mount under `/mcp` or `/sse`, not `/`.
 
 3. **Right transport selected?**
 
