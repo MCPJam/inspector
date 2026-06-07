@@ -55,26 +55,17 @@
               "inspector/home",
               "inspector/clients",
               "inspector/projects",
-              {
-                "page": "inspector/protocol-versions",
-                "tag": "Preview"
-              }
+              "inspector/protocol-versions"
             ]
           },
           {
             "group": "MCP Apps",
             "icon": "layout-dashboard",
             "pages": [
-              {
-                "page": "inspector/playground",
-                "tag": "NEW"
-              },
+              "inspector/playground",
               "inspector/views",
               "inspector/evals",
-              {
-                "page": "inspector/host-templates",
-                "tag": "NEW"
-              }
+              "inspector/host-templates"
             ]
           },
           {
@@ -87,10 +78,7 @@
             "icon": "puzzle",
             "pages": [
               "inspector/tools-prompts-resources",
-              {
-                "page": "inspector/skills",
-                "tag": "NEW"
-              }
+              "inspector/skills"
             ]
           },
           {
