@@ -63,4 +63,39 @@ You should see your server show **Connected** with a green dot in the **Connect*
   <Card title="Projects" icon="folder" href="/inspector/projects">
     Group servers; share configuration with your team
   </Card>
+  <Card title="API keys" icon="key" href="/reference/api-keys">
+    The three things called "API key" in MCPJam (LLM provider key, `MCPJAM_API_KEY`, per-server bearer) and when you need each one.
+  </Card>
 </CardGroup>
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Does MCPJam need a database?" icon="database">
+    No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx` — none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are handled by the hosted backend; the Terminal and Desktop apps store config locally on disk.
+  </Accordion>
+  <Accordion title="How do I check which version of Inspector I'm running?" icon="tag">
+    All three installs (Web, Desktop, Terminal) show the running version in the **Settings** tab under **About**.
+
+    To see what the latest published version on npm is — useful for confirming an `@latest` pull actually moved you forward — run:
+
+    ```bash
+    npm view @mcpjam/inspector version
+    ```
+
+    The Desktop and Web apps update on their own. For the Terminal install, the `@latest` tag in `npx @mcpjam/inspector@latest` pulls the most recent release every run.
+  </Accordion>
+  <Accordion title="Can MCPJam auto-install MCP servers into my repo?" icon="package">
+    Not directly — MCPJam doesn't reach into your repo. The closest workflow is **Skills**: install the MCPJam CLI skill into a project so an agent working in that repo knows how to use MCP tools and call MCPJam against your servers. See [Skills](/inspector/skills).
+  </Accordion>
+  <Accordion title="Where are my files saved?" icon="folder">
+    It depends what you mean — the word covers three different things:
+
+    - **OAuth credentials** from `mcpjam login`: `~/.mcpjam/config.json`. Override per command with `--credentials-out`. See [CLI OAuth login](/cli/oauth-login).
+    - **Eval results**: uploaded to your MCPJam workspace via `MCPJAM_API_KEY`. See [Saving Results](/sdk/concepts/saving-results).
+    - **Inspector UI changes** (server config, client edits): persisted via the **Save** button in the project view. See [Inspector Views](/inspector/views).
+  </Accordion>
+  <Accordion title="How do I sign out of the hosted app?" icon="log-out">
+    Open the **account menu** at the bottom of the sidebar and pick **Sign out**. You'll be returned to the public app as a guest. See [Hosted App → Signing out](/hosted/overview#signing-out).
+  </Accordion>
+</AccordionGroup>
