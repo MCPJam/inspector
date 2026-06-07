@@ -356,15 +356,20 @@ describe("runAssistantTurn — eval contract", () => {
     expect(fetchBody.providerKey).toBe("byok_anthropic_prod");
   });
 
-  it("accepts selectedServerIds (engine consumes inspector-side for tool filtering)", async () => {
+  it("accepts selectedServerIds (engine consumes inspector-side for history scrubbing)", async () => {
     setupSuccessfulStream();
 
     // Eval pre-builds the tool set via `prepareChatV2` and passes it as
-    // `tools`. `selectedServerIds` is consumed inspector-side by the
-    // engine to filter the tool set before sending tool definitions to
-    // Convex — it does NOT appear in the request body. PR 3 will still
-    // pass it for parity with chat; assert the call succeeds with the
-    // option present.
+    // `tools`. Tool definitions sent to Convex come straight from that
+    // map via `serializeToolsForConvex(tools)`. `selectedServerIds` is
+    // a separate signal threaded into the engine for MCP-Apps /
+    // ChatGPT-Apps tool-result history scrubbing
+    // (`scrubMcpAppsToolResultsForBackend` /
+    // `scrubChatGPTAppsToolResultsForBackend` consume it before the
+    // messages are forwarded). It does NOT filter the tool set and does
+    // NOT appear in the request body. PR 3 will still pass it for
+    // parity with chat; assert the call succeeds with the option
+    // present.
     const result = await runAssistantTurn({
       messages: [{ role: "user", content: "Hi." }] as any,
       modelDefinition: baseModelDefinition,
