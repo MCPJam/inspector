@@ -1306,6 +1306,20 @@ const runIterationWithAiSdk = async ({
       // includes it for the UI), so we don't pass it separately to
       // streamText. `normalizeSystemPromptForProvider("")` returns
       // `undefined`, so the helper skips the `system:` field.
+      // PR 4b review fix (Cursor "Partial messages never mirrored" +
+      // Codex P2): the legacy `generateText` loop updated
+      // `activePartialResponseMessages` and `activeCompletedStepCount`
+      // from its own `onStepFinish`. The outer catch + the no-msg
+      // fallback in this loop still depend on those locals to persist
+      // partial transcripts when `consumeStream()` rejects mid-turn.
+      // Wire the helper's `onStepSnapshot` callback to mirror the
+      // helper's running `traceHistory` into the eval-side locals so
+      // mid-turn throws don't lose successful tool calls + assistant
+      // messages from the failed iteration. `traceHistory` starts as
+      // a copy of `messageHistory` and the helper appends step
+      // responses to it, so slicing from `promptInputLength` yields
+      // just this turn's accumulated response.
+      const promptInputLength = activePromptInputMessages.length;
       const handle = runDirectChatTurn({
         llmModel,
         modelId: test.model,
@@ -1338,17 +1352,23 @@ const runIterationWithAiSdk = async ({
             promptIndex,
           },
         },
+        traceEvents: {
+          onStepSnapshot: ({ traceHistory }) => {
+            activeCompletedStepCount += 1;
+            // The helper's `traceHistory` contains prompt input plus
+            // every step response it has appended so far. The
+            // post-prompt-input slice IS this turn's running response.
+            activePartialResponseMessages = traceHistory.slice(
+              promptInputLength,
+            ) as ModelMessage[];
+          },
+        },
       });
       // `runDirectChatTurn` exposes its internal traceContext so eval
       // can fold its spans into `recordedSpans` after each turn,
       // matching the per-turn cadence the old generateText path used
       // with its own `activeTraceCtx`.
       activeTraceCtx = handle.traceContext;
-      // The helper appends step-response messages into its own
-      // internal `traceHistory`; eval mirrors that into
-      // `activePartialResponseMessages` from the headless result so
-      // the catch path can persist a partial transcript on uncaught
-      // throw. Drained after `consumeDirectChatTurnHeadless`.
 
       const headless = await consumeDirectChatTurnHeadless(handle);
 
@@ -1412,6 +1432,15 @@ const runIterationWithAiSdk = async ({
             messages: promptResponseMessages,
           }),
         );
+        // PR 4b review fix (Cursor "Step error drops assistant
+        // transcript"): merge the partial response into
+        // `conversationMessages` so persisted iterations include
+        // whatever the model produced before the failure. The break
+        // short-circuits the normal merge below, so do it explicitly.
+        conversationMessages = [
+          ...activePromptInputMessages,
+          ...promptResponseMessages,
+        ];
         break;
       }
 
