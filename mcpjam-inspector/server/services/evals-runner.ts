@@ -1277,6 +1277,21 @@ const runIterationWithAiSdk = async ({
   // tool cases.
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
+  // PR 4d review fix (Codex P2 "Persist the resolved system prompt with
+  // eval traces"): chat ships the system via the helper's `system:`
+  // field, but eval's persistence path (`finishIteration` →
+  // `persistEvalTraceFanout`'s `appendEvalTurnTrace` payload) has no
+  // dedicated `systemPrompt` slot. Pre-4d, the system rode along as
+  // the first entry in `conversationMessages` and was naturally
+  // persisted. PR 4d dropped that push to align with chat's wire shape,
+  // and accidentally removed the only path the persistence layer had
+  // for capturing it. Hoist the resolved system prompt to outer scope
+  // so we can prepend it to the messages array AT PERSISTENCE TIME
+  // (not in `conversationMessages` — that stays system-free so the
+  // streamText `system:` field isn't double-sent). The persisted
+  // shape now matches pre-4d (system is the first message in
+  // `messages`) while the wire shape stays chat-aligned.
+  let enhancedSystemPromptForPersist: string | undefined = undefined;
 
   try {
     // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
@@ -1305,10 +1320,11 @@ const runIterationWithAiSdk = async ({
     // emit `""` would have double-sent the system. Match chat's shape —
     // `enhancedSystemPrompt` flows to `runDirectChatTurn` via the
     // `systemPrompt:` argument below; `conversationMessages` no longer
-    // carries a system message entry. The persisted transcript still
-    // shows the system because the helper assembles it via the
-    // `system:` field and the chatbox/eval persistence pipeline
-    // stamps `systemPrompt` as its own column.
+    // carries a system message entry. PR 4d review fix (Codex P2):
+    // hoist the resolved value so it can be prepended to the messages
+    // array at persistence time, since eval's wire shape to Convex
+    // (`appendEvalTurnTrace`) has no dedicated `systemPrompt` slot.
+    enhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
 
     const llmModel = createLlmModel(
       modelDefinition,
@@ -1606,12 +1622,25 @@ const runIterationWithAiSdk = async ({
       convexClient,
     });
 
+    // PR 4d review fix (Codex P2): prepend the resolved system prompt
+    // so persisted eval transcripts carry it. The streamText `system:`
+    // field already covered the wire shape to the model; this restores
+    // the pre-4d persistence shape (first message is `role: "system"`)
+    // for downstream consumers of `appendEvalTurnTrace.sessionMessages`
+    // and the legacy `testIteration.blob` fallback.
+    const persistedMessages: ModelMessage[] = enhancedSystemPromptForPersist
+      ? [
+          { role: "system", content: enhancedSystemPromptForPersist },
+          ...conversationMessages,
+        ]
+      : conversationMessages;
+
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage,
-      messages: conversationMessages,
+      messages: persistedMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -1720,6 +1749,20 @@ const runIterationWithAiSdk = async ({
       mcpClientManager,
       convexClient,
     });
+    // PR 4d review fix (Codex P2): same prefix as the success path — if
+    // `prepared` ran far enough to populate
+    // `enhancedSystemPromptForPersist`, surface the resolved system in
+    // the persisted failure transcript. Catches that fire BEFORE
+    // `prepareChatV2` returned leave the prefix empty (no system to
+    // persist anyway). Applied only in `runIterationWithAiSdk`; the
+    // streaming variant still pushes the system into
+    // `conversationMessages` itself (PR 5 territory).
+    const persistedFailMessages: ModelMessage[] = enhancedSystemPromptForPersist
+      ? [
+          { role: "system", content: enhancedSystemPromptForPersist },
+          ...failMessages,
+        ]
+      : failMessages;
 
     const failParams = {
       iterationId,
@@ -1730,7 +1773,7 @@ const runIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: failMessages,
+      messages: persistedFailMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3030,6 +3073,12 @@ const streamIterationWithAiSdk = async ({
   let activeCompletedStepCount = 0;
   let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
     null;
+  // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
+  // success + catch paths can prepend the resolved system prompt to
+  // the messages array. Mirrors `enhancedSystemPromptForPersist` in
+  // `runIterationWithAiSdk`. Empty when `prepareChatV2` throws before
+  // returning.
+  let streamEnhancedSystemPromptForPersist: string | undefined = undefined;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -3044,12 +3093,17 @@ const streamIterationWithAiSdk = async ({
       customProviders: modelRuntime.customProviders,
       priorMessages: [],
     });
-    if (prepared.enhancedSystemPrompt) {
-      conversationMessages.push({
-        role: "system",
-        content: prepared.enhancedSystemPrompt,
-      });
-    }
+    // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
+    // streamIterationWithAiSdk"): align the streaming local-BYOK runner
+    // with the non-stream variant's chat-aligned shape. Pre-fix this
+    // runner pushed the system into `conversationMessages` AND omitted
+    // `system:` on the `streamText({...})` call below, so a streamed
+    // eval and a non-stream eval of the same case produced different
+    // transcript shapes. Now the system flows via the dedicated
+    // `system:` field, the runner-side `conversationMessages` stays
+    // system-free, and persistence prepends the resolved value at write
+    // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
+    streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
 
     const llmModel = createLlmModel(
       modelDefinition,
@@ -3093,6 +3147,9 @@ const streamIterationWithAiSdk = async ({
       const result = streamText({
         model: llmModel,
         messages: activePromptInputMessages,
+        ...(prepared.enhancedSystemPrompt
+          ? { system: prepared.enhancedSystemPrompt }
+          : {}),
         tools: tracedTools,
         stopWhen: stepCountIs(20),
         ...(prepared.resolvedTemperature == null
@@ -3333,13 +3390,26 @@ const streamIterationWithAiSdk = async ({
       mcpClientManager,
       convexClient,
     });
+    // PR 4d review fix (CodeRabbit): prepend the resolved system at
+    // persistence time so the streamed eval's transcript matches the
+    // non-stream runner's shape (`role: "system"` first entry).
+    const persistedStreamMessages: ModelMessage[] =
+      streamEnhancedSystemPromptForPersist
+        ? [
+            {
+              role: "system",
+              content: streamEnhancedSystemPromptForPersist,
+            },
+            ...conversationMessages,
+          ]
+        : conversationMessages;
 
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage: usageFinal,
-      messages: conversationMessages,
+      messages: persistedStreamMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3471,6 +3541,20 @@ const streamIterationWithAiSdk = async ({
       details: errorDetails,
     });
 
+    // PR 4d review fix (CodeRabbit): mirror the non-stream runner — if
+    // `prepared` populated the resolved system prompt before the throw,
+    // prepend it to the persisted failure transcript.
+    const persistedStreamFailMessages: ModelMessage[] =
+      streamEnhancedSystemPromptForPersist
+        ? [
+            {
+              role: "system",
+              content: streamEnhancedSystemPromptForPersist,
+            },
+            ...failMessages,
+          ]
+        : failMessages;
+
     const failParams = {
       iterationId,
       passed: false,
@@ -3480,7 +3564,7 @@ const streamIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: failMessages,
+      messages: persistedStreamFailMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),

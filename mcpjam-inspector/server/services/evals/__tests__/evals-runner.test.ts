@@ -2508,34 +2508,160 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(streamTextCall.temperature).toBe(0.99);
     });
 
-    it("does NOT push the system message into conversationMessages anymore (drops PR 4b quirk)", async () => {
+    it("sends the system to streamText via system: field, not as a message in messageHistory", async () => {
       // PR 4b pushed the resolved system prompt as a `role: "system"`
-      // message into `conversationMessages` and passed `systemPrompt: ""`
-      // to runDirectChatTurn. PR 4d aligns with chat-v2 — system goes
-      // via the helper's `systemPrompt:` field, never as a message.
-      // Persisted transcript must NOT contain a `role: "system"` entry.
+      // message into the messageHistory passed to streamText. PR 4d
+      // aligns with chat-v2 — the system goes via streamText's
+      // dedicated `system:` field, NOT in the messages array.
+      // (The persisted transcript DOES carry the system as a
+      // first-message prefix; see the next test for that — applied at
+      // persistence time, not in the runner's `conversationMessages`.)
       await runWithSuiteHostConfig({
         systemPrompt: "Test system prompt",
       });
 
-      const noSystemRoleInPersistedMessages = (msgs: unknown): boolean => {
-        if (!Array.isArray(msgs)) return true;
-        return !msgs.some((m: any) => m?.role === "system");
+      const streamTextCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamTextCall).toBeDefined();
+      expect(streamTextCall.system).toBe("Test system prompt");
+      // No `role: "system"` entry in the messages array — that's chat's
+      // shape, and PR 4d adopts it for the wire layer.
+      const messageHistory = streamTextCall.messages as Array<{ role: string }>;
+      const hasSystemEntry = messageHistory.some((m) => m.role === "system");
+      expect(hasSystemEntry).toBe(false);
+    });
+
+    it("prepends the resolved system prompt to persisted messages (PR 4d review — Codex P2)", async () => {
+      // Codex P2 review fix: pre-4d the system rode along as the first
+      // entry in `conversationMessages` and was naturally persisted via
+      // the messages-array path. PR 4d dropped that push to align the
+      // streamText wire shape with chat-v2; persistence had no
+      // dedicated `systemPrompt` slot on `appendEvalTurnTrace`, so the
+      // resolved system prompt was lost from the persisted transcript.
+      //
+      // Fix: prepend the resolved value as a `role: "system"` message
+      // at PERSISTENCE TIME (not in `conversationMessages` — the wire
+      // shape stays chat-aligned, no double-send). This restores the
+      // pre-4d persistence shape exactly: first message is
+      // `role: "system"` with the resolved content.
+      await runWithSuiteHostConfig({
+        systemPrompt: "Resolved system prompt for persistence",
+      });
+
+      const hasSystemPrefix = (msgs: unknown): boolean => {
+        if (!Array.isArray(msgs) || msgs.length === 0) return false;
+        const first = msgs[0] as { role?: string; content?: unknown };
+        if (first?.role !== "system") return false;
+        if (typeof first.content === "string") {
+          return first.content === "Resolved system prompt for persistence";
+        }
+        if (Array.isArray(first.content)) {
+          return first.content.some(
+            (part: any) =>
+              part?.type === "text" &&
+              part.text === "Resolved system prompt for persistence",
+          );
+        }
+        return false;
       };
-      const allCallsLackSystemRole = convexClient.action.mock.calls.every(
+      const anyCallCarriesIt = convexClient.action.mock.calls.some((call) => {
+        const payload = call[1] as Record<string, unknown> | undefined;
+        if (!payload) return false;
+        if (hasSystemPrefix(payload.messages)) return true;
+        const turn = payload.turn as
+          | { sessionMessages?: unknown }
+          | undefined;
+        if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
+        return false;
+      });
+      expect(anyCallCarriesIt).toBe(true);
+    });
+
+    it("aligns streamIterationWithAiSdk with the chat wire shape (PR 4d review — CodeRabbit)", async () => {
+      // CodeRabbit Major review fix: pre-fix, the streaming runner
+      // pushed the system into `conversationMessages` AND omitted
+      // `system:` on streamText. A streamed eval of the same case
+      // produced a different transcript shape from the non-stream
+      // runner. Align: system flows via the dedicated `system:` field;
+      // wire-shape messages do NOT carry a `role: "system"` entry;
+      // persistence prepends the resolved system at write time.
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          messages: [{ role: "assistant", content: "Done" }],
+        }),
+      }));
+
+      await streamTestCase({
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 1,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-stream-sys",
+        },
+        tools: {},
+        selectedServers: [],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-stream-sys",
+        suiteId: "suite-1",
+        runId: null,
+        emit: () => {},
+        suiteHostConfig: {
+          systemPrompt: "Stream-runner suite default",
+        },
+      } as any);
+
+      const streamCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamCall).toBeDefined();
+      // Wire shape: `system:` carries the resolved value; messages
+      // array does NOT include a `role: "system"` entry.
+      expect(streamCall.system).toBe("Stream-runner suite default");
+      const wireMessages = streamCall.messages as Array<{ role: string }>;
+      expect(wireMessages.some((m) => m.role === "system")).toBe(false);
+
+      // Persistence shape: first message is the resolved system,
+      // matching the non-stream runner's prefix.
+      const hasSystemPrefix = (msgs: unknown): boolean => {
+        if (!Array.isArray(msgs) || msgs.length === 0) return false;
+        const first = msgs[0] as { role?: string; content?: unknown };
+        if (first?.role !== "system") return false;
+        if (typeof first.content === "string") {
+          return first.content === "Stream-runner suite default";
+        }
+        if (Array.isArray(first.content)) {
+          return first.content.some(
+            (part: any) =>
+              part?.type === "text" &&
+              part.text === "Stream-runner suite default",
+          );
+        }
+        return false;
+      };
+      const persistedCarriesIt = convexClient.action.mock.calls.some(
         (call) => {
           const payload = call[1] as Record<string, unknown> | undefined;
-          if (!payload) return true;
-          if (!noSystemRoleInPersistedMessages(payload.messages)) return false;
+          if (!payload) return false;
+          if (hasSystemPrefix(payload.messages)) return true;
           const turn = payload.turn as
             | { sessionMessages?: unknown }
             | undefined;
-          if (turn && !noSystemRoleInPersistedMessages(turn.sessionMessages))
-            return false;
-          return true;
+          if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
+          return false;
         },
       );
-      expect(allCallsLackSystemRole).toBe(true);
+      expect(persistedCarriesIt).toBe(true);
     });
   });
 });
