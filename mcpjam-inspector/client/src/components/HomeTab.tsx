@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
+import { Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
@@ -89,6 +90,17 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
     },
     [setSearchParams]
   );
+
+  const handleNewChat = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("session");
+        return next;
+      },
+      { replace: false }
+    );
+  }, [setSearchParams]);
   const { user } = useAuth();
   const convexUser = useQuery("users:getCurrentUser" as any) as
     | { name?: string }
@@ -166,6 +178,36 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
 
   const isLoading = data === undefined;
 
+  // PostHog/Attio-style chat takeover: when a session is active, the entire
+  // home screen *becomes* the conversation — the greeting, stats, and
+  // recommended cards drop out until the user starts a new chat.
+  if (sessionParam) {
+    return (
+      <div className="flex h-full flex-col bg-background">
+        <div className="flex items-center justify-end px-4 pt-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleNewChat}
+            className="h-8 gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+            <span>New chat</span>
+          </Button>
+        </div>
+        <McpjamAgentThread
+          sessionId={sessionParam}
+          projectId={projectId}
+          organizationId={organizationId}
+          surface="home"
+          variant="full"
+          className="flex-1 min-h-0"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex max-w-5xl flex-col gap-8 px-8 pb-20 pt-14">
@@ -182,29 +224,17 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
           </h1>
         </header>
 
-        {/* MCPJam Agent surface — hero composer, or inline thread when a
-            ?session=<id> URL param is present. The future bubble reuses
-            these same components without renaming. */}
-        {sessionParam ? (
-          <McpjamAgentThread
-            sessionId={sessionParam}
-            projectId={projectId}
-            organizationId={organizationId}
-            surface="home"
-          />
-        ) : (
-          <McpjamAgentHero
-            surface="home"
-            onSessionStart={handleSessionStart}
-            onResumeSession={handleResumeSession}
-            // The backend route requires `projectId`; without it, submit
-            // would 400. The hero's own model gate runs inside
-            // `useMcpjamAgentSession` on the thread side — the hero itself
-            // doesn't see the model, but `projectId` is the gate that
-            // matters at mint time.
-            ready={Boolean(projectId)}
-          />
-        )}
+        <McpjamAgentHero
+          surface="home"
+          onSessionStart={handleSessionStart}
+          onResumeSession={handleResumeSession}
+          // The backend route requires `projectId`; without it, submit
+          // would 400. The hero's own model gate runs inside
+          // `useMcpjamAgentSession` on the thread side — the hero itself
+          // doesn't see the model, but `projectId` is the gate that
+          // matters at mint time.
+          ready={Boolean(projectId)}
+        />
 
         {/* Slim stats — pills with dot separators */}
         <OrgStatsStrip

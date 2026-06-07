@@ -34,6 +34,12 @@ export interface McpjamAgentThreadProps {
   organizationId: string | null;
   /** Telemetry surface. */
   surface: string;
+  /**
+   * Visual mode. `"card"` (default) is the embedded rounded card used inside
+   * a wider page. `"full"` is the PostHog/Attio-style takeover: no border,
+   * fills the parent, composer pinned to the bottom.
+   */
+  variant?: "card" | "full";
   className?: string;
 }
 
@@ -42,6 +48,7 @@ export function McpjamAgentThread({
   projectId,
   organizationId,
   surface: _surface,
+  variant = "card",
   className,
 }: McpjamAgentThreadProps) {
   const session = useMcpjamAgentSession({
@@ -169,14 +176,24 @@ export function McpjamAgentThread({
     }
   }, [handleSubmit, isReady, session.hydrating, sessionId]);
 
+  const isFull = variant === "full";
+
   return (
     <div
       className={cn(
-        "flex min-h-[36rem] flex-col gap-4 rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
+        "flex flex-col gap-4",
+        isFull
+          ? "h-full"
+          : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
         className
       )}
     >
-      <div className="flex-1 overflow-y-auto">
+      <div
+        className={cn(
+          "flex-1 overflow-y-auto",
+          isFull && "mx-auto w-full max-w-3xl px-6 pt-6"
+        )}
+      >
         {session.hydrating ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -205,7 +222,10 @@ export function McpjamAgentThread({
 
       <form
         onSubmit={onFormSubmit}
-        className="relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow"
+        className={cn(
+          "relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow",
+          isFull && "mx-auto w-full max-w-3xl mb-6 px-2"
+        )}
       >
         <TextareaAutosize
           ref={textareaRef}
