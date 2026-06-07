@@ -182,6 +182,24 @@ export interface MCPJamStepFinishEvent {
     outputTokens?: number;
     totalTokens?: number;
   };
+  /**
+   * **Step SETTLED, not necessarily successful.** `onStepFinish` fires
+   * once per `processOneStep` return, regardless of outcome — including
+   * the non-OK HTTP / no-body / decode-error branches that emit an
+   * `error` UI chunk + failure trace event and return
+   * `didEmitFinish: false`. Callers that map this to a higher-level
+   * "step succeeded" SSE event (eval's `step_finish`) MUST gate on
+   * `settledWithError === false`, OR consume failure events from the
+   * UI/trace stream and treat `onStepFinish` as a settle-once
+   * notification.
+   *
+   * Marcelo's PR 5b-pre review caveat: if PR 5b wires this directly to
+   * eval `step_finish` SSE, failed backend steps would emit
+   * `step_finish` where the pre-collapse runner only emitted error /
+   * failure trace. Surfacing the settle state on the event lets the
+   * wire-up decide.
+   */
+  settledWithError: boolean;
 }
 
 export interface MCPJamHandlerOptions {
@@ -2366,6 +2384,17 @@ export async function runChatEngineLoop(
           // callbacks' shape.
           if (onStepFinish) {
             try {
+              // Marcelo's PR 5b-pre review caveat: the engine's
+              // failure branches return `shouldContinue: false` +
+              // `didEmitFinish: false` after emitting an error UI
+              // chunk. We surface this on `settledWithError` so PR 5b's
+              // wire-up can decide whether to map to eval's
+              // `step_finish` SSE event (success-only) or treat the
+              // settle as terminal. The shape: a step that produced a
+              // UI `finish` chunk OR `shouldContinue: true` is a
+              // success; the only failure shape today is
+              // `shouldContinue: false && !didEmitFinish`.
+              const settledWithError = !didEmitFinish && !shouldContinue;
               onStepFinish({
                 stepIndex: effectiveSteps() - 1,
                 promptIndex: traceTurn.promptIndex,
@@ -2376,6 +2405,7 @@ export async function runChatEngineLoop(
                       totalTokens: traceTurn.turnUsage.totalTokens,
                     }
                   : undefined,
+                settledWithError,
               });
             } catch (error) {
               logger.warn(

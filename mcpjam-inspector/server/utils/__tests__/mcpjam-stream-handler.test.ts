@@ -1828,8 +1828,19 @@ describe("mcpjam-stream-handler", () => {
       // derives per-step deltas across successive invocations.
       const first = onStepFinish.mock.calls[0]?.[0];
       const second = onStepFinish.mock.calls[1]?.[0];
-      expect(first).toMatchObject({ stepIndex: 0, promptIndex: 0 });
-      expect(second).toMatchObject({ stepIndex: 1, promptIndex: 0 });
+      expect(first).toMatchObject({
+        stepIndex: 0,
+        promptIndex: 0,
+        // PR 5b-pre review caveat (Marcelo): both successful steps
+        // settle without error. PR 5b should rely on this flag to
+        // gate eval `step_finish` SSE event emission.
+        settledWithError: false,
+      });
+      expect(second).toMatchObject({
+        stepIndex: 1,
+        promptIndex: 0,
+        settledWithError: false,
+      });
       // Engine aggregates usage across steps; the second call sees the
       // sum (3+1, 4+2, 7+3).
       expect(second.turnUsage).toMatchObject({
@@ -1837,6 +1848,55 @@ describe("mcpjam-stream-handler", () => {
         outputTokens: 6,
         totalTokens: 10,
       });
+    });
+
+    it("fires `onStepFinish` with `settledWithError: true` on backend failure paths (PR 5b-pre review — Marcelo caveat)", async () => {
+      // Marcelo's review caveat: `onStepFinish` fires after every
+      // `processOneStep` return — including the non-OK / no-body
+      // branches at mcpjam-stream-handler.ts:1558. Those return
+      // `didEmitFinish: false` after writing an error UI chunk. If
+      // PR 5b maps `onStepFinish` directly to eval `step_finish` SSE,
+      // failed backend steps would emit `step_finish` where the
+      // pre-collapse runner only emitted error/failure trace.
+      //
+      // Fix is "step settled, not step succeeded" semantics: the engine
+      // surfaces the settle state via `settledWithError` so PR 5b's
+      // wire-up gates correctly. This test locks the failure shape:
+      // a non-OK HTTP response from Convex MUST fire `onStepFinish`
+      // exactly once with `settledWithError: true`.
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response("upstream broke", {
+          status: 500,
+          statusText: "Internal Server Error",
+        }),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onStepFinish = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Fail me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onStepFinish,
+      });
+
+      await lastExecution;
+
+      // Failure step fires the callback once. `settledWithError: true`
+      // signals to PR 5b's wire-up to NOT emit eval `step_finish` SSE.
+      expect(onStepFinish).toHaveBeenCalledTimes(1);
+      expect(onStepFinish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stepIndex: 0,
+          promptIndex: 0,
+          settledWithError: true,
+        }),
+      );
     });
 
     it("fires `onToolResult` for denied tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
