@@ -25,6 +25,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
+import { MarkdownLinkBaseProvider } from "@/components/chat-v2/thread/memomized-markdown";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
 import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
@@ -347,8 +348,9 @@ export function McpjamAgentThread({
   }
 
   return (
-    <ChatboxHostStyleProvider value="mcpjam">
-      <ChatboxHostThemeProvider value={themeMode}>
+    <MarkdownLinkBaseProvider base="https://docs.mcpjam.com">
+      <ChatboxHostStyleProvider value="mcpjam">
+        <ChatboxHostThemeProvider value={themeMode}>
         <div
           className={cn(
             "chatbox-host-shell flex flex-col gap-4 min-h-0",
@@ -373,7 +375,8 @@ export function McpjamAgentThread({
             </p>
           )}
         </div>
-      </ChatboxHostThemeProvider>
-    </ChatboxHostStyleProvider>
+        </ChatboxHostThemeProvider>
+      </ChatboxHostStyleProvider>
+    </MarkdownLinkBaseProvider>
   );
 }
