@@ -149,6 +149,24 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       },
     });
     streamTextMock.mockReset();
+    // PR 4b of the engine consolidation: `runIterationWithAiSdk` now
+    // drives `runDirectChatTurn` (which calls `streamText`). Provide a
+    // default streamText return shape so suite-style tests using
+    // `runQuickTestCase()` resolve cleanly.
+    streamTextMock.mockReturnValue({
+      consumeStream: async () => {},
+      response: Promise.resolve({
+        modelId: "gpt-5-mini",
+        messages: [{ role: "assistant", content: "Done" }],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      }),
+      finishReason: Promise.resolve("stop"),
+    });
   });
 
   afterEach(() => {
@@ -475,8 +493,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   it("does not throw from non-streaming onStepFinish and records tokens once", async () => {
-    generateTextMock.mockImplementationOnce(async (options: any) => {
-      await options.onStepFinish?.({
+    // PR 4b: local-BYOK path now drives `streamText` via `runDirectChatTurn`.
+    // `onStepFinish` still fires once per step; the terminal totals come
+    // from `result.totalUsage`, not from each step.
+    streamTextMock.mockImplementationOnce((options: any) => {
+      void options.onStepFinish?.({
         usage: {
           inputTokens: 4,
           outputTokens: 6,
@@ -488,16 +509,18 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
 
       return {
-        response: {
+        consumeStream: async () => {},
+        response: Promise.resolve({
           modelId: "gpt-5-mini",
           messages: [{ role: "assistant", content: "Done" }],
-        },
-        steps: [],
-        usage: {
+        }),
+        steps: Promise.resolve([]),
+        totalUsage: Promise.resolve({
           inputTokens: 4,
           outputTokens: 6,
           totalTokens: 10,
-        },
+        }),
+        finishReason: Promise.resolve("stop"),
       };
     });
 
@@ -1100,9 +1123,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       );
       expect(payload.iterationId).toBe("iter-failed-setup");
 
-      // The runner must NOT have called generateText — the failure happens
-      // before any model invocation.
+      // The runner must NOT have called the model driver — the failure
+      // happens before any model invocation. PR 4b swapped the local-BYOK
+      // path from `generateText` to `streamText` (via `runDirectChatTurn`);
+      // assert against both so a future regression that re-introduces
+      // either driver gets caught.
       expect(generateTextMock).not.toHaveBeenCalled();
+      expect(streamTextMock).not.toHaveBeenCalled();
     } finally {
       prepareSpy.mockRestore();
     }
@@ -2037,5 +2064,138 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     } finally {
       runAssistantTurnSpy.mockRestore();
     }
+  });
+
+  it("records iteration failure when streamText returns no new messages (PR 4b)", async () => {
+    // PR 4b invariant (mirror of PR 3 "no-new-messages → cycle failure"):
+    // the local-BYOK driver `streamText` (via runDirectChatTurn) can finish
+    // with `response.messages` empty when the SDK silently swallows a
+    // stream-level failure. The PR 4b loop must detect this and set
+    // `iterationError`, instead of persisting a "passed" iteration with
+    // zero output.
+    streamTextMock.mockReturnValueOnce({
+      consumeStream: async () => {},
+      response: Promise.resolve({
+        modelId: "gpt-4-turbo",
+        messages: [],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+      }),
+      finishReason: Promise.resolve("stop"),
+    });
+
+    await runQuickTestCase();
+
+    const updateCall = convexClient.action.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestIteration",
+    );
+    expect(updateCall).toBeDefined();
+    const payload = updateCall![1] as Record<string, unknown>;
+    expect(payload.error).toEqual(
+      expect.stringContaining("Stream returned no content"),
+    );
+  });
+
+  it("persists the failing turn's user prompt for the local-BYOK path (PR 4b)", async () => {
+    // PR 4b invariant (mirror of PR 3 round 2 "Failed turn omits user
+    // transcript"): the user prompt is pushed to `conversationMessages`
+    // BEFORE the runDirectChatTurn call so a stream-level failure still
+    // surfaces the user message in the persisted transcript. Without
+    // this, the suite UI shows an empty failed iteration that's
+    // unactionable.
+    streamTextMock.mockReturnValueOnce({
+      consumeStream: async () => {},
+      response: Promise.resolve({
+        modelId: "gpt-4-turbo",
+        messages: [],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+      }),
+      finishReason: Promise.resolve("stop"),
+    });
+
+    await runQuickTestCase();
+
+    // The PR-2 fanout splits the iteration across multiple actions
+    // (`appendEvalTurnTrace`, `updateTestIteration`, …). The user prompt
+    // can land in `payload.messages` on `updateTestIteration` or in
+    // `turn.sessionMessages` on `appendEvalTurnTrace`. Search both so
+    // this regression catches the prompt in either location.
+    const containsUserHello = (msgs: unknown): boolean => {
+      if (!Array.isArray(msgs)) return false;
+      return msgs.some((m: any) => {
+        if (m?.role !== "user") return false;
+        if (typeof m.content === "string") return m.content === "Hello";
+        if (Array.isArray(m.content)) {
+          return m.content.some(
+            (part: any) =>
+              part?.type === "text" && part.text === "Hello",
+          );
+        }
+        return false;
+      });
+    };
+    const anyCallHasIt = convexClient.action.mock.calls.some((call) => {
+      const payload = call[1] as Record<string, unknown> | undefined;
+      if (!payload) return false;
+      if (containsUserHello(payload.messages)) return true;
+      const turn = payload.turn as
+        | { sessionMessages?: unknown }
+        | undefined;
+      if (turn && containsUserHello(turn.sessionMessages)) return true;
+      return false;
+    });
+    expect(anyCallHasIt).toBe(true);
+  });
+
+  it("does not record an iteration when the run is cancelled before the local-BYOK turn (PR 4b)", async () => {
+    // PR 4b invariant (mirror of PR 3 "Abort no longer skips
+    // persistence"): when cancellation lands before the local-BYOK
+    // driver runs, the runner must NOT persist the iteration. The
+    // mechanism today reads `run.status === "cancelled"` from the
+    // pre-iteration Convex query; this test exercises that path.
+    convexClient.query.mockResolvedValueOnce({ status: "cancelled" });
+    convexClient.query.mockResolvedValue({ status: "cancelled" });
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-cancel-1",
+      config: {
+        tests: [
+          {
+            title: "Aborted",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-abort",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-abort",
+    });
+
+    const updateCalls = convexClient.action.mock.calls.filter(
+      (c) => c[0] === "testSuites:updateTestIteration",
+    );
+    expect(updateCalls.length).toBe(0);
   });
 });

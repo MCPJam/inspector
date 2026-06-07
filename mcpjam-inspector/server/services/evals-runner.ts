@@ -1,5 +1,4 @@
 import {
-  generateText,
   streamText,
   type ModelMessage,
   type Tool as AiTool,
@@ -29,6 +28,10 @@ import {
   type BaseUrls,
   type CustomProviderConfig,
 } from "../utils/chat-helpers";
+import {
+  consumeDirectChatTurnHeadless,
+  runDirectChatTurn,
+} from "../utils/direct-chat-turn";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
@@ -1211,6 +1214,17 @@ const runIterationWithAiSdk = async ({
   let activeCompletedStepCount = 0;
   let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
     null;
+  // PR 4b of the engine consolidation: caller-side failure detection.
+  // `runDirectChatTurn` can return cleanly with empty response messages or
+  // a non-tool error span when the AI SDK silently swallows a step failure.
+  // Capturing the error into `iterationError` lets `finishParams` record
+  // the failure via `status:"completed"` + `error` (mirrors the PR 3
+  // backend-loop shape). The post-loop verdict gate
+  // (`finalizePassedForEval`) also reads this so a failed cycle can't
+  // sneak through as `passed:true` on negative tests / zero-expected
+  // tool cases.
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
 
   try {
     // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
@@ -1252,37 +1266,64 @@ const runIterationWithAiSdk = async ({
       );
     }
 
+    // PR 4b helper: abort happened during the cleanup window between the
+    // pre-turn cancellation check and `consumeStream()`. Mirrors PR 3's
+    // backend-path cancellation shape and the closed #2458's local-BYOK
+    // shape: drop the iteration entirely (no record).
+    const localIsAborted = () => abortSignal?.aborted === true;
+    const returnLocalCancelled = () => ({
+      evaluation: evaluateMultiTurnResults(
+        promptTurns,
+        toolsCalledByPrompt,
+        test.isNegativeTest,
+        test.matchOptions,
+      ),
+      iterationId: undefined,
+    });
+
     for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+      if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
-      activePromptInputMessages = [
-        ...conversationMessages,
-        { role: "user", content: promptTurn.prompt },
-      ];
+      // PR 4b invariant (carried from closed #2458, originally PR 3 round 2):
+      // push the user prompt to `conversationMessages` BEFORE the driver
+      // call so a failed turn still records the prompt in the persisted
+      // transcript. Without this, suite UI shows an empty failed
+      // iteration that's unactionable.
+      conversationMessages.push({ role: "user", content: promptTurn.prompt });
+      activePromptInputMessages = [...conversationMessages];
       activePartialResponseMessages = [];
       activeCompletedStepCount = 0;
-      activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
-      const tracedTools = wrapToolSetForEvalTrace(
-        prepared.allTools,
-        activeTraceCtx,
-        promptIndex,
-      );
 
-      const result = await generateText({
-        model: llmModel,
-        messages: activePromptInputMessages,
-        tools: tracedTools,
-        stopWhen: stepCountIs(20),
+      // PR 4b: drive `runDirectChatTurn` headless (no SSE — eval is
+      // batch). The helper owns the streamText config, span recording,
+      // abort wiring, progressive-discovery gating, and prepareStep.
+      // Eval owns failure detection + persistence + grading, layered
+      // on top of `consumeDirectChatTurnHeadless`'s assembled return.
+      //
+      // `systemPrompt: ""` is intentional: eval keeps the system message
+      // inside `conversationMessages` (so the persisted transcript still
+      // includes it for the UI), so we don't pass it separately to
+      // streamText. `normalizeSystemPromptForProvider("")` returns
+      // `undefined`, so the helper skips the `system:` field.
+      const handle = runDirectChatTurn({
+        llmModel,
+        modelId: test.model,
+        messageHistory: activePromptInputMessages,
+        systemPrompt: "",
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
+        tools: prepared.allTools,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+        ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
           : {}),
-        ...(abortSignal ? { abortSignal } : {}),
-        experimental_telemetry: {
+        experimentalTelemetry: {
           isEnabled: true,
-          functionId: "evals.generateText",
+          functionId: "evals.streamText",
           recordInputs: false,
           recordOutputs: false,
           metadata: {
@@ -1297,69 +1338,85 @@ const runIterationWithAiSdk = async ({
             promptIndex,
           },
         },
-        prepareStep: ({ stepNumber }) => {
-          registerAiSdkPrepareStep(activeTraceCtx!, stepNumber, {
-            modelId: test.model,
-            promptIndex,
-          });
-          return undefined;
-        },
-        onStepFinish: async (step) => {
-          activeCompletedStepCount += 1;
-          const stepFinishedAt = Date.now();
-          const responseMessages = step.response?.messages ?? [];
-          const responseMessageCountBeforeAppend =
-            activePartialResponseMessages.length;
-          const messageStartIndex =
-            responseMessages.length > 0
-              ? activePromptInputMessages.length +
-                responseMessageCountBeforeAppend
-              : undefined;
-          appendDedupedModelMessages(
-            activePartialResponseMessages,
-            responseMessages as ModelMessage[],
-          );
-          const appendedMessageCount =
-            activePartialResponseMessages.length -
-            responseMessageCountBeforeAppend;
-          const messageEndIndex =
-            messageStartIndex != null && appendedMessageCount > 0
-              ? messageStartIndex + appendedMessageCount - 1
-              : undefined;
-          emitAiSdkOnStepFinish(activeTraceCtx!, stepFinishedAt, {
-            modelId: step.response?.modelId ?? test.model,
-            inputTokens: step.usage?.inputTokens,
-            outputTokens: step.usage?.outputTokens,
-            totalTokens: step.usage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-            status: "ok",
-          });
-        },
-        onFinish: async () => {
-          /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
-        },
       });
+      // `runDirectChatTurn` exposes its internal traceContext so eval
+      // can fold its spans into `recordedSpans` after each turn,
+      // matching the per-turn cadence the old generateText path used
+      // with its own `activeTraceCtx`.
+      activeTraceCtx = handle.traceContext;
+      // The helper appends step-response messages into its own
+      // internal `traceHistory`; eval mirrors that into
+      // `activePartialResponseMessages` from the headless result so
+      // the catch path can persist a partial transcript on uncaught
+      // throw. Drained after `consumeDirectChatTurnHeadless`.
 
-      const finalMessagesRaw = result.response?.messages as
-        | ModelMessage[]
-        | undefined;
+      const headless = await consumeDirectChatTurnHeadless(handle);
+
+      // PR 4b invariant (carried from closed #2458, originally PR 3
+      // "Abort no longer skips persistence"): streamText can swallow
+      // AbortError silently. `handle.isAborted()` is also reflected in
+      // `headless.aborted`; check the outer signal here too in case
+      // the abort fired between consume and check.
+      if (headless.aborted || localIsAborted()) {
+        logger.debug(
+          "[evals] local-BYOK iteration aborted mid-turn; skipping record",
+        );
+        return returnLocalCancelled();
+      }
+
       const promptResponseMessages =
-        finalMessagesRaw && finalMessagesRaw.length > 0
-          ? finalMessagesRaw
+        headless.messages.length > 0
+          ? headless.messages
           : activePartialResponseMessages;
 
       if (activeTraceCtx.recordedSpans.length > 0) {
         patchAiSdkRecordedSpansMessageRangesFromSteps(
           activeTraceCtx.recordedSpans,
           activePromptInputMessages.length,
-          result.steps,
+          headless.steps,
           promptIndex,
         );
       }
 
+      // PR 4b failure-detection shape (mirrors PR 3 backend-path):
+      //
+      //  (a) No new messages → driver returned nothing (network failure
+      //      that fell through, model returned empty, …).
+      //  (b) Non-tool error span captured during the run (LLM step
+      //      failure, scrub failure, …). Tool error spans
+      //      (category "tool") flow through the existing
+      //      `failOnToolError` gate below — DON'T treat them as cycle
+      //      failures here.
+      if (promptResponseMessages.length === 0) {
+        iterationError =
+          "Stream returned no content (local-BYOK driver failed)";
+        logger.error(
+          "[evals] streamText returned no new messages this turn; treating as cycle failure",
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push([]);
+        break;
+      }
+      const stepErrorSpan = activeTraceCtx.recordedSpans.find(
+        (span) => span.status === "error" && span.category !== "tool",
+      );
+      if (stepErrorSpan) {
+        iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+        logger.error(
+          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push(
+          extractToolCallsFromConversation({
+            steps: headless.steps,
+            messages: promptResponseMessages,
+          }),
+        );
+        break;
+      }
+
       const promptToolsCalled = extractToolCallsFromConversation({
-        steps: result.steps,
+        steps: headless.steps,
         messages: promptResponseMessages,
       });
       toolsCalledByPrompt.push(promptToolsCalled);
@@ -1371,12 +1428,14 @@ const runIterationWithAiSdk = async ({
       ];
 
       accumulatedUsage.inputTokens =
-        (accumulatedUsage.inputTokens ?? 0) + (result.usage?.inputTokens ?? 0);
+        (accumulatedUsage.inputTokens ?? 0) +
+        (headless.totalUsage?.inputTokens ?? 0);
       accumulatedUsage.outputTokens =
         (accumulatedUsage.outputTokens ?? 0) +
-        (result.usage?.outputTokens ?? 0);
+        (headless.totalUsage?.outputTokens ?? 0);
       accumulatedUsage.totalTokens =
-        (accumulatedUsage.totalTokens ?? 0) + (result.usage?.totalTokens ?? 0);
+        (accumulatedUsage.totalTokens ?? 0) +
+        (headless.totalUsage?.totalTokens ?? 0);
 
       activeTraceCtx = null;
       activePromptInputMessages = [];
@@ -1420,6 +1479,12 @@ const runIterationWithAiSdk = async ({
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
+      // PR 4b (mirrors PR 3 invariant): if the per-turn loop set
+      // `iterationError` via the failure-detection branch (no new
+      // messages, non-tool error span), feed it to the gate so a
+      // failed cycle doesn't sneak through as a verdict pass on
+      // negative tests / zero-expected-tool cases.
+      iterationError,
       failOnToolError,
       predicateResults,
     });
@@ -1450,6 +1515,8 @@ const runIterationWithAiSdk = async ({
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
+      ...(iterationError ? { error: iterationError } : {}),
+      ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
       resultSource: "reported" as const,
       metadata: {
         ...iterationMetadataBase,
