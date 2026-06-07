@@ -20,6 +20,12 @@ vi.mock("@/hooks/usePaymentsHistory", () => ({
   usePaymentsHistory: () => hookState,
 }));
 
+// Invoices come from a separate Stripe-backed hook; these tests cover the
+// top-up path, so stub it empty (its own behavior is exercised elsewhere).
+vi.mock("@/hooks/useInvoiceHistory", () => ({
+  useInvoiceHistory: () => ({ entries: [], isLoading: false, error: null }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: captureMock }),
 }));
@@ -220,7 +226,7 @@ describe("PaymentsHistorySection", () => {
       );
       expect(screen.getAllByText("Refunded")).toHaveLength(2);
       // Must not also read as Succeeded.
-      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+      expect(screen.queryByText("Paid")).not.toBeInTheDocument();
     });
 
     it("renders a Partially refunded badge with a reversed-amount tooltip", () => {
@@ -248,7 +254,7 @@ describe("PaymentsHistorySection", () => {
         })
       );
       expect(screen.getAllByText("Disputed")).toHaveLength(2);
-      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+      expect(screen.queryByText("Paid")).not.toBeInTheDocument();
     });
 
     it("renders a seat refund row without a receipt link", () => {

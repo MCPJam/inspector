@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -22,14 +22,29 @@ import {
   usePaymentsHistory,
   type PaymentHistoryEntry,
 } from "@/hooks/usePaymentsHistory";
+import {
+  useInvoiceHistory,
+  type InvoiceHistoryEntry,
+} from "@/hooks/useInvoiceHistory";
 
-const formatUsd = (cents: number): string => {
+const formatUsd = (cents: number, currency = "usd"): string => {
   const sign = cents < 0 ? "-" : "";
-  const dollars = Math.abs(cents) / 100;
-  const formatted = Number.isInteger(dollars)
-    ? `$${dollars}`
-    : `$${dollars.toFixed(2)}`;
-  return `${sign}${formatted}`;
+  const absoluteCents = Math.abs(cents);
+  if (currency.toLowerCase() === "usd") {
+    const dollars = absoluteCents / 100;
+    const formatted = Number.isInteger(dollars)
+      ? `$${dollars}`
+      : `$${dollars.toFixed(2)}`;
+    return `${sign}${formatted}`;
+  }
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: currency.toUpperCase(),
+    }).format(cents / 100);
+  } catch {
+    return `${sign}$${(absoluteCents / 100).toFixed(2)}`;
+  }
 };
 
 const formatDate = (epochMs: number): string => {
@@ -51,37 +66,80 @@ function bucketEntryCount(count: number): string {
   return "20+";
 }
 
+// One unified history row: either a credit top-up (from our ledger) or a Stripe
+// invoice (subscription charge + mid-cycle seat prorations). Top-ups and
+// invoices are distinct Stripe objects, so there's no double-counting.
+type BillingRow =
+  | { kind: "topup"; date: number; topup: PaymentHistoryEntry }
+  | { kind: "invoice"; date: number; invoice: InvoiceHistoryEntry };
+
 export function PaymentsHistorySection({
   organizationId,
   canViewHistory = false,
+  canViewInvoices = false,
 }: {
   organizationId?: string | null;
+  /** Credit top-ups (reactive query). Gated on credit-manage rights. */
   canViewHistory?: boolean;
+  /** Stripe invoices (on-demand action). Gated on billing-manage (owner). */
+  canViewInvoices?: boolean;
 }) {
-  const { entries, isLoading } = usePaymentsHistory(
+  const { entries: topups, isLoading: topupsLoading } = usePaymentsHistory(
     canViewHistory ? organizationId : null
   );
+  const {
+    entries: invoices,
+    upcoming,
+    isLoading: invoicesLoading,
+  } = useInvoiceHistory(canViewInvoices ? organizationId : null);
   const posthog = usePostHog();
   const viewedRef = useRef(false);
 
-  const safeEntries = entries ?? [];
+  const rows = useMemo<BillingRow[]>(() => {
+    const merged: BillingRow[] = [
+      ...(topups ?? []).map(
+        (e): BillingRow => ({ kind: "topup", date: e.occurredAt, topup: e })
+      ),
+      ...(invoices ?? []).map(
+        (inv): BillingRow => ({
+          kind: "invoice",
+          date: inv.createdAt,
+          invoice: inv,
+        })
+      ),
+    ];
+    merged.sort((a, b) => b.date - a.date);
+    // Pin the projected next invoice to the very top.
+    if (upcoming) {
+      merged.unshift({
+        kind: "invoice",
+        date: upcoming.createdAt,
+        invoice: upcoming,
+      });
+    }
+    return merged;
+  }, [topups, invoices, upcoming]);
 
-  // Fire the view event once per mount when entries first load and aren't
+  const isLoading =
+    (canViewHistory && topupsLoading) || (canViewInvoices && invoicesLoading);
+
+  // Fire the (top-up) view event once per mount when rows first load and aren't
   // empty. Ref guard defeats StrictMode double-mount and the auth-resolve
   // re-render that flips isLoading false.
   useEffect(() => {
     if (viewedRef.current) return;
     if (isLoading) return;
-    if (safeEntries.length === 0) return;
+    if (rows.length === 0) return;
     viewedRef.current = true;
+    const topupList = topups ?? [];
     posthog?.capture("credit_topup_history_viewed", {
-      entry_count_bucket: bucketEntryCount(safeEntries.length),
-      has_failed: safeEntries.some((e) => e.status === "failed"),
-      has_pending: safeEntries.some((e) => e.status === "pending"),
+      entry_count_bucket: bucketEntryCount(topupList.length),
+      has_failed: topupList.some((e) => e.status === "failed"),
+      has_pending: topupList.some((e) => e.status === "pending"),
     });
-  }, [isLoading, posthog, safeEntries]);
+  }, [isLoading, posthog, rows, topups]);
 
-  if (!canViewHistory) return null;
+  if (!canViewHistory && !canViewInvoices) return null;
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">
@@ -91,22 +149,21 @@ export function PaymentsHistorySection({
         </div>
         {isLoading ? (
           <LoadingRows />
-        ) : safeEntries.length === 0 ? (
+        ) : rows.length === 0 ? (
           <EmptyState />
         ) : (
-          <PaymentsTable entries={safeEntries} />
+          <PaymentsTable rows={rows} />
         )}
       </CardContent>
     </Card>
   );
 }
 
-function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
+function PaymentsTable({ rows }: { rows: BillingRow[] }) {
   return (
     <div data-testid="payments-history-table">
-      {/* Desktop: real table at sm+. Cap visible height at ~5 rows; older
-       * rows scroll inside the card so the section never balloons even at
-       * the 50-row server cap. */}
+      {/* Desktop: real table at sm+. Cap visible height; older rows scroll
+       * inside the card so the section never balloons. */}
       <div className="hidden sm:block max-h-[280px] overflow-y-auto rounded-md border border-border/40">
         <Table>
           <TableHeader className="sticky top-0 bg-background">
@@ -120,42 +177,144 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {entries.map((entry) => (
-              <TableRow key={entry.sessionId}>
-                <TableCell className="whitespace-nowrap text-sm">
-                  {formatDate(entry.occurredAt)}
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                  {formatUsd(entry.pricePaidCents)}
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-sm">
-                  {entry.displayCredits}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {entry.details}
-                </TableCell>
-                <TableCell>
-                  <StatusBadge entry={entry} />
-                </TableCell>
-                <TableCell className="text-right">
-                  <ReceiptCell entry={entry} />
-                </TableCell>
-              </TableRow>
-            ))}
+            {rows.map((row) =>
+              row.kind === "topup" ? (
+                <TopupTableRow
+                  key={`t_${row.topup.sessionId}`}
+                  entry={row.topup}
+                />
+              ) : (
+                <InvoiceTableRow
+                  key={`i_${row.invoice.id}`}
+                  invoice={row.invoice}
+                />
+              )
+            )}
           </TableBody>
         </Table>
       </div>
       {/* Mobile: stacked rows. Same height cap as desktop. */}
       <div className="flex flex-col gap-3 sm:hidden max-h-[400px] overflow-y-auto">
-        {entries.map((entry) => (
-          <MobileRow key={entry.sessionId} entry={entry} />
-        ))}
+        {rows.map((row) =>
+          row.kind === "topup" ? (
+            <TopupMobileRow
+              key={`tm_${row.topup.sessionId}`}
+              entry={row.topup}
+            />
+          ) : (
+            <InvoiceMobileRow
+              key={`im_${row.invoice.id}`}
+              invoice={row.invoice}
+            />
+          )
+        )}
       </div>
     </div>
   );
 }
 
-function MobileRow({ entry }: { entry: PaymentHistoryEntry }) {
+function TopupTableRow({ entry }: { entry: PaymentHistoryEntry }) {
+  return (
+    <TableRow>
+      <TableCell className="whitespace-nowrap text-sm">
+        {formatDate(entry.occurredAt)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-sm tabular-nums">
+        {formatUsd(entry.pricePaidCents)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-sm">
+        {entry.displayCredits}
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">
+        {entry.details}
+      </TableCell>
+      <TableCell>
+        <StatusBadge entry={entry} />
+      </TableCell>
+      <TableCell className="text-right">
+        <ReceiptCell entry={entry} />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function invoiceAmountCents(invoice: InvoiceHistoryEntry): number {
+  return typeof invoice.totalCents === "number"
+    ? invoice.totalCents
+    : invoice.amountPaidCents || invoice.amountDueCents;
+}
+
+function InvoiceTableRow({ invoice }: { invoice: InvoiceHistoryEntry }) {
+  const amount = invoiceAmountCents(invoice);
+  return (
+    <TableRow>
+      <TableCell className="whitespace-nowrap align-top text-sm">
+        {formatDate(invoice.createdAt)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap align-top text-sm tabular-nums">
+        {formatUsd(amount, invoice.currency)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap align-top text-sm text-muted-foreground">
+        —
+      </TableCell>
+      <TableCell className="align-top text-sm">
+        <InvoiceLines invoice={invoice} />
+      </TableCell>
+      <TableCell className="align-top">
+        <InvoiceStatusBadge status={invoice.status} />
+      </TableCell>
+      <TableCell className="text-right align-top">
+        <InvoiceReceiptCell invoice={invoice} />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+// Stripe writes plan lines verbosely, e.g. "1 × MCPJam Team (at $360.00 / year)".
+// Keep the quantity, drop the "(at $X / interval)" parenthetical, and surface
+// the cadence as a clean word.
+function cleanLineDescription(desc: string): string {
+  const cadence = /\/\s*year/i.test(desc)
+    ? " · Annual"
+    : /\/\s*month/i.test(desc)
+    ? " · Monthly"
+    : "";
+  // Keep the "N × " quantity prefix (it shows how many seats are billed); only
+  // drop the verbose "(at $X / interval)" pricing parenthetical.
+  const name = desc.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  return `${name}${cadence}`;
+}
+
+function InvoiceLines({ invoice }: { invoice: InvoiceHistoryEntry }) {
+  if (invoice.lines.length === 0) {
+    return <span className="text-muted-foreground">Subscription</span>;
+  }
+  // Single line (just the plan charge): the Amount column already shows the
+  // total, so don't repeat it. Break amounts out only for multi-line invoices
+  // (plan + seat prorations), where the split is the useful part.
+  const showLineAmounts = invoice.lines.length > 1;
+  return (
+    <div className="flex flex-col gap-0.5">
+      {invoice.lines.map((line, i) => (
+        <div
+          key={i}
+          className="flex items-center justify-between gap-2 text-sm"
+        >
+          <span className="truncate text-foreground">
+            {cleanLineDescription(line.description)}
+          </span>
+          {showLineAmounts ? (
+            <span className="tabular-nums text-muted-foreground">
+              {formatUsd(line.amountCents, invoice.currency)}
+            </span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TopupMobileRow({ entry }: { entry: PaymentHistoryEntry }) {
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border/60 p-3">
       <div className="flex items-center justify-between text-sm">
@@ -176,6 +335,86 @@ function MobileRow({ entry }: { entry: PaymentHistoryEntry }) {
   );
 }
 
+function InvoiceMobileRow({ invoice }: { invoice: InvoiceHistoryEntry }) {
+  const amount = invoiceAmountCents(invoice);
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-border/60 p-3">
+      <div className="flex items-center justify-between text-sm">
+        <span>{formatDate(invoice.createdAt)}</span>
+        <span className="tabular-nums font-medium">
+          {formatUsd(amount, invoice.currency)}
+        </span>
+      </div>
+      <InvoiceLines invoice={invoice} />
+      <div className="flex items-center justify-between">
+        <InvoiceStatusBadge status={invoice.status} />
+        <InvoiceReceiptCell invoice={invoice} />
+      </div>
+    </div>
+  );
+}
+
+function InvoiceStatusBadge({ status }: { status: string }) {
+  if (status === "upcoming") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-100"
+      >
+        <Clock aria-hidden="true" />
+        Upcoming
+      </Badge>
+    );
+  }
+  if (status === "paid") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100"
+      >
+        <CheckCircle2 aria-hidden="true" />
+        Paid
+      </Badge>
+    );
+  }
+  if (status === "open" || status === "draft") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100"
+      >
+        <Clock aria-hidden="true" />
+        <span className="capitalize">{status}</span>
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="destructive">
+      <CircleAlert aria-hidden="true" />
+      <span className="capitalize">{status}</span>
+    </Badge>
+  );
+}
+
+function InvoiceReceiptCell({ invoice }: { invoice: InvoiceHistoryEntry }) {
+  const url = invoice.hostedInvoiceUrl ?? invoice.invoicePdfUrl;
+  if (!url) return <span className="text-sm text-muted-foreground">—</span>;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      referrerPolicy="no-referrer"
+      data-ph-no-capture
+      className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
+    >
+      View invoice
+      <ExternalLink aria-hidden="true" className="size-3.5" />
+      <span className="sr-only">(opens in new tab)</span>
+    </a>
+  );
+}
+
 function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
   const { status } = entry;
   if (status === "succeeded") {
@@ -185,7 +424,7 @@ function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
         className="border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100"
       >
         <CheckCircle2 aria-hidden="true" />
-        Succeeded
+        Paid
       </Badge>
     );
   }
@@ -292,8 +531,7 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
   }
 
   // No URL: distinguish the three cases so a succeeded-without-URL row
-  // doesn't read the same as a failed row (which legitimately has no
-  // receipt).
+  // doesn't read the same as a failed row (which legitimately has no receipt).
   const muted = "text-sm text-muted-foreground";
   if (entry.status === "succeeded") {
     return <span className={muted}>Not available</span>;
