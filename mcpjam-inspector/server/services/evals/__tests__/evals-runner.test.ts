@@ -3411,12 +3411,37 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-pr5b-vocab",
           suiteId: "suite-1",
           runId: null,
-          emit: (event) => emitted.push(event as Record<string, unknown>),
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
         } as any);
 
+        // CodeRabbit PR 5b review (nit): use ordered-index assertions,
+        // not arrayContaining — the latter accepts out-of-order
+        // regressions, but this test is supposed to lock the SSE event
+        // SEQUENCE the legacy inline loop emitted.
+        const types = emitted.map((e) => e.type as string);
+        const firstIndex = (t: string) => types.indexOf(t);
+        expect(firstIndex("turn_start")).toBeGreaterThanOrEqual(0);
+        expect(firstIndex("text_delta")).toBeGreaterThan(
+          firstIndex("turn_start"),
+        );
+        expect(firstIndex("tool_call")).toBeGreaterThan(
+          firstIndex("text_delta"),
+        );
+        expect(firstIndex("tool_result")).toBeGreaterThan(
+          firstIndex("tool_call"),
+        );
+        expect(firstIndex("step_finish")).toBeGreaterThan(
+          firstIndex("tool_result"),
+        );
+        expect(firstIndex("trace_snapshot")).toBeGreaterThan(
+          firstIndex("step_finish"),
+        );
+        expect(firstIndex("turn_finish")).toBeGreaterThan(
+          firstIndex("trace_snapshot"),
+        );
+        // Spot-check the data shapes carried on the events.
         expect(emitted).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ type: "turn_start" }),
             expect.objectContaining({
               type: "text_delta",
               content: "Working",
@@ -3431,9 +3456,251 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               toolCallId: "call-1",
               isError: false,
             }),
-            expect.objectContaining({ type: "step_finish" }),
-            expect.objectContaining({ type: "trace_snapshot" }),
-            expect.objectContaining({ type: "turn_finish" }),
+          ]),
+        );
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("emits per-step usage delta on step_finish SSE, not cumulative (PR 5b review — Cursor Medium #1)", async () => {
+      // Cursor PR 5b review fix: the engine reports turn-cumulative
+      // usage on each `onStepFinish` (`event.turnUsage`), but the
+      // legacy inline loop emitted PER-STEP token counts on
+      // `step_finish` SSE. Mid-turn step_finish SSEs from a multi-step
+      // hosted eval turn would otherwise show inflated counts vs the
+      // local-BYOK stream path / `consumeFullStreamAsEvalEvents`.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Two settled-OK steps. Step 1: 10 in / 5 out cumulative.
+          // Step 2: 25 in / 13 out cumulative (i.e. step 2 contributed
+          // +15 in / +8 out). Emitted step_finish SSEs must show the
+          // PER-STEP deltas, not the cumulative.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            settledWithError: false,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 25, outputTokens: 13, totalTokens: 38 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 25, outputTokens: 13, totalTokens: 38 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b step usage delta",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-usage-delta",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-usage-delta",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishEvents = emitted.filter(
+          (e) => e.type === "step_finish",
+        ) as Array<{
+          stepNumber: number;
+          usage: { inputTokens: number; outputTokens: number };
+        }>;
+        expect(stepFinishEvents).toHaveLength(2);
+        // Step 1 delta = cumulative-step-1 (no prior).
+        expect(stepFinishEvents[0]!.usage).toEqual({
+          inputTokens: 10,
+          outputTokens: 5,
+        });
+        // Step 2 delta = cumulative-step-2 − cumulative-step-1.
+        expect(stepFinishEvents[1]!.usage).toEqual({
+          inputTokens: 15,
+          outputTokens: 8,
+        });
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("includes in-flight assistant + tool content on mid-turn step_finish trace_snapshot (PR 5b review — Cursor Medium #2)", async () => {
+      // Cursor PR 5b review fix: mid-turn `step_finish` trace_snapshot
+      // would otherwise copy only `messageHistory`, which doesn't roll
+      // forward from `turnResult.messages` until AFTER `runAssistantTurn`
+      // returns. Live UI consumers watching SSE would see empty
+      // assistant transcripts mid-turn even though `tool_call` /
+      // `text_delta` SSE already fired. Mirror PR 5a's
+      // `activePartialResponseMessages` pattern: synthesize the
+      // partial response from chunk-event accumulators and stitch into
+      // mid-turn snapshots.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Stream text + tool call + tool result, then settle the
+          // step. The step_finish trace_snapshot must include the
+          // in-flight assistant text + tool-call + tool-result content.
+          opts.onLiveTextDelta?.("Looking up status");
+          opts.onToolCall?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            input: { q: "status" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            output: { ok: true, items: 3 },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b mid-turn snapshot fidelity",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-snap-fidelity",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-snap-fidelity",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        // The mid-turn step_finish trace_snapshot must carry the
+        // in-flight assistant content (text + tool-call) AND the
+        // synthetic tool-result message.
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        );
+        expect(stepFinishSnapshots.length).toBeGreaterThan(0);
+        const snap = stepFinishSnapshots[0] as {
+          trace: { messages: Array<{ role: string; content: unknown }> };
+        };
+        const messages = snap.trace.messages;
+        const assistantMsg = messages.find((m) => m.role === "assistant");
+        expect(assistantMsg).toBeDefined();
+        const assistantContent = assistantMsg!.content as Array<{
+          type: string;
+          text?: string;
+          toolCallId?: string;
+          toolName?: string;
+        }>;
+        expect(assistantContent).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "text",
+              text: "Looking up status",
+            }),
+            expect.objectContaining({
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "search",
+            }),
+          ]),
+        );
+        const toolMsg = messages.find((m) => m.role === "tool");
+        expect(toolMsg).toBeDefined();
+        const toolContent = toolMsg!.content as Array<{
+          type: string;
+          toolCallId?: string;
+        }>;
+        expect(toolContent).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "tool-result",
+              toolCallId: "call-1",
+            }),
           ]),
         );
       } finally {
@@ -3510,7 +3777,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-pr5b-settle-gate",
           suiteId: "suite-1",
           runId: null,
-          emit: (event) => emitted.push(event as Record<string, unknown>),
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
         } as any);
 
         const stepFinishEvents = emitted.filter(

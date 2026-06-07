@@ -4081,22 +4081,64 @@ const streamIterationViaBackend = async ({
     // branches can carry stepIndex when available.
     let activeCompletedStepCount = 0;
     let lastSettledStepIndex: number | undefined;
+    // Engine reports turn-cumulative usage on each `onStepFinish`. The
+    // legacy inline loop emitted PER-STEP token counts on
+    // `step_finish` SSE, so we track the previous step's cumulative
+    // and emit the delta. (Cursor PR 5b review fix: "Step finish
+    // reports cumulative usage" — multi-step hosted eval turns
+    // otherwise show inflated per-step counts vs the local-BYOK
+    // stream path / consumeFullStreamAsEvalEvents.)
+    let prevStepCumulativeInput = 0;
+    let prevStepCumulativeOutput = 0;
+
+    // In-flight partial-response accumulator. Mid-turn `step_finish`
+    // trace_snapshot needs to carry the assistant/tool content that
+    // already streamed within the turn — the engine doesn't roll its
+    // own `messageHistory` ref forward into `runAssistantTurn`'s
+    // return value until the turn settles, so `messageHistory` here
+    // is stale (only contains prior turns' history + this turn's user
+    // prompt). Mirror PR 5a's `activePartialResponseMessages` shape:
+    // synthesize one rolling assistant message from text deltas + tool
+    // calls, and append synthetic tool-result messages from tool
+    // results. (Cursor PR 5b review fix: "Step snapshots omit in-turn
+    // messages" — without this, live UI consumers watching SSE see
+    // empty assistant transcripts mid-turn even though tool_call /
+    // text_delta SSE already fired.)
+    let partialAssistantText = "";
+    const partialAssistantToolCalls: Array<{
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }> = [];
+    const partialToolResultMessages: ModelMessage[] = [];
+    const buildPartialResponseMessages = (): ModelMessage[] => {
+      const content: unknown[] = [];
+      if (partialAssistantText) {
+        content.push({ type: "text", text: partialAssistantText });
+      }
+      content.push(...partialAssistantToolCalls);
+      const out: ModelMessage[] = [];
+      if (content.length > 0) {
+        out.push({ role: "assistant", content } as ModelMessage);
+      }
+      out.push(...partialToolResultMessages);
+      return out;
+    };
 
     // Engine callbacks → SSE events. These mirror the events the old
     // inline backend stream loop emitted from its chunk-processing
     // switch:
-    //  - `onToolCall`     → `tool_call` SSE (was `tool-input-available`
-    //                       chunk branch).
-    //  - `onToolResult`   → `tool_result` SSE (was post-tool-execution
-    //                       loop over new tool messages).
-    //  - `onStepFinish`   → `step_finish` SSE + step_finish trace
-    //                       snapshot, gated on `settledWithError ===
-    //                       false` per Marcelo's PR 5b-pre review
-    //                       caveat. Failed backend steps surface via
-    //                       the failure detection branches below; we
-    //                       don't emit `step_finish` for them.
-    // `onLiveTextDelta`  → `text_delta` SSE (was the `text-delta`
-    //                       chunk branch).
+    //  - `onLiveTextDelta` → `text_delta` SSE + rolling assistant text
+    //  - `onToolCall`      → `tool_call` SSE + push to partial assistant
+    //  - `onToolResult`    → `tool_result` SSE + append synthetic tool msg
+    //  - `onStepFinish`    → `step_finish` SSE (with per-step usage
+    //                        DELTA, not cumulative) + step_finish trace
+    //                        snapshot. Gated on `settledWithError ===
+    //                        false` per Marcelo's PR 5b-pre review
+    //                        caveat. After firing, the partial-response
+    //                        accumulators reset so the next step starts
+    //                        fresh.
     //
     // `promptToolsCalled` mirrors the legacy local accumulator; the
     // engine's `messageHistory` is the source of truth post-turn, so
@@ -4105,9 +4147,9 @@ const streamIterationViaBackend = async ({
     // `promptToolsCalled` here keeps the SSE consumer's running view
     // aligned with the trace snapshot's `actualToolCalls`.
     const onLiveTextDelta = (delta: string) => {
-      if (typeof delta === "string" && delta.length > 0) {
-        emit({ type: "text_delta", content: delta });
-      }
+      if (typeof delta !== "string" || delta.length === 0) return;
+      partialAssistantText += delta;
+      emit({ type: "text_delta", content: delta });
     };
     const onToolCall = (event: MCPJamToolCallEvent) => {
       if (!event.toolName) return;
@@ -4115,6 +4157,12 @@ const streamIterationViaBackend = async ({
       promptToolsCalled.push({
         toolName: event.toolName,
         arguments: args as Record<string, any>,
+      });
+      partialAssistantToolCalls.push({
+        type: "tool-call",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        input: args,
       });
       emit({
         type: "tool_call",
@@ -4124,6 +4172,18 @@ const streamIterationViaBackend = async ({
       });
     };
     const onToolResult = (event: MCPJamToolResultEvent) => {
+      partialToolResultMessages.push({
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: event.toolCallId,
+            ...(event.toolName ? { toolName: event.toolName } : {}),
+            output: event.output,
+            ...(event.isError ? { isError: true } : {}),
+          },
+        ],
+      } as ModelMessage);
       emit({
         type: "tool_result",
         toolCallId: event.toolCallId,
@@ -4138,35 +4198,53 @@ const streamIterationViaBackend = async ({
       if (event.settledWithError) return;
       activeCompletedStepCount += 1;
       lastSettledStepIndex = event.stepIndex;
-      // Per-step usage delta = current cumulative - pre-turn baseline +
-      // last step's running total. The engine reports turn-cumulative
-      // usage on each onStepFinish; recompute accumulated usage from
-      // the snapshot taken at turn start so mid-run trace_snapshot
-      // events show the right running total even when this is step N
-      // of a multi-step turn.
+      // Per-step delta = cumulative-now − cumulative-at-prev-step.
+      // Engine reports turn-cumulative on `event.turnUsage`; emit just
+      // this step's contribution on the SSE `step_finish.usage` field
+      // so the wire shape matches the legacy inline loop (which
+      // forwarded each step's own `messageMetadata` totals).
+      const cumulativeInput = event.turnUsage?.inputTokens ?? 0;
+      const cumulativeOutput = event.turnUsage?.outputTokens ?? 0;
+      const cumulativeTotal = event.turnUsage?.totalTokens ?? 0;
+      const stepDeltaInput = Math.max(
+        0,
+        cumulativeInput - prevStepCumulativeInput,
+      );
+      const stepDeltaOutput = Math.max(
+        0,
+        cumulativeOutput - prevStepCumulativeOutput,
+      );
+      prevStepCumulativeInput = cumulativeInput;
+      prevStepCumulativeOutput = cumulativeOutput;
+      // Roll `accumulatedUsage` forward to the engine's reported
+      // turn-cumulative + the pre-turn baseline (multi-turn runs).
       accumulatedUsage.inputTokens =
-        accumulatedUsageBeforeTurn.inputTokens +
-        (event.turnUsage?.inputTokens ?? 0);
+        accumulatedUsageBeforeTurn.inputTokens + cumulativeInput;
       accumulatedUsage.outputTokens =
-        accumulatedUsageBeforeTurn.outputTokens +
-        (event.turnUsage?.outputTokens ?? 0);
+        accumulatedUsageBeforeTurn.outputTokens + cumulativeOutput;
       accumulatedUsage.totalTokens =
-        accumulatedUsageBeforeTurn.totalTokens +
-        (event.turnUsage?.totalTokens ?? 0);
+        accumulatedUsageBeforeTurn.totalTokens + cumulativeTotal;
       emit({
         type: "step_finish",
         stepNumber: activeCompletedStepCount,
         usage: {
-          inputTokens: event.turnUsage?.inputTokens ?? 0,
-          outputTokens: event.turnUsage?.outputTokens ?? 0,
+          inputTokens: stepDeltaInput,
+          outputTokens: stepDeltaOutput,
         },
       });
-      // Live trace snapshot for the step. Spans accumulate on
+      // Live trace snapshot for the step. Compose snapshot messages
+      // from the stale `messageHistory` (prior turns + this turn's
+      // user prompt) PLUS the in-flight partial response built from
+      // the chunk-event accumulators — without this, mid-turn step
+      // snapshots show only the user prompt even though `tool_call` /
+      // `text_delta` SSE already fired. Spans accumulate on
       // `traceCtx.recordedSpans` (tool spans) + the engine's own LLM
       // step spans (delivered on `turnResult.turnTrace.spans` AFTER
-      // the turn finishes). Mid-turn we only have the tool spans; the
-      // engine's LLM-step spans land at `turn_finish`.
-      const snapshotMessages = [...messageHistory];
+      // the turn finishes).
+      const snapshotMessages = [
+        ...messageHistory,
+        ...buildPartialResponseMessages(),
+      ];
       emit(
         buildTraceSnapshotEvent({
           turnIndex: promptIndex,
@@ -4180,6 +4258,13 @@ const streamIterationViaBackend = async ({
           usage: accumulatedUsage,
         }),
       );
+      // Reset partial-response accumulators for the next step so the
+      // next step_finish snapshot doesn't double-count this step's
+      // assistant/tool content (which will land in `messageHistory`
+      // via `turnResult.messages` after the turn settles).
+      partialAssistantText = "";
+      partialAssistantToolCalls.length = 0;
+      partialToolResultMessages.length = 0;
     };
 
     // `runAssistantTurn` call shape mirrors `runIterationViaBackend`
