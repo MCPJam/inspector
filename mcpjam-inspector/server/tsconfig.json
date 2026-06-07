@@ -27,5 +27,9 @@
     "types": ["node"]
   },
   "include": ["**/*.ts", "**/*.tsx", "../shared/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "utils/browser-harness/host-page.ts"
+  ]
 }
