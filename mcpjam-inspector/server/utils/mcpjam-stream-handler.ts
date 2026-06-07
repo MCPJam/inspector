@@ -965,11 +965,31 @@ async function processStream(
       if (done) break;
 
       if (!value?.success) {
-        writer.write({
-          type: "error",
-          errorText: value?.error?.message ?? "stream parse failed",
-        });
-        break;
+        // PR 5b-followup-2 review fix (CodeRabbit Major "Parser failures
+        // still bypass onEngineError and the real failure path"): the
+        // pre-fix shape wrote an error UI chunk and `break`'d out of
+        // the loop. processStream then returned NORMALLY with whatever
+        // contentParts had accumulated, processOneStep ran its
+        // post-stream epilogue, and the outer agentic loop marked the
+        // turn successful (runSucceeded = true) — `onEngineError`
+        // never fired and the eval runner's failure detection didn't
+        // trip. Throw instead so the failure lands in
+        // `runChatEngineLoop`'s outer catch, which fires
+        // `onEngineError` (site #3), writes the error+turn_finish
+        // trace events, and skips the success epilogue. The thrown
+        // Error carries the parser's message so the engine-error
+        // contract stays consistent.
+        const parseErr = (value as { error?: unknown })?.error;
+        throw parseErr instanceof Error
+          ? parseErr
+          : new Error(
+              typeof parseErr === "object" &&
+              parseErr !== null &&
+              "message" in parseErr &&
+              typeof (parseErr as { message?: unknown }).message === "string"
+                ? (parseErr as { message: string }).message
+                : "stream parse failed",
+            );
       }
 
       const chunk = value.value as UIMessageChunk & {

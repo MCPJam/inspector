@@ -2051,6 +2051,68 @@ describe("mcpjam-stream-handler", () => {
       expect(event.rawText).toBe("upstream broke");
     });
 
+    it("fires `onEngineError` (via outer catch) when SSE parser fails mid-stream (PR 5b-followup-2 review — CodeRabbit Major 'Parser failures bypass onEngineError')", async () => {
+      // CodeRabbit followup-2 review fix: the pre-fix
+      // `if (!value?.success)` branch in processStream wrote an error
+      // chunk and broke the read loop, then returned NORMALLY — so
+      // the outer agentic loop synthesized a finish and marked the
+      // turn successful (`runSucceeded = true`), and `onEngineError`
+      // never fired. Eval consumers lost the failure signal entirely.
+      //
+      // Fix: throw from the parse-failure branch so it lands in
+      // runChatEngineLoop's outer catch, which fires `onEngineError`
+      // (site #3) and writes the error+turn_finish trace events.
+      //
+      // Lock: feed a stream that decodes successfully (200 OK) but
+      // emits a chunk the schema rejects. Assert `onEngineError`
+      // fires once with the parser's message.
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          // Valid SSE framing, but the data payload is not parseable
+          // JSON. `parseJsonEventStream` surfaces this as
+          // `{ success: false, error: SyntaxError | ZodError }`.
+          `data: not-json-at-all-{{{\n\n`,
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "parse-fail me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      // The fix: parse failures now route through site #3
+      // (outer agentic-loop catch) instead of silently breaking the
+      // read loop. `onEngineError` MUST fire — pre-fix this was zero.
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      // Outer-catch site doesn't carry httpStatus / code / details —
+      // those only populate at site #1 (non-OK Convex response).
+      expect(event.httpStatus).toBeUndefined();
+      expect(event.code).toBeUndefined();
+      expect(event.details).toBeUndefined();
+      expect(event.stepIndex).toBeUndefined();
+      // The parser's message is preserved (Zod or whatever the
+      // schema validator reports). Either way, NOT the success path.
+      expect(typeof event.message).toBe("string");
+      expect(event.message.length).toBeGreaterThan(0);
+      expect(event.rawText).toBe(event.message);
+    });
+
     it("fires `onToolCall` for approved tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
       // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes
       // `tool-input-available` UI chunks for resumed APPROVED tools
