@@ -1003,32 +1003,6 @@ function hasExplicitModelApiKeys(
   return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
 }
 
-function readBackendUsage(usage: unknown): {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-} {
-  const record =
-    usage && typeof usage === "object"
-      ? (usage as Record<string, unknown>)
-      : {};
-  const inputTokens =
-    typeof record.inputTokens === "number"
-      ? record.inputTokens
-      : typeof record.promptTokens === "number"
-        ? record.promptTokens
-        : 0;
-  const outputTokens =
-    typeof record.outputTokens === "number"
-      ? record.outputTokens
-      : typeof record.completionTokens === "number"
-        ? record.completionTokens
-        : 0;
-  const totalTokens =
-    typeof record.totalTokens === "number" ? record.totalTokens : 0;
-  return { inputTokens, outputTokens, totalTokens };
-}
-
 function resolveOrgTargetForEval(
   test: EvalTestCase,
   explicitTarget?: ResolveOrgModelConfigTarget,
@@ -1632,7 +1606,13 @@ const runIterationViaBackend = async ({
   mcpClientManager,
   recorder,
   testCaseId,
-  convexHttpUrl,
+  // `convexHttpUrl` is in the RunIterationBackendParams type because the
+  // streaming variant (`streamIterationViaBackend`) still uses it for
+  // its legacy per-step fetch loop (PR 5 collapses that). The non-stream
+  // path now drives `runAssistantTurn`, which reads
+  // `process.env.CONVEX_HTTP_URL` directly — so the runner-level param
+  // is dead here. Kept in the type signature (no API churn) but no
+  // longer destructured.
   convexAuthToken,
   modelId,
   modelDefinition,

@@ -3,8 +3,6 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   convertToModelMessages,
-  streamText,
-  stepCountIs,
   type ToolSet,
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
@@ -49,47 +47,27 @@ import {
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
-import { appendDedupedModelMessages } from "@/shared/eval-trace";
-import {
-  createAiSdkEvalTraceContext,
-  emitAiSdkOnStepFinish,
-  finalizeAiSdkTraceOnFailure,
-  patchAiSdkRecordedSpansMessageRangesFromSteps,
-  registerAiSdkPrepareStep,
-  wrapToolSetForEvalTrace,
-} from "../../services/evals/eval-trace-capture";
 import {
   emitRequestPayload,
   emitTraceSnapshot,
-  generateLiveTraceTurnId,
-  getPromptIndex,
-  getPromptMessageStartIndex,
-  readToolServerId,
-  setToolSpanMessageRangesFromResults,
-  toTraceRecord,
   writeTraceEvent,
 } from "../../utils/live-chat-trace-stream";
-import {
-  buildResolvedModelRequestPayload,
-  normalizeSystemPromptForProvider,
-} from "../../utils/model-request-payload";
+import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
 import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
 import { describeError, describeAsSlug } from "@mcpjam/sdk";
-import {
-  mergeLiveChatTraceUsage,
-  type LiveChatTraceUsage,
-} from "@/shared/live-chat-trace";
+import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
-  commitNewlyLoaded,
-  gateToolsToActiveSubset,
-  resolveActiveToolNames,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
+import {
+  runDirectChatTurn,
+  type RunDirectChatTurnHandle,
+} from "../../utils/direct-chat-turn";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -162,34 +140,6 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
   });
 }
 
-function toLiveChatTraceUsage(
-  usage:
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-      }
-    | null
-    | undefined
-): LiveChatTraceUsage | undefined {
-  if (!usage) {
-    return undefined;
-  }
-
-  const next: LiveChatTraceUsage = {};
-  if (typeof usage.inputTokens === "number") {
-    next.inputTokens = usage.inputTokens;
-  }
-  if (typeof usage.outputTokens === "number") {
-    next.outputTokens = usage.outputTokens;
-  }
-  if (typeof usage.totalTokens === "number") {
-    next.totalTokens = usage.totalTokens;
-  }
-
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
 function toPersistedUsage(
   usage: LiveChatTraceUsage | undefined
 ): { inputTokens: number; outputTokens: number } | undefined {
@@ -206,26 +156,17 @@ function toPersistedUsage(
   };
 }
 
-function collectStepToolCallIds(
-  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined
-): Set<string> {
-  const toolCallIds = new Set<string>();
-  if (!Array.isArray(toolCalls)) {
-    return toolCallIds;
-  }
-
-  for (const toolCall of toolCalls) {
-    if (
-      typeof toolCall?.toolCallId === "string" &&
-      toolCall.toolCallId.length > 0
-    ) {
-      toolCallIds.add(toolCall.toolCallId);
-    }
-  }
-
-  return toolCallIds;
-}
-
+/**
+ * Chat user-API-key path. The `streamText` driver, trace span management,
+ * abort wiring, and progressive-discovery gating live in
+ * `runDirectChatTurn` (`server/utils/direct-chat-turn.ts`). This function
+ * is the SSE terminal — it wraps the helper's trace-event callbacks in
+ * `createUIMessageStream` writer events and drives the result through
+ * `result.toUIMessageStream(...)` into the writer.
+ *
+ * Eval's local-BYOK suite path (PR 4b) uses the same helper with the
+ * headless terminal (`consumeDirectChatTurnHeadless`).
+ */
 function streamDirectChatWithLiveTrace(options: {
   llmModel: ReturnType<typeof createLlmModel>;
   modelId: string;
@@ -247,306 +188,125 @@ function streamDirectChatWithLiveTrace(options: {
     turnTrace: PersistedTurnTrace;
   }) => Promise<void> | void;
 }): Response {
-  const {
-    llmModel,
-    modelId,
-    provider,
-    messageHistory,
-    systemPrompt,
-    temperature,
-    tools,
-    abortSignal,
-    onPersist,
-  } = options;
-
-  // Separate array for tracing — we must NOT mutate `messageHistory` because
-  // `streamText` holds a reference and internally accumulates step responses.
-  // Mutating it would cause duplicate items on the next API call (OpenAI
-  // Responses API rejects duplicates by id).
-  const traceHistory = [...messageHistory];
-  const initialMessageHistoryLength = messageHistory.length;
-  const traceTurn = {
-    turnId: generateLiveTraceTurnId(),
-    promptIndex: getPromptIndex(messageHistory),
-    promptMessageStartIndex: getPromptMessageStartIndex(messageHistory),
-    turnStartedAt: Date.now(),
-    turnSpans: [] as Awaited<
-      ReturnType<typeof createAiSdkEvalTraceContext>
-    >["recordedSpans"],
-    turnUsage: undefined as LiveChatTraceUsage | undefined,
-  };
-  const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
-  const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
-  let currentStepIndex = 0;
-  let turnFinished = false;
-  let aborted = abortSignal?.aborted === true;
-  const markAborted = () => {
-    aborted = true;
-  };
-  abortSignal?.addEventListener("abort", markAborted, { once: true });
+  const { provider, abortSignal, onPersist, ...turnOptions } = options;
+  // Declared before `createUIMessageStream` so the top-level `onError`
+  // (which can fire before `execute` runs) can read it; assigned inside
+  // `execute` once the helper is configured.
+  let handle: RunDirectChatTurnHandle | undefined;
 
   const stream = createUIMessageStream({
     onError: (error) => {
-      if (aborted || isAbortError(error)) {
+      if (handle?.isAborted() || isAbortError(error)) {
         return "";
       }
       logger.error("[mcp/chat-v2] stream error", error);
       return formatStreamError(error, provider);
     },
     execute: async ({ writer }) => {
-      writeTraceEvent(writer, {
-        type: "turn_start",
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        startedAtMs: traceTurn.turnStartedAt,
-      });
-
-      emitRequestPayload(writer, {
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        stepIndex: 0,
-        payload: buildResolvedModelRequestPayload({
-          systemPrompt,
-          tools,
-          messages: messageHistory,
-        }),
-      });
-
-      const tracedTools = wrapToolSetForEvalTrace(
-        tools as Record<string, unknown>,
-        traceContext,
-        traceTurn.promptIndex
-      ) as ToolSet;
-
-      const { progressivePlan, discoveryState } = options;
-      // Progressive mode: gate execution to the active subset.
-      // `activeTools` (set in `prepareStep` below) narrows what the model
-      // sees, but a hallucinated/remembered call to a non-active tool
-      // would still execute against the full map. Gating wraps each
-      // tool's `execute` to throw a structured "not loaded" error,
-      // which the AI SDK surfaces as an error tool-result the model can
-      // recover from via `load_mcp_tools`.
-      const executableTools = gateToolsToActiveSubset(
-        tracedTools as Record<string, unknown>,
-        progressivePlan,
-        () => discoveryState,
-      ) as ToolSet;
-      const streamTextOptions: Parameters<typeof streamText>[0] = {
-        model: llmModel,
-        messages: messageHistory,
-        ...(temperature !== undefined ? { temperature } : {}),
-        system: providerSystemPrompt,
-        tools: executableTools,
-        stopWhen: stepCountIs(20),
-        ...(abortSignal ? { abortSignal } : {}),
-        prepareStep: ({ stepNumber }) => {
-          currentStepIndex = stepNumber;
-          registerAiSdkPrepareStep(traceContext, stepNumber, {
-            modelId,
-            promptIndex: traceTurn.promptIndex,
+      handle = runDirectChatTurn({
+        ...turnOptions,
+        abortSignal,
+        onPersist,
+        onPersistError: (error) => {
+          logger.warn("[mcp/chat-v2] onFinish ingestion error", {
+            error: error instanceof Error ? error.message : String(error),
           });
-          if (progressivePlan?.enabled && discoveryState) {
-            commitNewlyLoaded(discoveryState);
-            const active = resolveActiveToolNames(
-              progressivePlan,
-              discoveryState,
-            );
-            return { activeTools: active };
-          }
-          return {};
         },
-        onChunk: async ({ chunk }) => {
-          if (chunk.type === "text-delta") {
+        traceEvents: {
+          onTurnStart: (event) => {
+            writeTraceEvent(writer, {
+              type: "turn_start",
+              turnId: event.turnId,
+              promptIndex: event.promptIndex,
+              startedAtMs: event.startedAtMs,
+            });
+          },
+          onRequestPayload: (event) => {
+            emitRequestPayload(writer, {
+              turnId: event.turnId,
+              promptIndex: event.promptIndex,
+              stepIndex: event.stepIndex,
+              payload: buildResolvedModelRequestPayload({
+                systemPrompt: event.systemPrompt,
+                tools: event.tools,
+                messages: event.messages,
+              }),
+            });
+          },
+          onTextDelta: (event) => {
             writeTraceEvent(writer, {
               type: "text_delta",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              stepIndex: currentStepIndex,
-              delta: chunk.text,
+              turnId: event.turnId,
+              promptIndex: event.promptIndex,
+              stepIndex: event.stepIndex,
+              delta: event.delta,
             });
-            return;
-          }
-
-          if (chunk.type === "tool-call") {
+          },
+          onToolCallChunk: (event) => {
             writeTraceEvent(writer, {
               type: "tool_call",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              stepIndex: currentStepIndex,
-              toolCallId: chunk.toolCallId,
-              toolName: chunk.toolName,
-              input: toTraceRecord(chunk.input),
-              serverId: readToolServerId(tracedTools, chunk.toolName),
+              turnId: event.turnId,
+              promptIndex: event.promptIndex,
+              stepIndex: event.stepIndex,
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              input: event.input,
+              serverId: event.serverId,
             });
-            return;
-          }
-
-          if (chunk.type === "tool-result") {
+          },
+          onToolResultChunk: (event) => {
             writeTraceEvent(writer, {
               type: "tool_result",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              stepIndex: currentStepIndex,
-              toolCallId: chunk.toolCallId,
-              toolName: chunk.toolName,
-              output: chunk.output,
-              serverId: readToolServerId(tracedTools, chunk.toolName),
+              turnId: event.turnId,
+              promptIndex: event.promptIndex,
+              stepIndex: event.stepIndex,
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              output: event.output,
+              serverId: event.serverId,
             });
-          }
-        },
-        onStepFinish: async (step) => {
-          const responseMessages = Array.isArray(step?.response?.messages)
-            ? (step.response.messages as ModelMessage[])
-            : [];
-          const beforeLength = traceHistory.length;
-          appendDedupedModelMessages(traceHistory, responseMessages);
-          const afterLength = traceHistory.length;
-          const messageStartIndex =
-            afterLength > beforeLength ? beforeLength : undefined;
-          const messageEndIndex =
-            afterLength > beforeLength ? afterLength - 1 : undefined;
-          const stepUsage = toLiveChatTraceUsage(step.usage);
-
-          traceTurn.turnUsage = mergeLiveChatTraceUsage(
-            traceTurn.turnUsage,
-            stepUsage
-          );
-
-          emitAiSdkOnStepFinish(traceContext, Date.now(), {
-            modelId,
-            inputTokens: stepUsage?.inputTokens,
-            outputTokens: stepUsage?.outputTokens,
-            totalTokens: stepUsage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-          });
-
-          setToolSpanMessageRangesFromResults(
-            traceContext.recordedSpans,
+          },
+          onStepSnapshot: ({ traceHistory, tracedTools, traceTurn }) => {
+            emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
+          },
+          onTurnError: ({
+            turnId,
+            promptIndex,
+            stepIndex,
+            errorText,
+            traceTurn,
+            tracedTools,
             traceHistory,
-            traceTurn.promptIndex,
-            currentStepIndex,
-            collectStepToolCallIds(step.toolCalls)
-          );
-
-          traceTurn.turnSpans = [...traceContext.recordedSpans];
-          emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
-        },
-        onError: async ({ error }) => {
-          if (turnFinished) {
-            return;
-          }
-          if (aborted || isAbortError(error)) {
-            aborted = true;
-            turnFinished = true;
-            return;
-          }
-
-          const failAt = Date.now();
-          finalizeAiSdkTraceOnFailure(traceContext, failAt, {
-            completedStepCount: currentStepIndex,
-            lastStepEndedAt: traceContext.lastStepClosedEndAt,
-            modelId,
-            promptIndex: traceTurn.promptIndex,
-          });
-          traceTurn.turnSpans = [...traceContext.recordedSpans];
-          emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
-          writeTraceEvent(writer, {
-            type: "error",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            stepIndex: currentStepIndex,
-            errorText: error instanceof Error ? error.message : String(error),
-          });
-          writeTraceEvent(writer, {
-            type: "turn_finish",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            usage: traceTurn.turnUsage,
-          });
-          turnFinished = true;
-        },
-        onFinish: async (event) => {
-          if (aborted || abortSignal?.aborted) {
-            aborted = true;
-            turnFinished = true;
-            return;
-          }
-
-          patchAiSdkRecordedSpansMessageRangesFromSteps(
-            traceContext.recordedSpans,
-            initialMessageHistoryLength,
-            event.steps,
-            traceTurn.promptIndex
-          );
-          traceTurn.turnSpans = [...traceContext.recordedSpans];
-          traceTurn.turnUsage =
-            toLiveChatTraceUsage(event.totalUsage) ?? traceTurn.turnUsage;
-
-          if (!turnFinished) {
+          }) => {
+            emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
+            writeTraceEvent(writer, {
+              type: "error",
+              turnId,
+              promptIndex,
+              stepIndex,
+              errorText,
+            });
             writeTraceEvent(writer, {
               type: "turn_finish",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              finishReason: event.finishReason,
+              turnId,
+              promptIndex,
               usage: traceTurn.turnUsage,
             });
-            turnFinished = true;
-          }
-
-          const responseMessages: ModelMessage[] = [];
-          for (const step of event.steps) {
-            appendDedupedModelMessages(
-              responseMessages,
-              Array.isArray(step?.response?.messages)
-                ? (step.response.messages as ModelMessage[])
-                : []
-            );
-          }
-
-          try {
-            await onPersist?.({
-              responseMessages,
-              assistantText: event.text,
-              toolCalls: event.steps.flatMap((step) => step.toolCalls ?? []),
-              toolResults: event.steps.flatMap(
-                (step) => step.toolResults ?? []
-              ),
-              usage: traceTurn.turnUsage,
-              finishReason: event.finishReason,
-              turnTrace: {
-                turnId: traceTurn.turnId,
-                promptIndex: traceTurn.promptIndex,
-                startedAt: traceTurn.turnStartedAt,
-                endedAt: Date.now(),
-                spans: [...traceTurn.turnSpans],
-                usage: traceTurn.turnUsage,
-                finishReason: event.finishReason,
-                modelId,
-              },
+          },
+          onTurnFinish: ({ turnId, promptIndex, finishReason, usage }) => {
+            writeTraceEvent(writer, {
+              type: "turn_finish",
+              turnId,
+              promptIndex,
+              finishReason,
+              usage,
             });
-          } catch (error) {
-            logger.warn("[mcp/chat-v2] onFinish ingestion error", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
+          },
         },
-      };
-
-      let result: ReturnType<typeof streamText>;
-      try {
-        result = streamText(streamTextOptions);
-      } catch (error) {
-        abortSignal?.removeEventListener("abort", markAborted);
-        if (aborted || isAbortError(error)) {
-          aborted = true;
-          return;
-        }
-        throw error;
-      }
+      });
 
       try {
-        for await (const chunk of result.toUIMessageStream({
+        for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
             if (part.type === "finish-step") {
               return {
@@ -557,20 +317,19 @@ function streamDirectChatWithLiveTrace(options: {
             }
           },
           onError: (error) => {
-            if (aborted || isAbortError(error)) return "";
+            if (handle!.isAborted() || isAbortError(error)) return "";
             return formatStreamError(error, provider);
           },
         })) {
           writer.write(chunk);
         }
       } catch (error) {
-        if (aborted || isAbortError(error)) {
-          aborted = true;
+        if (handle.isAborted() || isAbortError(error)) {
           return;
         }
         throw error;
       } finally {
-        abortSignal?.removeEventListener("abort", markAborted);
+        handle.cleanup();
       }
     },
   });
