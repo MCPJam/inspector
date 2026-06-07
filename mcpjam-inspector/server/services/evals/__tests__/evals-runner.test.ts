@@ -41,6 +41,26 @@ vi.mock("../../../utils/chat-helpers", () => ({
   ) => createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
 }));
 
+// Stub the chat-side tool/system/temperature pipeline. The real implementation
+// in `chat-v2-orchestration` pulls in `getSkillToolsAndPrompt`, which touches
+// the filesystem outside HOSTED_MODE; the eval test environment doesn't need
+// that. Return a minimal `PrepareChatV2Result` shape — the actual tool set
+// stays empty (matching `mcpClientManager.getToolsForAiSdk` → `{}`), and the
+// engine swap only depends on the named output fields.
+vi.mock("../../../utils/chat-v2-orchestration", () => ({
+  prepareChatV2: vi.fn(async (options: any) => ({
+    allTools: {},
+    enhancedSystemPrompt: options?.systemPrompt ?? "",
+    resolvedTemperature: options?.temperature,
+    scrubMessages: (msgs: unknown[]) => msgs,
+    progressivePlan: { enabled: false },
+    discoveryState: {
+      loadedToolIds: new Set<string>(),
+      catalogVersion: 0,
+    },
+  })),
+}));
+
 import { runEvalSuiteWithAiSdk, streamTestCase } from "../../evals-runner";
 
 describe("runEvalSuiteWithAiSdk compare session metadata", () => {
@@ -589,6 +609,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         testCaseId: "case-1",
       },
       tools: {},
+      selectedServers: [],
       mcpClientManager: mcpClientManager as any,
       recorder: null,
       modelApiKeys: { openai: "sk-test" },
@@ -700,6 +721,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           testCaseId: "case-1",
         },
         tools: {},
+        selectedServers: [],
         mcpClientManager: mcpClientManager as any,
         recorder: null,
         modelApiKeys: {},
