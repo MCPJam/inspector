@@ -2762,4 +2762,370 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(persistedCarriesIt).toBe(true);
     });
   });
+
+  describe("PR 5a — streamIterationWithAiSdk on runDirectChatTurn + adapter", () => {
+    // PR 5a of the engine consolidation
+    // (`~/mcpjam-docs/unification.md`): the local-AI-SDK streaming runner
+    // now drives `runDirectChatTurn` (PR 4a) + `consumeFullStreamAsEvalEvents`
+    // (PR 5-pre, #2466) instead of an inline `streamText({...})` call.
+    // These tests lock the 6 contract bullets carried from 4a–4d
+    // reviews onto the streaming runner.
+
+    async function runStreamCase(args: {
+      caseAdvancedConfig?: Record<string, unknown>;
+      suiteHostConfig?: Record<string, unknown> | null;
+      emitCollector?: Array<Record<string, unknown>>;
+    }) {
+      const emitted = args.emitCollector ?? [];
+      await streamTestCase({
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 1,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-stream-pr5a",
+          ...(args.caseAdvancedConfig
+            ? { advancedConfig: args.caseAdvancedConfig }
+            : {}),
+        },
+        tools: {},
+        selectedServers: [],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-stream-pr5a",
+        suiteId: "suite-1",
+        runId: null,
+        emit: (event) => emitted.push(event as Record<string, unknown>),
+        ...(args.suiteHostConfig !== undefined
+          ? { suiteHostConfig: args.suiteHostConfig }
+          : {}),
+      } as any);
+      return emitted;
+    }
+
+    it("records iteration with `error` set when streamed turn produces no new messages (PR 5a no-msg failure)", async () => {
+      // Mirror PR 4b's three-signal failure detection on the streaming
+      // path. Pre-PR-5a the streaming runner had no equivalent — a
+      // mid-run failure surfaced via throw or silent zero-token
+      // iteration. PR 5a now sets `iterationError` + records via
+      // `status:"completed"` + `error` on `finishParams`.
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: [],
+        }),
+        totalUsage: Promise.resolve({
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+        }),
+        finishReason: Promise.resolve("stop"),
+        consumeStream: async () => {},
+      }));
+
+      await runStreamCase({});
+
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      expect(payload.error).toEqual(
+        expect.stringContaining("Stream returned no content"),
+      );
+    });
+
+    it("persists the failing turn's user prompt for the streaming local-BYOK path (PR 5a user-prompt-before-call)", async () => {
+      // Mirror PR 4b's user-prompt-before-driver-call invariant. The
+      // streaming runner now pushes the user prompt to
+      // `conversationMessages` BEFORE the `runDirectChatTurn` call so
+      // a failed turn still records the prompt in the persisted
+      // transcript.
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: [],
+        }),
+        totalUsage: Promise.resolve({
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+        }),
+        finishReason: Promise.resolve("stop"),
+        consumeStream: async () => {},
+      }));
+
+      await runStreamCase({});
+
+      const containsUserHello = (msgs: unknown): boolean => {
+        if (!Array.isArray(msgs)) return false;
+        return msgs.some((m: any) => {
+          if (m?.role !== "user") return false;
+          if (typeof m.content === "string") return m.content === "Hello";
+          if (Array.isArray(m.content)) {
+            return m.content.some(
+              (part: any) =>
+                part?.type === "text" && part.text === "Hello",
+            );
+          }
+          return false;
+        });
+      };
+      const anyCallHasIt = convexClient.action.mock.calls.some((call) => {
+        const payload = call[1] as Record<string, unknown> | undefined;
+        if (!payload) return false;
+        if (containsUserHello(payload.messages)) return true;
+        const turn = payload.turn as
+          | { sessionMessages?: unknown }
+          | undefined;
+        if (turn && containsUserHello(turn.sessionMessages)) return true;
+        return false;
+      });
+      expect(anyCallHasIt).toBe(true);
+    });
+
+    it("preserves PR 4d wire shape: `system:` field, no `role:system` in messages array (PR 5a)", async () => {
+      // The pre-PR-5a runner already aligned on chat's wire shape in
+      // PR 4d ("Use the dedicated system: field"). PR 5a's rewrite onto
+      // `runDirectChatTurn` flows the system through the helper, which
+      // adds it to the streamText `system:` field via the helper's
+      // internal wiring. Lock that the wire shape didn't regress.
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((_options: any) => ({
+        fullStream: (async function* () {})(),
+        steps: Promise.resolve([]),
+        response: Promise.resolve({
+          modelId: "gpt-4-turbo",
+          messages: [{ role: "assistant", content: "Done" }],
+        }),
+        totalUsage: Promise.resolve({
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        }),
+        finishReason: Promise.resolve("stop"),
+        consumeStream: async () => {},
+      }));
+
+      await runStreamCase({
+        suiteHostConfig: {
+          systemPrompt: "Stream PR 5a system",
+        },
+      });
+
+      const streamCall = streamTextMock.mock.calls[0]?.[0];
+      expect(streamCall).toBeDefined();
+      expect(streamCall.system).toBe("Stream PR 5a system");
+      const wireMessages = streamCall.messages as Array<{ role: string }>;
+      expect(wireMessages.some((m) => m.role === "system")).toBe(false);
+    });
+
+    it("prepends resolved system to streamIterationViaBackend's mid-run SSE snapshots (PR 5a folds 4d Cursor-Low)", async () => {
+      // PR 4d round 2 deferred fix: the streaming backend runner
+      // (`streamIterationViaBackend`) emits `buildTraceSnapshotEvent`
+      // mid-run with `messages: messageHistory` (no system prefix).
+      // PR 4d closed the same gap on `streamIterationWithAiSdk` via a
+      // `withSystemPrefix` closure but deferred the backend equivalent
+      // to PR 5. PR 5a folds it in — the closure exists in
+      // `streamIterationViaBackend` too and is applied at every
+      // snapshot site.
+      const fetchMockBackend = vi.fn();
+      vi.stubGlobal("fetch", fetchMockBackend);
+      fetchMockBackend.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: vi.fn().mockResolvedValue({ ok: true }),
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        headers: new Headers({ "Content-Type": "text/event-stream" }),
+      });
+
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockResolvedValueOnce({
+          messages: [
+            { role: "user", content: "Hello" } as any,
+            { role: "assistant", content: "Done" } as any,
+          ],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          turnTrace: {
+            turnId: "t_1",
+            promptIndex: 0,
+            startedAt: 0,
+            endedAt: 10,
+            modelId: "anthropic/claude-haiku-4.5",
+            spans: [],
+          },
+        } as any);
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "Backend SSE prefix",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-backend-sse",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-backend-sse",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event) => emitted.push(event as Record<string, unknown>),
+          suiteHostConfig: {
+            systemPrompt: "Backend stream SSE prefix",
+          },
+        } as any);
+
+        // At least one trace_snapshot SSE event should have the system
+        // as the first message in its trace messages payload.
+        const hasSystemPrefix = (msgs: unknown): boolean => {
+          if (!Array.isArray(msgs) || msgs.length === 0) return false;
+          const first = msgs[0] as { role?: string; content?: unknown };
+          if (first?.role !== "system") return false;
+          if (typeof first.content === "string") {
+            return first.content === "Backend stream SSE prefix";
+          }
+          if (Array.isArray(first.content)) {
+            return first.content.some(
+              (part: any) =>
+                part?.type === "text" &&
+                part.text === "Backend stream SSE prefix",
+            );
+          }
+          return false;
+        };
+        const traceSnapshots = emitted.filter(
+          (e) => e?.type === "trace_snapshot",
+        );
+        const anySnapshotHasPrefix = traceSnapshots.some((snap) => {
+          const trace = snap.trace as { messages?: unknown } | undefined;
+          return hasSystemPrefix(trace?.messages);
+        });
+        expect(anySnapshotHasPrefix).toBe(true);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("emits the existing fullStream → SSE event vocabulary via the shared adapter (PR 5a)", async () => {
+      // Lock the byte-shape contract: the events emitted from the
+      // streaming runner's terminal stream still match the existing
+      // `streamTestCase` SSE event vocabulary. The adapter is unit-tested
+      // standalone in PR 5-pre; this asserts the runner routes through
+      // it correctly.
+      const emitted: Array<Record<string, unknown>> = [];
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((options: any) => {
+        // Fire onStepFinish so the helper's onStepSnapshot fires and the
+        // runner emits the per-step trace_snapshot SSE event.
+        void options.onStepFinish?.({
+          usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+          response: {
+            messages: [{ role: "assistant", content: "Done" }],
+          },
+        });
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", id: "t1", text: "Working" };
+            yield {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "search",
+              input: { q: "status" },
+            };
+            yield {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "search",
+              output: { ok: true },
+            };
+            yield {
+              type: "finish-step",
+              usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+            };
+          })(),
+          steps: Promise.resolve([]),
+          response: Promise.resolve({
+            modelId: "gpt-4-turbo",
+            messages: [{ role: "assistant", content: "Done" }],
+          }),
+          totalUsage: Promise.resolve({
+            inputTokens: 2,
+            outputTokens: 3,
+            totalTokens: 5,
+          }),
+          finishReason: Promise.resolve("stop"),
+          consumeStream: async () => {},
+        };
+      });
+
+      await runStreamCase({ emitCollector: emitted });
+
+      // Spot-check: the canonical event vocabulary still flows.
+      expect(emitted).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "turn_start" }),
+          expect.objectContaining({
+            type: "text_delta",
+            content: "Working",
+          }),
+          expect.objectContaining({
+            type: "tool_call",
+            toolName: "search",
+            toolCallId: "call-1",
+          }),
+          expect.objectContaining({
+            type: "tool_result",
+            toolCallId: "call-1",
+            isError: false,
+          }),
+          expect.objectContaining({ type: "step_finish" }),
+          expect.objectContaining({
+            type: "trace_snapshot",
+          }),
+          expect.objectContaining({ type: "turn_finish" }),
+        ]),
+      );
+    });
+  });
 });
