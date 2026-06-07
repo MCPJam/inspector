@@ -37,6 +37,19 @@ import { resolveExecutionContext } from "../utils/host-execution-context";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
+  McpAppBrowserHarness,
+  DEFAULT_VIEWPORT,
+  type WidgetRenderObservation,
+} from "../utils/mcp-app-browser-harness";
+import {
+  buildComputerUseTools,
+  resolveComputerUseToolVersion,
+} from "../utils/computer-use-tool";
+import {
+  renderMcpAppToolResult,
+  isRenderableMcpAppTool,
+} from "../utils/mcp-app-render-observation";
+import {
   buildLlmRuntimeConfigFromOrgConfig,
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
@@ -1232,6 +1245,33 @@ const runIterationWithAiSdk = async ({
   // `messages`) while the wire shape stays chat-aligned.
   let enhancedSystemPromptForPersist: string | undefined = undefined;
 
+  // Browser-rendered MCP App eval (PR 5): render MCP App tool results in the
+  // headless-Chromium harness and (for Claude drivers) drive them with
+  // Computer Use. Harness construction is cheap; Chromium launches lazily on
+  // the first widget render, so prompt-only / no-widget iterations pay nothing.
+  const computerUseVersion = resolveComputerUseToolVersion(test.model);
+  // Ref-object (not a bare `let`): the only assignments happen inside the
+  // closures below, which TS control-flow analysis can't see — a bare `let`
+  // would stay narrowed to its `null` initializer in the outer `finally`.
+  const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
+    current: null,
+  };
+  let activeWidgetToolCallId: string | null = null;
+  const widgetRenderObservations: WidgetRenderObservation[] = [];
+  const ensureWidgetHarness = (): McpAppBrowserHarness => {
+    if (!widgetHarnessRef.current) {
+      widgetHarnessRef.current = new McpAppBrowserHarness({
+        callTool: (sid, name, args) =>
+          mcpClientManager.executeTool(sid, name, args),
+        viewport: DEFAULT_VIEWPORT,
+      });
+    }
+    return widgetHarnessRef.current;
+  };
+  // Eager (cheap) construction when Computer Use is supported so the computer
+  // tools can reference the harness; Chromium still launches lazily.
+  if (computerUseVersion) ensureWidgetHarness();
+
   try {
     // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
     // this and call `getToolsForAiSdk` + an inline system/temperature wiring,
@@ -1264,6 +1304,18 @@ const runIterationWithAiSdk = async ({
     // array at persistence time, since eval's wire shape to Convex
     // (`appendEvalTurnTrace`) has no dedicated `systemPrompt` slot.
     enhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+
+    // Computer Use tools (Claude drivers only). Included in the tool map so the
+    // AI SDK Anthropic provider auto-attaches the beta header; gated per step by
+    // `prepareAdvertisedTools` so they only appear once a widget has rendered.
+    const computerWidgetTools = computerUseVersion
+      ? buildComputerUseTools({
+          version: computerUseVersion,
+          harness: ensureWidgetHarness(),
+          getActiveToolCallId: () => activeWidgetToolCallId,
+          viewport: DEFAULT_VIEWPORT,
+        })
+      : {};
 
     const llmModel = createLlmModel(
       modelDefinition,
@@ -1351,9 +1403,27 @@ const runIterationWithAiSdk = async ({
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
-        tools: prepared.allTools,
+        tools: { ...prepared.allTools, ...computerWidgetTools },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
+        // Browser-rendered MCP App eval (PR 5): gate Computer Use tools so the
+        // model only sees `computer` / `finish_widget` once a widget has
+        // actually rendered in the harness (PR 2's prepareAdvertisedTools hook).
+        ...(computerUseVersion
+          ? {
+              prepareAdvertisedTools: ({
+                defaultToolNames,
+              }: {
+                stepIndex: number;
+                defaultToolNames: string[];
+              }) =>
+                widgetHarnessRef.current?.hasRenderedWidget()
+                  ? defaultToolNames
+                  : defaultToolNames.filter(
+                      (n) => n !== "computer" && n !== "finish_widget",
+                    ),
+            }
+          : {}),
         ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
@@ -1384,6 +1454,43 @@ const runIterationWithAiSdk = async ({
             activePartialResponseMessages = traceHistory.slice(
               promptInputLength,
             ) as ModelMessage[];
+          },
+          // Browser-rendered MCP App eval (PR 5): render each MCP App tool
+          // result in the harness and record a WidgetRenderObservation. Awaited
+          // (direct-chat-turn awaits this callback) so a rendered widget is
+          // mounted before the next step's Computer Use gate runs.
+          onToolResultChunk: async ({ toolCallId, toolName, output, serverId }) => {
+            if (!serverId) return;
+            const meta = mcpClientManager.getAllToolsMetadata(serverId)?.[
+              toolName
+            ];
+            if (!isRenderableMcpAppTool(meta)) return;
+            try {
+              const obs = await renderMcpAppToolResult({
+                toolCallId,
+                toolName,
+                serverId,
+                toolMetadata: meta,
+                output,
+                mcpClientManager,
+                injectOpenAiCompat,
+                harness: ensureWidgetHarness(),
+                keepMounted: computerUseVersion !== null,
+              });
+              widgetRenderObservations.push(obs);
+              if (obs.status === "rendered" && computerUseVersion) {
+                activeWidgetToolCallId = toolCallId;
+              }
+              logger.debug("[evals] widget render observation", {
+                toolName,
+                status: obs.status,
+              });
+            } catch (err) {
+              logger.warn("[evals] widget render failed", {
+                toolName,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           },
         },
       });
@@ -1755,6 +1862,17 @@ const runIterationWithAiSdk = async ({
       evaluation,
       iterationId: iterationId ?? undefined,
     };
+  } finally {
+    // Browser-rendered MCP App eval (PR 5): tear down the harness (and its
+    // headless Chromium, if launched) regardless of success/failure. No-op
+    // when the harness was never constructed or never launched.
+    await widgetHarnessRef.current?.dispose();
+    if (widgetRenderObservations.length > 0) {
+      logger.debug("[evals] widget render observations", {
+        count: widgetRenderObservations.length,
+        statuses: widgetRenderObservations.map((o) => o.status),
+      });
+    }
   }
 };
 

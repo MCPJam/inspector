@@ -167,7 +167,9 @@ export interface DirectChatTurnTraceEvents {
   /** Fired for every tool-call chunk. */
   onToolCallChunk?: (event: DirectChatTurnToolCallChunk) => void;
   /** Fired for every tool-result chunk. */
-  onToolResultChunk?: (event: DirectChatTurnToolResultChunk) => void;
+  onToolResultChunk?: (
+    event: DirectChatTurnToolResultChunk,
+  ) => void | Promise<void>;
   /**
    * Fired after each step finishes — after spans have been emitted into
    * `traceContext` and `traceHistory` has been updated. Chat uses this to
@@ -495,7 +497,11 @@ export function runDirectChatTurn(
         return;
       }
       if (chunk.type === "tool-result") {
-        traceEvents?.onToolResultChunk?.({
+        // Awaited (the callback may be async — the eval runner renders the MCP
+        // App widget here so a rendered widget is mounted before the next
+        // step's `prepareStep` decides whether to advertise Computer Use).
+        // Existing void-returning consumers (chat trace) are unaffected.
+        await traceEvents?.onToolResultChunk?.({
           turnId: traceTurn.turnId,
           promptIndex: traceTurn.promptIndex,
           stepIndex: currentStepIndex,
