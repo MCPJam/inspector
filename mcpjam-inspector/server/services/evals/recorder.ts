@@ -335,6 +335,18 @@ export const createSuiteRunRecorder = ({
           ...(useW1Fallback
             ? {
                 messages: sanitizeForConvexTransport(messages),
+                // Mirrors `appendEvalTurnTrace.systemPrompt` + the
+                // parallel fix in `finishIterationDirectly`. Cursor
+                // Bugbot follow-up "Recorder W1 omits systemPrompt":
+                // without this, suite runs that use the recorder
+                // (not the direct `finishIterationDirectly` path) and
+                // hit the W1 fallback persist a transcript with no
+                // resolved system prompt — the prepend was dropped
+                // earlier in this PR. Backend `updateTestIteration`
+                // accepts the slot (mcpjam-backend #449); first-write-
+                // wins semantics apply, no risk of clobbering a value
+                // already set by an earlier `appendEvalTurnTrace`.
+                ...(systemPrompt ? { systemPrompt } : {}),
                 ...(spans?.length
                   ? { spans: sanitizeForConvexTransport(spans) }
                   : {}),
