@@ -248,6 +248,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
       >
         {sessionParam ? (
           <McpjamAgentThread
+            key={sessionParam}
             sessionId={sessionParam}
             projectId={projectId}
             organizationId={organizationId}
