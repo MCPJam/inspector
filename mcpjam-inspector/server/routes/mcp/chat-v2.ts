@@ -383,6 +383,12 @@ chatV2.post("/", async (c) => {
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
       ? "chatbox"
       : "direct";
+    // Mirrors the sourceType branch — chatbox surface stays "chatbox", the
+    // non-chatbox case is the inspector playground over MCP. The docs agent
+    // has its own route (web/mcpjam-agent.ts) and never lands here.
+    const chatSessionOrigin: "chatbox" | "playground" = isChatboxSession
+      ? "chatbox"
+      : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
       isChatboxSession ? bodySurface ?? "preview" : undefined;
 
@@ -724,6 +730,7 @@ chatV2.post("/", async (c) => {
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
+                origin: chatSessionOrigin,
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
                 ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
@@ -809,6 +816,7 @@ chatV2.post("/", async (c) => {
               modelSource:
                 runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
+              origin: chatSessionOrigin,
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
@@ -942,6 +950,7 @@ chatV2.post("/", async (c) => {
               modelId: String(modelDefinition.id),
               modelSource: "byok",
               sourceType: chatSessionSourceType,
+              origin: chatSessionOrigin,
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)

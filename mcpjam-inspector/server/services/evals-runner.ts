@@ -2185,6 +2185,7 @@ const runIterationViaBackend = async ({
         mcpClientManager,
         authContext: evalAuthContext,
         sourceType: "eval",
+        origin: "eval",
         streamSink: "none",
         persistMode: "caller",
         approvalMode: "auto-deny",

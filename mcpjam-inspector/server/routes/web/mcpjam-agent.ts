@@ -113,9 +113,12 @@ mcpjamAgent.post("/", async (c) => {
           chatSessionId: body.chatSessionId,
           projectId: body.projectId,
           // Closed union; "direct" lets the agent ride existing billing/
-          // ingestion paths. Per-surface client tagging lives in localStorage
-          // and the surface event property.
+          // ingestion paths (billing rollups + by_*_direct indexes assume
+          // agent traffic is "direct"). `origin` carries the product
+          // surface separately so training pipelines can filter agent
+          // rows out without disturbing those readers.
           sourceType: "direct",
+          origin: "mcpjam_agent",
           authenticatedUserId: undefined,
           originalMessages: body.messages,
           // No host config — the docs server id isn't a project-validated
