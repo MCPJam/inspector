@@ -2092,13 +2092,26 @@ const runIterationViaBackend = async ({
       );
       break;
     }
+    // Codex P1 round-3 ("Don't treat tool-result error spans as
+    // backend failures"): `wrapBackendToolsForTrace` records ORDINARY
+    // local tool-result errors (MCP tool returned `isError: true`,
+    // tool execution threw, ...) as `status: "error"` with
+    // `category: "tool"`. The original match-any-error-span check
+    // would set `iterationError` and break before
+    // `finalizePassedForEval` could apply the configured
+    // `failOnToolError` policy — so otherwise-passing evals were
+    // force-failed when a tool returned a recoverable error and the
+    // model recovered. Filter to backend step / LLM failure spans
+    // only (categories `"step" | "llm" | "error"`); tool-category
+    // error spans flow through the existing tool-error gate (see
+    // `finalizePassedForEval` + `advancedConfig.failOnToolError`).
     const stepErrorSpan = turnResult.turnTrace.spans.find(
-      (span) => span.status === "error",
+      (span) => span.status === "error" && span.category !== "tool",
     );
     if (stepErrorSpan) {
       iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
       logger.error(
-        `[evals] runAssistantTurn turnTrace has error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+        `[evals] runAssistantTurn turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
       );
       break;
     }

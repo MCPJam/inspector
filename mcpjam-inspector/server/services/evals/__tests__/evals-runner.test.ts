@@ -1893,4 +1893,149 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       runAssistantTurnSpy.mockRestore();
     }
   });
+
+  it("does NOT treat a tool-result error span as a backend failure (PR 3 review round 4)", async () => {
+    // Codex P1 round-3 ("Don't treat tool-result error spans as
+    // backend failures"): `wrapBackendToolsForTrace` records ordinary
+    // local tool-result errors (MCP tool returned isError:true,
+    // tool execution threw, ...) as `status:"error"` with
+    // `category:"tool"`. Treating those as cycle failures
+    // short-circuits before `finalizePassedForEval` can apply the
+    // configured `failOnToolError` policy, so otherwise-passing evals
+    // get force-failed when a tool returns a recoverable error.
+    //
+    // The runner must filter the error-span check to non-tool
+    // categories. Backend step / LLM failure spans (category:
+    // "llm" / "step" / "error") still trigger; tool spans flow
+    // through the existing tool-error gate.
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockResolvedValueOnce({
+        messages: [
+          { role: "user", content: "Hello" } as any,
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "tc_1",
+                toolName: "lookup",
+                input: {},
+              },
+            ],
+          } as any,
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "tc_1",
+                toolName: "lookup",
+                output: { isError: true, content: "tool failed" },
+              },
+            ],
+          } as any,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Recovered." }],
+          } as any,
+        ],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        turnTrace: {
+          turnId: "t_1",
+          promptIndex: 0,
+          startedAt: 0,
+          endedAt: 30,
+          modelId: "anthropic/claude-haiku-4.5",
+          spans: [
+            {
+              id: "sp_step_ok",
+              name: "step.1.llm",
+              category: "llm",
+              startMs: 0,
+              endMs: 10,
+              status: "ok",
+            },
+            // Tool error — should be IGNORED by the cycle-failure
+            // check (deferred to `failOnToolError`).
+            {
+              id: "sp_tool_error",
+              name: "tool.lookup",
+              category: "tool",
+              startMs: 10,
+              endMs: 20,
+              status: "error",
+              toolCallId: "tc_1",
+              toolName: "lookup",
+            },
+            // The model recovered with a successful final LLM step.
+            {
+              id: "sp_step_final",
+              name: "step.2.llm",
+              category: "llm",
+              startMs: 20,
+              endMs: 30,
+              status: "ok",
+            },
+          ] as any,
+        },
+      } as any);
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Tool error recovered",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              // Disable tool-error gating in advancedConfig — the
+              // intended policy is "tool errors don't fail evals."
+              advancedConfig: { failOnToolError: false },
+              expectedToolCalls: [
+                { toolName: "lookup", arguments: {} },
+              ],
+              promptTurns: [
+                {
+                  id: "turn-1",
+                  prompt: "Hello",
+                  expectedToolCalls: [
+                    { toolName: "lookup", arguments: {} },
+                  ],
+                },
+              ],
+              testCaseId: "case-tool-error-recovered",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-tool-error-recovered",
+      });
+
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      // Load-bearing assertion: with the filter in place,
+      // `iterationError` must NOT be set just because a tool span
+      // had `status:"error"`. The legacy backend loop deferred to
+      // `failOnToolError`; this PR's filter restores that.
+      expect(payload.error).toBeFalsy();
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
 });
