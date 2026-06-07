@@ -12,7 +12,9 @@ function parseMarkdownIntoBlocks(markdown: string): string[] {
 
 const MemoizedMarkdownBlock = memo(
   ({ content }: { content: string }) => {
-    return <Streamdown>{content}</Streamdown>;
+    return (
+      <Streamdown linkSafety={{ enabled: false }}>{content}</Streamdown>
+    );
   },
   (prevProps, nextProps) => {
     if (prevProps.content !== nextProps.content) return false;
