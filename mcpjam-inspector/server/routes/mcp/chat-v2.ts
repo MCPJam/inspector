@@ -68,6 +68,7 @@ import {
   runDirectChatTurn,
   type RunDirectChatTurnHandle,
 } from "../../utils/direct-chat-turn";
+import { resolveExecutionContext } from "../../utils/host-execution-context";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -390,17 +391,19 @@ chatV2.post("/", async (c) => {
     // temperature / requireToolApproval). Mirrors the web/chat-v2 path.
     // Soft-fall-through on Convex blip — chat keeps running with body
     // values, matching pre-rollout behavior.
-    let resolvedSystemPrompt = bodySystemPrompt;
-    let resolvedTemperatureOverride = bodyTemperature;
-    let resolvedRequireToolApproval = bodyRequireToolApproval;
-    let resolvedRespectToolVisibility = bodyRespectToolVisibility;
+    //
+    // PR 4c of the engine consolidation (`~/mcpjam-docs/unification.md`):
+    // the field-by-field merge between body and `fetchChatboxRuntimeConfig`
+    // was duplicated across `mcp/chat-v2.ts` and `web/chat-v2.ts` and
+    // drifted from eval's separate hostConfig resolver. Routed through the
+    // shared `resolveExecutionContext` so a single helper owns the merge,
+    // the precedence (`host-wins` for chatbox security model — body
+    // values are warned-and-overwritten), and the drift surfacing. Pure
+    // refactor: resolved values for the existing fields are byte-identical
+    // to the inline code below by construction (snapshot tests in
+    // `host-execution-context.test.ts` lock the contract).
     let resolvedModelOverride: typeof model | null = null;
-    // See web/chat-v2 for rationale: body is authoritative for direct
-    // chat (sourced from the project default), host overrides for
-    // chatbox-bound sessions to keep guest / share-link clients from
-    // flipping the host-level setting.
-    let resolvedProgressiveToolDiscovery: boolean | undefined =
-      body.progressiveToolDiscovery;
+    let hostRuntimeConfig: Record<string, unknown> | null = null;
     if (isChatboxSession && bodyChatboxId) {
       const bearer = c.req.header("authorization") ?? "";
       if (bearer) {
@@ -409,88 +412,13 @@ chatV2.post("/", async (c) => {
           bearer,
         });
         if (runtime.ok) {
-          const cfg = runtime.config;
-          if (
-            bodyRequireToolApproval !== undefined &&
-            cfg.requireToolApproval !== bodyRequireToolApproval
-          ) {
-            logger.warn(
-              "[mcp/chat-v2] client requireToolApproval differs from host; using host value",
-              {
-                chatboxId: bodyChatboxId,
-                body: bodyRequireToolApproval,
-                host: cfg.requireToolApproval,
-              }
-            );
-          }
-          resolvedSystemPrompt = cfg.systemPrompt;
-          resolvedTemperatureOverride = cfg.temperature;
-          resolvedRequireToolApproval = cfg.requireToolApproval;
-          // Host wins on chatbox-bound turns — but only when the
-          // runtime config actually carries the field. Older backends
-          // omit it; without this gate the override would replace the
-          // body's value (sourced from the chatbox doc client-side)
-          // with `undefined` and the orchestrator's auto policy would
-          // re-enable progressive mode on large catalogs.
-          if (cfg.progressiveToolDiscovery !== undefined) {
-            if (
-              body.progressiveToolDiscovery !== undefined &&
-              cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
-            ) {
-              logger.warn(
-                "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
-                {
-                  chatboxId: bodyChatboxId,
-                  body: body.progressiveToolDiscovery,
-                  host: cfg.progressiveToolDiscovery,
-                }
-              );
-            }
-            resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
-          }
-          if (cfg.respectToolVisibility !== undefined) {
-            if (
-              bodyRespectToolVisibility !== undefined &&
-              cfg.respectToolVisibility !== bodyRespectToolVisibility
-            ) {
-              logger.warn(
-                "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
-                {
-                  chatboxId: bodyChatboxId,
-                  body: bodyRespectToolVisibility,
-                  host: cfg.respectToolVisibility,
-                }
-              );
-            }
-            resolvedRespectToolVisibility = cfg.respectToolVisibility;
-          }
-          // See web/chat-v2 for rationale: host's modelId wins on
-          // chatbox-bound turns. Built-in catalog hit → full
-          // ModelDefinition; miss → swap id only, keep body provider.
-          if (model && cfg.modelId && cfg.modelId !== model.id) {
-            const hostModel = getModelById(cfg.modelId);
-            if (hostModel) {
-              logger.warn(
-                "[mcp/chat-v2] client model differs from host; using host model",
-                {
-                  chatboxId: bodyChatboxId,
-                  body: model.id,
-                  host: cfg.modelId,
-                }
-              );
-              resolvedModelOverride = hostModel;
-            } else {
-              logger.warn(
-                "[mcp/chat-v2] host model not in catalog; swapping id only",
-                {
-                  chatboxId: bodyChatboxId,
-                  body: model.id,
-                  host: cfg.modelId,
-                }
-              );
-              resolvedModelOverride = { ...model, id: cfg.modelId };
-            }
-          }
+          // Cast the typed `ChatboxRuntimeConfig` to a plain record so
+          // `resolveExecutionContext` can read it — the type narrowing
+          // re-enters via the resolver's per-field typeof checks.
+          hostRuntimeConfig = runtime.config as unknown as Record<
+            string,
+            unknown
+          >;
         } else {
           logger.warn(
             "[mcp/chat-v2] runtime-config fetch failed; using body values",
@@ -503,10 +431,91 @@ chatV2.post("/", async (c) => {
         }
       }
     }
-    const systemPrompt = resolvedSystemPrompt;
-    const temperature = resolvedTemperatureOverride;
-    const requireToolApproval = resolvedRequireToolApproval;
-    const respectToolVisibility = resolvedRespectToolVisibility;
+    const resolvedExecution = resolveExecutionContext({
+      hostConfig: hostRuntimeConfig,
+      overrides: {
+        systemPrompt: bodySystemPrompt,
+        temperature: bodyTemperature,
+        requireToolApproval: bodyRequireToolApproval,
+        respectToolVisibility: bodyRespectToolVisibility,
+        progressiveToolDiscovery: body.progressiveToolDiscovery,
+      },
+      precedence: "host-wins",
+    });
+    // Preserve the per-field warnings the inline code emitted — the
+    // resolver returns drift as data so the call site can keep its
+    // existing log shape unchanged.
+    for (const entry of resolvedExecution.drift) {
+      if (entry.field === "requireToolApproval") {
+        logger.warn(
+          "[mcp/chat-v2] client requireToolApproval differs from host; using host value",
+          {
+            chatboxId: bodyChatboxId,
+            body: entry.overrideValue,
+            host: entry.hostValue,
+          },
+        );
+      } else if (entry.field === "progressiveToolDiscovery") {
+        logger.warn(
+          "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
+          {
+            chatboxId: bodyChatboxId,
+            body: entry.overrideValue,
+            host: entry.hostValue,
+          },
+        );
+      } else if (entry.field === "respectToolVisibility") {
+        logger.warn(
+          "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
+          {
+            chatboxId: bodyChatboxId,
+            body: entry.overrideValue,
+            host: entry.hostValue,
+          },
+        );
+      }
+    }
+    // `modelId` stays special-cased: chat resolves it to a `ModelDefinition`
+    // via the catalog (built-in hit → full def; miss → swap id only,
+    // keep body provider). The resolver yields the resolved `modelId`
+    // string; the call site does the catalog lookup and warn.
+    if (
+      isChatboxSession &&
+      hostRuntimeConfig &&
+      model &&
+      resolvedExecution.modelId &&
+      resolvedExecution.modelId !== model.id
+    ) {
+      const hostModelId = resolvedExecution.modelId;
+      const hostModel = getModelById(hostModelId);
+      if (hostModel) {
+        logger.warn(
+          "[mcp/chat-v2] client model differs from host; using host model",
+          {
+            chatboxId: bodyChatboxId,
+            body: model.id,
+            host: hostModelId,
+          }
+        );
+        resolvedModelOverride = hostModel;
+      } else {
+        logger.warn(
+          "[mcp/chat-v2] host model not in catalog; swapping id only",
+          {
+            chatboxId: bodyChatboxId,
+            body: model.id,
+            host: hostModelId,
+          }
+        );
+        resolvedModelOverride = { ...model, id: hostModelId };
+      }
+    }
+    const systemPrompt = resolvedExecution.systemPrompt;
+    const temperature = resolvedExecution.temperature;
+    const requireToolApproval = resolvedExecution.requireToolApproval;
+    const respectToolVisibility = resolvedExecution.respectToolVisibility;
+    const resolvedProgressiveToolDiscovery =
+      resolvedExecution.progressiveToolDiscovery;
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
