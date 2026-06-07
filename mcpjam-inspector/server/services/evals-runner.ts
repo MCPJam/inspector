@@ -705,6 +705,15 @@ async function finishIterationDirectly(
       ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(params.messages),
+            // Mirrors `appendEvalTurnTrace.systemPrompt` (Cursor follow-up
+            // on PR-2481): after dropping the persistence-side prepend,
+            // this W1 single-call path would otherwise persist a
+            // transcript with no resolved system prompt. Backend PR #448
+            // adds `systemPrompt` to `updateTestIteration` with the same
+            // first-write-wins semantics as the per-turn append.
+            ...(params.systemPrompt
+              ? { systemPrompt: params.systemPrompt }
+              : {}),
             ...(params.spans?.length
               ? { spans: sanitizeForConvexTransport(params.spans) }
               : {}),
