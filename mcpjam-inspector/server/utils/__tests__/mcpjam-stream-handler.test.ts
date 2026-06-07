@@ -4,6 +4,7 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 
 let lastExecution: Promise<void> | null = null;
@@ -109,6 +110,59 @@ describe("mcpjam-stream-handler", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it("request_payload trace reflects prepareAdvertisedTools narrowing (non-progressive) and matches the Convex request", async () => {
+    const toolDef = (description: string) => ({
+      description,
+      inputSchema: { type: "object" } as any,
+    });
+    // serializeToolsForConvex is stubbed to [] by default in this suite; return
+    // the real defs for this turn so there's an advertised set to narrow.
+    vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+      { name: "search", inputSchema: { type: "object" } },
+      { name: "computer", inputSchema: { type: "object" } },
+      { name: "finish_widget", inputSchema: { type: "object" } },
+    ]);
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "hi" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {
+        search: toolDef("Search"),
+        computer: toolDef("Computer Use"),
+        finish_widget: toolDef("Finish widget"),
+      },
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      // Hide computer/finish_widget this step (the widget-eval gate) with no
+      // progressive discovery — this is the path the P2 trace mismatch hit.
+      prepareAdvertisedTools: ({ defaultToolNames }) =>
+        defaultToolNames.filter(
+          (n) => n !== "computer" && n !== "finish_widget",
+        ),
+    });
+
+    await lastExecution;
+
+    // The Convex /stream request advertised only the narrowed set.
+    const fetchBody = JSON.parse(
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+    );
+    const requestToolNames = (fetchBody.tools as Array<{ name: string }>).map(
+      (t) => t.name
+    );
+    expect(requestToolNames).toEqual(["search"]);
+
+    // The request_payload trace must reflect the SAME narrowed set (regression:
+    // it previously fell back to the full tools map in non-progressive mode).
+    const requestPayload = writtenChunks
+      .filter((chunk) => chunk?.type === "data-trace-event")
+      .map((chunk) => chunk.data)
+      .find((event) => event.type === "request_payload");
+    expect(Object.keys(requestPayload.payload.tools)).toEqual(["search"]);
   });
 
   it("scrubs backend-only approval parts while preserving full history for completion callbacks", async () => {

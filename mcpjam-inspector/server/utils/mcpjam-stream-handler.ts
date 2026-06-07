@@ -1741,19 +1741,19 @@ async function processOneStep(
     stepIndex
   );
 
-  // For progressive discovery, the trace payload should reflect the *active*
-  // subset so request_payload snapshots show what the model actually saw.
-  const toolsForPayload: ToolSet =
-    progressivePlan && progressivePlan.enabled && discoveryState
-      ? Object.fromEntries(
-          activeToolDefs
-            .map((def): [string, unknown] | null => {
-              const t = (tools as Record<string, unknown>)[def.name];
-              return t === undefined ? null : [def.name, t];
-            })
-            .filter((pair): pair is [string, unknown] => pair !== null),
-        ) as ToolSet
-      : tools;
+  // The trace payload must reflect the *advertised* subset — `activeToolDefs`
+  // after BOTH progressive-discovery narrowing AND the prepareAdvertisedTools
+  // hook — so request_payload snapshots match what Convex actually received in
+  // `tools: activeToolDefs` below. Derived unconditionally: in the no-narrowing
+  // case `activeToolDefs === toolDefs`, so this reconstructs the full set.
+  const toolsForPayload: ToolSet = Object.fromEntries(
+    activeToolDefs
+      .map((def): [string, unknown] | null => {
+        const t = (tools as Record<string, unknown>)[def.name];
+        return t === undefined ? null : [def.name, t];
+      })
+      .filter((pair): pair is [string, unknown] => pair !== null),
+  ) as ToolSet;
 
   emitRequestPayload(writer, {
     turnId: traceTurn.turnId,
