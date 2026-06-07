@@ -256,12 +256,6 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   string,
   { ariaLabel: string; content: string; contentClassName?: string }
 > = {
-  "Eval iteration overage": {
-    ariaLabel: "Eval iteration overage pricing",
-    content:
-      "Free stops at the cap. Team can continue at $0.02 per iteration beyond the included monthly pool.",
-    contentClassName: "max-w-[22rem]",
-  },
   "Triage Insights": {
     ariaLabel: "About Triage Insights",
     content: "Recommendations for how to improve your server.",

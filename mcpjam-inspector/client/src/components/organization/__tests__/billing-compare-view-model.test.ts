@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import type { PlanCatalog } from "@/hooks/useOrganizationBilling";
 
-function createPlanCatalog(
-  maxEvalRunsPerMonth: { free: number; team: number },
-): PlanCatalog {
+function createPlanCatalog(): PlanCatalog {
   const baseEntry = {
     prices: {
       monthly: { amountCents: 0, stripePriceId: null },
@@ -20,19 +18,23 @@ function createPlanCatalog(
       free: {
         ...baseEntry,
         limits: {
-          maxMembers: 1,
-          maxProjects: 1,
-          maxServersPerProject: 3,
-          maxEvalRunsPerMonth: maxEvalRunsPerMonth.free,
+          maxMembers: null,
+          maxProjects: null,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: null,
+          maxEvalRunsPerMonth: null,
+          insightsPerDay: null,
         },
       },
       team: {
         ...baseEntry,
         limits: {
-          maxMembers: 10,
-          maxProjects: 10,
-          maxServersPerProject: 10,
-          maxEvalRunsPerMonth: maxEvalRunsPerMonth.team,
+          maxMembers: null,
+          maxProjects: null,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: null,
+          maxEvalRunsPerMonth: null,
+          insightsPerDay: null,
         },
       },
       enterprise: {
@@ -41,34 +43,48 @@ function createPlanCatalog(
           maxMembers: null,
           maxProjects: null,
           maxServersPerProject: null,
+          maxChatboxesPerProject: null,
           maxEvalRunsPerMonth: null,
+          insightsPerDay: null,
         },
       },
     },
   };
 }
 
-function findEvalIterationCapRow(
+function findRow(
   sections: ReturnType<typeof buildComparePlanSectionsFromCatalog>,
+  label: string,
 ) {
   for (const section of sections) {
-    const row = section.rows.find((r) => r.label === "Eval iteration cap");
+    const row = section.rows.find((r) => r.label === label);
     if (row) return row;
   }
-  throw new Error("Eval iteration cap row not found");
+  throw new Error(`${label} row not found`);
 }
 
 describe("buildComparePlanSectionsFromCatalog", () => {
-  it("keeps static eval iteration cap copy instead of catalog limits", () => {
-    const sections = buildComparePlanSectionsFromCatalog(
-      createPlanCatalog({ free: 5, team: 5000 }),
-    );
-    const row = findEvalIterationCapRow(sections);
+  it("renders uncapped Free and Team org/project limits from the catalog", () => {
+    const sections = buildComparePlanSectionsFromCatalog(createPlanCatalog());
+    const seatLimit = findRow(sections, "Seat limit");
+    const projects = findRow(sections, "Projects");
 
-    expect(row.free).toEqual({ kind: "text", text: "100 iter. / mo" });
-    expect(row.team).toEqual({
+    expect(seatLimit.free).toMatchObject({
       kind: "text",
-      text: "5,000 iter. / mo",
+      text: "Unlimited",
+    });
+    expect(seatLimit.team).toEqual({
+      kind: "text",
+      text: "Unlimited",
+      emphasize: true,
+    });
+    expect(projects.free).toMatchObject({
+      kind: "text",
+      text: "Unlimited",
+    });
+    expect(projects.team).toEqual({
+      kind: "text",
+      text: "Unlimited",
       emphasize: true,
     });
   });

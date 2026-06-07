@@ -17,7 +17,8 @@ export type BillingLimitName =
   | "maxProjects"
   | "maxServersPerProject"
   | "maxChatboxesPerProject"
-  | "maxEvalRunsPerMonth";
+  | "maxEvalRunsPerMonth"
+  | "insightsPerDay";
 
 /** Mirrors backend premiumness gate keys exactly. */
 export type PremiumnessGateKey =
@@ -29,7 +30,8 @@ export type PremiumnessGateKey =
   | "maxProjects"
   | "maxServersPerProject"
   | "maxChatboxesPerProject"
-  | "maxEvalRunsPerMonth";
+  | "maxEvalRunsPerMonth"
+  | "insightsPerDay";
 
 export type BillingEnforcementState =
   | "active"

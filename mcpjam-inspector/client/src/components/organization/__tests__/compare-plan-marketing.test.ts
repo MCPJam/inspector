@@ -26,7 +26,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (n, s) => n + s.rows.length,
       0,
     );
-    expect(rowCount).toBe(24);
+    expect(rowCount).toBe(22);
 
     const standardFeatures = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Standard features",
@@ -41,31 +41,18 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
   });
 
   it("includes representative product and org/project cells", () => {
-    const testing = COMPARE_PLAN_MARKETING_SECTIONS.find(
+    const evaluations = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Evaluations",
     );
-    const iterationCapRow = testing?.rows.find(
-      (r) => r.label === "Eval iteration cap",
-    );
-    expect(iterationCapRow?.team).toEqual({
-      kind: "text",
-      text: "5,000 iter. / mo",
-      emphasize: true,
-    });
-    expect(iterationCapRow?.free).toEqual({
-      kind: "text",
-      text: "100 iter. / mo",
-    });
-
-    const overageRow = testing?.rows.find(
-      (r) => r.label === "Eval iteration overage",
-    );
-    expect(overageRow?.free).toEqual({ kind: "x" });
-    expect(overageRow?.team).toEqual({
-      kind: "text",
-      text: "$0.02 / iter.",
-      emphasize: true,
-    });
+    expect(
+      evaluations?.rows.some((r) => r.label === "Eval iteration cap"),
+    ).toBe(false);
+    expect(
+      evaluations?.rows.some((r) => r.label === "Eval iteration overage"),
+    ).toBe(false);
+    expect(
+      evaluations?.rows.find((r) => r.label === "Triage Insights")?.free,
+    ).toEqual({ kind: "check" });
 
     const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Organization & projects",
@@ -74,7 +61,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       orgProjects?.rows.find((r) => r.label === "Seat limit")?.free,
     ).toEqual({
       kind: "text",
-      text: "5",
+      text: "Unlimited",
     });
     const security = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Security & Compliance",

@@ -1386,7 +1386,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("disables sidebar project creation when the routed org is free and at cap", async () => {
+  it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/organizations/org-3");
@@ -1461,12 +1461,12 @@ describe("App hosted OAuth callback handling", () => {
               gateKey: "maxProjects",
               kind: "limit",
               scope: "organization",
-              canAccess: false,
-              shouldShowUpsell: true,
-              upgradePlan: "team",
-              reason: "limit_reached",
+              canAccess: true,
+              shouldShowUpsell: false,
+              upgradePlan: null,
+              reason: "within_limit",
               currentValue: 1,
-              allowedValue: 1,
+              allowedValue: null,
             },
           ],
         };
@@ -1483,11 +1483,8 @@ describe("App hosted OAuth callback handling", () => {
 
     const lastCall =
       mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
-    expect(lastCall?.[0]).toMatchObject({
-      isCreateProjectDisabled: true,
-      createProjectDisabledReason:
-        "This organization has reached its project limit (1). Upgrade to create more projects.",
-    });
+    expect(lastCall?.[0].isCreateProjectDisabled).toBe(false);
+    expect(lastCall?.[0].createProjectDisabledReason).toBeUndefined();
   });
 
   it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {

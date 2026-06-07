@@ -95,14 +95,14 @@ describe("ChatboxesRoute billing gate", () => {
     mockRouteContext.upgradePlanForActiveTab = null;
   });
 
-  it("shows the billing upsell gate for free organizations", () => {
+  it("shows the billing upsell gate when the active tab is locked", () => {
     mockRouteContext.activeTabBillingLocked = true;
     mockRouteContext.shellBillingStatus = {
-      plan: "free",
-      effectivePlan: "free",
+      plan: "team",
+      effectivePlan: "team",
       canManageBilling: true,
     };
-    mockRouteContext.upgradePlanForActiveTab = "team";
+    mockRouteContext.upgradePlanForActiveTab = "enterprise";
 
     render(<ChatboxesRoute />);
 
