@@ -6,7 +6,7 @@ import { CreditBalanceCard } from "../CreditBalanceCard";
 
 let balanceState:
   | {
-      availableCredits: number;
+      paidCreditsRemaining: number;
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
       freeDailyCreditsRemaining: number;
@@ -17,7 +17,6 @@ let balanceState:
       monthlyAllowanceTotal?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
-      paidCreditsRemaining?: number;
     }
   | undefined = undefined;
 let isLoadingState = false;
@@ -63,7 +62,7 @@ vi.mock("@/components/billing/PendingCreditTopupsBanner", () => ({
 describe("CreditBalanceCard", () => {
   beforeEach(() => {
     balanceState = {
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 0,
       freeDailyCreditsRemaining: 300,
@@ -96,7 +95,7 @@ describe("CreditBalanceCard", () => {
 
   it("renders the daily-limit row without surfacing any dollar value", () => {
     balanceState = {
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 9,
       freeDailyCreditsRemaining: 273,
@@ -120,7 +119,7 @@ describe("CreditBalanceCard", () => {
 
   it("renders the paid-credits row as org credits, with no dollar value", () => {
     balanceState = {
-      availableCredits: 1200,
+      paidCreditsRemaining: 1200,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 100,
       freeDailyCreditsRemaining: 0,
@@ -141,7 +140,7 @@ describe("CreditBalanceCard", () => {
 
   it("shows the org wallet lock state independent of the paid-credits row", () => {
     balanceState = {
-      availableCredits: -500,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 0,
       freeDailyCreditsRemaining: 300,
@@ -152,7 +151,7 @@ describe("CreditBalanceCard", () => {
     render(<CreditBalanceCard />);
 
     const paidRow = screen.getByTestId("usage-paid");
-    expect(paidRow).toHaveTextContent(/-500 credits/);
+    expect(paidRow).toHaveTextContent(/0 credits/);
     // The lock notice lives in its own block, not inside the paid row.
     expect(screen.getByTestId("usage-wallet-locked")).toHaveTextContent(
       /paused pending review/
@@ -164,7 +163,7 @@ describe("CreditBalanceCard", () => {
     // purchase. Gating the notice on purchase history would hide it exactly
     // when the user needs to know spending is paused.
     balanceState = {
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 0,
       freeDailyCreditsRemaining: 300,
@@ -246,7 +245,7 @@ describe("CreditBalanceCard", () => {
   describe("team monthly model", () => {
     beforeEach(() => {
       balanceState = {
-        availableCredits: 19_500,
+        paidCreditsRemaining: 1_500,
         hasPurchaseHistory: true,
         freeDailyPercentUsed: 0,
         freeDailyCreditsRemaining: 0,
@@ -257,7 +256,6 @@ describe("CreditBalanceCard", () => {
         monthlyAllowanceTotal: 18_000,
         monthlyAllowanceRemaining: 13_950,
         monthlyResetAt: Date.now() + 12 * 24 * 60 * 60 * 1000,
-        paidCreditsRemaining: 1_500,
       };
     });
 
@@ -284,9 +282,9 @@ describe("CreditBalanceCard", () => {
         hasPurchaseHistory: false,
       };
       render(<CreditBalanceCard canManageCredits />);
-      expect(
-        screen.getByTestId("usage-monthly-exhausted")
-      ).toHaveTextContent(/Monthly credits used/);
+      expect(screen.getByTestId("usage-monthly-exhausted")).toHaveTextContent(
+        /Monthly credits used/
+      );
     });
 
     it("keeps the existing daily and top-up UI when only the team flag is off", async () => {
@@ -300,7 +298,7 @@ describe("CreditBalanceCard", () => {
         /Free daily credits/
       );
       expect(screen.getByTestId("usage-paid")).toHaveTextContent(
-        /19,500 credits/
+        /1,500 credits/
       );
 
       await user.click(screen.getByRole("button", { name: /Buy credits/i }));

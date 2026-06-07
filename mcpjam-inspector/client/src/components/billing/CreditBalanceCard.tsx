@@ -107,9 +107,7 @@ export function CreditBalanceCard({
     teamCreditsUiEnabled && balance?.billingModel === "monthly_per_seat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
-  const paidRemaining = showMonthly
-    ? (balance?.paidCreditsRemaining ?? 0)
-    : (balance?.availableCredits ?? 0);
+  const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const monthlyExhausted =
     showMonthly && monthlyRemaining <= 0 && paidRemaining <= 0;
 
@@ -238,7 +236,6 @@ export function CreditBalanceCard({
             Credit spending is paused pending review.
           </p>
         ) : null}
-
       </CardContent>
       {isTopupOpen && canManageCredits && (
         <CreditTopupDialog

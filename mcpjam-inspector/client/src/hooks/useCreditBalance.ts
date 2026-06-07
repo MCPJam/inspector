@@ -3,8 +3,8 @@ import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
 
 export interface CreditBalanceState {
-  /** Shared credits currently available to the organization. */
-  availableCredits: number;
+  /** Shared paid top-up credits currently available to the organization. */
+  paidCreditsRemaining: number;
   /**
    * Whether the user has ever topped up. Used to gate paid-bar
    * visibility. Boolean-only — we deliberately don't expose the
@@ -37,11 +37,6 @@ export interface CreditBalanceState {
   monthlyAllowanceRemaining?: number;
   /** Epoch ms when the monthly allowance resets. Only set when monthly. */
   monthlyResetAt?: number | null;
-  /**
-   * Paid top-up credits still available, kept separate from the monthly
-   * allowance (the allowance is spent first). Only set when monthly.
-   */
-  paidCreditsRemaining?: number;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -64,7 +59,7 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   return {
-    availableCredits: optionalNumber(r.availableCredits),
+    paidCreditsRemaining: optionalNumber(r.paidCreditsRemaining),
     hasPurchaseHistory: r.hasPurchaseHistory === true,
     freeDailyPercentUsed: clampPercent(r.freeDailyPercentUsed),
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
@@ -77,10 +72,9 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
       r.billingModel === "monthly_per_seat" ? "monthly_per_seat" : "daily",
     monthlyAllowanceTotal: optionalNumberOrUndefined(r.monthlyAllowanceTotal),
     monthlyAllowanceRemaining: optionalNumberOrUndefined(
-      r.monthlyAllowanceRemaining,
+      r.monthlyAllowanceRemaining
     ),
     monthlyResetAt: optionalNumberOrUndefined(r.monthlyResetAt) ?? null,
-    paidCreditsRemaining: optionalNumberOrUndefined(r.paidCreditsRemaining),
   };
 };
 

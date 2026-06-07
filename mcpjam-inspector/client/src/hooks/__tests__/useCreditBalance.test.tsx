@@ -32,7 +32,7 @@ describe("useCreditBalance", () => {
     mocks.workosAuth.user = null;
     mocks.workosAuth.isLoading = false;
     mocks.queryResult = {
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: 1_777_777_777_000,
@@ -69,7 +69,7 @@ describe("useCreditBalance", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
     expect(result.current.balance).toEqual({
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: 1_777_777_777_000,
@@ -118,7 +118,6 @@ describe("useCreditBalance", () => {
     mocks.workosAuth.user = { id: "user_123" };
     mocks.queryResult = {
       billingModel: "monthly_per_seat",
-      availableCredits: 19_500,
       hasPurchaseHistory: true,
       monthlyAllowanceTotal: 18_000,
       monthlyAllowanceRemaining: 13_950,
@@ -143,7 +142,7 @@ describe("useCreditBalance", () => {
     mocks.workosAuth.user = { id: "user_123" };
     mocks.queryResult = {
       billingModel: "something_new",
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 10,
       freeDailyResetAt: 1,
