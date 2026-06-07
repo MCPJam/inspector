@@ -8,24 +8,47 @@ import {
 } from "react";
 import { Streamdown } from "streamdown";
 
-// Resolves root-relative markdown links (`/foo/bar`) against a remote origin
-// for assistant surfaces that inline markdown authored elsewhere — e.g. the
-// MCPJam Agent home, which streams snippets from docs.mcpjam.com whose links
-// are written relative to that site. Defaults to null so every other chat
-// surface keeps rendering links exactly as the model emitted them.
-const MarkdownLinkBaseContext = createContext<string | null>(null);
+// Per-surface markdown rendering knobs for surfaces that inline content
+// authored elsewhere — e.g. the MCPJam Agent home, which streams docs from
+// docs.mcpjam.com. The defaults (`linkBase: null`, `trustLinks: false`) keep
+// every other chat surface rendering links exactly as the model emitted them
+// and preserve Streamdown's built-in link-safety confirmation.
+type MarkdownSurfaceConfig = {
+  // When set, root-relative hrefs (`/foo`) are rewritten to `${linkBase}/foo`
+  // via Streamdown's `urlTransform`.
+  linkBase: string | null;
+  // When true, Streamdown's `linkSafety` confirmation modal is disabled for
+  // this surface — use only when the surface inlines content from a trusted
+  // origin and Streamdown's modal styling would otherwise render unusably
+  // (the project does not import `streamdown/styles.css`).
+  trustLinks: boolean;
+};
+
+const DEFAULT_SURFACE_CONFIG: MarkdownSurfaceConfig = {
+  linkBase: null,
+  trustLinks: false,
+};
+
+const MarkdownSurfaceContext =
+  createContext<MarkdownSurfaceConfig>(DEFAULT_SURFACE_CONFIG);
 
 export function MarkdownLinkBaseProvider({
   base,
+  trustLinks = false,
   children,
 }: {
   base: string | null;
+  trustLinks?: boolean;
   children: ReactNode;
 }) {
+  const value = useMemo<MarkdownSurfaceConfig>(
+    () => ({ linkBase: base, trustLinks }),
+    [base, trustLinks],
+  );
   return (
-    <MarkdownLinkBaseContext.Provider value={base}>
+    <MarkdownSurfaceContext.Provider value={value}>
       {children}
-    </MarkdownLinkBaseContext.Provider>
+    </MarkdownSurfaceContext.Provider>
   );
 }
 
@@ -50,10 +73,17 @@ function parseMarkdownIntoBlocks(markdown: string): string[] {
 
 const MemoizedMarkdownBlock = memo(
   ({ content }: { content: string }) => {
-    const base = useContext(MarkdownLinkBaseContext);
-    const urlTransform = useMemo(() => buildUrlTransform(base), [base]);
+    const { linkBase, trustLinks } = useContext(MarkdownSurfaceContext);
+    const urlTransform = useMemo(
+      () => buildUrlTransform(linkBase),
+      [linkBase],
+    );
+    const linkSafety = useMemo(
+      () => (trustLinks ? { enabled: false } : undefined),
+      [trustLinks],
+    );
     return (
-      <Streamdown linkSafety={{ enabled: false }} urlTransform={urlTransform}>
+      <Streamdown linkSafety={linkSafety} urlTransform={urlTransform}>
         {content}
       </Streamdown>
     );

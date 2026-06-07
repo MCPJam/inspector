@@ -348,7 +348,7 @@ export function McpjamAgentThread({
   }
 
   return (
-    <MarkdownLinkBaseProvider base="https://docs.mcpjam.com">
+    <MarkdownLinkBaseProvider base="https://docs.mcpjam.com" trustLinks>
       <ChatboxHostStyleProvider value="mcpjam">
         <ChatboxHostThemeProvider value={themeMode}>
         <div
