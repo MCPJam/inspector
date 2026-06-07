@@ -295,17 +295,14 @@ export const createSuiteRunRecorder = ({
           { iterationId, error: fanout.error.message },
         );
       }
-      // Only send trace fields when no fanout was attempted at all.
-      // - `persisted === true`: fanout already wrote per-turn rows; the W1
-      //   path would duplicate at promptIndex: 0.
-      // - `persisted === false`: fanout failed mid-stream and may have left
-      //   partial turn rows. Re-firing W1 with promptIndex: 0 + the full
-      //   transcript would overwrite the partial turn 0 and orphan turns
-      //   1..N. We accept the partial chatSessions row instead — the
-      //   legacy-blob fallback that used to recover this case was removed
-      //   in PR-6.
-      const sendTraceFieldsToUpdate = fanout === undefined;
-
+      // We never re-send trace fields to updateTestIteration:
+      //   - `persisted === true`: fanout already wrote per-turn rows; W1
+      //     would duplicate at promptIndex: 0.
+      //   - `persisted === false`: fanout failed mid-stream and may have
+      //     left partial turn rows; re-firing W1 would overwrite turn 0
+      //     and orphan turns 1..N. The legacy-blob fallback that used to
+      //     recover this case was removed in PR-6.
+      //
       // PR-2 review #5 (Cursor "Update failure after successful fanout"):
       // track whether the iteration is gone so we don't waste a lock
       // call on a deleted session, AND so the lock fires even when
@@ -319,23 +316,6 @@ export const createSuiteRunRecorder = ({
           result,
           actualToolCalls: sanitizeForConvexTransport(toolsCalled),
           tokensUsed: usage.totalTokens ?? 0,
-          ...(sendTraceFieldsToUpdate
-            ? {
-                messages: sanitizeForConvexTransport(messages),
-                ...(spans?.length
-                  ? { spans: sanitizeForConvexTransport(spans) }
-                  : {}),
-                ...(prompts?.length
-                  ? { prompts: sanitizeForConvexTransport(prompts) }
-                  : {}),
-                ...(widgetSnapshots?.length
-                  ? {
-                      widgetSnapshots:
-                        sanitizeForConvexTransport(widgetSnapshots),
-                    }
-                  : {}),
-              }
-            : {}),
           error,
           errorDetails,
           resultSource,

@@ -745,10 +745,6 @@ async function finishIterationDirectly(
       { iterationId: params.iterationId, error: fanout.error.message },
     );
   }
-  // See recorder.ts for the rationale — only send trace fields when no
-  // fanout was attempted at all.
-  const sendTraceFieldsToUpdate = fanout === undefined;
-
   // PR-2 review #5 (Cursor "Update failure after successful fanout"):
   // track iteration-gone state so the lock can fire even when the
   // update throws a transient error. Mirrors recorder.finishIteration.
@@ -760,24 +756,6 @@ async function finishIterationDirectly(
       status: iterationStatus,
       actualToolCalls: sanitizeForConvexTransport(params.toolsCalled),
       tokensUsed: params.usage.totalTokens ?? 0,
-      ...(sendTraceFieldsToUpdate
-        ? {
-            messages: sanitizeForConvexTransport(params.messages),
-            ...(params.spans?.length
-              ? { spans: sanitizeForConvexTransport(params.spans) }
-              : {}),
-            ...(params.prompts?.length
-              ? { prompts: sanitizeForConvexTransport(params.prompts) }
-              : {}),
-            ...(params.widgetSnapshots?.length
-              ? {
-                  widgetSnapshots: sanitizeForConvexTransport(
-                    params.widgetSnapshots,
-                  ),
-                }
-              : {}),
-          }
-        : {}),
       error: params.error,
       errorDetails: params.errorDetails,
       resultSource: params.resultSource,
