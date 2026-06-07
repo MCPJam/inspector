@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
-import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
+import type {
+  HttpServerConfig,
+  MCPServerConfig,
+  NormalizedError,
+} from "@mcpjam/sdk/browser";
 import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
 import type {
   AppAction,
@@ -1795,10 +1799,17 @@ export function useServerState({
             `Server does not speak the pinned MCP protocol version (${
               effective ?? "default"
             })`;
+          // Thread backend-attached normalized so the reducer doesn't
+          // re-derive a less-specific slug from just the message string.
+          const reTestNormalized = (result as { normalized?: unknown })
+            ?.normalized;
           dispatch({
             type: "CONNECT_FAILURE",
             name,
             error: errorMessage,
+            ...(reTestNormalized && typeof reTestNormalized === "object"
+              ? { normalized: reTestNormalized as NormalizedError }
+              : {}),
           });
         } catch (error) {
           if (isStaleOp(name, token)) return;
@@ -2053,6 +2064,8 @@ export function useServerState({
                 error:
                   connectionResult.error ||
                   "Connection test failed after OAuth",
+                normalized: (connectionResult as { normalized?: unknown })
+                  .normalized as any,
                 oauthTrace: result.oauthTrace,
               });
               logger.error("OAuth connection test failed", {
@@ -2562,6 +2575,11 @@ export function useServerState({
             type: "CONNECT_FAILURE",
             name: formData.name,
             error: result.error || "Connection test failed",
+            // Thread the backend-attached rich block through. Without this
+            // the reducer's auto-derive would re-classify from just the
+            // message string and lose the slug the backend already pinned
+            // (e.g. `transport/econnrefused` from a Node errno match).
+            ...(result.normalized ? { normalized: result.normalized } : {}),
           });
           logger.error("Connection failed", {
             serverName: formData.name,
@@ -2804,10 +2822,21 @@ export function useServerState({
           await storeInitInfo(serverName, result.initInfo);
           return { success: true };
         }
+        // OAuth reconnect failure: preserve the backend-attached
+        // normalized block for the same reason as the other dispatch
+        // sites — the reducer's auto-derive only sees the message
+        // string and produces a less specific slug than the backend
+        // already pinned (e.g. via Node errno match).
+        const oauthReconnectNormalized = (result as { normalized?: unknown })
+          .normalized;
         dispatch({
           type: "CONNECT_FAILURE",
           name: serverName,
           error: result.error || "Connection failed",
+          ...(oauthReconnectNormalized &&
+          typeof oauthReconnectNormalized === "object"
+            ? { normalized: oauthReconnectNormalized as NormalizedError }
+            : {}),
         });
         return { success: false, error: result.error };
       } catch (error) {
@@ -3700,6 +3729,10 @@ export function useServerState({
           name: serverName,
           error: errorMessage,
           oauthTrace: authResult.oauthTrace,
+          // Preserve the backend-attached normalized block so the reducer
+          // doesn't have to re-derive a (less specific) slug from just
+          // the message string.
+          ...(result.normalized ? { normalized: result.normalized } : {}),
         });
         logger.error("Reconnection failed", { serverName, result });
         reportError(errorMessage || `Failed to reconnect: ${serverName}`);

@@ -1,5 +1,9 @@
 import { isMethodUnavailableError } from "./mcp-client-manager/error-utils.js";
 import { isAuthError } from "./mcp-client-manager/errors.js";
+import {
+  extractNodeErrno,
+  RETRYABLE_NODE_ERROR_CODES,
+} from "./error-describer/node-errno.js";
 
 export interface RetryPolicy {
   retries: number;
@@ -23,20 +27,6 @@ export interface RetryExecutionOptions<T> {
     result?: T;
   }) => Promise<void> | void;
 }
-
-const RETRYABLE_NODE_ERROR_CODES = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "EAI_AGAIN",
-  "ENETDOWN",
-  "ENETUNREACH",
-  "ENOTFOUND",
-  "EPIPE",
-  "ETIMEDOUT",
-  "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_HEADERS_TIMEOUT",
-  "UND_ERR_SOCKET",
-]);
 
 function toAbortError(reason: unknown): Error {
   if (reason instanceof Error) {
@@ -115,16 +105,6 @@ function extractHttpStatusCode(error: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function extractNodeErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object") {
-    return undefined;
-  }
-
-  return "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
-}
-
 export function normalizeRetryPolicy(policy?: RetryPolicy): RetryPolicy {
   return {
     retries: Math.max(0, policy?.retries ?? DEFAULT_RETRY_POLICY.retries),
@@ -155,7 +135,7 @@ export function isRetryableTransientError(error: unknown): boolean {
     return true;
   }
 
-  const nodeCode = extractNodeErrorCode(error)?.toUpperCase();
+  const nodeCode = extractNodeErrno(error)?.toUpperCase();
   if (nodeCode && RETRYABLE_NODE_ERROR_CODES.has(nodeCode)) {
     return true;
   }

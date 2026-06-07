@@ -39,7 +39,7 @@ All models use the format `provider/model-id`:
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -68,7 +68,7 @@ const agent = new TestAgent({
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "openai/gpt-4o",
   apiKey: process.env.OPENAI_API_KEY,
@@ -99,7 +99,7 @@ const agent = new TestAgent({
 // AZURE_OPENAI_API_KEY=...
 // AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "azure/gpt-4o",
   apiKey: process.env.AZURE_OPENAI_API_KEY,
@@ -126,7 +126,7 @@ const agent = new TestAgent({
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "google/gemini-1.5-pro",
   apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
@@ -155,7 +155,7 @@ const agent = new TestAgent({
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "mistral/mistral-large-latest",
   apiKey: process.env.MISTRAL_API_KEY,
@@ -181,7 +181,7 @@ const agent = new TestAgent({
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "deepseek/deepseek-chat",
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -213,7 +213,7 @@ Ensure Ollama is running locally before use. The API key parameter is required b
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "ollama/llama3",
   apiKey: "ollama", // Required but not used
@@ -241,7 +241,7 @@ Access many models through one API:
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "openrouter/anthropic/claude-3-opus",
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -266,7 +266,7 @@ const agent = new TestAgent({
 #### Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "xai/grok-beta",
   apiKey: process.env.XAI_API_KEY,
@@ -306,7 +306,7 @@ interface CustomProvider {
 ### OpenAI-Compatible Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "my-openai/gpt-4",
   apiKey: process.env.MY_API_KEY,
@@ -324,7 +324,7 @@ const agent = new TestAgent({
 ### Anthropic-Compatible Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "my-anthropic/claude-3-sonnet",
   apiKey: process.env.MY_API_KEY,
@@ -342,7 +342,7 @@ const agent = new TestAgent({
 ### LiteLLM Example
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools,
   model: "litellm/gpt-4",
   apiKey: process.env.LITELLM_API_KEY,
@@ -448,4 +448,4 @@ const provider = createCustomProvider({
 ## Related
 
 - [Testing Across Providers](/sdk/concepts/multi-provider) - Conceptual guide
-- [TestAgent Reference](/sdk/reference/test-agent) - Agent configuration
+- [HostRunner Reference](/sdk/reference/host-runner) - Agent configuration

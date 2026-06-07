@@ -4,9 +4,57 @@ description: "Solutions to common MCP server connection and configuration issues
 icon: "circle-alert"
 ---
 
+<Info>
+Looking for a specific error code? See the [error code reference](/troubleshooting/error-codes) — every ErrorCard in the inspector deep-links to a section there.
+</Info>
+
 This guide covers common errors you might encounter when working with MCP servers and how to resolve them.
 
 ## Connection Issues
+
+### Diagnose a connection failure
+
+Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: Connection closed` / `MCP error -32001: Request timed out` reports come down to one of five root causes. Work through them in order — each step takes seconds.
+
+1. **Is the server actually running?**
+
+   Open a second terminal and run the same command you'd ask Inspector to run. If it exits or prints a stack trace, fix that first — Inspector can only attach to a server that stays alive.
+
+   ```bash
+   # For STDIO servers — run the same command Inspector would run
+   python /Users/yourname/project/server.py
+   # or: uv run --directory /Users/yourname/project mcp.py
+   # or: npx -y @modelcontextprotocol/server-everything
+
+   # For HTTP servers
+   curl -i http://localhost:PORT/mcp
+   ```
+
+   A clean stdio process should sit waiting on stdin; a healthy HTTP server should respond with something other than `Connection refused` (the exact code varies — common responses are `405 Method Not Allowed` for `GET`, `406 Not Acceptable` if Accept headers are missing, or `400 Bad Request` if the server expects a session header).
+
+2. **Right port, right path?**
+
+   `ECONNREFUSED 127.0.0.1:5555` means **nothing is listening on that port** — typo, wrong port, or the server is bound to `127.0.0.1` only while you're calling it via a different hostname (or vice versa). `SSE error: Non-200 status code (404)` means the port is correct but the path is wrong: most MCP servers mount under `/mcp` or `/sse`, not `/`.
+
+3. **Right transport selected?**
+
+   In the server card, the transport dropdown must match what your server speaks. STDIO servers won't respond to HTTP attempts and vice versa. If you used a `url:` field in `config.json`, Inspector picks HTTP; if you used `command:` + `args:`, Inspector picks STDIO.
+
+4. **Right auth setting?**
+
+   For local development servers, pick **No Authentication**. If you get `401`, see [Getting 401 Unauthorized errors](#getting-401-unauthorized-errors) below.
+
+5. **Did the server actually finish booting before the handshake?**
+
+   `MCP error -32001: Request timed out` during `initialize` means the server didn't respond to the handshake in time — usually because it's still loading models, opening a database, or waiting on an upstream. Raise the **Request timeout** in **Clients → your client → Request timeout** (default 30,000ms), or reduce the server's startup work.
+
+If all five check out and you still see a failure, copy the full error from the JSON-RPC log into a [GitHub issue](https://github.com/MCPJam/inspector/issues) or [Discord](https://discord.gg/JEnDtz8X6z) thread.
+
+### `(intermediate value).subtle is undefined`
+
+The browser's Web Crypto API (`crypto.subtle`) is only available in **secure contexts** — that means HTTPS, or `http://localhost` / `http://127.0.0.1`. If you're hitting Inspector over a non-localhost HTTP URL (for example, a LAN IP like `http://192.168.1.10:6274`), the browser disables `crypto.subtle` and OAuth/PKCE flows fail.
+
+**Fix:** open Inspector at `http://localhost:6274` or `http://127.0.0.1:6274`, or put HTTPS in front of it. The hosted app and the desktop app are unaffected.
 
 ### Server fails to start or connect
 
@@ -24,6 +72,16 @@ This guide covers common errors you might encounter when working with MCP server
 
 - **For HTTP servers**: Verify the URL is accessible
   - Test with `curl` or a browser first
+
+### "Invalid host header" when connecting to an HTTP server
+
+This response comes from **your MCP server**, not from MCPJam Inspector. The server's HTTP layer is rejecting the request because the `Host` header isn't on its allowlist. Most common culprits:
+
+- **Next.js / webpack-dev-server** — both block unknown hosts by default in dev mode. Add your host to `allowedHosts` (webpack-dev-server) or `experimental.allowedDevOrigins` (Next.js).
+- **FastAPI / Starlette (Python)** — `TrustedHostMiddleware` rejects hosts not in `allowed_hosts`. Add the host the inspector is calling from, or temporarily set `allowed_hosts=["*"]` for local testing.
+- **Reverse proxies (nginx, Caddy)** — check the `server_name` / `host_match` config.
+
+**Quick check:** test the same URL with `curl http://localhost:PORT/mcp` — if curl gets the same error, it's definitely server-side, not inspector.
 
 ## Authentication Issues
 

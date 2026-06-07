@@ -1,5 +1,4 @@
 import {
-  generateText,
   streamText,
   type ModelMessage,
   type Tool as AiTool,
@@ -29,6 +28,12 @@ import {
   type BaseUrls,
   type CustomProviderConfig,
 } from "../utils/chat-helpers";
+import {
+  consumeDirectChatTurnHeadless,
+  runDirectChatTurn,
+} from "../utils/direct-chat-turn";
+import { consumeFullStreamAsEvalEvents } from "./evals/stream-adapter";
+import { resolveExecutionContext } from "../utils/host-execution-context";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
@@ -87,6 +92,11 @@ import {
 } from "@/shared/prompt-turns";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
+import {
+  prepareChatV2,
+  type PrepareChatV2Result,
+} from "../utils/chat-v2-orchestration.js";
+import { runAssistantTurn } from "../utils/assistant-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import {
   lockEvalSessionAfterUpdate,
@@ -219,6 +229,13 @@ export type RunEvalSuiteOptions = {
    * cross-host dashboard.
    */
   hostExecutionPolicy?: HostExecutionPolicy;
+  /**
+   * Raw suite hostConfig record. PR 4d threads this through so per-iteration
+   * runners can resolve CONFIG fields (`systemPrompt` / `temperature` /
+   * `selectedServerIds`) via `resolveExecutionContext` — the runner used
+   * to read `advancedConfig.system` only and ignore the suite default.
+   */
+  suiteHostConfig?: Record<string, unknown> | null;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -706,12 +723,25 @@ async function finishIterationDirectly(
   // rows BEFORE updateTestIteration; the chatSessions lock fires AFTER
   // updateTestIteration succeeds (PR-2 review fix #2). When the
   // backend flag is off, today's legacy behavior runs unchanged.
+  // lockReason describes the transcript LIFECYCLE, not the verdict —
+  // see recorder.ts for the full rationale. A failed-verdict iteration
+  // that ran cleanly still gets eval_completed; eval_failed is reserved
+  // for cycle failures (provider errors, transport crashes, etc.).
+  //
+  // The `params.error` check covers a runner quirk (Codex review on
+  // #2446): some backend eval paths set `iterationError` but still
+  // pass `status: "completed"` to finishIteration (see
+  // evals-runner.ts:2079-2082 / :3962-3965). Treating those as
+  // eval_completed would lock an error transcript with the wrong reason.
+  const isCycleFailure =
+    iterationStatus === "failed" ||
+    (params.error !== undefined && params.error !== "");
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"
-      : params.passed
-        ? "eval_completed"
-        : "eval_failed";
+      : isCycleFailure
+        ? "eval_failed"
+        : "eval_completed";
   const fanout = await persistEvalTraceFanout({
     convexClient,
     iterationId: params.iterationId,
@@ -721,15 +751,22 @@ async function finishIterationDirectly(
     prompts: params.prompts,
     widgetSnapshots: params.widgetSnapshots,
   });
-  if (fanout?.persisted === false) {
+  // Fall back to the W1 single-call path ONLY when the fanout failed
+  // before any turn landed. See recorder.ts / persist-eval-trace.ts.
+  const useW1Fallback =
+    fanout.persisted === false && fanout.turnsWritten === 0;
+  if (fanout.persisted === false) {
     logger.warn(
-      "[evals] persistEvalTraceFanout failed (quick run); falling back to forced-legacy-blob path",
-      { iterationId: params.iterationId, error: fanout.error.message },
+      useW1Fallback
+        ? "[evals] persistEvalTraceFanout failed before any turn landed (quick run); falling back to W1 single-call save"
+        : "[evals] persistEvalTraceFanout failed mid-stream (quick run); iteration finalized without re-attempting (would orphan partial turns)",
+      {
+        iterationId: params.iterationId,
+        turnsWritten: fanout.turnsWritten,
+        error: fanout.error.message,
+      },
     );
   }
-  const sendTraceFieldsToUpdate = fanout?.persisted !== true;
-  // See recorder.ts for the rationale — same fallback escape hatch.
-  const forceLegacyTraceBlob = fanout?.persisted === false;
 
   // PR-2 review #5 (Cursor "Update failure after successful fanout"):
   // track iteration-gone state so the lock can fire even when the
@@ -742,8 +779,7 @@ async function finishIterationDirectly(
       status: iterationStatus,
       actualToolCalls: sanitizeForConvexTransport(params.toolsCalled),
       tokensUsed: params.usage.totalTokens ?? 0,
-      ...(forceLegacyTraceBlob ? { forceLegacyTraceBlob: true } : {}),
-      ...(sendTraceFieldsToUpdate
+      ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(params.messages),
             ...(params.spans?.length
@@ -813,10 +849,52 @@ async function finishIterationDirectly(
   }
 }
 
+/**
+ * Persist a failed iteration row when iteration setup throws BEFORE the
+ * per-prompt loop can start (e.g. `prepareChatV2` rejects on Anthropic
+ * tool-name validation or meta-tool collisions). Used by the backend
+ * runners, which lack the outer try/catch the AI-SDK runners have.
+ */
+async function persistSetupFailedIteration(args: {
+  iterationId: string | undefined;
+  runStartedAt: number;
+  errorMessage: string;
+  iterationMetadataBase: Record<string, string | number | boolean>;
+  recorder: SuiteRunRecorder | null;
+  convexClient: ConvexHttpClient;
+}): Promise<void> {
+  const failParams = {
+    ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+    passed: false,
+    toolsCalled: [],
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    messages: [] as ModelMessage[],
+    status: "failed" as const,
+    startedAt: args.runStartedAt,
+    error: args.errorMessage,
+    resultSource: "reported" as const,
+    metadata: { ...args.iterationMetadataBase },
+  };
+  if (args.recorder) {
+    await args.recorder.finishIteration(failParams);
+  } else {
+    await finishIterationDirectly(args.convexClient, failParams);
+  }
+}
+
 type RunIterationBaseParams = {
   test: EvalTestCase;
   runIndex: number;
+  /**
+   * Suite-level raw tool set, kept for `toolSignals` telemetry only.
+   * Iteration runners route the actual tool prep through `prepareChatV2`
+   * (per PR 1 of the engine consolidation) so eval gets skill tools,
+   * progressive-discovery meta-tools, Anthropic name validation, and the
+   * system-prompt assembly chat already applies. Removed in a later PR.
+   */
   tools: ToolSet;
+  /** Server ids the iteration runner hands to `prepareChatV2`. */
+  selectedServers: string[];
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   testCaseId?: string;
@@ -847,6 +925,23 @@ type RunIterationBaseParams = {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  /**
+   * Raw suite hostConfig record — the same one the route layer feeds
+   * to `extractHostExecutionPolicy` for the `hostPolicy` field above.
+   * PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`)
+   * threads this through so per-iteration runners can resolve CONFIG
+   * fields (`systemPrompt` / `temperature` / `selectedServerIds`) off
+   * it via `resolveExecutionContext` — the runner used to read
+   * `advancedConfig.system` only, leaving the suite-default systemPrompt
+   * unused at runtime even though the eval client deliberately omits
+   * it from per-case `advancedConfig` (see comment at
+   * `client/src/components/evals/use-eval-handlers.ts:302`).
+   *
+   * Optional so quick-run paths that don't load a suite hostConfig keep
+   * working — the resolver treats `null`/`undefined` as "no host opinion;
+   * use overrides as-is."
+   */
+  suiteHostConfig?: Record<string, unknown> | null;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -857,6 +952,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
+  /** Resolved model definition — fed to `prepareChatV2` for Anthropic name validation. */
+  modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
 };
@@ -941,32 +1038,6 @@ function hasExplicitModelApiKeys(
   return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
 }
 
-function readBackendUsage(usage: unknown): {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-} {
-  const record =
-    usage && typeof usage === "object"
-      ? (usage as Record<string, unknown>)
-      : {};
-  const inputTokens =
-    typeof record.inputTokens === "number"
-      ? record.inputTokens
-      : typeof record.promptTokens === "number"
-        ? record.promptTokens
-        : 0;
-  const outputTokens =
-    typeof record.outputTokens === "number"
-      ? record.outputTokens
-      : typeof record.completionTokens === "number"
-        ? record.completionTokens
-        : 0;
-  const totalTokens =
-    typeof record.totalTokens === "number" ? record.totalTokens : 0;
-  return { inputTokens, outputTokens, totalTokens };
-}
-
 function resolveOrgTargetForEval(
   test: EvalTestCase,
   explicitTarget?: ResolveOrgModelConfigTarget,
@@ -1034,7 +1105,10 @@ async function resolveOrgByokEvalRuntime(args: {
 const runIterationWithAiSdk = async ({
   test,
   runIndex,
-  tools,
+  // `tools` is the suite-level raw set kept for `toolSignals` telemetry;
+  // this runner now goes through prepareChatV2 below for its actual tool prep.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
@@ -1050,6 +1124,7 @@ const runIterationWithAiSdk = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1099,18 +1174,44 @@ const runIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
+  // PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // resolve `systemPrompt` and `temperature` via the shared
+  // `resolveExecutionContext` so the suite-level hostConfig's
+  // `systemPrompt` / `temperature` act as defaults under the per-case
+  // `advancedConfig` overrides. Pre-4d the runner ignored
+  // `suiteHostConfig.systemPrompt` / `.temperature` entirely — even
+  // though the eval client deliberately omits suite defaults from per-case
+  // advancedConfig (see comment at
+  // `client/src/components/evals/use-eval-handlers.ts:302`) on the
+  // understanding that the runtime applies them. `override-wins`
+  // precedence keeps per-case overrides authoritative; the hostConfig
+  // fills the gap when the per-case value is absent.
+  //
+  // `withHostContextSystemPrompt` runs AFTER the resolver because
+  // `{{var}}` substitution context is per-RUN
+  // (`test.hostConfigOverride.hostContext`), not part of the suite
+  // hostConfig.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const system = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const modelRuntime = resolveEvalModelRuntime({
@@ -1154,11 +1255,11 @@ const runIterationWithAiSdk = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const baseMessages: ModelMessage[] = [];
-  if (system) {
-    baseMessages.push({ role: "system", content: system });
-  }
-  let conversationMessages: ModelMessage[] = [...baseMessages];
+  // `conversationMessages` starts empty; the system message is pushed below
+  // inside the try block, AFTER `prepareChatV2` (which can throw on Anthropic
+  // name validation / meta-tool collisions / skill-tool prep). Building it
+  // inside the try lets the catch path persist a failed iteration row.
+  let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   let accumulatedUsage = {
@@ -1172,8 +1273,66 @@ const runIterationWithAiSdk = async ({
   let activeCompletedStepCount = 0;
   let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
     null;
+  // PR 4b of the engine consolidation: caller-side failure detection.
+  // `runDirectChatTurn` can return cleanly with empty response messages or
+  // a non-tool error span when the AI SDK silently swallows a step failure.
+  // Capturing the error into `iterationError` lets `finishParams` record
+  // the failure via `status:"completed"` + `error` (mirrors the PR 3
+  // backend-loop shape). The post-loop verdict gate
+  // (`finalizePassedForEval`) also reads this so a failed cycle can't
+  // sneak through as `passed:true` on negative tests / zero-expected
+  // tool cases.
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
+  // PR 4d review fix (Codex P2 "Persist the resolved system prompt with
+  // eval traces"): chat ships the system via the helper's `system:`
+  // field, but eval's persistence path (`finishIteration` →
+  // `persistEvalTraceFanout`'s `appendEvalTurnTrace` payload) has no
+  // dedicated `systemPrompt` slot. Pre-4d, the system rode along as
+  // the first entry in `conversationMessages` and was naturally
+  // persisted. PR 4d dropped that push to align with chat's wire shape,
+  // and accidentally removed the only path the persistence layer had
+  // for capturing it. Hoist the resolved system prompt to outer scope
+  // so we can prepend it to the messages array AT PERSISTENCE TIME
+  // (not in `conversationMessages` — that stays system-free so the
+  // streamText `system:` field isn't double-sent). The persisted
+  // shape now matches pre-4d (system is the first message in
+  // `messages`) while the wire shape stays chat-aligned.
+  let enhancedSystemPromptForPersist: string | undefined = undefined;
 
   try {
+    // Adopt the chat-side tool/system/temperature pipeline. Eval used to skip
+    // this and call `getToolsForAiSdk` + an inline system/temperature wiring,
+    // missing skill tools, Anthropic name validation, and skills-prompt
+    // assembly. Called inside the try so prep failures become a recorded
+    // failed iteration rather than an uncaught setup error.
+    const prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt: system,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      customProviders: modelRuntime.customProviders,
+      priorMessages: [],
+    });
+    // PR 4d of the engine consolidation: drop the PR 4b
+    // `systemPrompt: ""` quirk. Pre-4d, eval pushed
+    // `prepared.enhancedSystemPrompt` as a `role: "system"` message into
+    // `conversationMessages` and passed `systemPrompt: ""` to the
+    // helper — `normalizeSystemPromptForProvider("")` resolved to
+    // `undefined` so streamText received the system via messages, not
+    // the dedicated `system:` field. That worked but was a latent
+    // footgun: any refactor of `normalizeSystemPromptForProvider` to
+    // emit `""` would have double-sent the system. Match chat's shape —
+    // `enhancedSystemPrompt` flows to `runDirectChatTurn` via the
+    // `systemPrompt:` argument below; `conversationMessages` no longer
+    // carries a system message entry. PR 4d review fix (Codex P2):
+    // hoist the resolved value so it can be prepended to the messages
+    // array at persistence time, since eval's wire shape to Convex
+    // (`appendEvalTurnTrace`) has no dedicated `systemPrompt` slot.
+    enhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
@@ -1184,42 +1343,92 @@ const runIterationWithAiSdk = async ({
     if (
       toolChoice &&
       typeof toolChoice === "object" &&
-      !Object.hasOwn(tools, toolChoice.toolName)
+      !Object.hasOwn(prepared.allTools, toolChoice.toolName)
     ) {
       throw new Error(
         `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
       );
     }
 
+    // PR 4b helper: abort happened during the cleanup window between the
+    // pre-turn cancellation check and `consumeStream()`. Mirrors PR 3's
+    // backend-path cancellation shape and the closed #2458's local-BYOK
+    // shape: drop the iteration entirely (no record).
+    const localIsAborted = () => abortSignal?.aborted === true;
+    const returnLocalCancelled = () => ({
+      evaluation: evaluateMultiTurnResults(
+        promptTurns,
+        toolsCalledByPrompt,
+        test.isNegativeTest,
+        test.matchOptions,
+      ),
+      iterationId: undefined,
+    });
+
     for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+      if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
-      activePromptInputMessages = [
-        ...conversationMessages,
-        { role: "user", content: promptTurn.prompt },
-      ];
+      // PR 4b invariant (carried from closed #2458, originally PR 3 round 2):
+      // push the user prompt to `conversationMessages` BEFORE the driver
+      // call so a failed turn still records the prompt in the persisted
+      // transcript. Without this, suite UI shows an empty failed
+      // iteration that's unactionable.
+      conversationMessages.push({ role: "user", content: promptTurn.prompt });
+      activePromptInputMessages = [...conversationMessages];
       activePartialResponseMessages = [];
       activeCompletedStepCount = 0;
-      activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
-      const tracedTools = wrapToolSetForEvalTrace(
-        tools,
-        activeTraceCtx,
-        promptIndex,
-      );
 
-      const result = await generateText({
-        model: llmModel,
-        messages: activePromptInputMessages,
-        tools: tracedTools,
-        stopWhen: stepCountIs(20),
-        ...(temperature == null ? {} : { temperature }),
+      // PR 4b: drive `runDirectChatTurn` headless (no SSE — eval is
+      // batch). The helper owns the streamText config, span recording,
+      // abort wiring, progressive-discovery gating, and prepareStep.
+      // Eval owns failure detection + persistence + grading, layered
+      // on top of `consumeDirectChatTurnHeadless`'s assembled return.
+      //
+      // PR 4d: `systemPrompt: prepared.enhancedSystemPrompt` matches
+      // chat's shape — the helper passes it to streamText via the
+      // dedicated `system:` field. `conversationMessages` no longer
+      // contains a system message; the persisted transcript carries
+      // the system via its own column (chatSession.systemPrompt /
+      // testIteration column), same as chat's path.
+      // PR 4b review fix (Cursor "Partial messages never mirrored" +
+      // Codex P2): the legacy `generateText` loop updated
+      // `activePartialResponseMessages` and `activeCompletedStepCount`
+      // from its own `onStepFinish`. The outer catch + the no-msg
+      // fallback in this loop still depend on those locals to persist
+      // partial transcripts when `consumeStream()` rejects mid-turn.
+      // Wire the helper's `onStepSnapshot` callback to mirror the
+      // helper's running `traceHistory` into the eval-side locals so
+      // mid-turn throws don't lose successful tool calls + assistant
+      // messages from the failed iteration. `traceHistory` starts as
+      // a copy of `messageHistory` and the helper appends step
+      // responses to it, so slicing from `promptInputLength` yields
+      // just this turn's accumulated response.
+      const promptInputLength = activePromptInputMessages.length;
+      const handle = runDirectChatTurn({
+        llmModel,
+        modelId: test.model,
+        messageHistory: activePromptInputMessages,
+        // Cursor PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): anchor trace span offsets to the iteration start so
+        // multi-turn timelines don't collapse to start-at-zero per
+        // turn. The helper defaults to `Date.now()` for the chat /
+        // single-turn case.
+        traceStartedAt: runStartedAt,
+        systemPrompt: prepared.enhancedSystemPrompt ?? "",
+        ...(prepared.resolvedTemperature == null
+          ? {}
+          : { temperature: prepared.resolvedTemperature }),
+        tools: prepared.allTools,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+        ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
           : {}),
-        ...(abortSignal ? { abortSignal } : {}),
-        experimental_telemetry: {
+        experimentalTelemetry: {
           isEnabled: true,
-          functionId: "evals.generateText",
+          functionId: "evals.streamText",
           recordInputs: false,
           recordOutputs: false,
           metadata: {
@@ -1234,69 +1443,130 @@ const runIterationWithAiSdk = async ({
             promptIndex,
           },
         },
-        prepareStep: ({ stepNumber }) => {
-          registerAiSdkPrepareStep(activeTraceCtx!, stepNumber, {
-            modelId: test.model,
-            promptIndex,
-          });
-          return undefined;
-        },
-        onStepFinish: async (step) => {
-          activeCompletedStepCount += 1;
-          const stepFinishedAt = Date.now();
-          const responseMessages = step.response?.messages ?? [];
-          const responseMessageCountBeforeAppend =
-            activePartialResponseMessages.length;
-          const messageStartIndex =
-            responseMessages.length > 0
-              ? activePromptInputMessages.length +
-                responseMessageCountBeforeAppend
-              : undefined;
-          appendDedupedModelMessages(
-            activePartialResponseMessages,
-            responseMessages as ModelMessage[],
-          );
-          const appendedMessageCount =
-            activePartialResponseMessages.length -
-            responseMessageCountBeforeAppend;
-          const messageEndIndex =
-            messageStartIndex != null && appendedMessageCount > 0
-              ? messageStartIndex + appendedMessageCount - 1
-              : undefined;
-          emitAiSdkOnStepFinish(activeTraceCtx!, stepFinishedAt, {
-            modelId: step.response?.modelId ?? test.model,
-            inputTokens: step.usage?.inputTokens,
-            outputTokens: step.usage?.outputTokens,
-            totalTokens: step.usage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-            status: "ok",
-          });
-        },
-        onFinish: async () => {
-          /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
+        traceEvents: {
+          onStepSnapshot: ({ traceHistory }) => {
+            activeCompletedStepCount += 1;
+            // The helper's `traceHistory` contains prompt input plus
+            // every step response it has appended so far. The
+            // post-prompt-input slice IS this turn's running response.
+            activePartialResponseMessages = traceHistory.slice(
+              promptInputLength,
+            ) as ModelMessage[];
+          },
         },
       });
+      // `runDirectChatTurn` exposes its internal traceContext so eval
+      // can fold its spans into `recordedSpans` after each turn,
+      // matching the per-turn cadence the old generateText path used
+      // with its own `activeTraceCtx`.
+      activeTraceCtx = handle.traceContext;
 
-      const finalMessagesRaw = result.response?.messages as
-        | ModelMessage[]
-        | undefined;
+      const headless = await consumeDirectChatTurnHeadless(handle);
+
+      // PR 4b invariant (carried from closed #2458, originally PR 3
+      // "Abort no longer skips persistence"): streamText can swallow
+      // AbortError silently. `handle.isAborted()` is also reflected in
+      // `headless.aborted`; check the outer signal here too in case
+      // the abort fired between consume and check.
+      if (headless.aborted || localIsAborted()) {
+        logger.debug(
+          "[evals] local-BYOK iteration aborted mid-turn; skipping record",
+        );
+        return returnLocalCancelled();
+      }
+
       const promptResponseMessages =
-        finalMessagesRaw && finalMessagesRaw.length > 0
-          ? finalMessagesRaw
+        headless.messages.length > 0
+          ? headless.messages
           : activePartialResponseMessages;
 
       if (activeTraceCtx.recordedSpans.length > 0) {
         patchAiSdkRecordedSpansMessageRangesFromSteps(
           activeTraceCtx.recordedSpans,
           activePromptInputMessages.length,
-          result.steps,
+          headless.steps,
           promptIndex,
         );
       }
 
+      // PR 4b review fix (Cursor "Failed turn drops token usage"):
+      // accumulate `totalUsage` BEFORE the failure-detection branches.
+      // `headless.totalUsage` reflects what the model actually consumed
+      // up to (and including) the failing step; the persisted iteration
+      // should report it regardless of which exit path the turn takes.
+      // Failure branches `break` after this so the persisted token
+      // totals match reality even when the cycle fails.
+      accumulatedUsage.inputTokens =
+        (accumulatedUsage.inputTokens ?? 0) +
+        (headless.totalUsage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        (accumulatedUsage.outputTokens ?? 0) +
+        (headless.totalUsage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        (accumulatedUsage.totalTokens ?? 0) +
+        (headless.totalUsage?.totalTokens ?? 0);
+
+      // PR 4b failure-detection shape (mirrors PR 3 backend-path):
+      //
+      //  (a) No new messages → driver returned nothing (network failure
+      //      that fell through, model returned empty, …).
+      //  (b) Non-tool error span captured during the run (LLM step
+      //      failure, scrub failure, …). Tool error spans
+      //      (category "tool") flow through the existing
+      //      `failOnToolError` gate below — DON'T treat them as cycle
+      //      failures here.
+      if (promptResponseMessages.length === 0) {
+        iterationError =
+          "Stream returned no content (local-BYOK driver failed)";
+        logger.error(
+          "[evals] streamText returned no new messages this turn; treating as cycle failure",
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push([]);
+        break;
+      }
+      const stepErrorSpan = activeTraceCtx.recordedSpans.find(
+        // Codex PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): when a tool call fails, `wrapToolSetForEvalTrace`
+        // records BOTH a `category:"tool"` span AND a child
+        // `category:"error"` span carrying `toolCallId`/`toolName`
+        // (see eval-trace-capture.ts:258-275). The simple
+        // `category !== "tool"` filter catches the child error span
+        // and treats failed tool calls as cycle failures even when
+        // `advancedConfig.failOnToolError === false`. Excluding any
+        // span associated with a tool (carries `toolCallId`) restores
+        // the intended deferral to the `failOnToolError` gate.
+        (span) =>
+          span.status === "error" &&
+          span.category !== "tool" &&
+          !(span as { toolCallId?: string }).toolCallId,
+      );
+      if (stepErrorSpan) {
+        iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+        logger.error(
+          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push(
+          extractToolCallsFromConversation({
+            steps: headless.steps,
+            messages: promptResponseMessages,
+          }),
+        );
+        // PR 4b review fix (Cursor "Step error drops assistant
+        // transcript"): merge the partial response into
+        // `conversationMessages` so persisted iterations include
+        // whatever the model produced before the failure. The break
+        // short-circuits the normal merge below, so do it explicitly.
+        conversationMessages = [
+          ...activePromptInputMessages,
+          ...promptResponseMessages,
+        ];
+        break;
+      }
+
       const promptToolsCalled = extractToolCallsFromConversation({
-        steps: result.steps,
+        steps: headless.steps,
         messages: promptResponseMessages,
       });
       toolsCalledByPrompt.push(promptToolsCalled);
@@ -1306,14 +1576,10 @@ const runIterationWithAiSdk = async ({
         ...activePromptInputMessages,
         ...promptResponseMessages,
       ];
-
-      accumulatedUsage.inputTokens =
-        (accumulatedUsage.inputTokens ?? 0) + (result.usage?.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        (accumulatedUsage.outputTokens ?? 0) +
-        (result.usage?.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        (accumulatedUsage.totalTokens ?? 0) + (result.usage?.totalTokens ?? 0);
+      // Note: `accumulatedUsage` was merged above (before the failure
+      // branches) so token totals stay correct whether the loop
+      // continues, breaks on the no-messages path, or breaks on the
+      // step-error path.
 
       activeTraceCtx = null;
       activePromptInputMessages = [];
@@ -1357,6 +1623,12 @@ const runIterationWithAiSdk = async ({
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
+      // PR 4b (mirrors PR 3 invariant): if the per-turn loop set
+      // `iterationError` via the failure-detection branch (no new
+      // messages, non-tool error span), feed it to the gate so a
+      // failed cycle doesn't sneak through as a verdict pass on
+      // negative tests / zero-expected-tool cases.
+      iterationError,
       failOnToolError,
       predicateResults,
     });
@@ -1376,17 +1648,32 @@ const runIterationWithAiSdk = async ({
       convexClient,
     });
 
+    // PR 4d review fix (Codex P2): prepend the resolved system prompt
+    // so persisted eval transcripts carry it. The streamText `system:`
+    // field already covered the wire shape to the model; this restores
+    // the pre-4d persistence shape (first message is `role: "system"`)
+    // for downstream consumers of `appendEvalTurnTrace.sessionMessages`
+    // and the legacy `testIteration.blob` fallback.
+    const persistedMessages: ModelMessage[] = enhancedSystemPromptForPersist
+      ? [
+          { role: "system", content: enhancedSystemPromptForPersist },
+          ...conversationMessages,
+        ]
+      : conversationMessages;
+
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage,
-      messages: conversationMessages,
+      messages: persistedMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
+      ...(iterationError ? { error: iterationError } : {}),
+      ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
       resultSource: "reported" as const,
       metadata: {
         ...iterationMetadataBase,
@@ -1475,12 +1762,33 @@ const runIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions,
     );
+    // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
+    // The persisted iteration is hard-coded `passed: false` below, but the
+    // returned evaluation could still report `passed: true` on negative tests
+    // or tests with no expected tools when the catch fires before any tools
+    // are called — that would inflate suite-pass counts. Force false here so
+    // the persisted and returned verdicts agree.
+    evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
     });
+    // PR 4d review fix (Codex P2): same prefix as the success path — if
+    // `prepared` ran far enough to populate
+    // `enhancedSystemPromptForPersist`, surface the resolved system in
+    // the persisted failure transcript. Catches that fire BEFORE
+    // `prepareChatV2` returned leave the prefix empty (no system to
+    // persist anyway). Applied only in `runIterationWithAiSdk`; the
+    // streaming variant still pushes the system into
+    // `conversationMessages` itself (PR 5 territory).
+    const persistedFailMessages: ModelMessage[] = enhancedSystemPromptForPersist
+      ? [
+          { role: "system", content: enhancedSystemPromptForPersist },
+          ...failMessages,
+        ]
+      : failMessages;
 
     const failParams = {
       iterationId,
@@ -1491,7 +1799,7 @@ const runIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: failMessages,
+      messages: persistedFailMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -1529,13 +1837,24 @@ const runIterationWithAiSdk = async ({
 const runIterationViaBackend = async ({
   test,
   runIndex,
-  tools,
+  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+  // is delegated to prepareChatV2 below.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
-  convexHttpUrl,
+  // `convexHttpUrl` is in the RunIterationBackendParams type because the
+  // streaming variant (`streamIterationViaBackend`) still uses it for
+  // its legacy per-step fetch loop (PR 5 collapses that). The non-stream
+  // path now drives `runAssistantTurn`, which reads
+  // `process.env.CONVEX_HTTP_URL` directly — so the runner-level param
+  // is dead here. Kept in the type signature (no API churn) but no
+  // longer destructured.
   convexAuthToken,
   modelId,
+  modelDefinition,
+  orgModelConfig,
   endpointPath = "/stream",
   extraBodyFields,
   convexClient,
@@ -1546,6 +1865,7 @@ const runIterationViaBackend = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1595,18 +1915,31 @@ const runIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  // PR 4d of the engine consolidation: same resolver shape as
+  // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
+  // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
+  // applies {{var}} substitution on the resolved value.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const systemPrompt = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
@@ -1646,369 +1979,388 @@ const runIterationViaBackend = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const toolDefs = Object.entries(tools).map(([name, tool]) => {
-    const schema = (tool as any)?.inputSchema;
-    let serializedSchema: Record<string, unknown> | undefined;
-    if (schema) {
-      if (
-        typeof schema === "object" &&
-        schema !== null &&
-        "jsonSchema" in (schema as Record<string, unknown>)
-      ) {
-        serializedSchema = (schema as any).jsonSchema as Record<
-          string,
-          unknown
-        >;
-      } else if (typeof schema === "object" && "safeParse" in (schema as any)) {
-        try {
-          serializedSchema = z.toJSONSchema(schema) as Record<string, unknown>;
-        } catch {
-          serializedSchema = undefined;
-        }
-      } else {
-        serializedSchema = schema as Record<string, unknown>;
-      }
-    }
-
+  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
+  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
+  // tools, Anthropic name validation, and the assembled system prompt. The
+  // backend path serializes `prepared.allTools` to `toolDefs` below and
+  // executes them locally on tool-call events. Run AFTER iteration creation
+  // and inside a try/catch so prep failures persist as a failed iteration row
+  // rather than rejecting the test case with no iteration record.
+  //
+  // `customProviders` is derived from `orgModelConfig` so Anthropic name
+  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
+  // custom providers (matches the local-AI-SDK runner, which threads the same
+  // shape via `resolveEvalModelRuntime`).
+  const backendCustomProviders = orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
+    : undefined;
+  // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
+  // the `prepareChatV2` try) so the catch path and the assignment
+  // inside the try are both in scope. Stays `undefined` if prepareChatV2
+  // throws — the setup-failure persistence path doesn't need a system
+  // prefix.
+  let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
+  let prepared: PrepareChatV2Result;
+  try {
+    prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      ...(backendCustomProviders?.length
+        ? { customProviders: backendCustomProviders }
+        : {}),
+      priorMessages: [],
+    });
+    // PR 4d review fix (Codex P2 / Cursor Medium): stash the resolved
+    // system prompt for the persistence prefix below. The engine
+    // (`runAssistantTurn`) sends it to the model via its `systemPrompt:`
+    // arg, but the returned message history doesn't carry a system entry
+    // and `appendEvalTurnTrace` has no `systemPrompt` slot. Prepend at
+    // persistence time — same shape as the local runners' Codex-P2 fix.
+    backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    await persistSetupFailedIteration({
+      iterationId,
+      runStartedAt,
+      errorMessage,
+      iterationMetadataBase,
+      recorder,
+      convexClient,
+    });
+    // Suite summary aggregates `evaluation.passed`; a fresh
+    // `evaluateMultiTurnResults([], ...)` returns `passed: true` for negative
+    // tests and for positive tests with no expected tools, so setup failures
+    // would silently count as suite passes if we returned that as-is.
+    const failedEvaluation = evaluateMultiTurnResults(
+      promptTurns,
+      [],
+      test.isNegativeTest,
+      test.matchOptions,
+    );
+    failedEvaluation.passed = false;
     return {
-      name,
-      description: (tool as any)?.description,
-      inputSchema:
-        serializedSchema ??
-        ({
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        } as Record<string, unknown>),
+      evaluation: failedEvaluation,
+      iterationId,
     };
-  });
+  }
 
-  const authHeader = convexAuthToken
-    ? { Authorization: `Bearer ${convexAuthToken}` }
-    : ({} as Record<string, string>);
-
+  // PR 3 of the engine consolidation: drive the per-step fetch + local-tool
+  // loop through `runAssistantTurn` (the same engine chat / playground /
+  // synthetic use) instead of an eval-specific while loop. The contract test
+  // at `server/utils/__tests__/assistant-turn-eval-contract.test.ts` (PR 2)
+  // locks in the exact configuration we pass here.
+  //
+  // What this swap drops vs. the legacy backend loop:
+  //   - Per-step LLM spans (`pushBackendStepLlmFailureSpans`,
+  //     `pushBackendStepSuccessSpans`, `pushBackendStepToolFailureSpans`). The
+  //     legacy loop emitted span-per-step granularity for the trace UI; the
+  //     engine handles its own step traces internally and `runAssistantTurn`
+  //     surfaces them as `result.turnTrace`, but that format is the chat-side
+  //     `PersistedTurnTrace` shape, not the eval `EvalTraceSpan[]` shape.
+  //     Converting between them is out of scope here; PR 5/6 can address.
+  //   - Friendly "[evals] run halted: <reason>" log distinction for
+  //     daily-spend-cap errors. The engine throws on backend failures; we map
+  //     to `iterationError` uniformly. Spend-cap halts still record cleanly,
+  //     just without the warn-vs-error split.
+  // What this swap keeps:
+  //   - Tool-execution spans via `wrapToolSetForEvalTrace` (the wrapped tools
+  //     are passed to the engine; their `execute` hooks fire span capture).
+  //   - Cancellation via `abortSignal`.
+  //   - `iterationError` accumulation for the existing post-loop verdict gate.
   let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
   };
-
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
+  // `prepareChatV2` try.
+
+  // Eval supplies its bearer token via `convexAuthToken`. The engine wraps it
+  // into the Convex `/stream` (or `/stream/org`) request the same way live
+  // chat does.
+  const evalAuthContext = {
+    kind: "user_bearer" as const,
+    token: `Bearer ${convexAuthToken}`,
+  };
+
+  // Cursor review fix: the legacy `runIterationViaBackend` returned
+  // early on AbortError without recording the iteration. The engine
+  // swallows AbortError internally (sets its `aborted` flag, omits
+  // `turnTrace`, doesn't throw out of `runAssistantTurn`), and
+  // `RunAssistantTurnResult` doesn't expose the engine's `aborted`
+  // flag — so we read `abortSignal.aborted` directly as the
+  // authoritative cancellation signal. Used at the top of each
+  // iteration AND after every per-turn call (success or catch).
+  const isAborted = () => abortSignal?.aborted === true;
+  const returnCancelled = () => ({
+    evaluation: evaluateMultiTurnResults(
+      promptTurns,
+      toolsCalledByPrompt,
+      test.isNegativeTest,
+      test.matchOptions,
+    ),
+    iterationId: undefined,
+  });
+
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+    // Cancellation between turns: bail without recording.
+    if (isAborted()) {
+      logger.debug(
+        "[evals] backend iteration aborted between turns; skipping record",
+      );
+      return returnCancelled();
+    }
+
     const promptTurn = promptTurns[promptIndex]!;
-    const promptToolsCalled: ToolCall[] = [];
-    toolsCalledByPrompt.push(promptToolsCalled);
+
+    // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
+    // each tool's `execute` to push to `traceCtx.recordedSpans`; we drain
+    // into `capturedSpans` after the engine finishes.
+    const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
+    const tracedTools = wrapToolSetForEvalTrace(
+      prepared.allTools,
+      traceCtx,
+      promptIndex,
+    );
+
+    // Cursor review round-2 fix: push the user prompt into
+    // `messageHistory` BEFORE the engine call so a failed turn still
+    // persists the user side of the transcript. The legacy backend
+    // loop pushed the user message at the top of its per-step while
+    // loop; that meant `finishIteration` saw the user prompt even
+    // when the iteration failed mid-step. Recording the input keeps
+    // the transcript honest about WHICH turn errored.
     messageHistory.push({
       role: "user",
       content: promptTurn.prompt,
     });
+    const messageCountBeforeTurn = messageHistory.length;
+    const inputMessages: ModelMessage[] = [...messageHistory];
 
-    let steps = 0;
-    while (steps < MAX_STEPS) {
-      const stepStartAbs = Date.now();
-      const stepIndex = steps;
-      const llmStartAbs = stepStartAbs;
-      const stepMessageStartIndex = messageHistory.length;
-      try {
-        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(authHeader ? { ...authHeader } : {}),
-          },
-          body: JSON.stringify({
-            mode: "step",
-            messages: JSON.stringify(messageHistory),
-            model: modelId,
-            ...(systemPrompt ? { systemPrompt } : {}),
-            ...(temperature == null ? {} : { temperature }),
-            ...(toolChoice ? { toolChoice } : {}),
-            tools: toolDefs,
-            maxOutputTokens: 16384,
-            ...(extraBodyFields ?? {}),
-          }),
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        });
+    // Cursor + Codex review fix: thread `toolChoice` AND
+    // `maxOutputTokens` through `extraBodyFields` since the engine's
+    // `RunAssistantTurnOptions` / `MCPJamHandlerOptions` don't expose
+    // them as first-class fields. The Convex `/stream` (and
+    // `/stream/org`) handlers already accept both in the request body
+    // — the engine spreads `extraBodyFields` into the body unchanged.
+    // `maxOutputTokens: 16384` matches the legacy per-step Convex body
+    // (Cursor round-2 finding "Dropped eval maxOutputTokens limit"):
+    // without it, hosted backend eval turns would inherit the
+    // `/stream` handler's default, which can truncate long multi-step
+    // tool loops differently than the historical eval cap.
+    const mergedExtraBodyFields: Record<string, unknown> = {
+      maxOutputTokens: 16384,
+      ...(extraBodyFields ?? {}),
+      ...(toolChoice ? { toolChoice } : {}),
+    };
 
-        if (!res.ok) {
-          const errorText = await res.text().catch(() => res.statusText);
-          const { message, expected } = describeBackendStreamError(
-            res.status,
-            errorText,
-          );
-          iterationError = message;
-          iterationErrorDetails = errorText;
-          if (expected) {
-            // Daily spend cap / concurrency guardrail — expected, and with N
-            // cases running concurrently it fires once per case. Log a single
-            // quiet line with the real reason, not an alarming per-case stack.
-            logger.warn(`[evals] run halted: ${message}`);
-          } else {
-            logger.error("[evals] backend stream error", new Error(message));
-          }
-          const failAbs = Date.now();
-          pushBackendStepLlmFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            llmStartAbs,
-            failAbs,
-          );
-          break;
-        }
-
-        const json: any = await res.json();
-        const llmEndAbs = Date.now();
-        if (!json?.ok || !Array.isArray(json.messages)) {
-          iterationError = "Invalid backend response payload";
-          iterationErrorDetails = JSON.stringify(json, null, 2);
-          logger.error(
-            "[evals] invalid backend response payload",
-            new Error("Invalid backend response payload"),
-          );
-          const failAbs = Date.now();
-          pushBackendStepLlmFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            llmStartAbs,
-            failAbs,
-            {
-              modelId,
-            },
-          );
-          break;
-        }
-
-        const stepUsage = readBackendUsage(json.usage);
-        accumulatedUsage.inputTokens =
-          (accumulatedUsage.inputTokens || 0) + stepUsage.inputTokens;
-        accumulatedUsage.outputTokens =
-          (accumulatedUsage.outputTokens || 0) + stepUsage.outputTokens;
-        accumulatedUsage.totalTokens =
-          (accumulatedUsage.totalTokens || 0) + stepUsage.totalTokens;
-
-        for (const msg of json.messages as any[]) {
-          if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-            for (const item of msg.content) {
-              if (item?.type === "tool-call") {
-                const name = item.toolName ?? item.name;
-                if (name) {
-                  promptToolsCalled.push({
-                    toolName: name,
-                    arguments: item.input ?? item.parameters ?? item.args ?? {},
-                  });
-                }
-                if (!item.toolCallId) {
-                  item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                }
-                if (item.input == null) {
-                  item.input = item.parameters ?? item.args ?? {};
-                }
-              }
-            }
-          }
-          messageHistory.push(msg);
-        }
-
-        if (hasUnresolvedToolCalls(messageHistory as any)) {
-          const toolsStartAbs = Date.now();
-          const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            spans: capturedSpans,
-          });
-          try {
-            const newToolMessages = await executeToolCallsFromMessages(
-              messageHistory as any,
-              {
-                tools: tracedBackendTools as any,
-              },
-            );
-            const toolsEndAbs = Date.now();
-            const toolMessageIndexByCallId = new Map<string, number>();
-            for (let index = 0; index < messageHistory.length; index++) {
-              const msg = messageHistory[index] as any;
-              if (msg?.role !== "tool" || !Array.isArray(msg.content)) {
-                continue;
-              }
-              for (const part of msg.content) {
-                if (
-                  part?.type === "tool-result" &&
-                  typeof part.toolCallId === "string"
-                ) {
-                  toolMessageIndexByCallId.set(part.toolCallId, index);
-                }
-              }
-            }
-            for (const span of capturedSpans) {
-              if (
-                span.stepIndex !== stepIndex ||
-                (span.promptIndex ?? 0) !== promptIndex ||
-                typeof span.toolCallId !== "string" ||
-                typeof span.messageStartIndex === "number"
-              ) {
-                continue;
-              }
-              const toolMessageIndex = toolMessageIndexByCallId.get(
-                span.toolCallId,
-              );
-              if (typeof toolMessageIndex === "number") {
-                span.messageStartIndex = toolMessageIndex;
-                span.messageEndIndex = toolMessageIndex;
-              }
-            }
-            const stepMessageEndIndex =
-              messageHistory.length > stepMessageStartIndex
-                ? messageHistory.length - 1
-                : undefined;
-            pushBackendStepSuccessSpans(
-              capturedSpans,
-              runStartedAt,
-              promptIndex,
-              stepIndex,
-              stepStartAbs,
-              { startAbs: llmStartAbs, endAbs: llmEndAbs },
-              {
-                startAbs: toolsStartAbs,
-                endAbs: toolsEndAbs,
-                pushAggregateSpan: newToolMessages.length === 0,
-              },
-              {
-                modelId,
-                inputTokens: stepUsage.inputTokens,
-                outputTokens: stepUsage.outputTokens,
-                totalTokens: stepUsage.totalTokens,
-                messageStartIndex:
-                  stepMessageEndIndex != null
-                    ? stepMessageStartIndex
-                    : undefined,
-                messageEndIndex: stepMessageEndIndex,
-                status: "ok",
-              },
-            );
-          } catch (toolErr) {
-            const failAbs = Date.now();
-            const stepMessageEndIndex =
-              messageHistory.length > stepMessageStartIndex
-                ? messageHistory.length - 1
-                : undefined;
-            pushBackendStepToolFailureSpans(
-              capturedSpans,
-              runStartedAt,
-              promptIndex,
-              stepIndex,
-              stepStartAbs,
-              { startAbs: llmStartAbs, endAbs: llmEndAbs },
-              toolsStartAbs,
-              failAbs,
-              {
-                modelId,
-                inputTokens: stepUsage.inputTokens,
-                outputTokens: stepUsage.outputTokens,
-                totalTokens: stepUsage.totalTokens,
-                messageStartIndex:
-                  stepMessageEndIndex != null
-                    ? stepMessageStartIndex
-                    : undefined,
-                messageEndIndex: stepMessageEndIndex,
-                pushAggregateSpan: false,
-              },
-            );
-            iterationError =
-              toolErr instanceof Error ? toolErr.message : String(toolErr);
-            logger.error("[evals] tool execution failed", toolErr);
-            break;
-          }
-        } else {
-          const stepMessageEndIndex =
-            messageHistory.length > stepMessageStartIndex
-              ? messageHistory.length - 1
-              : undefined;
-          pushBackendStepSuccessSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            { startAbs: llmStartAbs, endAbs: llmEndAbs },
-            undefined,
-            {
-              modelId,
-              inputTokens: stepUsage.inputTokens,
-              outputTokens: stepUsage.outputTokens,
-              totalTokens: stepUsage.totalTokens,
-              messageStartIndex:
-                stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
-              messageEndIndex: stepMessageEndIndex,
-              status: "ok",
-            },
-          );
-        }
-
-        steps += 1;
-
-        const finishReason: string | undefined = json.finishReason;
-        if (finishReason && finishReason !== "tool-calls") {
-          break;
-        }
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          logger.debug("[evals] backend iteration aborted due to cancellation");
-          return {
-            evaluation: evaluateMultiTurnResults(
-              promptTurns,
-              toolsCalledByPrompt,
-              test.isNegativeTest,
-              test.matchOptions,
-            ),
-            iterationId: undefined,
-          };
-        }
-
-        if (error instanceof Error) {
-          iterationError = error.message || error.toString();
-
-          const responseBody = (error as any).responseBody;
-          if (responseBody && typeof responseBody === "string") {
-            iterationErrorDetails = responseBody;
-          }
-        } else if (typeof error === "string") {
-          iterationError = error;
-        } else {
-          iterationError = String(error);
-        }
-
-        if (iterationError && iterationError.length > 500) {
-          iterationError = iterationError.substring(0, 497) + "...";
-        }
-
-        logger.error("[evals] backend fetch failed", error);
-        const failAbs = Date.now();
-        pushBackendStepLlmFailureSpans(
-          capturedSpans,
-          runStartedAt,
-          promptIndex,
-          stepIndex,
-          stepStartAbs,
-          llmStartAbs,
-          failAbs,
-          {
-            modelId,
-          },
+    let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
+    try {
+      turnResult = await runAssistantTurn({
+        messages: inputMessages,
+        // Eval's `runTestCase` already resolved the canonical model id
+        // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads
+        // it in as `modelId` — for the JAM-paid path that's e.g.
+        // `anthropic/claude-haiku-4.5`. The engine reads
+        // `modelDefinition.id` for the wire payload, so override here so
+        // backend wallet/quota lookup keys match what live chat sends.
+        modelDefinition: { ...modelDefinition, id: modelId },
+        systemPrompt: prepared.enhancedSystemPrompt,
+        ...(prepared.resolvedTemperature != null
+          ? { temperature: prepared.resolvedTemperature }
+          : {}),
+        tools: tracedTools,
+        ...(selectedServers.length
+          ? { selectedServerIds: selectedServers }
+          : {}),
+        mcpClientManager,
+        authContext: evalAuthContext,
+        sourceType: "eval",
+        origin: "eval",
+        streamSink: "none",
+        persistMode: "caller",
+        approvalMode: "auto-deny",
+        endpointPath,
+        extraBodyFields: mergedExtraBodyFields,
+        ...(abortSignal ? { abortSignal } : {}),
+        maxSteps: MAX_STEPS,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+      });
+    } catch (error) {
+      // Cancellation: bail without recording. AbortError can surface
+      // either as a thrown exception (when fetch is aborted mid-flight)
+      // or as the engine's internal silent-cancellation path (handled
+      // by the `isAborted()` check after the success path below). Check
+      // `abortSignal.aborted` to catch BOTH paths consistently.
+      if (
+        isAborted() ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
+        logger.debug(
+          "[evals] backend iteration aborted due to cancellation",
         );
-        break;
+        return returnCancelled();
       }
+
+      // Non-abort runtime error from the engine. Map to `iterationError`
+      // for the post-loop verdict gate; preserve a truncated message and,
+      // when available, a `responseBody` for `errorDetails`.
+      if (error instanceof Error) {
+        iterationError = error.message || error.toString();
+        const responseBody = (error as { responseBody?: unknown })
+          .responseBody;
+        if (responseBody && typeof responseBody === "string") {
+          iterationErrorDetails = responseBody;
+        }
+      } else if (typeof error === "string") {
+        iterationError = error;
+      } else {
+        iterationError = String(error);
+      }
+      if (iterationError && iterationError.length > 500) {
+        iterationError = iterationError.substring(0, 497) + "...";
+      }
+      logger.error("[evals] runAssistantTurn failed", error);
+      break;
     }
 
-    if (iterationError) {
+    // Cursor review fix: cancellation that fired DURING
+    // `runAssistantTurn` without surfacing as a throw. The engine
+    // catches AbortError, sets its internal `aborted` flag, omits the
+    // `turnTrace`, and returns normally. Without this check we'd fall
+    // through to the silent-cycle-failure branch below and record an
+    // aborted run as a verdict failure.
+    if (isAborted()) {
+      logger.debug(
+        "[evals] backend iteration aborted mid-turn; skipping record",
+      );
+      return returnCancelled();
+    }
+
+    // Drain per-turn outputs into the iteration-level accumulators
+    // BEFORE the failure checks below. Doing it first preserves
+    // whatever partial good state the engine produced (tool spans,
+    // partial transcript, usage), so the persisted iteration shows
+    // what completed before the failure point.
+    //
+    // Codex round-3 (P2 "Preserve backend tool step indices"):
+    // `wrapToolSetForEvalTrace` records tool spans in
+    // `traceCtx.recordedSpans` but never gets `prepareStep` updates
+    // from the engine (eval is no longer calling `generateText`
+    // directly), so those spans land with `stepIndex: -1`. The engine
+    // emits its OWN correctly-indexed LLM-step spans into
+    // `turnTrace.spans` (already `EvalTraceSpan[]` shape — see
+    // `PersistedTurnTrace` in chat-ingestion.ts). Merge both: the
+    // engine's LLM spans give per-step granularity; the wrap's tool
+    // spans give per-tool-call detail. Tool spans still have
+    // `stepIndex: -1` for now — fixing that requires correlating
+    // each tool span back to its parent LLM step via the engine's
+    // step events, which is a separate workstream.
+    capturedSpans.push(...traceCtx.recordedSpans);
+    if (turnResult.turnTrace?.spans?.length) {
+      capturedSpans.push(...turnResult.turnTrace.spans);
+    }
+    if (turnResult.usage) {
+      accumulatedUsage.inputTokens =
+        (accumulatedUsage.inputTokens || 0) +
+        (turnResult.usage.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        (accumulatedUsage.outputTokens || 0) +
+        (turnResult.usage.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        (accumulatedUsage.totalTokens || 0) +
+        (turnResult.usage.totalTokens ?? 0);
+    }
+
+    // Extract per-turn tool calls from the new messages only (engine
+    // returns the FULL transcript; slice from `messageCountBeforeTurn`
+    // to get just this turn's appended assistant + tool messages so
+    // prior turns' calls aren't double-counted).
+    const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
+    const promptToolsCalled = extractToolCallsFromConversation({
+      messages: newMessages,
+    });
+    toolsCalledByPrompt.push(promptToolsCalled);
+
+    // Roll the engine's transcript forward as the next turn's starting
+    // point. Includes prior conversation + this turn's user prompt + this
+    // turn's assistant/tool messages.
+    messageHistory.length = 0;
+    messageHistory.push(...turnResult.messages);
+
+    // Failure detection (ordered most-specific → least-specific).
+    // Three engine failure shapes the runner must catch:
+    //
+    //  (a) Cursor round-3 ("Partial turn hides engine failures"):
+    //      Engine catch fired AFTER partial messages were appended
+    //      (some text deltas / partial tool call landed before the
+    //      error). The engine's `executeEngine` `try { ... }
+    //      catch (error) { logger.error; emit error chunk; ... }` at
+    //      mcpjam-stream-handler.ts:2227 leaves `runSucceeded:
+    //      false` → `turnTrace` is NOT captured even though
+    //      `messages.length > messageCountBeforeTurn`. The
+    //      message-count check and the error-span check both miss
+    //      this. `!turnTrace` is the reliable signal.
+    //
+    //  (b) Codex P1 round-1 + the original silent-cycle-failure:
+    //      Engine succeeded (turnTrace captured) but produced no new
+    //      content (step-level non-OK at
+    //      mcpjam-stream-handler.ts:1384 returns
+    //      `shouldContinue:false`, synthetic finish, runSucceeded
+    //      true). Detect via `messages.length <=
+    //      messageCountBeforeTurn`.
+    //
+    //  (c) Codex P1 round-2 ("Fail turns when later backend steps
+    //      error"): step 1 succeeded, step 2 errored. `turnTrace`
+    //      captured, `messages.length` grew, but `turnTrace.spans`
+    //      includes an `EvalTraceSpan` with `status:"error"`.
+    if (!turnResult.turnTrace) {
+      iterationError =
+        "Backend stream failed during iteration (engine caught an error mid-turn)";
+      logger.error(
+        `[evals] runAssistantTurn returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${newMessages.length > 0})`,
+      );
+      break;
+    }
+    if (newMessages.length === 0) {
+      iterationError =
+        "Backend step returned no content (stream error or empty response)";
+      logger.error(
+        "[evals] runAssistantTurn produced no new messages this turn; treating as cycle failure",
+      );
+      break;
+    }
+    // Codex P1 round-3 ("Don't treat tool-result error spans as
+    // backend failures"): `wrapBackendToolsForTrace` records ORDINARY
+    // local tool-result errors (MCP tool returned `isError: true`,
+    // tool execution threw, ...) as `status: "error"` with
+    // `category: "tool"`. The original match-any-error-span check
+    // would set `iterationError` and break before
+    // `finalizePassedForEval` could apply the configured
+    // `failOnToolError` policy — so otherwise-passing evals were
+    // force-failed when a tool returned a recoverable error and the
+    // model recovered. Filter to backend step / LLM failure spans
+    // only (categories `"step" | "llm" | "error"`); tool-category
+    // error spans flow through the existing tool-error gate (see
+    // `finalizePassedForEval` + `advancedConfig.failOnToolError`).
+    const stepErrorSpan = turnResult.turnTrace.spans.find(
+      (span) => span.status === "error" && span.category !== "tool",
+    );
+    if (stepErrorSpan) {
+      iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
+      logger.error(
+        `[evals] runAssistantTurn turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+      );
       break;
     }
   }
@@ -2062,13 +2414,26 @@ const runIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
+  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
+  // system at persistence so the backend's transcript carries it.
+  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
+  const persistedBackendMessages: ModelMessage[] =
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...messageHistory,
+        ]
+      : messageHistory;
 
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    messages: persistedBackendMessages,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -2107,6 +2472,7 @@ const runIterationViaBackend = async ({
 const runTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
+  selectedServers: string[];
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
@@ -2126,10 +2492,13 @@ const runTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
+  /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
+  suiteHostConfig?: Record<string, unknown> | null;
 }) => {
   const {
     test,
     tools,
+    selectedServers,
     mcpClientManager,
     recorder,
     modelApiKeys,
@@ -2146,6 +2515,7 @@ const runTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    suiteHostConfig,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2232,6 +2602,7 @@ const runTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -2239,6 +2610,7 @@ const runTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        modelDefinition,
         extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
         convexClient,
         modelApiKeys,
@@ -2250,6 +2622,7 @@ const runTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2260,6 +2633,7 @@ const runTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -2267,6 +2641,7 @@ const runTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: String(modelDefinition.id),
+        modelDefinition,
         endpointPath: "/stream/org",
         extraBodyFields: {
           providerKey: orgByokRuntime.providerKey,
@@ -2283,6 +2658,7 @@ const runTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2292,6 +2668,7 @@ const runTestCase = async (params: {
       test,
       runIndex,
       tools,
+      selectedServers,
       mcpClientManager,
       recorder,
       testCaseId,
@@ -2311,6 +2688,7 @@ const runTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      suiteHostConfig,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2334,6 +2712,7 @@ export const runEvalSuiteWithAiSdk = async ({
   compareRunId,
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
+  suiteHostConfig,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2418,6 +2797,7 @@ export const runEvalSuiteWithAiSdk = async ({
       runTestCase({
         test,
         tools,
+        selectedServers: serverIds,
         mcpClientManager,
         recorder,
         modelApiKeys,
@@ -2434,6 +2814,7 @@ export const runEvalSuiteWithAiSdk = async ({
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
+        suiteHostConfig,
       }),
     );
 
@@ -2578,7 +2959,10 @@ export type StreamEmit = (event: EvalStreamEvent) => void;
 const streamIterationWithAiSdk = async ({
   test,
   runIndex,
-  tools,
+  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+  // is delegated to prepareChatV2 below.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
@@ -2595,6 +2979,7 @@ const streamIterationWithAiSdk = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2645,18 +3030,44 @@ const streamIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
+  // PR 4d of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // resolve `systemPrompt` and `temperature` via the shared
+  // `resolveExecutionContext` so the suite-level hostConfig's
+  // `systemPrompt` / `temperature` act as defaults under the per-case
+  // `advancedConfig` overrides. Pre-4d the runner ignored
+  // `suiteHostConfig.systemPrompt` / `.temperature` entirely — even
+  // though the eval client deliberately omits suite defaults from per-case
+  // advancedConfig (see comment at
+  // `client/src/components/evals/use-eval-handlers.ts:302`) on the
+  // understanding that the runtime applies them. `override-wins`
+  // precedence keeps per-case overrides authoritative; the hostConfig
+  // fills the gap when the per-case value is absent.
+  //
+  // `withHostContextSystemPrompt` runs AFTER the resolver because
+  // `{{var}}` substitution context is per-RUN
+  // (`test.hostConfigOverride.hostContext`), not part of the suite
+  // hostConfig.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const system = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const modelRuntime = resolveEvalModelRuntime({
@@ -2700,11 +3111,10 @@ const streamIterationWithAiSdk = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const baseMessages: ModelMessage[] = [];
-  if (system) {
-    baseMessages.push({ role: "system", content: system });
-  }
-  let conversationMessages: ModelMessage[] = [...baseMessages];
+  // `conversationMessages` starts empty; the system message is pushed below
+  // inside the try block, AFTER `prepareChatV2`. See the suite-style runner
+  // for the rationale (prep failures persist as failed iteration rows).
+  let conversationMessages: ModelMessage[] = [];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const accumulatedUsage = {
@@ -2718,8 +3128,66 @@ const streamIterationWithAiSdk = async ({
   let activeCompletedStepCount = 0;
   let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
     null;
+  // PR 5a of the engine consolidation (`~/mcpjam-docs/unification.md`):
+  // streaming-runner equivalents of PR 4b's `iterationError` /
+  // `iterationErrorDetails` hoists. The streaming runner historically
+  // threw on driver failures and relied on the outer catch; PR 5a
+  // adopts the non-stream runner's three-signal failure detection
+  // (no-new-messages, non-tool error span) which records the failure
+  // via `status:"completed"` + `error` on `finishParams` so the run
+  // continues to complete cleanly while flagging the failure.
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
+  // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
+  // success + catch paths can prepend the resolved system prompt to
+  // the messages array. Mirrors `enhancedSystemPromptForPersist` in
+  // `runIterationWithAiSdk`. Empty when `prepareChatV2` throws before
+  // returning.
+  let streamEnhancedSystemPromptForPersist: string | undefined = undefined;
+  // PR 4d review fix (Cursor Low "Stream snapshots drop system prompt"):
+  // PR 4d dropped the `conversationMessages.push({role:"system"})` in
+  // this runner, but `buildTraceSnapshotEvent` reads from those arrays
+  // mid-run — live SSE traces during a streamed quick run no longer
+  // include the resolved system until the final persistence prepend.
+  // Wrap message slices with the system prefix everywhere the SSE
+  // snapshot consumes them so trace UI viewers see the system as the
+  // first message throughout the run.
+  const withSystemPrefix = (msgs: ModelMessage[]): ModelMessage[] =>
+    streamEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: streamEnhancedSystemPromptForPersist,
+          },
+          ...msgs,
+        ]
+      : msgs;
 
   try {
+    // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
+    // so prep failures become a recorded failed iteration.
+    const prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt: system,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      customProviders: modelRuntime.customProviders,
+      priorMessages: [],
+    });
+    // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
+    // streamIterationWithAiSdk"): align the streaming local-BYOK runner
+    // with the non-stream variant's chat-aligned shape. Pre-fix this
+    // runner pushed the system into `conversationMessages` AND omitted
+    // `system:` on the `streamText({...})` call below, so a streamed
+    // eval and a non-stream eval of the same case produced different
+    // transcript shapes. Now the system flows via the dedicated
+    // `system:` field, the runner-side `conversationMessages` stays
+    // system-free, and persistence prepends the resolved value at write
+    // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
+    streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
@@ -2730,28 +3198,40 @@ const streamIterationWithAiSdk = async ({
     if (
       toolChoice &&
       typeof toolChoice === "object" &&
-      !Object.hasOwn(tools, toolChoice.toolName)
+      !Object.hasOwn(prepared.allTools, toolChoice.toolName)
     ) {
       throw new Error(
         `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
       );
     }
 
+    // PR 5a abort helpers — mirror the non-stream runner's pattern so
+    // a cancellation between consume and check drops the iteration
+    // record without persisting cancelled state.
+    const localIsAborted = () => abortSignal?.aborted === true;
+    const returnLocalCancelled = () => ({
+      evaluation: evaluateMultiTurnResults(
+        promptTurns,
+        toolsCalledByPrompt,
+        test.isNegativeTest,
+        test.matchOptions,
+      ),
+      iterationId: undefined,
+    });
+
     for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+      if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
-      activePromptInputMessages = [
-        ...conversationMessages,
-        { role: "user", content: promptTurn.prompt },
-      ];
+      // PR 5a invariant (mirror PR 4b round 2): push the user prompt to
+      // `conversationMessages` BEFORE the driver call so a failed turn
+      // still records the prompt in the persisted transcript. Without
+      // this, suite UI shows an empty failed iteration that's
+      // unactionable.
+      conversationMessages.push({ role: "user", content: promptTurn.prompt });
+      activePromptInputMessages = [...conversationMessages];
       activePartialResponseMessages = [];
       activeCompletedStepCount = 0;
-      activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
-      const tracedTools = wrapToolSetForEvalTrace(
-        tools,
-        activeTraceCtx,
-        promptIndex,
-      );
 
       emit({
         type: "turn_start",
@@ -2759,17 +3239,49 @@ const streamIterationWithAiSdk = async ({
         prompt: promptTurn.prompt,
       });
 
-      const result = streamText({
-        model: llmModel,
-        messages: activePromptInputMessages,
-        tools: tracedTools,
-        stopWhen: stepCountIs(20),
-        ...(temperature == null ? {} : { temperature }),
+      // PR 5a: drive `runDirectChatTurn`. The helper owns the streamText
+      // config, span recording, abort wiring, progressive-discovery
+      // gating, and prepareStep. Eval owns SSE event emission (via the
+      // adapter on `handle.result.fullStream`), failure detection,
+      // persistence, and grading.
+      //
+      // `traceEvents.onStepSnapshot` is the eval-side per-step hook:
+      // increment step counter, mirror partial state (so the outer
+      // catch + no-msg fallback can persist a partial transcript),
+      // update accumulatedUsage from `traceTurn.turnUsage` delta (so
+      // mid-run `trace_snapshot` events show running totals, and the
+      // PR 4b "totalUsage merged BEFORE failure branches" invariant
+      // holds — each completed step's usage lands before the next
+      // potential failure branch fires), and emit the `trace_snapshot`
+      // SSE event with `withSystemPrefix` applied.
+      const promptInputLength = activePromptInputMessages.length;
+      const accumulatedUsageBeforeTurn = {
+        inputTokens: accumulatedUsage.inputTokens,
+        outputTokens: accumulatedUsage.outputTokens,
+        totalTokens: accumulatedUsage.totalTokens,
+      };
+      const handle = runDirectChatTurn({
+        llmModel,
+        modelId: test.model,
+        messageHistory: activePromptInputMessages,
+        // Cursor PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): anchor trace span offsets to the iteration start so
+        // multi-turn timelines don't collapse to start-at-zero per
+        // turn. The helper defaults to `Date.now()` for the chat /
+        // single-turn case.
+        traceStartedAt: runStartedAt,
+        systemPrompt: prepared.enhancedSystemPrompt ?? "",
+        ...(prepared.resolvedTemperature == null
+          ? {}
+          : { temperature: prepared.resolvedTemperature }),
+        tools: prepared.allTools,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+        ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
           : {}),
-        ...(abortSignal ? { abortSignal } : {}),
-        experimental_telemetry: {
+        experimentalTelemetry: {
           isEnabled: true,
           functionId: "evals.streamText",
           recordInputs: false,
@@ -2786,116 +3298,112 @@ const streamIterationWithAiSdk = async ({
             promptIndex,
           },
         },
-        prepareStep: ({ stepNumber }) => {
-          registerAiSdkPrepareStep(activeTraceCtx!, stepNumber, {
-            modelId: test.model,
-            promptIndex,
-          });
-          return undefined;
-        },
-        onStepFinish: async (step) => {
-          activeCompletedStepCount += 1;
-          const stepFinishedAt = Date.now();
-          accumulatedUsage.inputTokens += step.usage?.inputTokens ?? 0;
-          accumulatedUsage.outputTokens += step.usage?.outputTokens ?? 0;
-          accumulatedUsage.totalTokens += step.usage?.totalTokens ?? 0;
-          const responseMessages = step.response?.messages ?? [];
-          const responseMessageCountBeforeAppend =
-            activePartialResponseMessages.length;
-          const messageStartIndex =
-            responseMessages.length > 0
-              ? activePromptInputMessages.length +
-                responseMessageCountBeforeAppend
-              : undefined;
-          appendDedupedModelMessages(
-            activePartialResponseMessages,
-            responseMessages as ModelMessage[],
-          );
-          const appendedMessageCount =
-            activePartialResponseMessages.length -
-            responseMessageCountBeforeAppend;
-          const messageEndIndex =
-            messageStartIndex != null && appendedMessageCount > 0
-              ? messageStartIndex + appendedMessageCount - 1
-              : undefined;
-          emitAiSdkOnStepFinish(activeTraceCtx!, stepFinishedAt, {
-            modelId: step.response?.modelId ?? test.model,
-            inputTokens: step.usage?.inputTokens,
-            outputTokens: step.usage?.outputTokens,
-            totalTokens: step.usage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-            status: "ok",
-          });
-          const snapshotMessages = [
-            ...activePromptInputMessages,
-            ...activePartialResponseMessages,
-          ];
-          emit(
-            buildTraceSnapshotEvent({
-              turnIndex: promptIndex,
-              stepIndex: activeCompletedStepCount - 1,
-              snapshotKind: "step_finish",
-              messages: snapshotMessages,
-              spans: [...recordedSpans, ...activeTraceCtx!.recordedSpans],
-              actualToolCalls: extractToolCallsFromConversation({
-                messages: snapshotMessages,
+        traceEvents: {
+          onStepSnapshot: ({ traceHistory, traceTurn }) => {
+            activeCompletedStepCount += 1;
+            // Slice from `promptInputLength` to get just this turn's
+            // running response (PR 4d pattern).
+            activePartialResponseMessages = traceHistory.slice(
+              promptInputLength,
+            ) as ModelMessage[];
+            // Recompute accumulatedUsage from this turn's cumulative
+            // usage so far + the snapshot taken at turn start. This
+            // keeps the running total correct across multi-turn runs
+            // AND across the failure branches below (since the
+            // accumulated value is up-to-date by the time the
+            // for-await loop returns).
+            accumulatedUsage.inputTokens =
+              accumulatedUsageBeforeTurn.inputTokens +
+              (traceTurn.turnUsage?.inputTokens ?? 0);
+            accumulatedUsage.outputTokens =
+              accumulatedUsageBeforeTurn.outputTokens +
+              (traceTurn.turnUsage?.outputTokens ?? 0);
+            accumulatedUsage.totalTokens =
+              accumulatedUsageBeforeTurn.totalTokens +
+              (traceTurn.turnUsage?.totalTokens ?? 0);
+            const snapshotMessages = [
+              ...activePromptInputMessages,
+              ...activePartialResponseMessages,
+            ];
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                stepIndex: activeCompletedStepCount - 1,
+                snapshotKind: "step_finish",
+                messages: withSystemPrefix(snapshotMessages),
+                // Spans available on `traceTurn.turnSpans` so we don't
+                // need to reach into the closed-over handle, which the
+                // arrow function can't reference yet during option
+                // construction.
+                spans: [...recordedSpans, ...traceTurn.turnSpans],
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: snapshotMessages,
+                }),
+                usage: accumulatedUsage,
               }),
-              usage: accumulatedUsage,
-            }),
-          );
-        },
-        onFinish: async () => {
-          /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
+            );
+          },
         },
       });
+      // `runDirectChatTurn` exposes its internal traceContext so eval
+      // can fold its spans into `recordedSpans` after each turn,
+      // matching the per-turn cadence the old in-runner `activeTraceCtx`
+      // used.
+      activeTraceCtx = handle.traceContext;
 
-      // Consume the full stream and emit events
-      for await (const part of result.fullStream) {
-        switch (part.type) {
-          case "text-delta":
-            emit({ type: "text_delta", content: part.text });
-            break;
-          case "tool-call":
-            emit({
-              type: "tool_call",
-              toolName: part.toolName,
-              toolCallId: part.toolCallId,
-              args: (part.input ?? {}) as Record<string, unknown>,
-            });
-            break;
-          case "tool-result":
-            emit({
-              type: "tool_result",
-              toolCallId: part.toolCallId,
-              result: part.output,
-              isError: false,
-            });
-            break;
-          case "tool-error":
-            emit({
-              type: "tool_result",
-              toolCallId: part.toolCallId,
-              result: part.error,
-              isError: true,
-            });
-            break;
-          case "finish-step":
-            emit({
-              type: "step_finish",
-              stepNumber: activeCompletedStepCount,
-              usage: {
-                inputTokens: part.usage?.inputTokens ?? 0,
-                outputTokens: part.usage?.outputTokens ?? 0,
-              },
-            });
-            break;
+      // Cursor PR 5a review fix (Low "Stream throw skips handle
+      // cleanup"): wrap the stream drain + terminal-promise reads in a
+      // try/finally so `handle.cleanup()` always runs (idempotent), even
+      // when `consumeFullStreamAsEvalEvents` or any subsequent await
+      // throws into the outer catch. The abort listener inside the
+      // helper would otherwise leak when control jumps to a scope where
+      // `handle` is unreachable.
+      try {
+        // Drive the stream via the shared adapter — emits text_delta /
+        // tool_call / tool_result / step_finish SSE events. The runner
+        // owns the step counter via `getStepIndex` so the adapter stays
+        // stateless.
+        await consumeFullStreamAsEvalEvents(handle.result.fullStream, {
+          emit,
+          getStepIndex: () => activeCompletedStepCount,
+        });
+
+        // PR 5a abort check (mirror PR 4b): streamText can swallow
+        // AbortError silently when the underlying fetch is cancelled.
+        // Check the outer signal directly after the for-await loop
+        // resolves so cancelled runs drop without persisting.
+        if (handle.isAborted() || localIsAborted()) {
+          logger.debug(
+            "[evals] streaming local-BYOK iteration aborted mid-turn; skipping record",
+          );
+          return returnLocalCancelled();
         }
-      }
 
-      // After stream completes, resolve the promises on the streamText result
-      const steps = await result.steps;
-      const responseObj = await result.response;
+      // Cursor PR 5a review round 2 fix (Medium "Streaming omits
+      // totalUsage before failures"): the per-step delta-update inside
+      // `onStepSnapshot` only captures usage for steps where the
+      // snapshot fired. If the stream resolves with zero completed
+      // steps — the same path the no-content failure branch handles —
+      // `accumulatedUsage` stays at the pre-turn baseline even when
+      // `handle.result.totalUsage` reports billed tokens. The
+      // non-stream runner (PR 4b) reads `headless.totalUsage` and
+      // merges before failure branches; PR 5a now does the same.
+      // Reconciles to the canonical post-stream total so failure
+      // branches + finishParams see the real billed value.
+      const finalTurnUsage = await handle.result.totalUsage;
+      accumulatedUsage.inputTokens =
+        accumulatedUsageBeforeTurn.inputTokens +
+        (finalTurnUsage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        accumulatedUsageBeforeTurn.outputTokens +
+        (finalTurnUsage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        accumulatedUsageBeforeTurn.totalTokens +
+        (finalTurnUsage?.totalTokens ?? 0);
+
+      // After stream completes, resolve the helper's terminal promises.
+      const steps = await handle.result.steps;
+      const responseObj = await handle.result.response;
       const finalMessagesRaw = responseObj?.messages as
         | ModelMessage[]
         | undefined;
@@ -2913,6 +3421,108 @@ const streamIterationWithAiSdk = async ({
         );
       }
 
+      // PR 5a failure-detection (mirror PR 4b / 4d three-signal shape):
+      //   (a) No new messages → driver returned nothing (network
+      //       failure, model returned empty, …).
+      //   (b) Non-tool error span captured during the run (LLM step
+      //       failure, scrub failure, …). Tool error spans
+      //       (category "tool") flow through the existing
+      //       `failOnToolError` gate below — DON'T treat them as cycle
+      //       failures here.
+      // `accumulatedUsage` is already up-to-date from the last
+      // `onStepSnapshot`, so failure branches inherit correct token
+      // totals (PR 4b "totalUsage before failure" invariant).
+      if (promptResponseMessages.length === 0) {
+        iterationError =
+          "Stream returned no content (local-BYOK driver failed)";
+        logger.error(
+          "[evals] streamText returned no new messages this turn; treating as cycle failure",
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push([]);
+        // Cursor PR 5a review fix (Medium "Soft failure skips streaming
+        // error events"): emit the failure trace_snapshot + error event
+        // before `break` so live SSE consumers see the failure signal
+        // immediately. Without these, a turn that already emitted
+        // `turn_start` ends silently from the consumer's POV.
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            ...(activeCompletedStepCount > 0
+              ? { stepIndex: activeCompletedStepCount - 1 }
+              : {}),
+            snapshotKind: "failure",
+            messages: withSystemPrefix(activePromptInputMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: activePromptInputMessages,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
+        emit({ type: "error", message: iterationError });
+        handle.cleanup();
+        break;
+      }
+      const stepErrorSpan = activeTraceCtx.recordedSpans.find(
+        // Codex PR 5a review fix (also applies to PR 4b's non-stream
+        // runner): when a tool call fails, `wrapToolSetForEvalTrace`
+        // records BOTH a `category:"tool"` span AND a child
+        // `category:"error"` span carrying `toolCallId`/`toolName`
+        // (see eval-trace-capture.ts:258-275). The simple
+        // `category !== "tool"` filter catches the child error span
+        // and treats failed tool calls as cycle failures even when
+        // `advancedConfig.failOnToolError === false`. Excluding any
+        // span associated with a tool (carries `toolCallId`) restores
+        // the intended deferral to the `failOnToolError` gate.
+        (span) =>
+          span.status === "error" &&
+          span.category !== "tool" &&
+          !(span as { toolCallId?: string }).toolCallId,
+      );
+      if (stepErrorSpan) {
+        iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+        logger.error(
+          `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`,
+        );
+        recordedSpans.push(...activeTraceCtx.recordedSpans);
+        toolsCalledByPrompt.push(
+          extractToolCallsFromConversation({
+            steps,
+            messages: promptResponseMessages,
+          }),
+        );
+        // PR 4b review fix (Cursor "Step error drops assistant
+        // transcript"): merge the partial response into
+        // `conversationMessages` so persisted iterations include
+        // whatever the model produced before the failure.
+        conversationMessages = [
+          ...activePromptInputMessages,
+          ...promptResponseMessages,
+        ];
+        // Cursor PR 5a review fix (Medium "Soft failure skips
+        // streaming error events"): emit the failure trace_snapshot +
+        // error event before `break` (mirror the no-msg branch above).
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            ...(activeCompletedStepCount > 0
+              ? { stepIndex: activeCompletedStepCount - 1 }
+              : {}),
+            snapshotKind: "failure",
+            messages: withSystemPrefix(conversationMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: conversationMessages,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
+        emit({ type: "error", message: iterationError });
+        handle.cleanup();
+        break;
+      }
+
       const promptToolsCalled = extractToolCallsFromConversation({
         steps,
         messages: promptResponseMessages,
@@ -2924,26 +3534,37 @@ const streamIterationWithAiSdk = async ({
         ...activePromptInputMessages,
         ...promptResponseMessages,
       ];
+      // Note: `accumulatedUsage` was updated incrementally via
+      // `onStepSnapshot`; no post-loop merge needed.
 
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          snapshotKind: "turn_finish",
-          messages: conversationMessages,
-          spans: recordedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: conversationMessages,
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            snapshotKind: "turn_finish",
+            messages: withSystemPrefix(conversationMessages),
+            spans: recordedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: conversationMessages,
+            }),
+            usage: accumulatedUsage,
           }),
-          usage: accumulatedUsage,
-        }),
-      );
+        );
 
-      activeTraceCtx = null;
-      activePromptInputMessages = [];
-      activePartialResponseMessages = [];
-      activeCompletedStepCount = 0;
+        activeTraceCtx = null;
+        activePromptInputMessages = [];
+        activePartialResponseMessages = [];
+        activeCompletedStepCount = 0;
 
-      emit({ type: "turn_finish", turnIndex: promptIndex });
+        emit({ type: "turn_finish", turnIndex: promptIndex });
+      } finally {
+        // Cursor PR 5a review fix (Low "Stream throw skips handle
+        // cleanup"): unconditional cleanup. Idempotent (the helper
+        // tracks `listenerAttached`), so the existing explicit
+        // `handle.cleanup()` calls inside the failure branches above
+        // are now safe redundancies — kept there for symmetry with
+        // PR 4b's pattern, but the real guarantee is here.
+        handle.cleanup();
+      }
     }
 
     const evaluation = evaluateMultiTurnResults(
@@ -2982,6 +3603,11 @@ const streamIterationWithAiSdk = async ({
     const passed = finalizePassedForEval({
       matchPassed: evaluation.passed,
       trace: traceForGate,
+      // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
+      // via the failure-detection branch, feed it to the gate so a
+      // failed cycle doesn't sneak through as a verdict pass on
+      // negative tests / zero-expected-tool cases.
+      iterationError,
       failOnToolError,
       predicateResults,
     });
@@ -3000,18 +3626,37 @@ const streamIterationWithAiSdk = async ({
       mcpClientManager,
       convexClient,
     });
+    // PR 4d review fix (CodeRabbit): prepend the resolved system at
+    // persistence time so the streamed eval's transcript matches the
+    // non-stream runner's shape (`role: "system"` first entry).
+    const persistedStreamMessages: ModelMessage[] =
+      streamEnhancedSystemPromptForPersist
+        ? [
+            {
+              role: "system",
+              content: streamEnhancedSystemPromptForPersist,
+            },
+            ...conversationMessages,
+          ]
+        : conversationMessages;
 
     const finishParams = {
       iterationId,
       passed,
       toolsCalled: evaluation.toolsCalled,
       usage: usageFinal,
-      messages: conversationMessages,
+      messages: persistedStreamMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
+      // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
+      // via the failure-detection branch, surface it on the persisted
+      // iteration via `status:"completed"` + `error` — the run
+      // completed cleanly but the cycle failed.
+      ...(iterationError ? { error: iterationError } : {}),
+      ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
       resultSource: "reported" as const,
       metadata: {
         ...iterationMetadataBase,
@@ -3098,6 +3743,13 @@ const streamIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions,
     );
+    // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
+    // The persisted iteration is hard-coded `passed: false` below, but the
+    // returned evaluation could still report `passed: true` on negative tests
+    // or tests with no expected tools when the catch fires before any tools
+    // are called — that would inflate suite-pass counts. Force false here so
+    // the persisted and returned verdicts agree.
+    evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
@@ -3112,7 +3764,7 @@ const streamIterationWithAiSdk = async ({
           ? { stepIndex: activeCompletedStepCount - 1 }
           : {}),
         snapshotKind: "failure",
-        messages: failMessages,
+        messages: withSystemPrefix(failMessages),
         spans: recordedSpans,
         actualToolCalls: extractToolCallsFromConversation({
           messages: failMessages,
@@ -3131,6 +3783,20 @@ const streamIterationWithAiSdk = async ({
       details: errorDetails,
     });
 
+    // PR 4d review fix (CodeRabbit): mirror the non-stream runner — if
+    // `prepared` populated the resolved system prompt before the throw,
+    // prepend it to the persisted failure transcript.
+    const persistedStreamFailMessages: ModelMessage[] =
+      streamEnhancedSystemPromptForPersist
+        ? [
+            {
+              role: "system",
+              content: streamEnhancedSystemPromptForPersist,
+            },
+            ...failMessages,
+          ]
+        : failMessages;
+
     const failParams = {
       iterationId,
       passed: false,
@@ -3140,7 +3806,7 @@ const streamIterationWithAiSdk = async ({
         outputTokens: accumulatedUsage.outputTokens,
         totalTokens: accumulatedUsage.totalTokens,
       },
-      messages: failMessages,
+      messages: persistedStreamFailMessages,
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3178,13 +3844,18 @@ const streamIterationWithAiSdk = async ({
 const streamIterationViaBackend = async ({
   test,
   runIndex,
-  tools,
+  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+  // is delegated to prepareChatV2 below.
+  tools: _suiteTools,
+  selectedServers,
   mcpClientManager,
   recorder,
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  modelDefinition,
+  orgModelConfig,
   endpointPath = "/stream",
   extraBodyFields,
   convexClient,
@@ -3196,6 +3867,7 @@ const streamIterationViaBackend = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  suiteHostConfig,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3246,18 +3918,31 @@ const streamIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  // PR 4d of the engine consolidation: same resolver shape as
+  // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
+  // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
+  // applies {{var}} substitution on the resolved value.
+  const resolvedExecution = resolveExecutionContext({
+    hostConfig: suiteHostConfig ?? null,
+    overrides: {
+      systemPrompt:
+        typeof advancedConfig?.system === "string"
+          ? advancedConfig.system
+          : undefined,
+      temperature:
+        typeof advancedConfig?.temperature === "number"
+          ? advancedConfig.temperature
+          : undefined,
+    },
+    precedence: "override-wins",
+  });
   const systemPrompt = withHostContextSystemPrompt(
-    typeof advancedConfig?.system === "string"
-      ? advancedConfig.system
-      : undefined,
+    resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as
       | Record<string, unknown>
       | undefined,
   );
-  const temperature =
-    typeof advancedConfig?.temperature === "number"
-      ? advancedConfig.temperature
-      : undefined;
+  const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
@@ -3297,7 +3982,102 @@ const streamIterationViaBackend = async ({
       ? await recorder.startIteration(iterationParams)
       : await createIterationDirectly(convexClient, iterationParams);
 
-  const toolDefs = Object.entries(tools).map(([name, tool]) => {
+  // Adopt the chat-side tool/system/temperature pipeline. Same change as the
+  // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
+  // tools, Anthropic name validation, and the assembled system prompt. The
+  // backend path serializes `prepared.allTools` to `toolDefs` below and
+  // executes them locally on tool-call events. Run AFTER iteration creation
+  // and inside a try/catch so prep failures persist as a failed iteration row
+  // rather than rejecting the test case with no iteration record.
+  //
+  // `customProviders` is derived from `orgModelConfig` so Anthropic name
+  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
+  // custom providers (matches the local-AI-SDK runner, which threads the same
+  // shape via `resolveEvalModelRuntime`).
+  const backendCustomProviders = orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
+    : undefined;
+  // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
+  // the `prepareChatV2` try) so the catch path and the assignment
+  // inside the try are both in scope. Stays `undefined` if prepareChatV2
+  // throws — the setup-failure persistence path doesn't need a system
+  // prefix.
+  let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
+  // PR 5a folds in the deferred 4d Cursor-Low fix: mid-run SSE
+  // snapshot events (`buildTraceSnapshotEvent`) in this streaming
+  // backend variant read from `messageHistory` directly. PR 4d
+  // round 2 added a `withSystemPrefix` closure to
+  // `streamIterationWithAiSdk` but deferred the equivalent here.
+  // The full runner-engine collapse stays for PR 5b; the
+  // snapshot-prefix shape is small and isolated, so it folds into
+  // PR 5a alongside the local stream rewrite. Closes the
+  // "live-on-main UI gap" risk entry in unification.md.
+  const withSystemPrefix = (msgs: ModelMessage[]): ModelMessage[] =>
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...msgs,
+        ]
+      : msgs;
+  let prepared: PrepareChatV2Result;
+  try {
+    prepared = await prepareChatV2({
+      mcpClientManager,
+      selectedServers,
+      modelDefinition,
+      systemPrompt,
+      temperature,
+      respectToolVisibility: hostPolicy?.respectToolVisibility,
+      ...(backendCustomProviders?.length
+        ? { customProviders: backendCustomProviders }
+        : {}),
+      priorMessages: [],
+    });
+    // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
+    // prefix shape as the non-stream backend runner.
+    backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    await persistSetupFailedIteration({
+      iterationId,
+      runStartedAt,
+      errorMessage,
+      iterationMetadataBase,
+      recorder,
+      convexClient,
+    });
+    // Mirror the in-stream failure signal `streamIterationWithAiSdk` already
+    // sends from its outer catch. Without this, the live test-runner UI
+    // watching `streamTestCase` SSE finishes silently on hosted-model /
+    // hosted-org-BYOK setup errors while the local-AI-SDK stream variant
+    // emits an `error` event for the same failure mode.
+    emit({
+      type: "error",
+      message: errorMessage,
+    });
+    // Suite summary aggregates `evaluation.passed`; a fresh
+    // `evaluateMultiTurnResults([], ...)` returns `passed: true` for negative
+    // tests and for positive tests with no expected tools, so setup failures
+    // would silently count as suite passes if we returned that as-is.
+    const failedEvaluation = evaluateMultiTurnResults(
+      promptTurns,
+      [],
+      test.isNegativeTest,
+      test.matchOptions,
+    );
+    failedEvaluation.passed = false;
+    return {
+      evaluation: failedEvaluation,
+      iterationId,
+    };
+  }
+
+  const toolDefs = Object.entries(prepared.allTools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
     let serializedSchema: Record<string, unknown> | undefined;
     if (schema) {
@@ -3347,6 +4127,8 @@ const streamIterationViaBackend = async ({
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
+  // `prepareChatV2` try.
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
     const promptTurn = promptTurns[promptIndex]!;
     const promptToolsCalled: ToolCall[] = [];
@@ -3379,8 +4161,12 @@ const streamIterationViaBackend = async ({
             skipChatIngestion: true,
             messages: JSON.stringify(messageHistory),
             model: modelId,
-            ...(systemPrompt ? { systemPrompt } : {}),
-            ...(temperature == null ? {} : { temperature }),
+            ...(prepared.enhancedSystemPrompt
+              ? { systemPrompt: prepared.enhancedSystemPrompt }
+              : {}),
+            ...(prepared.resolvedTemperature == null
+              ? {}
+              : { temperature: prepared.resolvedTemperature }),
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
@@ -3420,7 +4206,7 @@ const streamIterationViaBackend = async ({
               turnIndex: promptIndex,
               stepIndex,
               snapshotKind: "failure",
-              messages: messageHistory,
+              messages: withSystemPrefix(messageHistory),
               spans: capturedSpans,
               actualToolCalls: extractToolCallsFromConversation({
                 messages: messageHistory,
@@ -3454,7 +4240,7 @@ const streamIterationViaBackend = async ({
               turnIndex: promptIndex,
               stepIndex,
               snapshotKind: "failure",
-              messages: messageHistory,
+              messages: withSystemPrefix(messageHistory),
               spans: capturedSpans,
               actualToolCalls: extractToolCallsFromConversation({
                 messages: messageHistory,
@@ -3551,7 +4337,7 @@ const streamIterationViaBackend = async ({
               turnIndex: promptIndex,
               stepIndex,
               snapshotKind: "failure",
-              messages: messageHistory,
+              messages: withSystemPrefix(messageHistory),
               spans: capturedSpans,
               actualToolCalls: extractToolCallsFromConversation({
                 messages: messageHistory,
@@ -3606,7 +4392,7 @@ const streamIterationViaBackend = async ({
 
         if (hasUnresolvedToolCalls(messageHistory as any)) {
           const toolsStartAbs = Date.now();
-          const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
+          const tracedBackendTools = wrapBackendToolsForTrace(prepared.allTools as any, {
             runStartedAt,
             promptIndex,
             stepIndex,
@@ -3740,7 +4526,7 @@ const streamIterationViaBackend = async ({
                 turnIndex: promptIndex,
                 stepIndex,
                 snapshotKind: "failure",
-                messages: messageHistory,
+                messages: withSystemPrefix(messageHistory),
                 spans: capturedSpans,
                 actualToolCalls: extractToolCallsFromConversation({
                   messages: messageHistory,
@@ -3796,7 +4582,7 @@ const streamIterationViaBackend = async ({
             turnIndex: promptIndex,
             stepIndex,
             snapshotKind: "step_finish",
-            messages: messageHistory,
+            messages: withSystemPrefix(messageHistory),
             spans: capturedSpans,
             actualToolCalls: extractToolCallsFromConversation({
               messages: messageHistory,
@@ -3860,7 +4646,7 @@ const streamIterationViaBackend = async ({
             turnIndex: promptIndex,
             stepIndex,
             snapshotKind: "failure",
-            messages: messageHistory,
+            messages: withSystemPrefix(messageHistory),
             spans: capturedSpans,
             actualToolCalls: extractToolCallsFromConversation({
               messages: messageHistory,
@@ -3885,7 +4671,7 @@ const streamIterationViaBackend = async ({
       buildTraceSnapshotEvent({
         turnIndex: promptIndex,
         snapshotKind: "turn_finish",
-        messages: messageHistory,
+        messages: withSystemPrefix(messageHistory),
         spans: capturedSpans,
         actualToolCalls: extractToolCallsFromConversation({
           messages: messageHistory,
@@ -3945,13 +4731,26 @@ const streamIterationViaBackend = async ({
     mcpClientManager,
     convexClient,
   });
+  // PR 4d review fix (Codex P2 / Cursor Medium): prepend the resolved
+  // system at persistence so the backend's transcript carries it.
+  // Engine sent it via `runAssistantTurn`'s `systemPrompt:` arg.
+  const persistedBackendMessages: ModelMessage[] =
+    backendEnhancedSystemPromptForPersist
+      ? [
+          {
+            role: "system",
+            content: backendEnhancedSystemPromptForPersist,
+          },
+          ...messageHistory,
+        ]
+      : messageHistory;
 
   const finishParams = {
     iterationId,
     passed,
     toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    messages: persistedBackendMessages,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
@@ -3990,6 +4789,7 @@ const streamIterationViaBackend = async ({
 export const streamTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
+  selectedServers: string[];
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
@@ -4015,10 +4815,13 @@ export const streamTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for the stream run. */
   toolSignals?: ToolExposureSignals;
+  /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
+  suiteHostConfig?: Record<string, unknown> | null;
 }) => {
   const {
     test,
     tools,
+    selectedServers,
     mcpClientManager,
     recorder,
     modelApiKeys,
@@ -4036,6 +4839,7 @@ export const streamTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    suiteHostConfig,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -4125,6 +4929,7 @@ export const streamTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -4132,6 +4937,7 @@ export const streamTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        modelDefinition,
         extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
         convexClient,
         modelApiKeys,
@@ -4144,6 +4950,7 @@ export const streamTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4154,6 +4961,7 @@ export const streamTestCase = async (params: {
         test,
         runIndex,
         tools,
+        selectedServers,
         mcpClientManager,
         recorder,
         testCaseId,
@@ -4161,6 +4969,7 @@ export const streamTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: String(modelDefinition.id),
+        modelDefinition,
         endpointPath: "/stream/org",
         extraBodyFields: {
           providerKey: orgByokRuntime.providerKey,
@@ -4178,6 +4987,7 @@ export const streamTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        suiteHostConfig,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -4187,6 +4997,7 @@ export const streamTestCase = async (params: {
       test,
       runIndex,
       tools,
+      selectedServers,
       mcpClientManager,
       recorder,
       testCaseId,
@@ -4207,6 +5018,7 @@ export const streamTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      suiteHostConfig,
     });
     outcomes.push(iterationOutcome);
   }

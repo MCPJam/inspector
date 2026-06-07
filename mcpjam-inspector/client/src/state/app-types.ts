@@ -1,4 +1,4 @@
-import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { MCPServerConfig, NormalizedError } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
@@ -45,6 +45,13 @@ export interface ServerWithName {
   connectionStatus: ConnectionStatus;
   retryCount: number;
   lastError?: string;
+  /**
+   * Rich describe-error block for the last connection failure. Populated
+   * alongside `lastError` whenever the source carried a `normalized`
+   * payload. `lastError` is kept as a back-compat string field — readers
+   * should prefer `lastNormalizedError` and fall back to `lastError`.
+   */
+  lastNormalizedError?: NormalizedError;
   lastOAuthTrace?: OAuthTrace;
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
@@ -115,6 +122,12 @@ export type AppAction =
       type: "CONNECT_FAILURE";
       name: string;
       error: string;
+      /**
+       * Optional rich describe-error block. Forwarded onto
+       * `ServerWithName.lastNormalizedError` so the ErrorCard renders
+       * without re-classifying from `error`.
+       */
+      normalized?: NormalizedError;
       oauthTrace?: OAuthTrace;
     }
   | {
@@ -123,7 +136,12 @@ export type AppAction =
       config: MCPServerConfig;
       select?: boolean;
     }
-  | { type: "DISCONNECT"; name: string; error?: string }
+  | {
+      type: "DISCONNECT";
+      name: string;
+      error?: string;
+      normalized?: NormalizedError;
+    }
   | { type: "REMOVE_SERVER"; name: string }
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }
   | { type: "SELECT_SERVER"; name: string }

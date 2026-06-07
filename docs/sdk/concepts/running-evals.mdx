@@ -28,7 +28,7 @@ import { EvalTest } from "@mcpjam/sdk";
 const test = new EvalTest({
   name: "addition-accuracy",
   test: async (agent) => {
-    const result = await agent.prompt("Add 2 and 3");
+    const result = await agent.run("Add 2 and 3");
     return result.hasToolCall("add"); // Return true/false
   },
 });
@@ -42,26 +42,26 @@ console.log(`${result.successes}/${result.iterations} passed`);
 
 ### Writing Test Functions
 
-Test functions receive an `EvalAgent` (implemented by `TestAgent` and mock agents) and return `boolean`:
+Test functions receive an `HostExecutor` (implemented by `HostRunner` and mock agents) and return `boolean`:
 
 ```typescript
 // Simple: did the right tool get called?
 test: async (agent) => {
-  const result = await agent.prompt("Add 5 and 3");
+  const result = await agent.run("Add 5 and 3");
   return result.hasToolCall("add");
 }
 
 // Detailed: check arguments too
 test: async (agent) => {
-  const result = await agent.prompt("Add 10 and 20");
+  const result = await agent.run("Add 10 and 20");
   const args = result.getToolArguments("add");
   return args?.a === 10 && args?.b === 20;
 }
 
 // Complex: multi-step workflow
 test: async (agent) => {
-  const r1 = await agent.prompt("Create a project called 'Test'");
-  const r2 = await agent.prompt("Add a task to it", { context: r1 });
+  const r1 = await agent.run("Create a project called 'Test'");
+  const r2 = await agent.run("Add a task to it", { context: r1 });
   return r1.hasToolCall("createProject") && r2.hasToolCall("createTask");
 }
 ```
@@ -108,7 +108,7 @@ const suite = new EvalSuite({ name: "Math Operations" });
 suite.add(new EvalTest({
   name: "addition",
   test: async (agent) => {
-    const r = await agent.prompt("Add 5 and 3");
+    const r = await agent.run("Add 5 and 3");
     return r.hasToolCall("add");
   },
 }));
@@ -116,7 +116,7 @@ suite.add(new EvalTest({
 suite.add(new EvalTest({
   name: "multiplication",
   test: async (agent) => {
-    const r = await agent.prompt("Multiply 4 by 6");
+    const r = await agent.run("Multiply 4 by 6");
     return r.hasToolCall("multiply");
   },
 }));
@@ -124,7 +124,7 @@ suite.add(new EvalTest({
 suite.add(new EvalTest({
   name: "division",
   test: async (agent) => {
-    const r = await agent.prompt("Divide 20 by 4");
+    const r = await agent.run("Divide 20 by 4");
     return r.hasToolCall("divide");
   },
 }));
@@ -221,7 +221,7 @@ console.log(`Addition accuracy: ${addTest.accuracy()}`);
 More deterministic results for testing:
 
 ```typescript
-const agent = new TestAgent({
+const agent = new HostRunner({
   // ...
   temperature: 0.1,
 });
@@ -246,7 +246,7 @@ Don't just test the happy path:
 suite.add(new EvalTest({
   name: "handles-empty-input",
   test: async (agent) => {
-    const r = await agent.prompt("Add numbers"); // No numbers given
+    const r = await agent.run("Add numbers"); // No numbers given
     return !r.hasError(); // Should handle gracefully
   },
 }));
@@ -254,7 +254,7 @@ suite.add(new EvalTest({
 suite.add(new EvalTest({
   name: "handles-large-numbers",
   test: async (agent) => {
-    const r = await agent.prompt("Add 999999999 and 1");
+    const r = await agent.run("Add 999999999 and 1");
     return r.hasToolCall("add");
   },
 }));
@@ -272,6 +272,48 @@ if (suite.accuracy() < 0.90) {
   process.exit(1);
 }
 ```
+
+## Bring your own host
+
+`HostRunner` is the right starting point when you just need an LLM + tools + a model string. For richer setups — pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses for its Playground — start from a `Host` spec instead:
+
+```typescript
+import { MCPClientManager, Host, EvalTest } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager();
+await manager.connectToServer("everything", {
+  command: "npx",
+  args: ["-y", "@modelcontextprotocol/server-everything"],
+});
+
+const host = new Host({
+  style: "mcpjam",
+  model: "openai/gpt-4o",
+  systemPrompt: "You are a helpful assistant.",
+}).requireServer("everything");
+
+// Bind the spec to the live manager. apiKey lives on the runtime, not per-call.
+const runtime = host.withManager(manager, {
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+
+const test = new EvalTest({
+  name: "add",
+  test: async (runner) => (await runner.run("Add 2+3")).hasToolCall("add"),
+});
+await test.run(runtime, { iterations: 10 });
+```
+
+`HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction — pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
+
+**Statelessness.** `HostRuntime.run()` does NOT auto-replay history across turns. Use `PromptOptions.context` to thread context explicitly:
+
+```typescript
+const r1 = await runtime.run("Who am I?");
+const r2 = await runtime.run("List my projects", { context: [r1] });
+```
+
+**Eval reporting (Stage 5).** When you upload results to MCPJam, the reporter additionally sends the canonical host config alongside each run (`{ hostConfig, hostConfigHash }`) so the persisted row in the Evals UI shows the exact host you ran with. Pass 1 sends a run-level snapshot only when all iteration snapshots match; heterogeneous runs (mutating the bound `Host` between iterations) omit the run-level field for now. Old backends without the capability are unaffected. Source order is `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`.
 
 ## Generate evals from the Inspector
 

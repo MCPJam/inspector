@@ -1,7 +1,12 @@
-import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
+import type {
+  HttpServerConfig,
+  MCPServerConfig,
+  NormalizedError,
+} from "@mcpjam/sdk/browser";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { WebApiError } from "@/lib/apis/web/base";
 import {
   validateHostedServer,
   type HostedServerValidateContext,
@@ -102,7 +107,12 @@ async function safeValidateHostedServer(
   serverId: string,
   serverConfig: MCPServerConfig,
   hostedContext?: HostedServerValidateContext,
-): Promise<HostedServerValidateResponse & { error?: string }> {
+): Promise<
+  HostedServerValidateResponse & {
+    error?: string;
+    normalized?: NormalizedError;
+  }
+> {
   try {
     const oauthToken =
       extractOAuthToken(serverConfig) ?? getHostedOAuthToken(serverId);
@@ -116,9 +126,16 @@ async function safeValidateHostedServer(
       HOSTED_VALIDATE_TIMEOUT_MS,
     );
   } catch (error) {
+    // Preserve the server-attached `normalized` block when the wrapped
+    // error is a WebApiError. The string form (kept for back-compat) is
+    // populated from the existing normalizer; the rich block flows to
+    // the ErrorCard via `lastNormalizedError` on the server reducer.
+    const normalized =
+      error instanceof WebApiError ? error.normalized : undefined;
     return {
       success: false,
       error: normalizeHostedValidationError(error),
+      ...(normalized ? { normalized } : {}),
     };
   }
 }

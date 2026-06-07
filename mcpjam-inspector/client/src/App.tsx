@@ -59,6 +59,7 @@ import {
   computeHostsHubFlagEnabled,
 } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
+import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
 import {
   Alert,
   AlertDescription,
@@ -3056,6 +3057,11 @@ export default function App() {
           </AppRouteReactContext.Provider>
         </div>
       </SidebarInset>
+      <AgentSidePanelMount
+        projectId={activeProjectId ?? null}
+        organizationId={activeOrganizationId ?? null}
+        activeTab={activeTab}
+      />
       <Dialog
         open={showTrialDecisionModal}
         onOpenChange={(open) => {

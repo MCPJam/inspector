@@ -757,12 +757,19 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("passes through regular Error messages", async () => {
+    it("passes through regular Error messages with a normalized block", async () => {
       const onError = await getOnError("openai");
       const error = new Error("Network connection failed");
 
-      const result = onError(error);
-      expect(result).toBe("Network connection failed");
+      // formatStreamError now always returns a JSON envelope so the client
+      // can render an ErrorCard for unclassified provider failures. The
+      // human message is preserved on `message`; `normalized` carries the
+      // catalog data.
+      const result = JSON.parse(onError(error));
+      expect(result.message).toBe("Network connection failed");
+      expect(result.normalized).toBeDefined();
+      expect(typeof result.normalized.slug).toBe("string");
+      expect(typeof result.normalized.title).toBe("string");
     });
 
     it("normalizes retry-exhausted provider overload errors", async () => {

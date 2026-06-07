@@ -1,53 +1,60 @@
-diff --git a/.changeset/sdk-host-config-public-api.md b/.changeset/sdk-host-config-public-api.md
+diff --git a/.changeset/sdk-host-config-canonicalize-tightening.md b/.changeset/sdk-host-config-canonicalize-tightening.md
 deleted file mode 100644
-index 70d6348ef..000000000
---- a/.changeset/sdk-host-config-public-api.md
+index 7bd7375c2..000000000
+--- a/.changeset/sdk-host-config-canonicalize-tightening.md
 +++ /dev/null
-@@ -1,22 +0,0 @@
+@@ -1,16 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 ----
 -
--SDK: add public `Host` builder + portable HostConfig v2 core (`@mcpjam/sdk/host-config`).
+-SDK: tighten the HostConfig v2 canonicalizer (four follow-up items deferred from #2392). All four ship together as the second-half of the Stage 1 backend consolidation — the backend imports the canonicalizer directly from `@mcpjam/sdk/host-config/internal`, so this PR is the single source of behavior change for both sides.
 -
--Construct a host with MCP-vocabulary fields and serialize a normalized JSON shape:
+-Behavior changes (all on `canonicalizeHostConfigV2` / `computeHostConfigHashV2`):
 -
--```ts
--import { Host } from "@mcpjam/sdk";
+-- **Deep-sort `clientCapabilities` and `hostContext`.** Previously a shallow `sortStringKeys` left nested key order leaking into the canonical hash, so `{ extensions: { ui: { a, b } } }` and `{ extensions: { ui: { b, a } } }` minted distinct rows for identical capability sets. Now both fields go through the same recursive sort already used for `*Override` and `mcpProfile`.
+-- **Collapse empty `allowFeatures` to absent.** A user `allowFeatures: {}` (or `{ camera: "*" }` whose only keys are spec-permission features that the canonicalizer drops) now omits the field entirely, matching the sibling `openaiAppsOverrides` collapse and preventing semantic dupes.
+-- **Drop `openaiAppsOverrides` when `compatRuntime.openaiApps === false`.** The resolver ignores per-method overrides when the shim isn't injected; letting them affect the hash minted rows that resolved to identical runtime behavior.
+-- **Fail-fast on missing `clientCapabilities` / `hostContext`.** The previous `?? {}` coalescing silently merged a writer-bug `undefined` into the empty-cap dedupe pool. Both fields are required on the input type; the canonicalizer now enforces it at the boundary.
 -
--const host = new Host({ style: "mcpjam", model: "anthropic/claude-sonnet-4-6" });
--host.mcp.protocolVersion = "2025-11-25";
--host.mcp.apps = { sandbox: { csp: { mode: "declared" } } };
--host.addServer("srv_abc");
+-Audit confirmed all four items are **hash-neutral for current production data** (15,389 prod hostConfigs rows scanned across the four predicates; 0 hits). The bundled parity fixture was regenerated; `EXPECTED_INPUT_HASH` bumped accordingly. External SDK consumers using the public `Host` builder are unaffected — the canonicalizer is internal-only.
 -
--const json = host.toJSON();
--```
+-Out of scope: the eight `@mcpjam/sdk` items still tracked elsewhere (Stage 3+ in the macro plan).
+diff --git a/.changeset/stage5-step1-sdk-evals-normalizer.md b/.changeset/stage5-step1-sdk-evals-normalizer.md
+deleted file mode 100644
+index 89eb6c264..000000000
+--- a/.changeset/stage5-step1-sdk-evals-normalizer.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
 -
--New public exports (from `@mcpjam/sdk` and `@mcpjam/sdk/host-config`): `Host`, `HostInit`, `HostJson`, `HostMcp`, `HostServerOverride`, `HostConnectionDefaults`, `HostStyleId`, `ServerId`, `CspDomainSet`, `OpenAiAppsCapabilities`, `McpAppsCapabilities`.
+-host-config: add `normalizeSdkEvalHostConfigForWire` (Stage 5 helper, `/internal` only).
 -
--Also publishes `@mcpjam/sdk/host-config/internal` — a first-party, non-semver-stable subpath exposing `canonicalizeHostConfigV2`, `computeHostConfigHashV2`, and storage-row types. Intended for first-party consumers (the MCPJam backend, parity-fixture tooling); external SDK users should stay on the `Host` builder.
+-Strips runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) so SDK eval reporters and backend ingestion hash byte-identical wire shapes. Accepts either `HostConfigInputV2` or `HostJson` (Host.toJSON()). Reporter wire-send is gated behind backend capability (Step 3, later PR).
 diff --git a/package-lock.json b/package-lock.json
-index 143fc1940..5252980ee 100644
+index 5252980ee..d4d7ae4d7 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -36114,7 +36114,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.10.1",
-+      "version": "1.11.0",
+-      "version": "1.11.0",
++      "version": "1.12.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/anthropic": "^2.0.17",
 diff --git a/sdk/package.json b/sdk/package.json
-index 64de7c80a..cfae63519 100644
+index 0d3bd2a14..e009b8410 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.10.1",
-+  "version": "1.11.0",
+-  "version": "1.11.0",
++  "version": "1.12.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
