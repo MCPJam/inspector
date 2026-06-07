@@ -1132,7 +1132,17 @@ function emitToolResults(
 function emitInheritedToolCalls(
   writer: StepContext["writer"],
   messageHistory: ModelMessage[],
-  beforeStepLength: number
+  beforeStepLength: number,
+  // PR 5b-pre review fix (Cursor Medium "Resumed approvals skip
+  // onToolCall"): symmetric counterpart of the denial-path
+  // `onToolResult` fix. This path writes `tool-input-available` UI
+  // chunks for inherited unresolved calls — eval's PR 5b wiring needs
+  // `onToolCall` to fire here too, otherwise it would see orphan
+  // `tool_result` events later without a matching `tool_call`.
+  tools?: ToolSet,
+  traceTurn?: LiveTraceTurnContext,
+  stepIndex?: number,
+  onToolCall?: (event: MCPJamToolCallEvent) => void
 ) {
   // Collect existing tool result IDs
   const existingResultIds = new Set<string>();
@@ -1164,6 +1174,31 @@ function emitInheritedToolCalls(
             toolName: part.toolName,
             input: part.input ?? {},
           });
+          // PR 5b-pre review fix (Cursor Medium): fire `onToolCall`
+          // for inherited unresolved calls so PR 5b's eval wiring
+          // sees a matching `tool_call` before any `tool_result`.
+          if (onToolCall && traceTurn && typeof stepIndex === "number") {
+            try {
+              onToolCall({
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+                input: part.input,
+                stepIndex,
+                promptIndex: traceTurn.promptIndex,
+                serverId: tools
+                  ? readToolServerId(tools, part.toolName)
+                  : undefined,
+              });
+            } catch (error) {
+              logger.warn(
+                "[mcpjam-stream-handler] onToolCall callback failed (inherited)",
+                {
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
+            }
+          }
         }
       }
     }
@@ -1185,9 +1220,13 @@ async function handlePendingApprovals(
   traceTurn?: LiveTraceTurnContext,
   stepIndex?: number,
   abortSignal?: AbortSignal,
-  // PR 5b-pre: propagate the chunk-level callback so denial /
-  // approved-tool-result emissions also fire it.
-  onToolResult?: (event: MCPJamToolResultEvent) => void
+  // PR 5b-pre: propagate the chunk-level callbacks so denial /
+  // resumed-approval / approved-tool-result emissions all fire them.
+  onToolResult?: (event: MCPJamToolResultEvent) => void,
+  // PR 5b-pre review fix (Cursor Medium): resumed-approval branch
+  // emits `tool-input-available` UI chunks — `onToolCall` must fire
+  // here too so PR 5b's wiring doesn't see orphan `tool_result`.
+  onToolCall?: (event: MCPJamToolCallEvent) => void
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -1380,6 +1419,30 @@ async function handlePendingApprovals(
             toolName: part.toolName,
             input: part.input ?? {},
           });
+          // PR 5b-pre review fix (Cursor Medium "Resumed approvals
+          // skip onToolCall"): fire `onToolCall` for resumed approved
+          // tools so PR 5b's eval wiring sees a matching `tool_call`
+          // before the `tool_result` `emitToolResults` produces below.
+          if (onToolCall && traceTurn && typeof stepIndex === "number") {
+            try {
+              onToolCall({
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+                input: part.input,
+                stepIndex,
+                promptIndex: traceTurn.promptIndex,
+                serverId: readToolServerId(tools, part.toolName),
+              });
+            } catch (error) {
+              logger.warn(
+                "[mcpjam-stream-handler] onToolCall callback failed (approval)",
+                {
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
+            }
+          }
           break;
         }
       }
@@ -1835,7 +1898,15 @@ async function processOneStep(
     }
 
     // Emit inherited tool calls that need execution
-    emitInheritedToolCalls(writer, messageHistory, beforeStepLength);
+    emitInheritedToolCalls(
+      writer,
+      messageHistory,
+      beforeStepLength,
+      tools,
+      traceTurn,
+      stepIndex,
+      onToolCall,
+    );
 
     const toolsStartAbs = Date.now();
     try {
@@ -2323,7 +2394,8 @@ export async function runChatEngineLoop(
             traceTurn,
             effectiveSteps(),
             abortSignal,
-            onToolResult
+            onToolResult,
+            onToolCall
           );
           if (handled) {
             // Approvals were processed — if there are still unresolved tool

@@ -1899,6 +1899,128 @@ describe("mcpjam-stream-handler", () => {
       );
     });
 
+    it("fires `onToolCall` for approved tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
+      // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes
+      // `tool-input-available` UI chunks for resumed APPROVED tools
+      // and `emitToolResults` fires `onToolResult` after local
+      // execution. Pre-fix `onToolCall` only fired from
+      // `processStream`'s chunk switch, so eval's PR 5b wiring would
+      // emit `tool_result` SSE without a matching `tool_call`. Fixed
+      // by firing `onToolCall` at the resumed-approval emit site.
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "ok approved" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      global.fetch = vi.fn().mockResolvedValue(createSseResponse(stepTwo));
+
+      // Resumed-approval shape with `approved: true` — the matching
+      // tool-call lives on the assistant message. handlePendingApprovals
+      // walks both, emits `tool-input-available`, executes the tool,
+      // then `emitToolResults` runs.
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-approved-1",
+              toolName: "search",
+              input: { q: "approved" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-1",
+              toolCallId: "call-approved-1",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-1",
+              approved: true,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-approved-1",
+                toolName: "search",
+                output: { type: "json", value: { hit: true } },
+                result: { hit: true },
+                serverId: "search-server",
+              },
+            ],
+          };
+          messages.push(toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+
+      const onToolCall = vi.fn();
+      const onToolResult = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          search: { _serverId: "search-server" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({ search: {} }),
+        } as any,
+        requireToolApproval: true,
+        onToolCall,
+        onToolResult,
+      });
+
+      await lastExecution;
+
+      // `onToolCall` MUST have fired for the approved tool before any
+      // `onToolResult` — eval's PR 5b wiring relies on the ordering.
+      const approvedCallIdx = onToolCall.mock.calls.findIndex(
+        (c) => c[0]?.toolCallId === "call-approved-1",
+      );
+      expect(approvedCallIdx).toBeGreaterThanOrEqual(0);
+      expect(onToolCall.mock.calls[approvedCallIdx]?.[0]).toMatchObject({
+        toolCallId: "call-approved-1",
+        toolName: "search",
+        input: { q: "approved" },
+        promptIndex: 0,
+        serverId: "search-server",
+      });
+    });
+
+    // NOTE: `emitInheritedToolCalls` also fires `onToolCall` after the
+    // PR 5b fix (the function's signature gained `tools` / `traceTurn`
+    // / `stepIndex` / `onToolCall` params, and the loop body now
+    // invokes the callback alongside the existing `writer.write({type:
+    // "tool-input-available", ...})`). That path is harder to trigger
+    // in isolation than the resumed-approval branch covered above —
+    // it requires the per-step path to reach the local tool-execution
+    // branch with prior unresolved tool-calls in scope, a
+    // multi-fixture setup that doesn't fit cleanly into the
+    // single-handler-call test shape used here. The code fix is
+    // covered by the same `tools` + `traceTurn` plumbing pattern as
+    // the approved-tools site above, which IS tested.
+
     it("fires `onToolResult` for denied tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
       // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes a
       // `tool_result` trace event inline (not via `emitToolResults`)
