@@ -150,6 +150,12 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.queryByRole("button", { name: /^top up$/i })
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      "without waiting for your org's credits to reset"
+    );
+    expect(screen.getByTestId("limit-dialog-description")).not.toHaveTextContent(
+      /tomorrow/i
+    );
     expect(
       screen.getByRole("button", { name: /bring your own key/i })
     ).toBeInTheDocument();
