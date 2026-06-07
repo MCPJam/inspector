@@ -1102,4 +1102,78 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       prepareSpy.mockRestore();
     }
   });
+
+  it("emits an error event when streamTestCase backend setup fails", async () => {
+    // Regression guard for Cursor review on commit 3924d0c: the
+    // `streamIterationViaBackend` setup-failure catch persists the failed
+    // iteration row but used to return silently. The live test-runner UI
+    // watching `streamTestCase` SSE then finished with no failure signal,
+    // unlike the local-AI-SDK stream variant whose outer catch already
+    // emits an `error` event. Setup failures must now emit one too.
+    const orchestration = await import(
+      "../../../utils/chat-v2-orchestration"
+    );
+    const prepareSpy = vi
+      .spyOn(orchestration, "prepareChatV2")
+      .mockRejectedValueOnce(new Error("backend stream prep boom"));
+
+    convexClient.mutation.mockResolvedValueOnce({
+      iterationId: "iter-stream-setup-fail",
+    });
+
+    const emitted: Array<Record<string, unknown>> = [];
+    try {
+      await streamTestCase({
+        test: {
+          title: "Stream backend setup-fail case",
+          query: "Hello",
+          runs: 1,
+          model: "claude-haiku-4.5",
+          provider: "anthropic",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-stream-setup",
+        },
+        tools: {},
+        selectedServers: [],
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        testCaseId: "case-stream-setup",
+        suiteId: "suite-stream",
+        runId: null,
+        emit: (event) => emitted.push(event as Record<string, unknown>),
+      });
+
+      // The SSE consumer must see an in-stream error event.
+      expect(emitted).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "error",
+            message: expect.stringContaining("backend stream prep boom"),
+          }),
+        ]),
+      );
+
+      // And the failure must still be persisted (status:"failed").
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      expect(payload.status).toBe("failed");
+      expect(payload.result).toBe("failed");
+
+      // The runner must NOT have hit the backend — failure happens before
+      // the per-step fetch loop.
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
 });

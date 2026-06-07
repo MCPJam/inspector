@@ -3543,6 +3543,15 @@ const streamIterationViaBackend = async ({
       recorder,
       convexClient,
     });
+    // Mirror the in-stream failure signal `streamIterationWithAiSdk` already
+    // sends from its outer catch. Without this, the live test-runner UI
+    // watching `streamTestCase` SSE finishes silently on hosted-model /
+    // hosted-org-BYOK setup errors while the local-AI-SDK stream variant
+    // emits an `error` event for the same failure mode.
+    emit({
+      type: "error",
+      message: errorMessage,
+    });
     // Suite summary aggregates `evaluation.passed`; a fresh
     // `evaluateMultiTurnResults([], ...)` returns `passed: true` for negative
     // tests and for positive tests with no expected tools, so setup failures
