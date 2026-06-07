@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
+import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
@@ -71,6 +72,35 @@ export function McpjamAgentThread({
 
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Peek at the hero-stashed pending prompt at mount so we can render an
+  // optimistic user bubble during the hydrate → autosubmit window. Without
+  // this, the user sees the brand mark centered on an empty surface and
+  // wonders if their submit landed. We only PEEK here (read, don't remove)
+  // — the autosubmit effect below is still the authoritative consumer that
+  // also writes the `mcpjam:agent-pending` key, so removing it twice would
+  // race the autosubmit.
+  const [optimisticPending] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem(
+        `mcpjam:agent-pending:${sessionId}`
+      );
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { fresh?: unknown }).fresh === true &&
+        typeof (parsed as { text?: unknown }).text === "string"
+      ) {
+        return (parsed as { text: string }).text;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
 
   const isStreaming =
     session.status === "submitted" || session.status === "streaming";
@@ -191,7 +221,9 @@ export function McpjamAgentThread({
       onSubmit={onFormSubmit}
       className={cn(
         "relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow",
-        isFull && "mx-auto w-full max-w-3xl mb-6 px-2"
+        // Match Thread's content column (max-w-4xl + px-4) so the composer
+        // sits exactly under the message column.
+        isFull && "mx-auto w-full max-w-4xl mb-6 px-4"
       )}
     >
       <TextareaAutosize
@@ -235,12 +267,36 @@ export function McpjamAgentThread({
   // Hydration / model-resolution placeholders — keep these in the host-style
   // shell so the brand chrome is consistent with the loaded state. We render
   // the composer below them so the user can start typing while we wait.
+  // Show the optimistic bubble only when there's nothing real yet — once
+  // `session.messages` has the user message the real Thread takes over and
+  // the optimistic UI unmounts.
+  const showOptimisticPending =
+    optimisticPending != null && session.messages.length === 0;
+
   let body: React.ReactNode;
-  if (session.hydrating) {
+  if (showOptimisticPending) {
+    // Hero → submit landing: render the user's pending text in the same
+    // column the real chat uses, plus the brand thinking indicator below.
+    // No "Loading conversation…" text — the user just wants to see their
+    // message land.
     body = (
-      <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+      <div className="flex flex-1 flex-col min-h-0 overflow-y-auto">
+        <div className="min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6">
+          <UserMessageBubble>
+            <p className="whitespace-pre-wrap">{optimisticPending}</p>
+          </UserMessageBubble>
+          <div className="text-sm text-muted-foreground">
+            <LoadingIndicatorContent />
+          </div>
+        </div>
+      </div>
+    );
+  } else if (session.hydrating) {
+    // Resumed session (no optimistic pending): the user came from the
+    // Recent Chat pill or a direct URL, so brand-marker-only is fine.
+    body = (
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
         <LoadingIndicatorContent />
-        <span>Loading conversation…</span>
       </div>
     );
   } else if (session.messages.length === 0) {
@@ -277,10 +333,11 @@ export function McpjamAgentThread({
               sendFollowUpMessage={handleSubmit}
               isLoading={isStreaming}
               minimalMode
-              contentClassName={cn(
-                "min-w-0 w-full mx-auto px-4 pt-6 pb-8 space-y-6",
-                isFull ? "max-w-3xl" : "max-w-3xl"
-              )}
+              // Match `Thread`'s standalone-thinking-indicator wrapper
+              // (`thread.tsx:368` uses `max-w-4xl mx-auto px-4`) so the dots
+              // sit in the same column as the would-be assistant message
+              // instead of floating ~64px to the left of it.
+              contentClassName="min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6"
             />
           </StickToBottom.Content>
           <ScrollToBottomButton />
@@ -309,7 +366,7 @@ export function McpjamAgentThread({
             <p
               className={cn(
                 "text-xs text-destructive",
-                isFull && "mx-auto w-full max-w-3xl px-2"
+                isFull && "mx-auto w-full max-w-4xl px-4"
               )}
             >
               {session.error.message ?? "Something went wrong."}
