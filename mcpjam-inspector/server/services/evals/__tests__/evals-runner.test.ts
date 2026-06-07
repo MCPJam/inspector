@@ -1038,4 +1038,62 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
     prepareSpy.mockRestore();
   });
+
+  it("does not count a negative-test setup failure as a suite pass", async () => {
+    // Regression guard for the Cursor review #2: with `isNegativeTest: true`
+    // and an empty `expectedToolCalls`, `evaluateMultiTurnResults([], ...)`
+    // returns `passed: true`. If the runner returned that evaluation as-is on
+    // setup failure, the suite summary would credit it as a pass even though
+    // the persisted iteration row is `failed`. The setup-failure path must
+    // force `evaluation.passed = false` before returning.
+    const orchestration = await import(
+      "../../../utils/chat-v2-orchestration"
+    );
+    const prepareSpy = vi
+      .spyOn(orchestration, "prepareChatV2")
+      .mockRejectedValueOnce(new Error("simulated prep failure"));
+
+    convexClient.mutation.mockResolvedValueOnce({
+      iterationId: "iter-negative-setup-fail",
+    });
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Negative case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            isNegativeTest: true,
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-neg",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-neg",
+    });
+
+    const updateCall = convexClient.action.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestIteration",
+    );
+    expect(updateCall).toBeDefined();
+    const payload = updateCall![1] as Record<string, unknown>;
+    expect(payload.result).toBe("failed");
+    expect(payload.status).toBe("failed");
+
+    prepareSpy.mockRestore();
+  });
 });

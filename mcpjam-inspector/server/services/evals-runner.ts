@@ -1563,6 +1563,13 @@ const runIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions,
     );
+    // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
+    // The persisted iteration is hard-coded `passed: false` below, but the
+    // returned evaluation could still report `passed: true` on negative tests
+    // or tests with no expected tools when the catch fires before any tools
+    // are called — that would inflate suite-pass counts. Force false here so
+    // the persisted and returned verdicts agree.
+    evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
@@ -1628,6 +1635,7 @@ const runIterationViaBackend = async ({
   convexAuthToken,
   modelId,
   modelDefinition,
+  orgModelConfig,
   endpointPath = "/stream",
   extraBodyFields,
   convexClient,
@@ -1745,6 +1753,14 @@ const runIterationViaBackend = async ({
   // executes them locally on tool-call events. Run AFTER iteration creation
   // and inside a try/catch so prep failures persist as a failed iteration row
   // rather than rejecting the test case with no iteration record.
+  //
+  // `customProviders` is derived from `orgModelConfig` so Anthropic name
+  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
+  // custom providers (matches the local-AI-SDK runner, which threads the same
+  // shape via `resolveEvalModelRuntime`).
+  const backendCustomProviders = orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
+    : undefined;
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -1754,6 +1770,9 @@ const runIterationViaBackend = async ({
       systemPrompt,
       temperature,
       respectToolVisibility: hostPolicy?.respectToolVisibility,
+      ...(backendCustomProviders?.length
+        ? { customProviders: backendCustomProviders }
+        : {}),
       priorMessages: [],
     });
   } catch (error) {
@@ -1768,13 +1787,19 @@ const runIterationViaBackend = async ({
       recorder,
       convexClient,
     });
+    // Suite summary aggregates `evaluation.passed`; a fresh
+    // `evaluateMultiTurnResults([], ...)` returns `passed: true` for negative
+    // tests and for positive tests with no expected tools, so setup failures
+    // would silently count as suite passes if we returned that as-is.
+    const failedEvaluation = evaluateMultiTurnResults(
+      promptTurns,
+      [],
+      test.isNegativeTest,
+      test.matchOptions,
+    );
+    failedEvaluation.passed = false;
     return {
-      evaluation: evaluateMultiTurnResults(
-        promptTurns,
-        [],
-        test.isNegativeTest,
-        test.matchOptions,
-      ),
+      evaluation: failedEvaluation,
       iterationId,
     };
   }
@@ -3266,6 +3291,13 @@ const streamIterationWithAiSdk = async ({
       test.isNegativeTest,
       test.matchOptions,
     );
+    // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
+    // The persisted iteration is hard-coded `passed: false` below, but the
+    // returned evaluation could still report `passed: true` on negative tests
+    // or tests with no expected tools when the catch fires before any tools
+    // are called — that would inflate suite-pass counts. Force false here so
+    // the persisted and returned verdicts agree.
+    evaluation.passed = false;
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureMcpAppWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
@@ -3357,6 +3389,7 @@ const streamIterationViaBackend = async ({
   convexAuthToken,
   modelId,
   modelDefinition,
+  orgModelConfig,
   endpointPath = "/stream",
   extraBodyFields,
   convexClient,
@@ -3476,6 +3509,14 @@ const streamIterationViaBackend = async ({
   // executes them locally on tool-call events. Run AFTER iteration creation
   // and inside a try/catch so prep failures persist as a failed iteration row
   // rather than rejecting the test case with no iteration record.
+  //
+  // `customProviders` is derived from `orgModelConfig` so Anthropic name
+  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
+  // custom providers (matches the local-AI-SDK runner, which threads the same
+  // shape via `resolveEvalModelRuntime`).
+  const backendCustomProviders = orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
+    : undefined;
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -3485,6 +3526,9 @@ const streamIterationViaBackend = async ({
       systemPrompt,
       temperature,
       respectToolVisibility: hostPolicy?.respectToolVisibility,
+      ...(backendCustomProviders?.length
+        ? { customProviders: backendCustomProviders }
+        : {}),
       priorMessages: [],
     });
   } catch (error) {
@@ -3499,13 +3543,19 @@ const streamIterationViaBackend = async ({
       recorder,
       convexClient,
     });
+    // Suite summary aggregates `evaluation.passed`; a fresh
+    // `evaluateMultiTurnResults([], ...)` returns `passed: true` for negative
+    // tests and for positive tests with no expected tools, so setup failures
+    // would silently count as suite passes if we returned that as-is.
+    const failedEvaluation = evaluateMultiTurnResults(
+      promptTurns,
+      [],
+      test.isNegativeTest,
+      test.matchOptions,
+    );
+    failedEvaluation.passed = false;
     return {
-      evaluation: evaluateMultiTurnResults(
-        promptTurns,
-        [],
-        test.isNegativeTest,
-        test.matchOptions,
-      ),
+      evaluation: failedEvaluation,
       iterationId,
     };
   }
