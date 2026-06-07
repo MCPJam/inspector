@@ -16,11 +16,20 @@ const createLlmModelMock = vi.hoisted(() =>
   ),
 );
 
-vi.mock("ai", () => ({
-  generateText: (...args: unknown[]) => generateTextMock(...args),
-  streamText: (...args: unknown[]) => streamTextMock(...args),
-  stepCountIs: vi.fn(() => undefined),
-}));
+vi.mock("ai", async () => {
+  // Keep the real exports (`createUIMessageStream`,
+  // `createUIMessageStreamResponse`, `parseJsonEventStream`, `pruneMessages`,
+  // etc.) — the engine that `runIterationViaBackend` now drives needs them.
+  // Only override `generateText` / `streamText` so the local-AI-SDK and
+  // stream-AI-SDK paths can be controlled by these tests.
+  const actual = await vi.importActual<typeof import("ai")>("ai");
+  return {
+    ...actual,
+    generateText: (...args: unknown[]) => generateTextMock(...args),
+    streamText: (...args: unknown[]) => streamTextMock(...args),
+    stepCountIs: vi.fn(() => undefined),
+  };
+});
 
 vi.mock("@mcpjam/sdk", async () => {
   const actual =
@@ -32,14 +41,30 @@ vi.mock("@mcpjam/sdk", async () => {
   };
 });
 
-vi.mock("../../../utils/chat-helpers", () => ({
-  createLlmModel: (
-    modelDefinition: unknown,
-    apiKey: unknown,
-    baseUrls?: unknown,
-    customProviders?: unknown,
-  ) => createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
-}));
+vi.mock("../../../utils/chat-helpers", async () => {
+  // PR 3 of the engine consolidation: `runIterationViaBackend` now drives
+  // `runChatEngineLoop`, which imports `scrubUnavailableToolHistoryForBackend`
+  // / `scrubMcpAppsToolResultsForBackend` / `scrubChatGPTAppsToolResultsForBackend`
+  // from this module. Returning only `createLlmModel` here would make those
+  // imports `undefined`; the engine's `try/catch` then silently swallows the
+  // resulting `TypeError`, runs to a `runSucceeded:false` finish, and the
+  // test never sees the fetch we expect. Keep the real exports and override
+  // only `createLlmModel` so the local-AI-SDK paths can be inspected.
+  const actual =
+    await vi.importActual<typeof import("../../../utils/chat-helpers")>(
+      "../../../utils/chat-helpers",
+    );
+  return {
+    ...actual,
+    createLlmModel: (
+      modelDefinition: unknown,
+      apiKey: unknown,
+      baseUrls?: unknown,
+      customProviders?: unknown,
+    ) =>
+      createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
+  };
+});
 
 // Stub the chat-side tool/system/temperature pipeline. The real implementation
 // in `chat-v2-orchestration` pulls in `getSkillToolsAndPrompt`, which touches
@@ -47,6 +72,22 @@ vi.mock("../../../utils/chat-helpers", () => ({
 // that. Return a minimal `PrepareChatV2Result` shape — the actual tool set
 // stays empty (matching `mcpClientManager.getToolsForAiSdk` → `{}`), and the
 // engine swap only depends on the named output fields.
+// PR 3 of the engine consolidation: `runIterationViaBackend` now drives
+// `runChatEngineLoop`, which imports `serializeToolsForConvex` for tool
+// serialization and uses `http-tool-calls` for local tool execution. Mirror
+// the mocks `assistant-turn.test.ts` uses for the same engine — keep these
+// minimal so the engine path can reach its `fetch` to Convex without
+// blowing up on test-mode-incompatible dependencies (zod schema conversion
+// in tool serialization, etc.).
+vi.mock("../../../utils/mcpjam-tool-helpers", () => ({
+  serializeToolsForConvex: vi.fn(() => []),
+}));
+
+vi.mock("@/shared/http-tool-calls", () => ({
+  hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
+  executeToolCallsFromMessages: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock("../../../utils/chat-v2-orchestration", () => ({
   prepareChatV2: vi.fn(async (options: any) => ({
     allTools: {},
@@ -72,12 +113,24 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   const mcpClientManager = {
     getToolsForAiSdk: vi.fn(),
     listServers: vi.fn(),
+    // PR 3 of the engine consolidation: the engine that
+    // `runIterationViaBackend` now drives calls
+    // `getAllToolsMetadata(serverId)` during message scrubbing
+    // (`scrubMcpAppsToolResultsForBackend` -> manager metadata lookup).
+    // Empty map is fine — no MCP-Apps result-scrubbing happens in these
+    // tests; we just need the method to exist.
+    getAllToolsMetadata: vi.fn().mockReturnValue({}),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
+    // The engine that PR-3-rewritten `runIterationViaBackend` drives
+    // (`runChatEngineLoop`) reads its target URL from `CONVEX_HTTP_URL`,
+    // not from the runner's `convexHttpUrl` parameter. Set both so the
+    // engine paths and any direct-fetch paths target the same host.
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     convexClient.mutation.mockResolvedValue({ iterationId: "iter-1" });
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
@@ -100,6 +153,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete process.env.CONVEX_HTTP_URL;
   });
 
   async function runQuickTestCase(compareRunId?: string) {
@@ -655,7 +709,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   it("routes bare MCPJam Anthropic compare models through the backend without a BYOK key", async () => {
-    fetchMock.mockResolvedValue(createBackendSuccessResponse());
+    // Post-PR3 `runIterationViaBackend` drives `runAssistantTurn`, which sends
+    // an SSE-shaped request (`mode:"stream"`) to Convex `/stream`. The legacy
+    // `mode:"step"` JSON-response path is gone for the non-stream backend
+    // runner — assert against the engine's stream request shape instead.
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
 
     await expect(
       runEvalSuiteWithAiSdk({
@@ -696,9 +754,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const compareRequest = fetchMock.mock.calls[0]?.[1] as {
       body?: string;
     };
-    expect(JSON.parse(compareRequest.body ?? "{}").model).toBe(
-      "anthropic/claude-haiku-4.5",
-    );
+    const compareBody = JSON.parse(compareRequest.body ?? "{}");
+    expect(compareBody.model).toBe("anthropic/claude-haiku-4.5");
+    expect(compareBody.mode).toBe("stream");
+    expect(compareBody.sourceType).toBe("eval");
     expect(createLlmModelMock).not.toHaveBeenCalled();
   });
 
@@ -759,7 +818,12 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   it("runs org BYOK cloud eval models through Convex without raw provider keys", async () => {
-    fetchMock.mockResolvedValue(createBackendSuccessResponse());
+    // Same migration as the previous test: assert against the engine's
+    // `mode:"stream"` SSE request, not the legacy `mode:"step"` JSON. The
+    // hosted-org BYOK contract that matters is that `providerKey` +
+    // `projectId` land in the request body (via `extraBodyFields`) and the
+    // request targets `/stream/org`.
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
 
     await runEvalSuiteWithAiSdk({
       suiteId: "suite-1",
@@ -802,10 +866,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     };
     const body = JSON.parse(request.body ?? "{}");
     expect(body).toMatchObject({
-      mode: "step",
+      mode: "stream",
       model: "gpt-4-turbo",
       providerKey: "openai",
       projectId: "project-1",
+      sourceType: "eval",
     });
     expect(body).not.toHaveProperty("apiKey");
     expect(new Headers(request.headers).get("authorization")).toBe(

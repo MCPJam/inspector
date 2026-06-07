@@ -91,6 +91,7 @@ import {
   prepareChatV2,
   type PrepareChatV2Result,
 } from "../utils/chat-v2-orchestration.js";
+import { runAssistantTurn } from "../utils/assistant-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import {
   lockEvalSessionAfterUpdate,
@@ -1804,375 +1805,185 @@ const runIterationViaBackend = async ({
     };
   }
 
-  const toolDefs = Object.entries(prepared.allTools).map(([name, tool]) => {
-    const schema = (tool as any)?.inputSchema;
-    let serializedSchema: Record<string, unknown> | undefined;
-    if (schema) {
-      if (
-        typeof schema === "object" &&
-        schema !== null &&
-        "jsonSchema" in (schema as Record<string, unknown>)
-      ) {
-        serializedSchema = (schema as any).jsonSchema as Record<
-          string,
-          unknown
-        >;
-      } else if (typeof schema === "object" && "safeParse" in (schema as any)) {
-        try {
-          serializedSchema = z.toJSONSchema(schema) as Record<string, unknown>;
-        } catch {
-          serializedSchema = undefined;
-        }
-      } else {
-        serializedSchema = schema as Record<string, unknown>;
-      }
-    }
-
-    return {
-      name,
-      description: (tool as any)?.description,
-      inputSchema:
-        serializedSchema ??
-        ({
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        } as Record<string, unknown>),
-    };
-  });
-
-  const authHeader = convexAuthToken
-    ? { Authorization: `Bearer ${convexAuthToken}` }
-    : ({} as Record<string, string>);
-
+  // PR 3 of the engine consolidation: drive the per-step fetch + local-tool
+  // loop through `runAssistantTurn` (the same engine chat / playground /
+  // synthetic use) instead of an eval-specific while loop. The contract test
+  // at `server/utils/__tests__/assistant-turn-eval-contract.test.ts` (PR 2)
+  // locks in the exact configuration we pass here.
+  //
+  // What this swap drops vs. the legacy backend loop:
+  //   - Per-step LLM spans (`pushBackendStepLlmFailureSpans`,
+  //     `pushBackendStepSuccessSpans`, `pushBackendStepToolFailureSpans`). The
+  //     legacy loop emitted span-per-step granularity for the trace UI; the
+  //     engine handles its own step traces internally and `runAssistantTurn`
+  //     surfaces them as `result.turnTrace`, but that format is the chat-side
+  //     `PersistedTurnTrace` shape, not the eval `EvalTraceSpan[]` shape.
+  //     Converting between them is out of scope here; PR 5/6 can address.
+  //   - Friendly "[evals] run halted: <reason>" log distinction for
+  //     daily-spend-cap errors. The engine throws on backend failures; we map
+  //     to `iterationError` uniformly. Spend-cap halts still record cleanly,
+  //     just without the warn-vs-error split.
+  // What this swap keeps:
+  //   - Tool-execution spans via `wrapToolSetForEvalTrace` (the wrapped tools
+  //     are passed to the engine; their `execute` hooks fire span capture).
+  //   - Cancellation via `abortSignal`.
+  //   - `iterationError` accumulation for the existing post-loop verdict gate.
   let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
   };
-
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+
+  // Eval supplies its bearer token via `convexAuthToken`. The engine wraps it
+  // into the Convex `/stream` (or `/stream/org`) request the same way live
+  // chat does.
+  const evalAuthContext = {
+    kind: "user_bearer" as const,
+    token: `Bearer ${convexAuthToken}`,
+  };
+
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
     const promptTurn = promptTurns[promptIndex]!;
-    const promptToolsCalled: ToolCall[] = [];
-    toolsCalledByPrompt.push(promptToolsCalled);
-    messageHistory.push({
-      role: "user",
-      content: promptTurn.prompt,
-    });
 
-    let steps = 0;
-    while (steps < MAX_STEPS) {
-      const stepStartAbs = Date.now();
-      const stepIndex = steps;
-      const llmStartAbs = stepStartAbs;
-      const stepMessageStartIndex = messageHistory.length;
-      try {
-        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(authHeader ? { ...authHeader } : {}),
-          },
-          body: JSON.stringify({
-            mode: "step",
-            messages: JSON.stringify(messageHistory),
-            model: modelId,
-            ...(prepared.enhancedSystemPrompt
-              ? { systemPrompt: prepared.enhancedSystemPrompt }
-              : {}),
-            ...(prepared.resolvedTemperature == null
-              ? {}
-              : { temperature: prepared.resolvedTemperature }),
-            ...(toolChoice ? { toolChoice } : {}),
-            tools: toolDefs,
-            maxOutputTokens: 16384,
-            ...(extraBodyFields ?? {}),
-          }),
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        });
+    // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
+    // each tool's `execute` to push to `traceCtx.recordedSpans`; we drain
+    // into `capturedSpans` after the engine finishes.
+    const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
+    const tracedTools = wrapToolSetForEvalTrace(
+      prepared.allTools,
+      traceCtx,
+      promptIndex,
+    );
 
-        if (!res.ok) {
-          const errorText = await res.text().catch(() => res.statusText);
-          const { message, expected } = describeBackendStreamError(
-            res.status,
-            errorText,
-          );
-          iterationError = message;
-          iterationErrorDetails = errorText;
-          if (expected) {
-            // Daily spend cap / concurrency guardrail — expected, and with N
-            // cases running concurrently it fires once per case. Log a single
-            // quiet line with the real reason, not an alarming per-case stack.
-            logger.warn(`[evals] run halted: ${message}`);
-          } else {
-            logger.error("[evals] backend stream error", new Error(message));
-          }
-          const failAbs = Date.now();
-          pushBackendStepLlmFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            llmStartAbs,
-            failAbs,
-          );
-          break;
-        }
+    const inputMessages: ModelMessage[] = [
+      ...messageHistory,
+      { role: "user", content: promptTurn.prompt },
+    ];
 
-        const json: any = await res.json();
-        const llmEndAbs = Date.now();
-        if (!json?.ok || !Array.isArray(json.messages)) {
-          iterationError = "Invalid backend response payload";
-          iterationErrorDetails = JSON.stringify(json, null, 2);
-          logger.error(
-            "[evals] invalid backend response payload",
-            new Error("Invalid backend response payload"),
-          );
-          const failAbs = Date.now();
-          pushBackendStepLlmFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            llmStartAbs,
-            failAbs,
-            {
-              modelId,
-            },
-          );
-          break;
-        }
-
-        const stepUsage = readBackendUsage(json.usage);
-        accumulatedUsage.inputTokens =
-          (accumulatedUsage.inputTokens || 0) + stepUsage.inputTokens;
-        accumulatedUsage.outputTokens =
-          (accumulatedUsage.outputTokens || 0) + stepUsage.outputTokens;
-        accumulatedUsage.totalTokens =
-          (accumulatedUsage.totalTokens || 0) + stepUsage.totalTokens;
-
-        for (const msg of json.messages as any[]) {
-          if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-            for (const item of msg.content) {
-              if (item?.type === "tool-call") {
-                const name = item.toolName ?? item.name;
-                if (name) {
-                  promptToolsCalled.push({
-                    toolName: name,
-                    arguments: item.input ?? item.parameters ?? item.args ?? {},
-                  });
-                }
-                if (!item.toolCallId) {
-                  item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                }
-                if (item.input == null) {
-                  item.input = item.parameters ?? item.args ?? {};
-                }
-              }
-            }
-          }
-          messageHistory.push(msg);
-        }
-
-        if (hasUnresolvedToolCalls(messageHistory as any)) {
-          const toolsStartAbs = Date.now();
-          const tracedBackendTools = wrapBackendToolsForTrace(prepared.allTools as any, {
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            spans: capturedSpans,
-          });
-          try {
-            const newToolMessages = await executeToolCallsFromMessages(
-              messageHistory as any,
-              {
-                tools: tracedBackendTools as any,
-              },
-            );
-            const toolsEndAbs = Date.now();
-            const toolMessageIndexByCallId = new Map<string, number>();
-            for (let index = 0; index < messageHistory.length; index++) {
-              const msg = messageHistory[index] as any;
-              if (msg?.role !== "tool" || !Array.isArray(msg.content)) {
-                continue;
-              }
-              for (const part of msg.content) {
-                if (
-                  part?.type === "tool-result" &&
-                  typeof part.toolCallId === "string"
-                ) {
-                  toolMessageIndexByCallId.set(part.toolCallId, index);
-                }
-              }
-            }
-            for (const span of capturedSpans) {
-              if (
-                span.stepIndex !== stepIndex ||
-                (span.promptIndex ?? 0) !== promptIndex ||
-                typeof span.toolCallId !== "string" ||
-                typeof span.messageStartIndex === "number"
-              ) {
-                continue;
-              }
-              const toolMessageIndex = toolMessageIndexByCallId.get(
-                span.toolCallId,
-              );
-              if (typeof toolMessageIndex === "number") {
-                span.messageStartIndex = toolMessageIndex;
-                span.messageEndIndex = toolMessageIndex;
-              }
-            }
-            const stepMessageEndIndex =
-              messageHistory.length > stepMessageStartIndex
-                ? messageHistory.length - 1
-                : undefined;
-            pushBackendStepSuccessSpans(
-              capturedSpans,
-              runStartedAt,
-              promptIndex,
-              stepIndex,
-              stepStartAbs,
-              { startAbs: llmStartAbs, endAbs: llmEndAbs },
-              {
-                startAbs: toolsStartAbs,
-                endAbs: toolsEndAbs,
-                pushAggregateSpan: newToolMessages.length === 0,
-              },
-              {
-                modelId,
-                inputTokens: stepUsage.inputTokens,
-                outputTokens: stepUsage.outputTokens,
-                totalTokens: stepUsage.totalTokens,
-                messageStartIndex:
-                  stepMessageEndIndex != null
-                    ? stepMessageStartIndex
-                    : undefined,
-                messageEndIndex: stepMessageEndIndex,
-                status: "ok",
-              },
-            );
-          } catch (toolErr) {
-            const failAbs = Date.now();
-            const stepMessageEndIndex =
-              messageHistory.length > stepMessageStartIndex
-                ? messageHistory.length - 1
-                : undefined;
-            pushBackendStepToolFailureSpans(
-              capturedSpans,
-              runStartedAt,
-              promptIndex,
-              stepIndex,
-              stepStartAbs,
-              { startAbs: llmStartAbs, endAbs: llmEndAbs },
-              toolsStartAbs,
-              failAbs,
-              {
-                modelId,
-                inputTokens: stepUsage.inputTokens,
-                outputTokens: stepUsage.outputTokens,
-                totalTokens: stepUsage.totalTokens,
-                messageStartIndex:
-                  stepMessageEndIndex != null
-                    ? stepMessageStartIndex
-                    : undefined,
-                messageEndIndex: stepMessageEndIndex,
-                pushAggregateSpan: false,
-              },
-            );
-            iterationError =
-              toolErr instanceof Error ? toolErr.message : String(toolErr);
-            logger.error("[evals] tool execution failed", toolErr);
-            break;
-          }
-        } else {
-          const stepMessageEndIndex =
-            messageHistory.length > stepMessageStartIndex
-              ? messageHistory.length - 1
-              : undefined;
-          pushBackendStepSuccessSpans(
-            capturedSpans,
-            runStartedAt,
-            promptIndex,
-            stepIndex,
-            stepStartAbs,
-            { startAbs: llmStartAbs, endAbs: llmEndAbs },
-            undefined,
-            {
-              modelId,
-              inputTokens: stepUsage.inputTokens,
-              outputTokens: stepUsage.outputTokens,
-              totalTokens: stepUsage.totalTokens,
-              messageStartIndex:
-                stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
-              messageEndIndex: stepMessageEndIndex,
-              status: "ok",
-            },
-          );
-        }
-
-        steps += 1;
-
-        const finishReason: string | undefined = json.finishReason;
-        if (finishReason && finishReason !== "tool-calls") {
-          break;
-        }
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          logger.debug("[evals] backend iteration aborted due to cancellation");
-          return {
-            evaluation: evaluateMultiTurnResults(
-              promptTurns,
-              toolsCalledByPrompt,
-              test.isNegativeTest,
-              test.matchOptions,
-            ),
-            iterationId: undefined,
-          };
-        }
-
-        if (error instanceof Error) {
-          iterationError = error.message || error.toString();
-
-          const responseBody = (error as any).responseBody;
-          if (responseBody && typeof responseBody === "string") {
-            iterationErrorDetails = responseBody;
-          }
-        } else if (typeof error === "string") {
-          iterationError = error;
-        } else {
-          iterationError = String(error);
-        }
-
-        if (iterationError && iterationError.length > 500) {
-          iterationError = iterationError.substring(0, 497) + "...";
-        }
-
-        logger.error("[evals] backend fetch failed", error);
-        const failAbs = Date.now();
-        pushBackendStepLlmFailureSpans(
-          capturedSpans,
-          runStartedAt,
-          promptIndex,
-          stepIndex,
-          stepStartAbs,
-          llmStartAbs,
-          failAbs,
-          {
-            modelId,
-          },
+    let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
+    try {
+      turnResult = await runAssistantTurn({
+        messages: inputMessages,
+        // Eval's `runTestCase` already resolved the canonical model id
+        // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads
+        // it in as `modelId` — for the JAM-paid path that's e.g.
+        // `anthropic/claude-haiku-4.5`. The engine reads
+        // `modelDefinition.id` for the wire payload, so override here so
+        // backend wallet/quota lookup keys match what live chat sends.
+        modelDefinition: { ...modelDefinition, id: modelId },
+        systemPrompt: prepared.enhancedSystemPrompt,
+        ...(prepared.resolvedTemperature != null
+          ? { temperature: prepared.resolvedTemperature }
+          : {}),
+        tools: tracedTools,
+        ...(selectedServers.length
+          ? { selectedServerIds: selectedServers }
+          : {}),
+        mcpClientManager,
+        authContext: evalAuthContext,
+        sourceType: "eval",
+        streamSink: "none",
+        persistMode: "caller",
+        approvalMode: "auto-deny",
+        endpointPath,
+        ...(extraBodyFields ? { extraBodyFields } : {}),
+        ...(abortSignal ? { abortSignal } : {}),
+        maxSteps: MAX_STEPS,
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+      });
+    } catch (error) {
+      // Cancellation: bail without recording. Matches the legacy
+      // AbortError handler at the bottom of the per-step while loop.
+      if (error instanceof Error && error.name === "AbortError") {
+        logger.debug(
+          "[evals] backend iteration aborted due to cancellation",
         );
-        break;
+        return {
+          evaluation: evaluateMultiTurnResults(
+            promptTurns,
+            toolsCalledByPrompt,
+            test.isNegativeTest,
+            test.matchOptions,
+          ),
+          iterationId: undefined,
+        };
       }
-    }
 
-    if (iterationError) {
+      // Non-abort runtime error from the engine. Map to `iterationError`
+      // for the post-loop verdict gate; preserve a truncated message and,
+      // when available, a `responseBody` for `errorDetails`.
+      if (error instanceof Error) {
+        iterationError = error.message || error.toString();
+        const responseBody = (error as { responseBody?: unknown })
+          .responseBody;
+        if (responseBody && typeof responseBody === "string") {
+          iterationErrorDetails = responseBody;
+        }
+      } else if (typeof error === "string") {
+        iterationError = error;
+      } else {
+        iterationError = String(error);
+      }
+      if (iterationError && iterationError.length > 500) {
+        iterationError = iterationError.substring(0, 497) + "...";
+      }
+      logger.error("[evals] runAssistantTurn failed", error);
       break;
     }
+
+    // Detect engine silent-failure. `runChatEngineLoop` catches throws
+    // inside the agentic loop (network failures, scrub errors, ...) and
+    // emits an error chunk to its writer — but for `streamSink:"none"`
+    // the writer is a no-op, so nothing surfaces and `runAssistantTurn`
+    // resolves normally with `runSucceeded: false`. The observable signal
+    // is that no `turnTrace` is captured (the engine only sets it when
+    // `runSucceeded && !aborted`) and no new messages were appended. Map
+    // that to `iterationError` so the verdict gate + lockReason
+    // derivation in the post-loop finalize see the cycle failure.
+    if (
+      !turnResult.turnTrace &&
+      turnResult.messages.length <= inputMessages.length
+    ) {
+      iterationError = "Backend stream failed during iteration";
+      logger.error(
+        "[evals] runAssistantTurn returned no turn trace; treating as cycle failure",
+      );
+      break;
+    }
+
+    // Drain per-turn outputs into the iteration-level accumulators.
+    capturedSpans.push(...traceCtx.recordedSpans);
+    if (turnResult.usage) {
+      accumulatedUsage.inputTokens =
+        (accumulatedUsage.inputTokens || 0) +
+        (turnResult.usage.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        (accumulatedUsage.outputTokens || 0) +
+        (turnResult.usage.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        (accumulatedUsage.totalTokens || 0) +
+        (turnResult.usage.totalTokens ?? 0);
+    }
+
+    // Extract per-turn tool calls from the new messages only (engine
+    // returns the FULL transcript; slice from `inputMessages.length` to
+    // get just this turn's appended assistant + tool messages so prior
+    // turns' calls aren't double-counted).
+    const newMessages = turnResult.messages.slice(inputMessages.length);
+    const promptToolsCalled = extractToolCallsFromConversation({
+      messages: newMessages,
+    });
+    toolsCalledByPrompt.push(promptToolsCalled);
+
+    // Roll the engine's transcript forward as the next turn's starting
+    // point. Includes prior conversation + this turn's user prompt + this
+    // turn's assistant/tool messages.
+    messageHistory.length = 0;
+    messageHistory.push(...turnResult.messages);
   }
 
   const evaluation = evaluateMultiTurnResults(
