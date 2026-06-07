@@ -29,6 +29,16 @@ This guide covers common errors you might encounter when working with MCP server
 - **For HTTP servers**: Verify the URL is accessible
   - Test with `curl` or a browser first
 
+### "Invalid host header" when connecting to an HTTP server
+
+This response comes from **your MCP server**, not from MCPJam Inspector. The server's HTTP layer is rejecting the request because the `Host` header isn't on its allowlist. Most common culprits:
+
+- **Next.js / webpack-dev-server** — both block unknown hosts by default in dev mode. Add your host to `allowedHosts` (webpack-dev-server) or `experimental.allowedDevOrigins` (Next.js).
+- **FastAPI / Starlette (Python)** — `TrustedHostMiddleware` rejects hosts not in `allowed_hosts`. Add the host the inspector is calling from, or temporarily set `allowed_hosts=["*"]` for local testing.
+- **Reverse proxies (nginx, Caddy)** — check the `server_name` / `host_match` config.
+
+**Quick check:** test the same URL with `curl http://localhost:PORT/mcp` — if curl gets the same error, it's definitely server-side, not inspector.
+
 ## Authentication Issues
 
 ### Server fails to connect with authentication errors
