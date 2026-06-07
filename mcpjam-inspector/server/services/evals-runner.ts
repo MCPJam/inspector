@@ -1999,36 +1999,29 @@ const runIterationViaBackend = async ({
       return returnCancelled();
     }
 
-    // Codex P1 review fix + the original silent-cycle-failure case.
-    // Two engine failure shapes both reduce to "engine produced no new
-    // messages this turn":
+    // Drain per-turn outputs into the iteration-level accumulators
+    // BEFORE the failure checks below. Doing it first preserves
+    // whatever partial good state the engine produced (tool spans,
+    // partial transcript, usage), so the persisted iteration shows
+    // what completed before the failure point.
     //
-    //  (1) Engine catch fired (network exception, scrub TypeError, ...).
-    //      `runSucceeded` stays false; `turnTrace` is NOT captured.
-    //  (2) Step-level error (Convex returned non-OK at
-    //      mcpjam-stream-handler.ts:1384). `processOneStep` returns
-    //      `shouldContinue:false` without throwing; the engine's loop
-    //      exits cleanly, a synthetic finish chunk is emitted, and
-    //      `runSucceeded` becomes true → `turnTrace` IS captured. But
-    //      no assistant/tool messages were appended.
-    //
-    // Without the message-count check, case (2) — 429s, 500s, etc. —
-    // would slip through with `iterationError` unset and verdict
-    // `passed: true` for tests with no expected tool calls. Map both
-    // to `iterationError` so the verdict gate + `lockReason`
-    // derivation in the post-loop finalize see the cycle failure.
-    if (turnResult.messages.length <= messageCountBeforeTurn) {
-      iterationError = turnResult.turnTrace
-        ? "Backend step returned no content (stream error or empty response)"
-        : "Backend stream failed during iteration";
-      logger.error(
-        `[evals] runAssistantTurn produced no new messages this turn; treating as cycle failure (turnTrace=${turnResult.turnTrace ? "captured" : "missing"})`,
-      );
-      break;
-    }
-
-    // Drain per-turn outputs into the iteration-level accumulators.
+    // Codex round-3 (P2 "Preserve backend tool step indices"):
+    // `wrapToolSetForEvalTrace` records tool spans in
+    // `traceCtx.recordedSpans` but never gets `prepareStep` updates
+    // from the engine (eval is no longer calling `generateText`
+    // directly), so those spans land with `stepIndex: -1`. The engine
+    // emits its OWN correctly-indexed LLM-step spans into
+    // `turnTrace.spans` (already `EvalTraceSpan[]` shape — see
+    // `PersistedTurnTrace` in chat-ingestion.ts). Merge both: the
+    // engine's LLM spans give per-step granularity; the wrap's tool
+    // spans give per-tool-call detail. Tool spans still have
+    // `stepIndex: -1` for now — fixing that requires correlating
+    // each tool span back to its parent LLM step via the engine's
+    // step events, which is a separate workstream.
     capturedSpans.push(...traceCtx.recordedSpans);
+    if (turnResult.turnTrace?.spans?.length) {
+      capturedSpans.push(...turnResult.turnTrace.spans);
+    }
     if (turnResult.usage) {
       accumulatedUsage.inputTokens =
         (accumulatedUsage.inputTokens || 0) +
@@ -2057,19 +2050,49 @@ const runIterationViaBackend = async ({
     messageHistory.length = 0;
     messageHistory.push(...turnResult.messages);
 
-    // Codex P1 round-2 fix: catch a backend step error that happened
-    // AFTER messages already grew. The engine emits `EvalTraceSpan`s
-    // with `status: "error"` on per-step failures (see
-    // `pushBackendStepLlmFailureSpans` / `pushBackendStepToolFailureSpans`
-    // in mcpjam-stream-handler.ts), but then synthesizes a finish
-    // chunk and sets `runSucceeded: true` — so neither the catch
-    // branch nor the `messages.length <= messageCountBeforeTurn` check
-    // fires when step 1 succeeded and step 2 errored. Walk
-    // `turnTrace.spans` for any error-status span and treat as a
-    // cycle failure; the partial successful state we just drained
-    // above (tool calls, spans, usage, transcript) stays — eval just
-    // marks the iteration as errored and halts further turns.
-    const stepErrorSpan = turnResult.turnTrace?.spans.find(
+    // Failure detection (ordered most-specific → least-specific).
+    // Three engine failure shapes the runner must catch:
+    //
+    //  (a) Cursor round-3 ("Partial turn hides engine failures"):
+    //      Engine catch fired AFTER partial messages were appended
+    //      (some text deltas / partial tool call landed before the
+    //      error). The engine's `executeEngine` `try { ... }
+    //      catch (error) { logger.error; emit error chunk; ... }` at
+    //      mcpjam-stream-handler.ts:2227 leaves `runSucceeded:
+    //      false` → `turnTrace` is NOT captured even though
+    //      `messages.length > messageCountBeforeTurn`. The
+    //      message-count check and the error-span check both miss
+    //      this. `!turnTrace` is the reliable signal.
+    //
+    //  (b) Codex P1 round-1 + the original silent-cycle-failure:
+    //      Engine succeeded (turnTrace captured) but produced no new
+    //      content (step-level non-OK at
+    //      mcpjam-stream-handler.ts:1384 returns
+    //      `shouldContinue:false`, synthetic finish, runSucceeded
+    //      true). Detect via `messages.length <=
+    //      messageCountBeforeTurn`.
+    //
+    //  (c) Codex P1 round-2 ("Fail turns when later backend steps
+    //      error"): step 1 succeeded, step 2 errored. `turnTrace`
+    //      captured, `messages.length` grew, but `turnTrace.spans`
+    //      includes an `EvalTraceSpan` with `status:"error"`.
+    if (!turnResult.turnTrace) {
+      iterationError =
+        "Backend stream failed during iteration (engine caught an error mid-turn)";
+      logger.error(
+        `[evals] runAssistantTurn returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${newMessages.length > 0})`,
+      );
+      break;
+    }
+    if (newMessages.length === 0) {
+      iterationError =
+        "Backend step returned no content (stream error or empty response)";
+      logger.error(
+        "[evals] runAssistantTurn produced no new messages this turn; treating as cycle failure",
+      );
+      break;
+    }
+    const stepErrorSpan = turnResult.turnTrace.spans.find(
       (span) => span.status === "error",
     );
     if (stepErrorSpan) {

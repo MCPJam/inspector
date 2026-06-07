@@ -1706,4 +1706,191 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       runAssistantTurnSpy.mockRestore();
     }
   });
+
+  it("treats an engine catch fired after partial messages as cycle failure (PR 3 review round 3)", async () => {
+    // Cursor round-3 ("Partial turn hides engine failures"): if the
+    // engine's agentic loop catches an error AFTER partial messages
+    // landed, it returns messageHistory grown beyond the input but
+    // omits `turnTrace` (`runSucceeded:false`). Neither the
+    // message-count check nor the error-span check catches this
+    // shape — only `!turnTrace` does. Without that signal the test
+    // would record `iterationError` unset and verdict `passed:true`
+    // for cases with no expected tool calls.
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockResolvedValueOnce({
+        // Engine returned with grown messages…
+        messages: [
+          { role: "user", content: "Hello" } as any,
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "I will look that up...",
+              },
+            ],
+          } as any,
+        ],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        // …but no `turnTrace`: engine catch fired, `runSucceeded` is
+        // false, persistence path was skipped.
+      } as any);
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Partial-then-error case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-partial-then-error",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-partial-then-error",
+      });
+
+      const updateCall = convexClient.action.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestIteration",
+      );
+      expect(updateCall).toBeDefined();
+      const payload = updateCall![1] as Record<string, unknown>;
+      // The load-bearing assertion: `iterationError` IS set even
+      // though messages grew. Verdict gating is mocked out (see other
+      // PR-3 tests for that explanation), but `payload.error` is the
+      // signal `finalizePassedForEval` would consume in production.
+      expect(payload.error).toBeTruthy();
+      expect(String(payload.error)).toMatch(/engine caught|stream failed/i);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
+
+  it("merges engine turnTrace.spans into capturedSpans for LLM step coverage (PR 3 review round 3)", async () => {
+    // Codex P2 round-3 ("Preserve backend tool step indices"): the
+    // engine writes LLM-step spans into `turnTrace.spans` (already
+    // `EvalTraceSpan[]` shape via `PersistedTurnTrace`). PR 3
+    // initially only persisted `traceCtx.recordedSpans` (the
+    // wrap-captured tool spans), so the trace UI lost engine-side
+    // step granularity. Merge both so persisted spans include LLM
+    // steps + tool calls.
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const engineSpans = [
+      {
+        id: "engine-step-1",
+        name: "step.1.llm",
+        category: "llm",
+        startMs: 0,
+        endMs: 10,
+        status: "ok",
+        stepIndex: 0,
+      },
+      {
+        id: "engine-step-2",
+        name: "step.2.llm",
+        category: "llm",
+        startMs: 10,
+        endMs: 20,
+        status: "ok",
+        stepIndex: 1,
+      },
+    ];
+
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockResolvedValueOnce({
+        messages: [
+          { role: "user", content: "Hello" } as any,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Done" }],
+          } as any,
+        ],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        turnTrace: {
+          turnId: "t_1",
+          promptIndex: 0,
+          startedAt: 0,
+          endedAt: 20,
+          modelId: "anthropic/claude-haiku-4.5",
+          spans: engineSpans as any,
+        },
+      } as any);
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Span merge case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-span-merge",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-span-merge",
+      });
+
+      // Look for the engine spans in any of the action payloads. The
+      // fanout persists per-turn spans via `appendEvalTurnTrace.turn.spans`;
+      // the legacy path includes them on `updateTestIteration.spans`.
+      const spanInPayload = (payload: unknown): boolean => {
+        if (!payload || typeof payload !== "object") return false;
+        const p = payload as Record<string, unknown>;
+        const candidates: unknown[] = [
+          p.spans,
+          (p.turn as { spans?: unknown } | undefined)?.spans,
+        ];
+        return candidates.some((spans) => {
+          if (!Array.isArray(spans)) return false;
+          return spans.some(
+            (s: any) =>
+              s?.id === "engine-step-1" || s?.id === "engine-step-2",
+          );
+        });
+      };
+      const anyHasEngineSpans = convexClient.action.mock.calls.some((c) =>
+        spanInPayload(c[1]),
+      );
+      expect(anyHasEngineSpans).toBe(true);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
 });
