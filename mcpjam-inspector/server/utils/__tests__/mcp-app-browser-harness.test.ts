@@ -163,6 +163,30 @@ describe("McpAppBrowserHarness — render classification", () => {
     expect(obs.status).toBe("blank_screenshot");
     expect(obs.bridgeInitialized).toBe(true);
   }, 30_000);
+
+  it("tears down a non-kept widget before mounting the next one", async () => {
+    const h = makeHarness();
+    // First widget rendered without keepMounted -> must be torn down in-page.
+    const first = await h.renderWidget({
+      toolCallId: "seq-1",
+      toolName: "first",
+      serverId: "s1",
+      html: buttonHtml,
+    });
+    expect(first.status).toBe("rendered");
+    expect(h.hasRenderedWidget()).toBe(false);
+
+    // A second render in the same page mounts cleanly (prior bridge disposed).
+    const second = await h.renderWidget({
+      toolCallId: "seq-2",
+      toolName: "second",
+      serverId: "s1",
+      html: buttonHtml,
+      keepMounted: true,
+    });
+    expect(second.status).toBe("rendered");
+    expect(h.hasRenderedWidget()).toBe(true);
+  }, 30_000);
 });
 
 describe("McpAppBrowserHarness — interaction", () => {

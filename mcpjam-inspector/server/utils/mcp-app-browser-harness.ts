@@ -384,8 +384,11 @@ export class McpAppBrowserHarness {
       return { ...base, status: "no_ui_resource", elapsedMs: Date.now() - started };
     }
 
-    // Capture only this render's console errors.
+    // Capture only this render's console errors + blocked requests (otherwise
+    // an observation would attach unrelated diagnostics from earlier widgets in
+    // the same iteration).
     this.consoleErrors = [];
+    this.blockedRequests = [];
     this.mounted.set(input.toolCallId, {
       serverId: input.serverId,
       actionCount: 0,
@@ -421,7 +424,7 @@ export class McpAppBrowserHarness {
         },
       );
     } catch (err) {
-      this.mounted.delete(input.toolCallId);
+      await this.unmount(input.toolCallId);
       return {
         ...base,
         status: "render_error",
@@ -434,7 +437,7 @@ export class McpAppBrowserHarness {
     this.toolCallBuffer = [];
 
     if (!pageResult.mounted) {
-      this.mounted.delete(input.toolCallId);
+      await this.unmount(input.toolCallId);
       return {
         ...base,
         status: "mount_failed",
@@ -452,7 +455,7 @@ export class McpAppBrowserHarness {
       screenshotBase64 = await this.captureScreenshot();
     } catch {
       // mounted but couldn't screenshot — keep mount state consistent.
-      if (!input.keepMounted) this.mounted.delete(input.toolCallId);
+      if (!input.keepMounted) await this.unmount(input.toolCallId);
       return {
         ...base,
         status: "screenshot_failed",
@@ -467,9 +470,12 @@ export class McpAppBrowserHarness {
     else if (pageResult.blank) status = "blank_screenshot";
     else status = "rendered";
 
-    // Only a fully-rendered widget stays mounted for Computer Use.
+    // Only a fully-rendered widget stays mounted for Computer Use. Any other
+    // outcome is torn down IN THE PAGE too (not just removed from `mounted`),
+    // so a leftover iframe + host bridge can't keep running and misroute a
+    // later widget-initiated tools/call (its serverId would resolve to "").
     if (!(input.keepMounted && status === "rendered")) {
-      this.mounted.delete(input.toolCallId);
+      await this.unmount(input.toolCallId);
     }
 
     return {
@@ -626,7 +632,13 @@ export class McpAppBrowserHarness {
   /* ---- teardown ---- */
 
   async dismissWidget(toolCallId: string): Promise<void> {
-    if (this.page && this.mounted.has(toolCallId)) {
+    await this.unmount(toolCallId);
+  }
+
+  /** Tear the widget down IN THE PAGE (close its host bridge + remove its
+   *  iframe) and drop the Node-side mount entry. Best-effort. */
+  private async unmount(toolCallId: string): Promise<void> {
+    if (this.page) {
       await this.page
         .evaluate(
           (id) =>

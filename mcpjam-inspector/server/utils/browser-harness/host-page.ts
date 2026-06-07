@@ -128,6 +128,14 @@ async function renderWidget(
     allowFeatures: opts.allowFeatures,
   });
 
+  // Only one widget is visible per page (we replaceChildren below). Dispose any
+  // previously-mounted widgets first so their host bridges are closed and their
+  // map entries cleared, rather than orphaning bridges on a repeat render.
+  for (const id of Array.from(activeWidgets.keys())) {
+    if (id !== opts.widgetId) dismissWidget(id);
+  }
+  dismissWidget(opts.widgetId);
+
   const root = ensureRoot();
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", policy.sandbox);
@@ -200,6 +208,9 @@ async function renderWidget(
   try {
     await bridge.connect(transport);
   } catch (err) {
+    // Not yet registered in activeWidgets; remove the iframe so it doesn't
+    // linger in the DOM.
+    iframe.remove();
     return {
       mounted: false,
       bridgeInitialized: false,
@@ -215,6 +226,10 @@ async function renderWidget(
     guestDoc.write(opts.html);
     guestDoc.close();
   } catch (err) {
+    // Close the connected bridge + drop the iframe so this failed render
+    // doesn't leave an orphaned host bridge running.
+    void bridge.close?.().catch?.(() => {});
+    iframe.remove();
     return {
       mounted: false,
       bridgeInitialized: false,
