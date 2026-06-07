@@ -1,4 +1,10 @@
-import { streamText, stepCountIs, type ToolSet } from "ai";
+import {
+  streamText,
+  stepCountIs,
+  type ToolSet,
+  type ToolChoice,
+  type Tool as AiTool,
+} from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { createLlmModel } from "./chat-helpers";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
@@ -197,6 +203,18 @@ export interface RunDirectChatTurnOptions {
    * dispatch. Defaults to no-op. Chat passes a logger.warn.
    */
   onPersistError?: (error: unknown) => void;
+  /**
+   * Optional AI SDK `toolChoice`. Eval forwards `advancedConfig.toolChoice`
+   * here; chat currently never sets it. Held outside `traceEvents` because
+   * it's a model-call parameter, not a trace concern.
+   */
+  toolChoice?: ToolChoice<Record<string, AiTool>>;
+  /**
+   * Optional `experimental_telemetry` block forwarded verbatim to
+   * `streamText`. Eval populates with suite/test/iteration metadata for
+   * observability; chat currently omits.
+   */
+  experimentalTelemetry?: Parameters<typeof streamText>[0]["experimental_telemetry"];
 }
 
 export interface RunDirectChatTurnHandle {
@@ -257,6 +275,8 @@ export function runDirectChatTurn(
     traceEvents,
     onPersist,
     onPersistError,
+    toolChoice,
+    experimentalTelemetry,
   } = options;
 
   // Separate array for tracing — we must NOT mutate `messageHistory` because
@@ -343,6 +363,10 @@ export function runDirectChatTurn(
     tools: executableTools,
     stopWhen: stepCountIs(20),
     ...(abortSignal ? { abortSignal } : {}),
+    ...(toolChoice ? { toolChoice } : {}),
+    ...(experimentalTelemetry
+      ? { experimental_telemetry: experimentalTelemetry }
+      : {}),
     prepareStep: ({ stepNumber }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
