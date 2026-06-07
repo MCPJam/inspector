@@ -1241,4 +1241,213 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       prepareSpy.mockRestore();
     }
   });
+
+  it("forwards advancedConfig.toolChoice via extraBodyFields (PR 3 review fix)", async () => {
+    // Cursor + Codex review on PR #2457: the engine doesn't expose
+    // `toolChoice` as a first-class field, so the legacy backend loop's
+    // request body included it but the rewritten runner dropped it.
+    // Fix: merge `toolChoice` into `extraBodyFields` so it rides through
+    // to Convex unchanged (the engine spreads `extraBodyFields` into
+    // the body verbatim). Hosted backend evals with forced-tool or
+    // `none` settings need this to work.
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Forced-tool case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            // Force a specific tool selection on the backend.
+            advancedConfig: {
+              toolChoice: { type: "tool", toolName: "search_docs" },
+            },
+            testCaseId: "case-toolchoice",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-toolchoice",
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    const request = fetchMock.mock.calls[0]?.[1] as { body?: string };
+    const body = JSON.parse(request.body ?? "{}");
+    expect(body.toolChoice).toEqual({
+      type: "tool",
+      toolName: "search_docs",
+    });
+  });
+
+  it("records iteration failure when Convex returns a non-OK step (PR 3 review fix)", async () => {
+    // Codex P1 review on PR #2457: when Convex returns a non-OK
+    // response, the engine writes an error chunk to its (no-op) writer
+    // and returns `shouldContinue:false`, then emits a synthetic finish
+    // and sets `runSucceeded:true`. `runAssistantTurn` returns with
+    // `turnTrace` defined but no new messages appended. Without the
+    // message-count check, 429s/500s slip through as passing iterations
+    // for tests with no expected tool calls.
+    //
+    // Synthesize a non-OK SSE response: fetchMock returns ok:false. The
+    // engine's processOneStep handles this at
+    // mcpjam-stream-handler.ts:1384 (`if (!res.ok || !res.body)`).
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      text: vi.fn().mockResolvedValue("Daily spend cap reached"),
+      body: null,
+    } as unknown as Response);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Backend 429 case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            // Zero expected tools — without the message-count check the
+            // empty toolsCalledByPrompt would match this expectation and
+            // the suite summary would credit it as a pass.
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-429",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-429",
+    });
+
+    const updateCall = convexClient.action.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestIteration",
+    );
+    expect(updateCall).toBeDefined();
+    const payload = updateCall![1] as Record<string, unknown>;
+    // The presence of `error` is the load-bearing assertion: the runner
+    // surfaced the cycle failure to `finishIteration` instead of letting
+    // it silently pass. (The verdict-side `result` field would gate on
+    // `iterationError` via the real `finalizePassedForEval`, but this
+    // suite mocks it to `({ matchPassed }) => matchPassed` to keep the
+    // matcher unit-testable; that gate is covered by the real-impl
+    // tests in @mcpjam/sdk's matcher suite.)
+    expect(payload.error).toBeTruthy();
+    expect(String(payload.error)).toMatch(/backend (stream|step)/i);
+  });
+
+  it("does not record an iteration when abortSignal fires mid-turn (PR 3 review fix)", async () => {
+    // Cursor review on PR #2457: the engine swallows AbortError
+    // internally (sets its `aborted` flag, returns with no `turnTrace`,
+    // doesn't throw). `RunAssistantTurnResult` doesn't expose the
+    // engine's `aborted` flag, so without an explicit
+    // `abortSignal.aborted` check the runner would treat the
+    // cancellation as a silent cycle failure and persist an aborted
+    // iteration as `status:"completed"` + `error:"Backend stream
+    // failed..."`. Legacy behavior was to return early without any
+    // recording on AbortError; preserve that.
+    //
+    // Simulating the engine's silent-abort path end-to-end through the
+    // suite runner is fiddly because `runEvalSuiteWithAiSdk` owns its
+    // own AbortController and only fires it on the cancellation
+    // watcher's 2-second cadence. Easier: spy on `runAssistantTurn`,
+    // abort the inbound signal exactly the way the engine would on
+    // AbortError, then return the same "silent-abort" shape — empty
+    // messages and no turnTrace. If the runner reads
+    // `abortSignal.aborted` correctly, it returns early without
+    // persisting; otherwise it falls through to the silent-failure
+    // branch and records the aborted run as a cycle failure.
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts: any) => {
+        opts.abortSignal?.dispatchEvent?.(new Event("abort"));
+        if (opts.abortSignal && !opts.abortSignal.aborted) {
+          // The runner passes a controller-backed signal; abort the
+          // backing controller via the signal's onabort hook. In tests
+          // we cheat by mutating the readonly flag through reflection
+          // — vitest's AbortSignal is the real Node one.
+          Object.defineProperty(opts.abortSignal, "aborted", {
+            value: true,
+            configurable: true,
+          });
+        }
+        return {
+          messages: opts.messages,
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        };
+      });
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Aborted case",
+              query: "Hello",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-aborted",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-aborted",
+      });
+
+      expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+
+      // The aborted iteration must NOT be finalized via the action
+      // pipeline — no updateTestIteration, no appendEvalTurnTrace, no
+      // lockEvalSession.
+      const finalizeCall = convexClient.action.mock.calls.find((c) =>
+        [
+          "testSuites:updateTestIteration",
+          "testSuites:appendEvalTurnTrace",
+          "testSuites:lockEvalSession",
+        ].includes(c[0] as string),
+      );
+      expect(finalizeCall).toBeUndefined();
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
 });

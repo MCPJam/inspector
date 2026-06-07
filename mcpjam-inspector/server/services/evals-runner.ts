@@ -1845,7 +1845,34 @@ const runIterationViaBackend = async ({
     token: `Bearer ${convexAuthToken}`,
   };
 
+  // Cursor review fix: the legacy `runIterationViaBackend` returned
+  // early on AbortError without recording the iteration. The engine
+  // swallows AbortError internally (sets its `aborted` flag, omits
+  // `turnTrace`, doesn't throw out of `runAssistantTurn`), and
+  // `RunAssistantTurnResult` doesn't expose the engine's `aborted`
+  // flag — so we read `abortSignal.aborted` directly as the
+  // authoritative cancellation signal. Used at the top of each
+  // iteration AND after every per-turn call (success or catch).
+  const isAborted = () => abortSignal?.aborted === true;
+  const returnCancelled = () => ({
+    evaluation: evaluateMultiTurnResults(
+      promptTurns,
+      toolsCalledByPrompt,
+      test.isNegativeTest,
+      test.matchOptions,
+    ),
+    iterationId: undefined,
+  });
+
   for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+    // Cancellation between turns: bail without recording.
+    if (isAborted()) {
+      logger.debug(
+        "[evals] backend iteration aborted between turns; skipping record",
+      );
+      return returnCancelled();
+    }
+
     const promptTurn = promptTurns[promptIndex]!;
 
     // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
@@ -1862,6 +1889,22 @@ const runIterationViaBackend = async ({
       ...messageHistory,
       { role: "user", content: promptTurn.prompt },
     ];
+
+    // Cursor + Codex review fix: thread `toolChoice` through
+    // `extraBodyFields` since the engine's
+    // `RunAssistantTurnOptions` / `MCPJamHandlerOptions` don't expose
+    // it as a first-class field. The Convex `/stream` (and
+    // `/stream/org`) handlers already accept `toolChoice` in the
+    // request body — the engine spreads `extraBodyFields` into the body
+    // unchanged, so forced-tool / `none` eval cases work the same way
+    // they did on the legacy backend loop and the local-AI-SDK path.
+    const mergedExtraBodyFields =
+      toolChoice || extraBodyFields
+        ? {
+            ...(extraBodyFields ?? {}),
+            ...(toolChoice ? { toolChoice } : {}),
+          }
+        : undefined;
 
     let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
     try {
@@ -1889,28 +1932,28 @@ const runIterationViaBackend = async ({
         persistMode: "caller",
         approvalMode: "auto-deny",
         endpointPath,
-        ...(extraBodyFields ? { extraBodyFields } : {}),
+        ...(mergedExtraBodyFields
+          ? { extraBodyFields: mergedExtraBodyFields }
+          : {}),
         ...(abortSignal ? { abortSignal } : {}),
         maxSteps: MAX_STEPS,
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
       });
     } catch (error) {
-      // Cancellation: bail without recording. Matches the legacy
-      // AbortError handler at the bottom of the per-step while loop.
-      if (error instanceof Error && error.name === "AbortError") {
+      // Cancellation: bail without recording. AbortError can surface
+      // either as a thrown exception (when fetch is aborted mid-flight)
+      // or as the engine's internal silent-cancellation path (handled
+      // by the `isAborted()` check after the success path below). Check
+      // `abortSignal.aborted` to catch BOTH paths consistently.
+      if (
+        isAborted() ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
         logger.debug(
           "[evals] backend iteration aborted due to cancellation",
         );
-        return {
-          evaluation: evaluateMultiTurnResults(
-            promptTurns,
-            toolsCalledByPrompt,
-            test.isNegativeTest,
-            test.matchOptions,
-          ),
-          iterationId: undefined,
-        };
+        return returnCancelled();
       }
 
       // Non-abort runtime error from the engine. Map to `iterationError`
@@ -1935,22 +1978,43 @@ const runIterationViaBackend = async ({
       break;
     }
 
-    // Detect engine silent-failure. `runChatEngineLoop` catches throws
-    // inside the agentic loop (network failures, scrub errors, ...) and
-    // emits an error chunk to its writer — but for `streamSink:"none"`
-    // the writer is a no-op, so nothing surfaces and `runAssistantTurn`
-    // resolves normally with `runSucceeded: false`. The observable signal
-    // is that no `turnTrace` is captured (the engine only sets it when
-    // `runSucceeded && !aborted`) and no new messages were appended. Map
-    // that to `iterationError` so the verdict gate + lockReason
+    // Cursor review fix: cancellation that fired DURING
+    // `runAssistantTurn` without surfacing as a throw. The engine
+    // catches AbortError, sets its internal `aborted` flag, omits the
+    // `turnTrace`, and returns normally. Without this check we'd fall
+    // through to the silent-cycle-failure branch below and record an
+    // aborted run as a verdict failure.
+    if (isAborted()) {
+      logger.debug(
+        "[evals] backend iteration aborted mid-turn; skipping record",
+      );
+      return returnCancelled();
+    }
+
+    // Codex P1 review fix + the original silent-cycle-failure case.
+    // Two engine failure shapes both reduce to "engine produced no new
+    // messages this turn":
+    //
+    //  (1) Engine catch fired (network exception, scrub TypeError, ...).
+    //      `runSucceeded` stays false; `turnTrace` is NOT captured.
+    //  (2) Step-level error (Convex returned non-OK at
+    //      mcpjam-stream-handler.ts:1384). `processOneStep` returns
+    //      `shouldContinue:false` without throwing; the engine's loop
+    //      exits cleanly, a synthetic finish chunk is emitted, and
+    //      `runSucceeded` becomes true → `turnTrace` IS captured. But
+    //      no assistant/tool messages were appended.
+    //
+    // Without the message-count check, case (2) — 429s, 500s, etc. —
+    // would slip through with `iterationError` unset and verdict
+    // `passed: true` for tests with no expected tool calls. Map both
+    // to `iterationError` so the verdict gate + `lockReason`
     // derivation in the post-loop finalize see the cycle failure.
-    if (
-      !turnResult.turnTrace &&
-      turnResult.messages.length <= inputMessages.length
-    ) {
-      iterationError = "Backend stream failed during iteration";
+    if (turnResult.messages.length <= inputMessages.length) {
+      iterationError = turnResult.turnTrace
+        ? "Backend step returned no content (stream error or empty response)"
+        : "Backend stream failed during iteration";
       logger.error(
-        "[evals] runAssistantTurn returned no turn trace; treating as cycle failure",
+        `[evals] runAssistantTurn produced no new messages this turn; treating as cycle failure (turnTrace=${turnResult.turnTrace ? "captured" : "missing"})`,
       );
       break;
     }
