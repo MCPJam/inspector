@@ -282,4 +282,40 @@ describe("buildComputerUseTools", () => {
     expect(dismissWidget).toHaveBeenCalledWith("tc-1");
     expect(out).toMatchObject({ ok: true, dismissed: "tc-1" });
   });
+
+  it("finish_widget.execute reports no dismissal when no widget is active", async () => {
+    const { harness, dismissWidget } = stubHarness();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => null,
+      viewport: { width: 1280, height: 800 },
+    });
+    const exec = (tools.finish_widget as { execute: Function }).execute;
+    const out = await exec({ toolCallId: "tc-stale" }, {});
+    // No live widget -> don't claim success, and don't call dismiss.
+    expect(dismissWidget).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ ok: false, dismissed: null });
+  });
+
+  it("finish_widget.execute dismisses the live widget even when the model passes a stale id", async () => {
+    const { harness, dismissWidget } = stubHarness();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-live",
+      viewport: { width: 1280, height: 800 },
+    });
+    const exec = (tools.finish_widget as { execute: Function }).execute;
+    const out = await exec({ toolCallId: "tc-stale" }, {});
+    // Dismisses the actually-mounted widget, not the (wrong) requested id...
+    expect(dismissWidget).toHaveBeenCalledWith("tc-live");
+    expect(dismissWidget).not.toHaveBeenCalledWith("tc-stale");
+    // ...and reports the truth: what was dismissed vs. what was requested.
+    expect(out).toMatchObject({
+      ok: true,
+      dismissed: "tc-live",
+      requested: "tc-stale",
+    });
+  });
 });

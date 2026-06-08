@@ -276,8 +276,18 @@ export function buildComputerUseTools(
         .describe("The tool call id of the rendered widget to dismiss."),
     }),
     execute: async ({ toolCallId }: { toolCallId: string }) => {
-      await harness.dismissWidget(toolCallId);
-      return { ok: true as const, dismissed: toolCallId };
+      // Dismiss the widget that is actually mounted (the harness keeps at most
+      // one, exposed via the same getActiveToolCallId the `computer` tool
+      // targets) rather than blindly the id the model passed. A stale or
+      // mistaken toolCallId must not report success while leaving the live
+      // widget mounted — otherwise Computer Use keeps targeting a widget the
+      // model believes is gone.
+      const active = getActiveToolCallId();
+      if (!active) {
+        return { ok: false as const, dismissed: null, requested: toolCallId };
+      }
+      await harness.dismissWidget(active);
+      return { ok: true as const, dismissed: active, requested: toolCallId };
     },
   });
 
