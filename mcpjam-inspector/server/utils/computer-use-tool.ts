@@ -66,8 +66,14 @@ function normalizeModelId(
       ? model
       : (model?.id ?? model?.modelId ?? undefined);
   if (!raw) return undefined;
-  // Strip a provider prefix (`anthropic/`, `anthropic.`) and lowercase.
-  return raw.toLowerCase().replace(/^anthropic[./]/, "");
+  // Strip a provider prefix (`anthropic/`, `anthropic.`), lowercase, and
+  // convert version dots to hyphens so dotted MCPJam ids
+  // (`anthropic/claude-haiku-4.5` — the default eval model) match the
+  // hyphenated keys in COMPUTER_USE_TOOL_VERSIONS (`claude-haiku-4-5`).
+  return raw
+    .toLowerCase()
+    .replace(/^anthropic[./]/, "")
+    .replace(/\./g, "-");
 }
 
 /**
