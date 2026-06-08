@@ -1938,6 +1938,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata() {
+    // When the user has supplied a static client_secret we register as a
+    // confidential client; otherwise PKCE-only ("none"). Advertising "none"
+    // with a secret would tell the server to expect no creds at the token
+    // endpoint and the SDK would honor that hint on later exchanges,
+    // silently dropping the secret and producing `invalid_client`.
+    const hasSecret = Boolean(this.customClientSecret);
     return {
       client_name: `MCPJam - ${this.serverName}`,
       client_uri: "https://github.com/mcpjam/inspector",
@@ -1945,7 +1951,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: "none",
+      token_endpoint_auth_method: hasSecret ? "client_secret_basic" : "none",
     };
   }
 
@@ -1965,13 +1971,25 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     if (this.customClientId) {
       if (storedClientInformation) {
         // If there's stored information, merge with custom client credentials
-        const result = {
+        const result: any = {
           ...storedClientInformation,
           client_id: this.customClientId,
         };
         // Add client secret if provided
         if (this.customClientSecret) {
           result.client_secret = this.customClientSecret;
+          // Drop only the specific `"none"` hint inherited from a prior
+          // DCR registration. Our DCR metadata advertises "none" when no
+          // secret is set, and servers echo that back into the stored
+          // client info. The upstream SDK's `selectClientAuthMethod`
+          // honors the field when present, so leaving "none" here would
+          // silently bypass the secret on token exchange and surface as
+          // `invalid_client`. Stored `client_secret_basic` / `_post` are
+          // left intact — they may be a legitimate per-client registration
+          // value, and either still results in the secret being sent.
+          if (result.token_endpoint_auth_method === "none") {
+            delete result.token_endpoint_auth_method;
+          }
         }
         return result;
       } else {
