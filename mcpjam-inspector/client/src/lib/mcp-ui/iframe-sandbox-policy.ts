@@ -21,7 +21,19 @@
  */
 
 import type { McpUiResourcePermissions } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { SEP_1865_PERMISSION_FEATURES } from "@/lib/client-config-v2";
+
+// The 4 SEP-1865 spec permission features (Permissions Policy tokens). Frozen
+// spec list; the canonical definition is `SEP_1865_PERMISSION_FEATURES` in
+// @mcpjam/sdk (host-config/types). Inlined here so this leaf stays
+// dependency-light: the eval browser harness esbuild-bundles this module for
+// the Playwright page, and importing the client `client-config-v2` barrel would
+// drag Vite-coupled asset/env code into that bundle.
+const SEP_1865_PERMISSION_FEATURES = [
+  "camera",
+  "microphone",
+  "geolocation",
+  "clipboard-write",
+] as const;
 
 /**
  * Spec-mandated permissive baseline for the outer iframe `sandbox=` attribute.
