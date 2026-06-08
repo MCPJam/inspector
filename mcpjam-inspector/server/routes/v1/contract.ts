@@ -105,7 +105,7 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {
-  if (code && code in INTERNAL_TO_V1_CODE) {
+  if (code && Object.prototype.hasOwnProperty.call(INTERNAL_TO_V1_CODE, code)) {
     return INTERNAL_TO_V1_CODE[code];
   }
   return "INTERNAL_ERROR";

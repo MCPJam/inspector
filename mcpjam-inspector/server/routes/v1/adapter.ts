@@ -13,6 +13,7 @@
 import type { Context } from "hono";
 import type { z } from "zod";
 import { runEphemeralConnection } from "../web/auth.js";
+import { ErrorCode, WebRouteError } from "../web/errors.js";
 
 /**
  * Build the web-schema body from the v1 path params + the public JSON body.
@@ -25,18 +26,33 @@ export async function synthesizeServerBody(
   const projectId = c.req.param("projectId");
   const serverId = c.req.param("serverId");
   let body: Record<string, unknown> = {};
-  try {
-    const text = await c.req.text();
-    if (text && text.trim()) {
-      const parsed = JSON.parse(text);
-      if (parsed && typeof parsed === "object") {
-        body = parsed as Record<string, unknown>;
-      }
+  const text = await c.req.text();
+  if (text && text.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Match /api/web/* (readJsonBody): a non-empty body that isn't valid
+      // JSON is a request error, not a silently-empty body — otherwise a
+      // caller's malformed `{ uri }` would surface as a confusing
+      // missing-field error instead of "invalid JSON".
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid JSON body"
+      );
     }
-  } catch {
-    // Empty or malformed body — the path params carry the required fields, and
-    // the Zod schema will reject anything else that's actually missing.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Request body must be a JSON object"
+      );
+    }
+    body = parsed as Record<string, unknown>;
   }
+  // Path params win over the body so a caller can't smuggle a different
+  // projectId/serverId than the URL they were authorized against.
   return { ...body, projectId, serverId };
 }
 

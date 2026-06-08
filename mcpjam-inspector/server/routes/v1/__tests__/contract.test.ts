@@ -68,6 +68,9 @@ describe("internal-code -> public-code mapping", () => {
   it("falls back to INTERNAL_ERROR for unknown codes", () => {
     expect(mapInternalCode("SOMETHING_NEW")).toBe("INTERNAL_ERROR");
     expect(mapInternalCode(undefined)).toBe("INTERNAL_ERROR");
+    // Inherited Object.prototype keys must not leak through.
+    expect(mapInternalCode("toString")).toBe("INTERNAL_ERROR");
+    expect(mapInternalCode("hasOwnProperty")).toBe("INTERNAL_ERROR");
   });
 });
 

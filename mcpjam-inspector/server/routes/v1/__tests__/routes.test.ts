@@ -21,9 +21,20 @@ vi.mock("@mcpjam/sdk", async () => {
 });
 
 import v1Routes from "../index.js";
+import { sessionAuthMiddleware } from "../../../middleware/session-auth.js";
 
 function makeApp(): Hono {
   const app = new Hono();
+  app.route("/api/v1", v1Routes);
+  return app;
+}
+
+// Mirrors the production wiring: the global session-auth middleware runs before
+// /api/v1 is mounted. /api/v1 must be bypassed (it does its own bearer auth), or
+// `Authorization: Bearer` callers 401 before ever reaching the v1 router.
+function makeFullStackApp(): Hono {
+  const app = new Hono();
+  app.use("*", sessionAuthMiddleware);
   app.route("/api/v1", v1Routes);
   return app;
 }
@@ -151,5 +162,19 @@ describe("v1 live-op routes", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code?: string };
     expect(body.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("reaches v1 through sessionAuthMiddleware with only Authorization: Bearer", async () => {
+    // No X-MCP-Session-Auth header. Without the /api/v1 bypass in
+    // sessionAuthMiddleware this 401s with "Session token required" before the
+    // v1 router runs; with the bypass it flows through to the doctor handler.
+    const res = await post(
+      makeFullStackApp(),
+      "/api/v1/projects/p1/servers/s1/doctor",
+      { serverName: "Example" },
+      "tok"
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status?: string }).status).toBe("ready");
   });
 });
