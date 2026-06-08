@@ -44,6 +44,7 @@ import {
   type RunDirectChatTurnHandle,
 } from "./direct-chat-turn.js";
 import { buildDirectChatTraceCallbacks } from "./direct-chat-sse-callbacks.js";
+import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   formatProviderOverloadError,
   isProviderOverloadError,
@@ -336,6 +337,16 @@ export function handleLocalOrgChatModel(
     execute: async ({ writer }) => {
       onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
 
+      // Cursor PR-review fix (Medium "Failed turns persist sessions"):
+      // legacy route 3 gated `onConversationComplete` on `!streamErrored`
+      // so a provider error mid-stream skipped chat ingestion (post-error
+      // partials weren't persisted). `runDirectChatTurn.onPersist` fires
+      // regardless of prior error (only gates on abort). Capture the
+      // error state here via `onEngineError` — the engine's parity
+      // callback fires from its `streamText` `onError` branch — and
+      // gate `onConversationComplete` below.
+      let streamErrored = false;
+
       handle = runDirectChatTurn({
         // The org-resolved model is typed as the AI SDK `LanguageModel`
         // union, while `RunDirectChatTurnOptions.llmModel` is typed as
@@ -358,6 +369,15 @@ export function handleLocalOrgChatModel(
         // Shared SSE-callback factory — byte-identical wire output with
         // route 4 (`streamDirectChatWithLiveTrace`).
         traceEvents: buildDirectChatTraceCallbacks(writer),
+        // Cursor PR-review fix (Medium "Failed turns persist sessions"):
+        // capture the engine-error state so `onPersist` below can skip
+        // ingestion on provider errors, matching legacy behavior.
+        // `postLocalUsage` still fires regardless (billing — matches
+        // legacy unconditional usage writeback). Per-turn `onTurnError`
+        // (SSE) still fires through `buildDirectChatTraceCallbacks`.
+        onEngineError: () => {
+          streamErrored = true;
+        },
         // Route-3-only persistence wrapper: fire `onConversationComplete`
         // (chat ingestion) AND post usage back to Convex. Silent-cancel
         // is enforced by `runDirectChatTurn` — `onPersist` only fires on
@@ -390,17 +410,28 @@ export function handleLocalOrgChatModel(
             });
           });
 
-          if (onConversationComplete) {
-            // The engine assembles `responseMessages` from steps; the
-            // legacy wire passed the cumulative `traceHistory`
-            // (initial messages + dedup-appended responses). Reconstruct
-            // that shape so ingestion sees the same history snapshot.
-            const fullHistory: ModelMessage[] = [
-              ...messages,
-              ...event.responseMessages,
-            ];
-            await onConversationComplete(fullHistory, event.turnTrace);
-          }
+          // Cursor PR-review fix (Medium "Failed turns persist sessions"):
+          // skip ingestion when the stream errored mid-flight; matches
+          // legacy `if (!streamErrored)` gate at the old
+          // `onConversationComplete` site. Billing already happened
+          // above so the only thing we're suppressing is persistence
+          // of a partial transcript.
+          if (streamErrored || !onConversationComplete) return;
+
+          // Cursor PR-review fix (Medium "History rebuild skips
+          // deduplication"): legacy code did
+          // `appendDedupedModelMessages(traceHistory, responseMessages)`
+          // against the FULL prefix (initial messages + accumulated
+          // responses). The engine dedupes `responseMessages` against
+          // itself across steps; the wrapper now dedupes again against
+          // the initial-messages prefix so messages that overlap by
+          // id / JSON identity don't double-write into the persisted
+          // transcript. Real-world impact is low (AI SDK rarely emits
+          // overlapping content with the prompt prefix), but restores
+          // the legacy defensive-dedup semantics.
+          const fullHistory: ModelMessage[] = [...messages];
+          appendDedupedModelMessages(fullHistory, event.responseMessages);
+          await onConversationComplete(fullHistory, event.turnTrace);
         },
         onPersistError: (err) => {
           logger.warn("[org/local] onFinish ingestion error", {

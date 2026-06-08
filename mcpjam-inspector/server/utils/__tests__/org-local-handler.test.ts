@@ -329,4 +329,127 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
 
     expect(deltas).toEqual(["Hi"]);
   });
+
+  it("does NOT invoke onConversationComplete when the stream errors mid-flight (Cursor PR-review fix)", async () => {
+    // Legacy route 3 gated ingestion on `!streamErrored`. The collapse
+    // dropped that guard; fix wires `onEngineError` -> local flag, and
+    // `onPersist` checks it before forwarding to `onConversationComplete`.
+    // Billing (`postLocalUsage`) still fires — matches legacy unconditional
+    // usage writeback (handled in the postLocalUsage test above).
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }),
+    );
+
+    streamTextMock.mockImplementationOnce((options: any) => {
+      // Engine fires `onError` then `onFinish` for terminal errors
+      // (AI SDK shape: onFinish runs for all terminal outcomes including
+      // finishReason:"error"). The wrapper's `onEngineError` callback
+      // flips `streamErrored = true`; `onPersist` then skips ingestion.
+      queueMicrotask(async () => {
+        await options.onError({ error: new Error("upstream 500") });
+        await options.onFinish({
+          steps: [],
+          totalUsage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+          finishReason: "error",
+          text: "",
+        });
+      });
+      return defaultStreamTextReturn();
+    });
+
+    const onConversationComplete = vi.fn();
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      onConversationComplete,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onConversationComplete).not.toHaveBeenCalled();
+  });
+
+  it("dedups onConversationComplete history against the initial messages prefix (Cursor PR-review fix)", async () => {
+    // Legacy code called `appendDedupedModelMessages(traceHistory,
+    // responseMessages)` against the full prefix; the collapse used
+    // naive `[...messages, ...event.responseMessages]` which could
+    // double-write a message that overlaps the prompt prefix. Fix
+    // restores `appendDedupedModelMessages` against the prefix.
+    // Real-world impact is low (AI SDK rarely emits overlapping
+    // content), but the regression test locks the defensive semantics.
+    const sharedMsg = {
+      role: "user" as const,
+      content: "hi",
+    };
+    const distinctResponse = {
+      role: "assistant" as const,
+      content: "Done",
+    };
+
+    streamTextMock.mockImplementationOnce((options: any) => {
+      queueMicrotask(() => {
+        void options.onFinish({
+          // Engine assembles `responseMessages` from steps. Include the
+          // shared `sharedMsg` (overlaps the prefix) AND a new response.
+          // The wrapper must dedup `sharedMsg` against the prefix while
+          // keeping the new response.
+          steps: [
+            {
+              response: {
+                messages: [sharedMsg, distinctResponse],
+              },
+            },
+          ],
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          finishReason: "stop",
+          text: "Done",
+        });
+      });
+      return defaultStreamTextReturn();
+    });
+
+    const onConversationComplete = vi.fn();
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [sharedMsg] as any,
+      systemPrompt: "s",
+      tools: {} as any,
+      onConversationComplete,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    const fullHistory = onConversationComplete.mock.calls[0]![0] as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    // Expected shape: [sharedMsg, distinctResponse] — NOT
+    // [sharedMsg, sharedMsg, distinctResponse]. Without the dedup the
+    // shared message would appear twice.
+    expect(fullHistory).toHaveLength(2);
+    expect(fullHistory[0]).toEqual(sharedMsg);
+    expect(fullHistory[1]).toEqual(distinctResponse);
+  });
 });
