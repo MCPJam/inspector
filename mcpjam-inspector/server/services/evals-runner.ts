@@ -1256,7 +1256,6 @@ const runIterationWithAiSdk = async ({
   const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
     current: null,
   };
-  let activeWidgetToolCallId: string | null = null;
   const widgetRenderObservations: WidgetRenderObservation[] = [];
   const ensureWidgetHarness = (): McpAppBrowserHarness => {
     if (!widgetHarnessRef.current) {
@@ -1312,7 +1311,12 @@ const runIterationWithAiSdk = async ({
       ? buildComputerUseTools({
           version: computerUseVersion,
           harness: ensureWidgetHarness(),
-          getActiveToolCallId: () => activeWidgetToolCallId,
+          // The harness keeps at most one widget mounted and drops it on
+          // dismiss / re-render / screenshot failure, so it is the single
+          // source of truth for the active widget — no separate id to track
+          // (and drift) across turns or after a finish_widget dismiss.
+          getActiveToolCallId: () =>
+            widgetHarnessRef.current?.getMountedWidgetId() ?? null,
           viewport: DEFAULT_VIEWPORT,
         })
       : {};
@@ -1327,7 +1331,10 @@ const runIterationWithAiSdk = async ({
     if (
       toolChoice &&
       typeof toolChoice === "object" &&
-      !Object.hasOwn(prepared.allTools, toolChoice.toolName)
+      !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
+      // `computer` / `finish_widget` are merged into the tool map below, so a
+      // forced tool choice naming one of them is valid on Claude drivers.
+      !Object.hasOwn(computerWidgetTools, toolChoice.toolName)
     ) {
       throw new Error(
         `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
@@ -1353,6 +1360,16 @@ const runIterationWithAiSdk = async ({
       if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
+      // Browser-rendered MCP App eval (PR 5): start each prompt turn with a
+      // clean widget surface. A widget kept mounted by a previous turn must not
+      // bleed into this one — otherwise Computer Use could be advertised (and
+      // `computer` actions routed) against the prior turn's widget before this
+      // turn's own MCP App tool runs.
+      const carriedWidgetId =
+        widgetHarnessRef.current?.getMountedWidgetId() ?? null;
+      if (carriedWidgetId) {
+        await widgetHarnessRef.current!.dismissWidget(carriedWidgetId);
+      }
       // PR 4b invariant (carried from closed #2458, originally PR 3 round 2):
       // push the user prompt to `conversationMessages` BEFORE the driver
       // call so a failed turn still records the prompt in the persisted
@@ -1417,7 +1434,11 @@ const runIterationWithAiSdk = async ({
                 stepIndex: number;
                 defaultToolNames: string[];
               }) =>
-                widgetHarnessRef.current?.hasRenderedWidget()
+                // Gate on the harness's live widget — the SAME source
+                // `getActiveToolCallId` reads — so the tools are only advertised
+                // when a Computer Use action can actually target a mount (avoids
+                // advertising while the active id would resolve to null).
+                widgetHarnessRef.current?.getMountedWidgetId()
                   ? defaultToolNames
                   : defaultToolNames.filter(
                       (n) => n !== "computer" && n !== "finish_widget",
@@ -1459,7 +1480,13 @@ const runIterationWithAiSdk = async ({
           // result in the harness and record a WidgetRenderObservation. Awaited
           // (direct-chat-turn awaits this callback) so a rendered widget is
           // mounted before the next step's Computer Use gate runs.
-          onToolResultChunk: async ({ toolCallId, toolName, output, serverId }) => {
+          onToolResultChunk: async ({
+            toolCallId,
+            toolName,
+            input,
+            output,
+            serverId,
+          }) => {
             if (!serverId) return;
             const meta = mcpClientManager.getAllToolsMetadata(serverId)?.[
               toolName
@@ -1471,6 +1498,9 @@ const runIterationWithAiSdk = async ({
                 toolName,
                 serverId,
                 toolMetadata: meta,
+                // Feed the real tool-call args to the widget shim so the live
+                // render matches what post-turn snapshot capture injects.
+                toolInput: input,
                 output,
                 mcpClientManager,
                 injectOpenAiCompat,
@@ -1478,9 +1508,10 @@ const runIterationWithAiSdk = async ({
                 keepMounted: computerUseVersion !== null,
               });
               widgetRenderObservations.push(obs);
-              if (obs.status === "rendered" && computerUseVersion) {
-                activeWidgetToolCallId = toolCallId;
-              }
+              // No separate active-widget bookkeeping: a `rendered` + kept widget
+              // stays in the harness mount (the single source of truth that the
+              // gate and getActiveToolCallId both read); every other outcome is
+              // already unmounted by renderWidget.
               logger.debug("[evals] widget render observation", {
                 toolName,
                 status: obs.status,

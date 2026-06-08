@@ -111,6 +111,10 @@ export interface DirectChatTurnToolResultChunk {
   stepIndex: number;
   toolCallId: string;
   toolName: string;
+  /** The tool-call arguments (already normalized via `toTraceRecord`). Lets an
+   *  async consumer (the eval render-check) feed the real toolInput into the
+   *  widget shim, matching what post-turn snapshot capture injects. */
+  input: Record<string, unknown>;
   output: unknown;
   serverId: string | undefined;
 }
@@ -507,6 +511,7 @@ export function runDirectChatTurn(
           stepIndex: currentStepIndex,
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
+          input: toTraceRecord(chunk.input),
           output: chunk.output,
           serverId: readToolServerId(tracedTools, chunk.toolName),
         });
