@@ -113,7 +113,7 @@ export interface ComputerImplOutput {
   widgetToolCalls: WidgetToolCall[];
   action: ComputerActionInput;
   elapsedMs: number;
-  /** Harness note (e.g. "budget_exceeded", "no rendered widget"). */
+  /** Harness note (e.g. "step_budget_exceeded", "no_rendered_widget"). */
   note?: string;
 }
 
@@ -235,7 +235,7 @@ export function buildComputerUseTools(
         widgetToolCalls: [],
         action: input,
         elapsedMs: 0,
-        note: "no rendered widget",
+        note: "no_rendered_widget",
       };
     }
     const result = await harness.executeAction({

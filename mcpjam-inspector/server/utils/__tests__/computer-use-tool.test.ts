@@ -255,7 +255,7 @@ describe("buildComputerUseTools", () => {
     );
   });
 
-  it("computer.execute returns 'no rendered widget' when none is active", async () => {
+  it("computer.execute returns 'no_rendered_widget' when none is active", async () => {
     const { harness, executeAction } = stubHarness();
     const tools = buildComputerUseTools({
       version: "20250124",
@@ -265,7 +265,7 @@ describe("buildComputerUseTools", () => {
     });
     const exec = (tools.computer as { execute: Function }).execute;
     const impl = (await exec({ action: "screenshot" }, {})) as ComputerImplOutput;
-    expect(impl.note).toBe("no rendered widget");
+    expect(impl.note).toBe("no_rendered_widget");
     expect(executeAction).not.toHaveBeenCalled();
   });
 
