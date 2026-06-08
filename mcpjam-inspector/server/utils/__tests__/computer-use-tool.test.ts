@@ -50,6 +50,23 @@ describe("resolveComputerUseToolVersion", () => {
     );
   });
 
+  it("normalizes dotted MCPJam version ids to hyphenated map keys", () => {
+    // The default eval model id is dotted (`anthropic/claude-haiku-4.5`); the
+    // map keys are hyphenated, so the dot must normalize or Computer Use is
+    // silently dropped for the default model.
+    expect(resolveComputerUseToolVersion("anthropic/claude-haiku-4.5")).toBe(
+      "20250124",
+    );
+    expect(resolveComputerUseToolVersion("claude-sonnet-4.5")).toBe("20250124");
+    expect(resolveComputerUseToolVersion("anthropic/claude-opus-4.6")).toBe(
+      "20251124",
+    );
+    // dotted + dated suffix still resolves by longest prefix.
+    expect(
+      resolveComputerUseToolVersion("anthropic/claude-haiku-4.5-20251001"),
+    ).toBe("20250124");
+  });
+
   it("returns null for non-Claude / unmapped / empty models", () => {
     expect(resolveComputerUseToolVersion("gpt-4o")).toBeNull();
     expect(resolveComputerUseToolVersion("gemini-2.5-pro")).toBeNull();
