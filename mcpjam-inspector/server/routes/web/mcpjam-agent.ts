@@ -28,6 +28,10 @@ import {
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import {
+  buildExaWebSearchTool,
+  WEB_SEARCH_TOOL_NAME,
+} from "../../utils/built-in-tools/exa-web-search.js";
+import {
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
@@ -98,6 +102,20 @@ mcpjamAgent.post("/", async (c) => {
     );
 
     try {
+      // Bearer is guaranteed by assertBearerToken above; thread it (plus the
+      // project + session) into the web_search built-in tool, whose execute
+      // proxies to the Convex Exa route for billing + the external call.
+      const authHeader = c.req.header("authorization");
+      const builtInTools = authHeader
+        ? {
+            [WEB_SEARCH_TOOL_NAME]: buildExaWebSearchTool({
+              authHeader,
+              projectId: body.projectId,
+              chatSessionId: body.chatSessionId,
+            }),
+          }
+        : undefined;
+
       return await streamWebChatTurn({
         manager,
         prepare: {
@@ -108,6 +126,7 @@ mcpjamAgent.post("/", async (c) => {
           requireToolApproval: body.requireToolApproval,
           respectToolVisibility: body.respectToolVisibility,
           uiMessages: body.messages,
+          builtInTools,
         },
         persist: {
           chatSessionId: body.chatSessionId,
@@ -136,7 +155,7 @@ mcpjamAgent.post("/", async (c) => {
           captureToolSnapshot: false,
         },
         runtime: {
-          authHeader: c.req.header("authorization"),
+          authHeader,
           clientIp: getClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
