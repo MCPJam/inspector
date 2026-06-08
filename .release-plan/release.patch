@@ -1,60 +1,91 @@
-diff --git a/.changeset/sdk-host-config-canonicalize-tightening.md b/.changeset/sdk-host-config-canonicalize-tightening.md
+diff --git a/.changeset/eval-trace-loader-chat-session-guard.md b/.changeset/eval-trace-loader-chat-session-guard.md
 deleted file mode 100644
-index 7bd7375c2..000000000
---- a/.changeset/sdk-host-config-canonicalize-tightening.md
+index b7f845377..000000000
+--- a/.changeset/eval-trace-loader-chat-session-guard.md
 +++ /dev/null
-@@ -1,16 +0,0 @@
+@@ -1,7 +0,0 @@
 ----
--"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
 ----
 -
--SDK: tighten the HostConfig v2 canonicalizer (four follow-up items deferred from #2392). All four ship together as the second-half of the Stage 1 backend consolidation — the backend imports the canonicalizer directly from `@mcpjam/sdk/host-config/internal`, so this PR is the single source of behavior change for both sides.
+-evals: load trace via `chatSessionId` when the legacy `blob` is absent.
 -
--Behavior changes (all on `canonicalizeHostConfigV2` / `computeHostConfigHashV2`):
--
--- **Deep-sort `clientCapabilities` and `hostContext`.** Previously a shallow `sortStringKeys` left nested key order leaking into the canonical hash, so `{ extensions: { ui: { a, b } } }` and `{ extensions: { ui: { b, a } } }` minted distinct rows for identical capability sets. Now both fields go through the same recursive sort already used for `*Override` and `mcpProfile`.
--- **Collapse empty `allowFeatures` to absent.** A user `allowFeatures: {}` (or `{ camera: "*" }` whose only keys are spec-permission features that the canonicalizer drops) now omits the field entirely, matching the sibling `openaiAppsOverrides` collapse and preventing semantic dupes.
--- **Drop `openaiAppsOverrides` when `compatRuntime.openaiApps === false`.** The resolver ignores per-method overrides when the shim isn't injected; letting them affect the hash minted rows that resolved to identical runtime behavior.
--- **Fail-fast on missing `clientCapabilities` / `hostContext`.** The previous `?? {}` coalescing silently merged a writer-bug `undefined` into the empty-cap dedupe pool. Both fields are required on the input type; the canonicalizer now enforces it at the boundary.
--
--Audit confirmed all four items are **hash-neutral for current production data** (15,389 prod hostConfigs rows scanned across the four predicates; 0 hits). The bundled parity fixture was regenerated; `EXPECTED_INPUT_HASH` bumped accordingly. External SDK consumers using the public `Host` builder are unaffected — the canonicalizer is internal-only.
--
--Out of scope: the eight `@mcpjam/sdk` items still tracked elsewhere (Stage 3+ in the macro plan).
-diff --git a/.changeset/stage5-step1-sdk-evals-normalizer.md b/.changeset/stage5-step1-sdk-evals-normalizer.md
+-After the eval→chatSessions unification dropped the legacy blob writer, new iterations are created with `chatSessionId` set and `blob` unset. `useEvalTraceBlob`'s pre-roundtrip guard still required `iteration.blob`, so the backend action was never called and the trace surface rendered "No trace data is available for this run" while tokens/tool counts populated normally. The hook now gates on either source and re-fires when `chatSessionId` resolves.
+diff --git a/.changeset/stage5-step3-sdk-reporter.md b/.changeset/stage5-step3-sdk-reporter.md
 deleted file mode 100644
-index 89eb6c264..000000000
---- a/.changeset/stage5-step1-sdk-evals-normalizer.md
+index 47609b7b8..000000000
+--- a/.changeset/stage5-step3-sdk-reporter.md
 +++ /dev/null
 @@ -1,7 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 ----
 -
--host-config: add `normalizeSdkEvalHostConfigForWire` (Stage 5 helper, `/internal` only).
+-eval reporter: send {hostConfig, hostConfigHash} on /sdk/v1/evals/* when backend advertises `evalsHostConfig` (Stage 5 Step 3).
 -
--Strips runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) so SDK eval reporters and backend ingestion hash byte-identical wire shapes. Accepts either `HostConfigInputV2` or `HostJson` (Host.toJSON()). Reporter wire-send is gated behind backend capability (Step 3, later PR).
+-Reporter probes `GET /sdk/v1/info` lazily (cached per baseUrl, fail-safe to "no capability"). When backend supports it AND iteration host snapshots are homogeneous, sends a normalized + content-hashed host config alongside results. Source order: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Heterogeneous per-iteration snapshots omit the run-level field (per-iteration wire support is a later stage). Old backends are unaffected.
+diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
+index f320891f1..768e56b00 100644
+--- a/mcpjam-inspector/package.json
++++ b/mcpjam-inspector/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "@mcpjam/inspector",
+   "productName": "MCPJam Inspector",
+-  "version": "2.9.4",
++  "version": "2.9.5",
+   "type": "module",
+   "engines": {
+     "node": ">=22.0.0"
+@@ -118,7 +118,7 @@
+     "@hookform/resolvers": "^3.10.0",
+     "@lezer/highlight": "^1.2.3",
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^1.10.1",
++    "@mcpjam/sdk": "^1.13.0",
+     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+     "@modelcontextprotocol/ext-apps": "^1.7.2",
+     "@ngrok/ngrok": "^1.6.0",
 diff --git a/package-lock.json b/package-lock.json
-index 5252980ee..d4d7ae4d7 100644
+index 093c67c8a..5b55a93cd 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -36114,7 +36114,7 @@
+@@ -289,7 +289,7 @@
+     },
+     "mcpjam-inspector": {
+       "name": "@mcpjam/inspector",
+-      "version": "2.9.4",
++      "version": "2.9.5",
+       "license": "Apache-2.0",
+       "dependencies": {
+         "@ai-sdk/anthropic": "^3.0.36",
+@@ -317,7 +317,7 @@
+         "@hookform/resolvers": "^3.10.0",
+         "@lezer/highlight": "^1.2.3",
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^1.10.1",
++        "@mcpjam/sdk": "^1.13.0",
+         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+         "@modelcontextprotocol/ext-apps": "^1.7.2",
+         "@ngrok/ngrok": "^1.6.0",
+@@ -36112,7 +36112,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.11.0",
-+      "version": "1.12.0",
+-      "version": "1.12.0",
++      "version": "1.13.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/anthropic": "^2.0.17",
 diff --git a/sdk/package.json b/sdk/package.json
-index 0d3bd2a14..e009b8410 100644
+index e009b8410..b4cb0bd79 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.11.0",
-+  "version": "1.12.0",
+-  "version": "1.12.0",
++  "version": "1.13.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
