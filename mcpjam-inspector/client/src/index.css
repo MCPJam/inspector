@@ -361,6 +361,60 @@
   will-change: transform;
 }
 
+/* MCPJam thinking indicator — three primary dots in a staggered bounce
+   wave. Uses `--primary` for fill/glow so light/dark themes stay on-brand. */
+@keyframes mcpjam-mark-dot-wave {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0) scale(0.88);
+    opacity: 0.55;
+  }
+
+  40% {
+    transform: translateY(-2px) scale(1);
+    opacity: 1;
+  }
+}
+
+.mcpjam-mark-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 1.25rem;
+}
+
+.mcpjam-mark-indicator__dot {
+  display: inline-block;
+  height: 0.4375rem;
+  width: 0.4375rem;
+  border-radius: 9999px;
+  animation: mcpjam-mark-dot-wave 1.25s ease-in-out infinite;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.mcpjam-mark-indicator__dot--1 {
+  animation-delay: 0ms;
+}
+
+.mcpjam-mark-indicator__dot--2 {
+  animation-delay: 160ms;
+}
+
+.mcpjam-mark-indicator__dot--3 {
+  animation-delay: 320ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mcpjam-mark-indicator__dot {
+    animation: thinking-dot-pulse 1.5s ease-in-out infinite;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .claude-loading-indicator__stage {
   isolation: isolate;
 }

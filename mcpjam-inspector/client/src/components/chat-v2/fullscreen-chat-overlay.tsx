@@ -20,8 +20,11 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
   LoadingIndicatorContent,
   useResolvedHostStyleForIndicator,
+  usesClaudeInlineStreamingFooter,
+  usesMcpjamInlineStreamingFooter,
 } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
+import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
 import {
   type AnyPart,
   getRenderableConversationMessages,
@@ -244,18 +247,26 @@ function MessageBubble({
   text,
   isUser,
   claudeFooterMode = "none",
+  mcpjamFooterActive = false,
 }: {
   text: string;
   isUser: boolean;
   claudeFooterMode?: "none" | "animated" | "static";
+  mcpjamFooterActive?: boolean;
 }) {
   const showClaudeFooter = !isUser && claudeFooterMode !== "none";
+  const showMcpjamFooter = !isUser && mcpjamFooterActive;
 
   return (
     <div
       className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
     >
-      <div className={cn("max-w-[85%]", showClaudeFooter && "space-y-3")}>
+      <div
+        className={cn(
+          "max-w-[85%]",
+          (showClaudeFooter || showMcpjamFooter) && "space-y-3",
+        )}
+      >
         <div
           className={cn(
             "rounded-2xl px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
@@ -266,6 +277,11 @@ function MessageBubble({
         >
           {isUser ? text : <TextPart text={text} role="assistant" />}
         </div>
+        {showMcpjamFooter ? (
+          <div data-testid="fullscreen-mcpjam-footer" className="pl-1">
+            <MCPJamMarkIndicator />
+          </div>
+        ) : null}
         {showClaudeFooter ? (
           <div
             data-testid={`fullscreen-claude-footer-${claudeFooterMode}`}
@@ -283,17 +299,30 @@ function ToolMessageEntry({
   part,
   chatSessionId,
   claudeFooterMode = "none",
+  mcpjamFooterActive = false,
 }: {
   part: FullscreenToolPart;
   chatSessionId?: string;
   claudeFooterMode?: "none" | "animated" | "static";
+  mcpjamFooterActive?: boolean;
 }) {
   const showClaudeFooter = claudeFooterMode !== "none";
+  const showMcpjamFooter = mcpjamFooterActive;
 
   return (
     <div className="flex w-full justify-start">
-      <div className={cn("w-full", showClaudeFooter && "space-y-3")}>
+      <div
+        className={cn(
+          "w-full",
+          (showClaudeFooter || showMcpjamFooter) && "space-y-3",
+        )}
+      >
         <ToolPart part={part} chatSessionId={chatSessionId} />
+        {showMcpjamFooter ? (
+          <div data-testid="fullscreen-mcpjam-footer" className="pl-1">
+            <MCPJamMarkIndicator />
+          </div>
+        ) : null}
         {showClaudeFooter ? (
           <div
             data-testid={`fullscreen-claude-footer-${claudeFooterMode}`}
@@ -375,12 +404,12 @@ function MessageList({
   const resolvedIndicatorHostStyle =
     useResolvedHostStyleForIndicator(modelProvider);
   const hasBrandIndicator = resolvedIndicatorHostStyle !== null;
-  // Claude paints its mark inline beneath the last assistant bubble
-  // ("footer" treatment); other hosts use the standalone row only.
-  // Resolve through the provider-aware helper so Direct Chat (no chatbox
-  // host context) still gets the footer when model.provider is Anthropic.
-  const isClaudeFamily =
-    getChatboxHostFamily(resolvedIndicatorHostStyle) === "claude";
+  const isClaudeFamily = usesClaudeInlineStreamingFooter(
+    resolvedIndicatorHostStyle,
+  );
+  const isMcpjamHost = usesMcpjamInlineStreamingFooter(
+    resolvedIndicatorHostStyle,
+  );
 
   const visibleEntries = getVisibleMessageEntries(messages);
   const visibleMessageScrollKey = visibleEntries
@@ -411,20 +440,24 @@ function MessageList({
       <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
         {visibleEntries.map((entry) => {
           const message = entry.message;
-          const claudeFooterMode =
-            isClaudeFamily &&
+          const isLatestAssistantEntry =
             message.role === "assistant" &&
-            entry.key === lastVisibleEntry?.key
+            entry.key === lastVisibleEntry?.key;
+          const claudeFooterMode =
+            isClaudeFamily && isLatestAssistantEntry
               ? isThinking
                 ? "animated"
                 : "static"
               : "none";
+          const mcpjamFooterActive =
+            isMcpjamHost && isLatestAssistantEntry && isThinking;
           return entry.kind === "tool" ? (
             <ToolMessageEntry
               key={entry.key}
               part={entry.part}
               chatSessionId={chatSessionId}
               claudeFooterMode={claudeFooterMode}
+              mcpjamFooterActive={mcpjamFooterActive}
             />
           ) : (
             <MessageBubble
@@ -432,6 +465,7 @@ function MessageList({
               text={entry.text}
               isUser={message.role === "user"}
               claudeFooterMode={claudeFooterMode}
+              mcpjamFooterActive={mcpjamFooterActive}
             />
           );
         })}

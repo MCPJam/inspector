@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { LoadingIndicatorContent } from "../shared/loading-indicator-content";
+import {
+  LoadingIndicatorContent,
+  usesClaudeInlineStreamingFooter,
+  usesMcpjamInlineStreamingFooter,
+} from "../shared/loading-indicator-content";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 
@@ -109,6 +113,19 @@ describe("LoadingIndicatorContent", () => {
     expect(screen.getByText("Thinking")).toBeInTheDocument();
   });
 
+  it("renders the MCPJam dot indicator for MCPJam-style chatbox hosts", () => {
+    render(
+      <ChatboxHostStyleProvider value="mcpjam">
+        <LoadingIndicatorContent />
+      </ChatboxHostStyleProvider>,
+    );
+
+    expect(screen.getByTestId("loading-indicator-mcpjam")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-claude"),
+    ).not.toBeInTheDocument();
+  });
+
   it("prefers the chatbox host context over the model provider", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
@@ -117,5 +134,14 @@ describe("LoadingIndicatorContent", () => {
     );
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
     expect(screen.queryByTestId("loading-indicator-dot")).not.toBeInTheDocument();
+  });
+});
+
+describe("inline streaming footer host helpers", () => {
+  it("treats Claude as a Claude-footer host but not MCPJam", () => {
+    expect(usesClaudeInlineStreamingFooter("claude")).toBe(true);
+    expect(usesClaudeInlineStreamingFooter("mcpjam")).toBe(false);
+    expect(usesMcpjamInlineStreamingFooter("mcpjam")).toBe(true);
+    expect(usesMcpjamInlineStreamingFooter("claude")).toBe(false);
   });
 });
