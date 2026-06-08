@@ -186,7 +186,10 @@ export function registerPublicApiTools(
       "Run health diagnostics (probe, connect, initialize, capabilities) against a hosted MCP server.",
     inputSchema: serverScope,
     outputSchema: resourceOutputSchema,
-    annotations: READ_ONLY,
+    // No readOnlyHint: runHostedDoctor opens a live MCP connection and may
+    // record doctor telemetry / RPC logs as a side effect. The MCP spec
+    // defines readOnlyHint as "does not modify its environment" — an honest
+    // absence beats a misleading hint a planner might trust.
     run: (args, client) =>
       client.post(
         "inspector",
@@ -201,7 +204,10 @@ export function registerPublicApiTools(
       "Connect to a hosted MCP server and capture an inspection snapshot.",
     inputSchema: serverScope,
     outputSchema: resourceOutputSchema,
-    annotations: READ_ONLY,
+    // No readOnlyHint: validateServerCore fire-and-forgets a
+    // persistHostedConnectInspection write so the snapshot lands on the
+    // project's serverInspections. That's an intentional side effect (port
+    // of #1731's use-inspection-coordinator), so the tool isn't read-only.
     run: (args, client) =>
       client.post(
         "inspector",
