@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
+import v1Routes from "./routes/v1/index.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -233,6 +234,26 @@ export function createHonoApp() {
     );
   }
   app.route("/api/web", webRoutes);
+
+  // Hosted public API (v1). Same 1MB JSON cap as /api/web; the canonical
+  // resource-oriented routes wrap the same core helpers and emit the v1
+  // envelope. Read-only diagnostics first; mutating ops land behind the
+  // X-MCPJam-Approval flow in a follow-up.
+  app.use(
+    "/api/v1/*",
+    bodyLimit({
+      maxSize: 1024 * 1024,
+      onError: (c) =>
+        c.json(
+          {
+            code: "VALIDATION_ERROR",
+            message: "Request body exceeds 1MB limit",
+          },
+          400,
+        ),
+    }),
+  );
+  app.route("/api/v1", v1Routes);
 
   // Health check
   app.get("/health", (c) => {
