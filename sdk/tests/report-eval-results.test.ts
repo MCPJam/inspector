@@ -775,6 +775,32 @@ describe("reportEvalResults", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not retry billing-limit errors after message normalization", async () => {
+    const convexError =
+      'Uncaught ConvexError: {"code":"billing_limit_reached","message":"Team plan billing limit reached.","limit":"someOtherLimit","gateKey":"someOtherLimit"}';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(errorResponse(500, convexError));
+    global.fetch = fetchMock as any;
+
+    await expect(
+      reportEvalResults({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "quota-failure",
+        results: [{ caseTitle: "case-1", passed: true }],
+      })
+    ).rejects.toMatchObject({
+      message: "Team plan billing limit reached.",
+      attemptCount: 1,
+      code: "EVAL_REPORTING_ERROR",
+      endpoint: "/sdk/v1/evals/report",
+      statusCode: 500,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns null in safe mode when strict is false and captures once", async () => {
     const fetchMock = jest
       .fn()

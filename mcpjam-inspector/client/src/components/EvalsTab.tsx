@@ -146,7 +146,7 @@ function EvalsTabContent({
   });
   const { quota: evalIterationQuota } = useEvalIterationQuota({
     organizationId,
-    enabled: isAuthenticated && Boolean(organizationId),
+    enabled: Boolean(organizationId),
   });
   const evalRunsDisabledReason = useMemo(
     () => getEvalIterationQuotaDisabledReason(evalIterationQuota),

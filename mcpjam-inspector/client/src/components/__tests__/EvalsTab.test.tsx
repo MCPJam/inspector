@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
   isDirectGuest: false,
+  isAuthenticated: true,
+  useQuery: vi.fn(),
   evalIterationQuota: undefined as
     | {
         used: number;
@@ -33,14 +35,11 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
-    isAuthenticated: true,
+    isAuthenticated: mocks.isAuthenticated,
     isLoading: false,
   }),
   useConvex: () => ({ query: vi.fn().mockResolvedValue([]) }),
-  useQuery: (name: unknown) =>
-    name === "billing:getEvalIterationQuota"
-      ? mocks.evalIterationQuota
-      : undefined,
+  useQuery: (...args: unknown[]) => mocks.useQuery(...args),
   useMutation: () => vi.fn().mockResolvedValue({ _id: "stub-id" }),
 }));
 
@@ -245,7 +244,13 @@ describe("EvalsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isDirectGuest = false;
+    mocks.isAuthenticated = true;
     mocks.evalIterationQuota = undefined;
+    mocks.useQuery.mockImplementation((name: unknown) =>
+      name === "billing:getEvalIterationQuota"
+        ? mocks.evalIterationQuota
+        : undefined
+    );
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
@@ -318,6 +323,17 @@ describe("EvalsTab", () => {
         /^Eval iteration limit reached\. Resets /
       ),
     });
+  });
+
+  it("fetches eval iteration quota for guest org sessions", () => {
+    mocks.isAuthenticated = false;
+
+    render(<EvalsTab projectId="ws-1" />);
+
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "billing:getEvalIterationQuota",
+      { organizationId: "org-1" }
+    );
   });
 
   it("shows the generic error fallback when the suites overview query throws", () => {

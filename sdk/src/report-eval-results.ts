@@ -104,11 +104,13 @@ function toEvalReportingError(
   }
 
   const rawMessage = error instanceof Error ? error.message : String(error);
-  const { message } = normalizeReportingErrorMessage(rawMessage);
+  const { message, isBillingLimitReached } =
+    normalizeReportingErrorMessage(rawMessage);
   return new EvalReportingError(message, {
     attemptCount,
     cause: error,
     endpoint,
+    isBillingLimitReached,
     statusCode,
   });
 }
@@ -237,6 +239,12 @@ function isBillingLimitReachedError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
+  if (
+    error instanceof EvalReportingError &&
+    error.isBillingLimitReached
+  ) {
+    return true;
+  }
   return (
     error.message.startsWith("Eval iteration limit reached.") ||
     normalizeReportingErrorMessage(error.message).isBillingLimitReached
@@ -345,10 +353,12 @@ async function requestWithRetry<T>(
       if (response.ok) {
         if (responseBody && responseBody.ok === false) {
           const rawMessage = responseBody.error ?? "Unknown SDK evals error";
-          const { message } = normalizeReportingErrorMessage(rawMessage);
+          const { message, isBillingLimitReached } =
+            normalizeReportingErrorMessage(rawMessage);
           throw new EvalReportingError(message, {
             attemptCount: attempt + 1,
             endpoint: path,
+            isBillingLimitReached,
             statusCode: response.status,
           });
         }
@@ -372,6 +382,7 @@ async function requestWithRetry<T>(
       throw new EvalReportingError(message, {
         attemptCount: attempt + 1,
         endpoint: path,
+        isBillingLimitReached,
         statusCode: response.status,
       });
     } catch (error) {
