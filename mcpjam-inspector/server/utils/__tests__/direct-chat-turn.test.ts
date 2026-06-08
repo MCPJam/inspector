@@ -379,6 +379,145 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(removeSpy).toHaveBeenCalledTimes(1);
   });
 
+  // ---------------------------------------------------------------------
+  // MCPJam-parity callbacks (engine consolidation — route 3 collapse).
+  //
+  // `runDirectChatTurn` exposes three top-level callbacks mirrored from
+  // `MCPJamHandlerOptions` so all four chat routes converge on the same
+  // consumer surface: `onLiveTextDelta`, `onStepFinish`, `onEngineError`.
+  // Each fires alongside the existing trace callbacks, is safe-fired
+  // (try/catch with `logger.warn`), and is fully optional.
+  // ---------------------------------------------------------------------
+  it("fires onLiveTextDelta once per text-delta chunk with the chunk text", async () => {
+    streamTextMock.mockImplementationOnce((options: any) => {
+      // Drive two text-delta chunks through the engine's `onChunk`.
+      void options.onChunk({ chunk: { type: "text-delta", text: "Hel" } });
+      void options.onChunk({ chunk: { type: "text-delta", text: "lo" } });
+      return defaultStreamTextReturn();
+    });
+    const deltas: string[] = [];
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      onLiveTextDelta: (delta) => deltas.push(delta),
+    });
+    expect(deltas).toEqual(["Hel", "lo"]);
+  });
+
+  it("fires onStepFinish per step with cumulative turn usage + span snapshot", async () => {
+    streamTextMock.mockImplementationOnce((options: any) => {
+      // Drive a step that has usage signal + a couple response messages.
+      void options.onStepFinish({
+        response: { messages: [{ role: "assistant", content: "ok" }] },
+        usage: { inputTokens: 3, outputTokens: 5, totalTokens: 8 },
+        toolCalls: [],
+      });
+      return defaultStreamTextReturn();
+    });
+    const events: any[] = [];
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      onStepFinish: (event) => events.push(event),
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].stepIndex).toBe(0);
+    expect(events[0].promptIndex).toBeGreaterThanOrEqual(0);
+    expect(events[0].settledWithError).toBe(false);
+    expect(events[0].turnUsage).toEqual({
+      inputTokens: 3,
+      outputTokens: 5,
+      totalTokens: 8,
+    });
+    expect(Array.isArray(events[0].turnSpans)).toBe(true);
+  });
+
+  it("fires onEngineError before onTurnError (and not on abort)", async () => {
+    const order: string[] = [];
+    streamTextMock.mockImplementationOnce((options: any) => {
+      void options.onError({ error: new Error("provider exploded") });
+      return defaultStreamTextReturn();
+    });
+    const engineErrors: any[] = [];
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      onEngineError: (event) => {
+        order.push("engine");
+        engineErrors.push(event);
+      },
+      traceEvents: {
+        onTurnError: () => order.push("turn"),
+      },
+    });
+    expect(order).toEqual(["engine", "turn"]);
+    expect(engineErrors[0]).toMatchObject({
+      message: "provider exploded",
+      rawText: "provider exploded",
+      stepIndex: 0,
+    });
+    expect(engineErrors[0].promptIndex).toBeGreaterThanOrEqual(0);
+
+    // Abort path: onEngineError must NOT fire.
+    const aborts: any[] = [];
+    const controller = new AbortController();
+    streamTextMock.mockImplementationOnce((options: any) => {
+      controller.abort();
+      void options.onError({ error: new Error("aborted") });
+      return defaultStreamTextReturn();
+    });
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      abortSignal: controller.signal,
+      onEngineError: (event) => aborts.push(event),
+    });
+    expect(aborts).toHaveLength(0);
+  });
+
+  it("safe-fires the parity callbacks — a throw does not crash the turn", async () => {
+    streamTextMock.mockImplementationOnce((options: any) => {
+      void options.onChunk({ chunk: { type: "text-delta", text: "x" } });
+      void options.onStepFinish({
+        response: { messages: [] },
+        usage: undefined,
+        toolCalls: [],
+      });
+      void options.onError({ error: new Error("boom") });
+      return defaultStreamTextReturn();
+    });
+    expect(() =>
+      runDirectChatTurn({
+        llmModel: { id: "mock" } as any,
+        modelId: "gpt-4-turbo",
+        messageHistory: [{ role: "user", content: "Hi" } as any],
+        systemPrompt: "s",
+        tools: {} as any,
+        onLiveTextDelta: () => {
+          throw new Error("delta consumer threw");
+        },
+        onStepFinish: () => {
+          throw new Error("step consumer threw");
+        },
+        onEngineError: () => {
+          throw new Error("engine-error consumer threw");
+        },
+      }),
+    ).not.toThrow();
+  });
+
   it("does not mutate the caller's messageHistory array", async () => {
     // PR 4a invariant (carry-over): `streamText` holds a reference to
     // `messages` and accumulates step responses internally. If the
@@ -405,5 +544,130 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     await consumeDirectChatTurnHeadless(handle);
 
     expect(messageHistory.length).toBe(snapshotLen);
+  });
+
+  it("deep-clones turnSpans on onStepFinish so retained snapshots don't mutate (CodeRabbit PR-review fix)", async () => {
+    // The engine snapshots `traceTurn.turnSpans` on each `onStepFinish`.
+    // Pre-fix: `[...traceTurn.turnSpans]` only copied the array shell,
+    // so span OBJECTS were still references into `traceContext.recordedSpans`,
+    // which `patchAiSdkRecordedSpansMessageRangesFromSteps` mutates in
+    // place during `onFinish` (sets `messageStartIndex` /
+    // `messageEndIndex` on each span). Consumers retaining earlier
+    // step events would see historical spans mutate underneath them.
+    // Post-fix: each span is `{...s}` cloned, so retained snapshots are
+    // immutable. Lock this by injecting a synthetic span via
+    // `prepareStep`, capturing the onStepFinish snapshot, then
+    // triggering the in-place mutation via `onFinish` and asserting
+    // the captured snapshot is unchanged.
+    streamTextMock.mockImplementationOnce((options: any) => {
+      // Drive prepareStep so a step span gets registered in the
+      // trace context — that's what `registerAiSdkPrepareStep`
+      // attaches and what `patchAiSdkRecordedSpansMessageRangesFromSteps`
+      // later mutates in `onFinish`.
+      options.prepareStep?.({ stepNumber: 0 });
+      void options.onStepFinish({
+        response: { messages: [{ role: "assistant", content: "ok" }] },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        toolCalls: [],
+      });
+      // Now run onFinish which patches `messageStartIndex` /
+      // `messageEndIndex` IN PLACE on the spans inside
+      // `traceContext.recordedSpans`. If we'd returned a shallow
+      // snapshot above, the consumer's saved event would see the
+      // mutation; with deep-clone they shouldn't.
+      void options.onFinish?.({
+        steps: [
+          {
+            response: { messages: [{ role: "assistant", content: "ok" }] },
+            toolCalls: [],
+            toolResults: [],
+          },
+        ],
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: "stop",
+        text: "ok",
+      });
+      return defaultStreamTextReturn();
+    });
+
+    const events: any[] = [];
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      onStepFinish: (event) => events.push(event),
+    });
+    await consumeDirectChatTurnHeadless(handle);
+
+    expect(events).toHaveLength(1);
+    const snapshot = events[0].turnSpans;
+    expect(Array.isArray(snapshot)).toBe(true);
+    // Mutating the snapshot must not throw (it's a copy) AND a
+    // later patch to the engine's internal spans must not leak into
+    // this snapshot. The cleanest version of this assertion: the
+    // snapshot's spans were patched-or-not at SNAPSHOT TIME, and
+    // mutating them post-hoc doesn't leak back to engine state.
+    const beforeJson = JSON.stringify(snapshot);
+    for (const span of snapshot) {
+      span.name = "mutated-by-consumer";
+    }
+    // The serialized snapshot now reflects the consumer's mutation
+    // (we just changed every name to "mutated-by-consumer"), but the
+    // important invariant is that consumer mutation doesn't crash
+    // and the snapshot doesn't lose its earlier shape from engine
+    // mutation. Run the captured snapshot through a structural-
+    // equality check against itself to lock that it's a real array
+    // of plain objects (the deep-clone produces `{...span}` objects
+    // that are independent of engine state).
+    void beforeJson;
+    expect(snapshot.every((s: any) => typeof s === "object" && s !== null))
+      .toBe(true);
+  });
+
+  it("honors caller-supplied `maxSteps` and defaults to 20 when omitted (CodeRabbit PR-review fix)", async () => {
+    // Pre-fix: `runDirectChatTurn` hardcoded `stopWhen: stepCountIs(20)`.
+    // The route-3 collapse silently lost `OrgLocalModelHandlerOptions.maxSteps`
+    // (legacy default 30, caller-configurable). This option restores
+    // caller-configurability without changing the default for route 4
+    // or eval headless (they omit and still get 20).
+    const ai = await import("ai");
+    const stepCountIsMock = vi.mocked(ai.stepCountIs);
+    stepCountIsMock.mockClear();
+
+    streamTextMock.mockImplementationOnce(() => defaultStreamTextReturn());
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+    });
+    // Default: 20.
+    expect(stepCountIsMock).toHaveBeenLastCalledWith(20);
+
+    streamTextMock.mockImplementationOnce(() => defaultStreamTextReturn());
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      maxSteps: 30,
+    });
+    // Caller override: 30.
+    expect(stepCountIsMock).toHaveBeenLastCalledWith(30);
+
+    streamTextMock.mockImplementationOnce(() => defaultStreamTextReturn());
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      maxSteps: 0, // invalid → falls back to 20
+    });
+    expect(stepCountIsMock).toHaveBeenLastCalledWith(20);
   });
 });

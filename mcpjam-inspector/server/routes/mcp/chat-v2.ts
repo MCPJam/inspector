@@ -48,12 +48,6 @@ import {
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
 import {
-  emitRequestPayload,
-  emitTraceSnapshot,
-  writeTraceEvent,
-} from "../../utils/live-chat-trace-stream";
-import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
-import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
@@ -68,6 +62,7 @@ import {
   runDirectChatTurn,
   type RunDirectChatTurnHandle,
 } from "../../utils/direct-chat-turn";
+import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
@@ -225,97 +220,10 @@ function streamDirectChatWithLiveTrace(options: {
             error: error instanceof Error ? error.message : String(error),
           });
         },
-        traceEvents: {
-          onTurnStart: (event) => {
-            writeTraceEvent(writer, {
-              type: "turn_start",
-              turnId: event.turnId,
-              promptIndex: event.promptIndex,
-              startedAtMs: event.startedAtMs,
-            });
-          },
-          onRequestPayload: (event) => {
-            emitRequestPayload(writer, {
-              turnId: event.turnId,
-              promptIndex: event.promptIndex,
-              stepIndex: event.stepIndex,
-              payload: buildResolvedModelRequestPayload({
-                systemPrompt: event.systemPrompt,
-                tools: event.tools,
-                messages: event.messages,
-              }),
-            });
-          },
-          onTextDelta: (event) => {
-            writeTraceEvent(writer, {
-              type: "text_delta",
-              turnId: event.turnId,
-              promptIndex: event.promptIndex,
-              stepIndex: event.stepIndex,
-              delta: event.delta,
-            });
-          },
-          onToolCallChunk: (event) => {
-            writeTraceEvent(writer, {
-              type: "tool_call",
-              turnId: event.turnId,
-              promptIndex: event.promptIndex,
-              stepIndex: event.stepIndex,
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              input: event.input,
-              serverId: event.serverId,
-            });
-          },
-          onToolResultChunk: (event) => {
-            writeTraceEvent(writer, {
-              type: "tool_result",
-              turnId: event.turnId,
-              promptIndex: event.promptIndex,
-              stepIndex: event.stepIndex,
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              output: event.output,
-              serverId: event.serverId,
-            });
-          },
-          onStepSnapshot: ({ traceHistory, tracedTools, traceTurn }) => {
-            emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
-          },
-          onTurnError: ({
-            turnId,
-            promptIndex,
-            stepIndex,
-            errorText,
-            traceTurn,
-            tracedTools,
-            traceHistory,
-          }) => {
-            emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
-            writeTraceEvent(writer, {
-              type: "error",
-              turnId,
-              promptIndex,
-              stepIndex,
-              errorText,
-            });
-            writeTraceEvent(writer, {
-              type: "turn_finish",
-              turnId,
-              promptIndex,
-              usage: traceTurn.turnUsage,
-            });
-          },
-          onTurnFinish: ({ turnId, promptIndex, finishReason, usage }) => {
-            writeTraceEvent(writer, {
-              type: "turn_finish",
-              turnId,
-              promptIndex,
-              finishReason,
-              usage,
-            });
-          },
-        },
+        // Trace-event factory shared with route 3 (local-org BYOK) so
+        // both routes emit byte-identical SSE wire output. See
+        // `server/utils/direct-chat-sse-callbacks.ts`.
+        traceEvents: buildDirectChatTraceCallbacks(writer),
       });
 
       try {

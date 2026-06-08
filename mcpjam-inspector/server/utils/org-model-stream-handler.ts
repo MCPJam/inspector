@@ -9,16 +9,22 @@
  *   points it at /stream/org with the user auth header + providerKey.
  *
  * handleLocalOrgChatModel → local: builds the AI SDK model directly in the
- *   inspector using buildOrgModelFromResolvedConfig, runs streamText with the
- *   same live-trace callbacks as mcp/chat-v2.ts, then posts usage back to
- *   /stream/org/local-usage so Convex can record it.
+ *   inspector using buildOrgModelFromResolvedConfig, then drives
+ *   `runDirectChatTurn` through the shared SSE-callback factory used by
+ *   route 4 (`streamDirectChatWithLiveTrace` in `mcp/chat-v2.ts`). Posts
+ *   usage back to /stream/org/local-usage on successful completion.
+ *
+ *   Engine consolidation route 3 collapse: this handler used to own its
+ *   own inline `streamText({...})` block (~390 LOC) that duplicated the
+ *   driver in `runDirectChatTurn`. The collapse keeps the route-specific
+ *   pieces here (the `requireToolApproval` guard, the local-runtime
+ *   config validation, the `postLocalUsage` writeback) and delegates
+ *   streaming + trace + persistence to the shared engine.
  */
 
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
-  streamText,
-  stepCountIs,
   type ToolSet,
   type UIMessageChunk,
 } from "ai";
@@ -33,52 +39,22 @@ import {
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
+import {
+  runDirectChatTurn,
+  type RunDirectChatTurnHandle,
+} from "./direct-chat-turn.js";
+import { buildDirectChatTraceCallbacks } from "./direct-chat-sse-callbacks.js";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
-import {
-  createAiSdkEvalTraceContext,
-  emitAiSdkOnStepFinish,
-  finalizeAiSdkTraceOnFailure,
-  patchAiSdkRecordedSpansMessageRangesFromSteps,
-  registerAiSdkPrepareStep,
-  wrapToolSetForEvalTrace,
-} from "../services/evals/eval-trace-capture.js";
-import {
-  emitRequestPayload,
-  emitTraceSnapshot,
-  generateLiveTraceTurnId,
-  getPromptIndex,
-  getPromptMessageStartIndex,
-  readToolServerId,
-  setToolSpanMessageRangesFromResults,
-  toTraceRecord,
-  writeTraceEvent,
-} from "./live-chat-trace-stream.js";
-import {
-  buildResolvedModelRequestPayload,
-  normalizeSystemPromptForProvider,
-} from "./model-request-payload.js";
 import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "./provider-error-normalization.js";
-import {
-  mergeLiveChatTraceUsage,
-  type LiveChatTraceUsage,
-} from "@/shared/live-chat-trace";
+import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
-  commitNewlyLoaded,
-  gateToolsToActiveSubset,
-  resolveActiveToolNames,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
-
-// Mirror DEFAULT_MAX_STEPS in mcpjam-stream-handler. Local org BYOK uses
-// the AI SDK's `stepCountIs` instead of a hand-rolled loop, but the
-// per-turn ceiling should match so a user doesn't see fewer steps just
-// because they routed through a local provider.
-const DEFAULT_MAX_STEPS_LOCAL_ORG = 30;
 
 export interface OrgModelHandlerOptions {
   projectId: string;
@@ -153,58 +129,6 @@ export interface OrgModelHandlerOptions {
 // ---------------------------------------------------------------------------
 // Helpers shared between local and hosted handlers
 // ---------------------------------------------------------------------------
-
-function toLiveChatTraceUsageLocal(
-  usage:
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-      }
-    | null
-    | undefined
-): LiveChatTraceUsage | undefined {
-  if (!usage) return undefined;
-  const next: LiveChatTraceUsage = {};
-  if (typeof usage.inputTokens === "number")
-    next.inputTokens = usage.inputTokens;
-  if (typeof usage.outputTokens === "number")
-    next.outputTokens = usage.outputTokens;
-  if (typeof usage.totalTokens === "number")
-    next.totalTokens = usage.totalTokens;
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
-function safelyEmitLiveTextDelta(
-  onLiveTextDelta: ((delta: string) => void) | undefined,
-  delta: string
-) {
-  if (!onLiveTextDelta) return;
-  try {
-    void Promise.resolve(onLiveTextDelta(delta)).catch((error) => {
-      logger.warn("[org/local] onLiveTextDelta callback failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  } catch (error) {
-    logger.warn("[org/local] onLiveTextDelta callback failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-function collectStepToolCallIdsLocal(
-  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined
-): Set<string> {
-  const ids = new Set<string>();
-  if (!Array.isArray(toolCalls)) return ids;
-  for (const tc of toolCalls) {
-    if (typeof tc?.toolCallId === "string" && tc.toolCallId.length > 0) {
-      ids.add(tc.toolCallId);
-    }
-  }
-  return ids;
-}
 
 function formatLocalStreamError(error: unknown): string {
   if (error instanceof OrgProviderConfigError) {
@@ -372,50 +296,39 @@ export function handleLocalOrgChatModel(
     return createUIMessageStreamResponse({ stream });
   }
 
-  const traceHistory = [...messages];
-  const initialMessageHistoryLength = messages.length;
-  const traceTurn = {
-    turnId: generateLiveTraceTurnId(),
-    promptIndex: getPromptIndex(messages),
-    promptMessageStartIndex: getPromptMessageStartIndex(messages),
-    turnStartedAt: Date.now(),
-    turnSpans: [] as Awaited<
-      ReturnType<typeof createAiSdkEvalTraceContext>
-    >["recordedSpans"],
-    turnUsage: undefined as LiveChatTraceUsage | undefined,
-  };
-  const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
-  const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
-  let currentStepIndex = 0;
-  let turnFinished = false;
-  let streamErrored = false;
-  let aborted = false;
+  // `maxSteps`: legacy route 3 defaulted to 30 + accepted caller
+  // override. CodeRabbit PR-review fix (Major "Do not silently drop
+  // maxSteps"): thread `options.maxSteps ?? 30` through
+  // `RunDirectChatTurnOptions.maxSteps` so the wrapper honors the
+  // caller-supplied ceiling AND preserves the legacy default. Route 4
+  // and eval headless still get the engine default (20) because they
+  // omit the option.
   const resolvedMaxSteps =
     typeof options.maxSteps === "number" &&
     Number.isFinite(options.maxSteps) &&
     options.maxSteps > 0
       ? Math.floor(options.maxSteps)
-      : DEFAULT_MAX_STEPS_LOCAL_ORG;
+      : 30;
 
-  // Mark `aborted` as soon as the inbound signal fires so the
-  // onFinish/onError branches below can gate their side effects without
-  // racing against the SDK's own abort propagation.
-  if (options.abortSignal) {
-    if (options.abortSignal.aborted) {
-      aborted = true;
-    } else {
-      options.abortSignal.addEventListener(
-        "abort",
-        () => {
-          aborted = true;
-        },
-        { once: true }
-      );
-    }
-  }
+  // Declared before `createUIMessageStream` so the top-level `onError`
+  // (which can fire before `execute` runs) can read it; assigned inside
+  // `execute` once the engine is configured. Mirrors the route-4 pattern
+  // in `streamDirectChatWithLiveTrace`.
+  let handle: RunDirectChatTurnHandle | undefined;
 
   const stream = createUIMessageStream({
     onError: (error) => {
+      // Silent-cancel invariant — match route 4: abort either reads from
+      // the inbound signal directly or from the engine's `isAborted`. A
+      // non-AbortError that arrives after the signal flipped is still
+      // suppressed because the downstream controller is being torn down.
+      if (
+        options.abortSignal?.aborted ||
+        handle?.isAborted() ||
+        isAbortError(error)
+      ) {
+        return "";
+      }
       logger.error("[org/local] stream error", error);
       return formatLocalStreamError(error);
     },
@@ -425,225 +338,68 @@ export function handleLocalOrgChatModel(
     execute: async ({ writer }) => {
       onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
 
-      writeTraceEvent(writer, {
-        type: "turn_start",
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        startedAtMs: traceTurn.turnStartedAt,
-      });
+      // Cursor PR-review fix (Medium "Failed turns persist sessions"):
+      // legacy route 3 gated `onConversationComplete` on `!streamErrored`
+      // so a provider error mid-stream skipped chat ingestion (post-error
+      // partials weren't persisted). `runDirectChatTurn.onPersist` fires
+      // regardless of prior error (only gates on abort). Capture the
+      // error state here via `onEngineError` — the engine's parity
+      // callback fires from its `streamText` `onError` branch — and
+      // gate `onConversationComplete` below.
+      let streamErrored = false;
 
-      emitRequestPayload(writer, {
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        stepIndex: 0,
-        payload: buildResolvedModelRequestPayload({
-          systemPrompt,
-          tools,
-          messages,
-        }),
-      });
-
-      const tracedTools = wrapToolSetForEvalTrace(
-        tools as Record<string, unknown>,
-        traceContext,
-        traceTurn.promptIndex
-      ) as ToolSet;
-
-      const { progressivePlan, discoveryState } = options;
-      // Progressive mode: gate execution to the active subset. See
-      // `gateToolsToActiveSubset` doc + the same wrap in
-      // `routes/mcp/chat-v2.ts` for rationale (defense-in-depth against
-      // hallucinated/remembered out-of-subset tool calls).
-      const executableTools = gateToolsToActiveSubset(
-        tracedTools as Record<string, unknown>,
-        progressivePlan,
-        () => discoveryState,
-      ) as ToolSet;
-      const result = streamText({
-        model: llmModel,
-        messages,
+      handle = runDirectChatTurn({
+        // The org-resolved model is typed as the AI SDK `LanguageModel`
+        // union, while `RunDirectChatTurnOptions.llmModel` is typed as
+        // the narrower `createLlmModel` return (a provider-specific
+        // union). Both reach the same `streamText(model: ...)` slot and
+        // the SDK accepts both at runtime; cast to bridge the typing
+        // gap rather than widen the engine's option shape.
+        llmModel: llmModel as unknown as Parameters<
+          typeof runDirectChatTurn
+        >[0]["llmModel"],
+        modelId,
+        messageHistory: messages,
+        systemPrompt,
         ...(temperature !== undefined ? { temperature } : {}),
-        system: providerSystemPrompt,
-        tools: executableTools,
-        stopWhen: stepCountIs(resolvedMaxSteps),
+        tools,
+        progressivePlan: options.progressivePlan,
+        discoveryState: options.discoveryState,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-        prepareStep: ({ stepNumber }) => {
-          currentStepIndex = stepNumber;
-          registerAiSdkPrepareStep(traceContext, stepNumber, {
-            modelId,
-            promptIndex: traceTurn.promptIndex,
-          });
-          // Progressive discovery: promote tool ids loaded on the prior
-          // step, then narrow `activeTools` to meta + loaded + pending.
-          // Without this, the full ToolSet is exposed every step, defeating
-          // the point of progressive discovery on the local AI SDK path.
-          if (progressivePlan?.enabled && discoveryState) {
-            commitNewlyLoaded(discoveryState);
-            const active = resolveActiveToolNames(
-              progressivePlan,
-              discoveryState,
-            );
-            return { activeTools: active };
-          }
-          return {};
-        },
-        onChunk: async ({ chunk }) => {
-          if (chunk.type === "text-delta") {
-            if (chunk.text) {
-              safelyEmitLiveTextDelta(onLiveTextDelta, chunk.text);
-            }
-            writeTraceEvent(writer, {
-              type: "text_delta",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              stepIndex: currentStepIndex,
-              delta: chunk.text,
-            });
-            return;
-          }
-          if (chunk.type === "tool-call") {
-            writeTraceEvent(writer, {
-              type: "tool_call",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              stepIndex: currentStepIndex,
-              toolCallId: chunk.toolCallId,
-              toolName: chunk.toolName,
-              input: toTraceRecord(chunk.input),
-              serverId: readToolServerId(tracedTools, chunk.toolName),
-            });
-            return;
-          }
-          if (chunk.type === "tool-result") {
-            writeTraceEvent(writer, {
-              type: "tool_result",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              stepIndex: currentStepIndex,
-              toolCallId: chunk.toolCallId,
-              toolName: chunk.toolName,
-              output: chunk.output,
-              serverId: readToolServerId(tracedTools, chunk.toolName),
-            });
-          }
-        },
-        onStepFinish: async (step) => {
-          const responseMessages = Array.isArray(step?.response?.messages)
-            ? (step.response.messages as ModelMessage[])
-            : [];
-          const beforeLength = traceHistory.length;
-          appendDedupedModelMessages(traceHistory, responseMessages);
-          const afterLength = traceHistory.length;
-          const messageStartIndex =
-            afterLength > beforeLength ? beforeLength : undefined;
-          const messageEndIndex =
-            afterLength > beforeLength ? afterLength - 1 : undefined;
-          const stepUsage = toLiveChatTraceUsageLocal(step.usage);
-
-          traceTurn.turnUsage = mergeLiveChatTraceUsage(
-            traceTurn.turnUsage,
-            stepUsage
-          );
-
-          emitAiSdkOnStepFinish(traceContext, Date.now(), {
-            modelId,
-            inputTokens: stepUsage?.inputTokens,
-            outputTokens: stepUsage?.outputTokens,
-            totalTokens: stepUsage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-          });
-
-          setToolSpanMessageRangesFromResults(
-            traceContext.recordedSpans,
-            traceHistory,
-            traceTurn.promptIndex,
-            currentStepIndex,
-            collectStepToolCallIdsLocal(step.toolCalls)
-          );
-
-          traceTurn.turnSpans = [...traceContext.recordedSpans];
-          emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
-        },
-        onError: async ({ error }) => {
-          if (turnFinished) return;
-          // Aborts are not failures — silent-cancel invariant applies
-          // here too: no error chunk, no turn_finish, no fail span.
-          if (aborted || isAbortError(error)) {
-            aborted = true;
-            turnFinished = true;
-            streamErrored = true;
-            return;
-          }
-          const failAt = Date.now();
-          finalizeAiSdkTraceOnFailure(traceContext, failAt, {
-            completedStepCount: currentStepIndex,
-            lastStepEndedAt: traceContext.lastStepClosedEndAt,
-            modelId,
-            promptIndex: traceTurn.promptIndex,
-          });
-          traceTurn.turnSpans = [...traceContext.recordedSpans];
-          emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
-          writeTraceEvent(writer, {
-            type: "error",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            stepIndex: currentStepIndex,
-            errorText: error instanceof Error ? error.message : String(error),
-          });
-          writeTraceEvent(writer, {
-            type: "turn_finish",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            usage: traceTurn.turnUsage,
-          });
+        ...(onLiveTextDelta ? { onLiveTextDelta } : {}),
+        maxSteps: resolvedMaxSteps,
+        // Shared SSE-callback factory — byte-identical wire output with
+        // route 4 (`streamDirectChatWithLiveTrace`).
+        traceEvents: buildDirectChatTraceCallbacks(writer),
+        // Cursor PR-review fix (Medium "Failed turns persist sessions"):
+        // capture the engine-error state so `onPersist` below can skip
+        // ingestion on provider errors, matching legacy behavior.
+        // `postLocalUsage` still fires regardless (billing — matches
+        // legacy unconditional usage writeback). Per-turn `onTurnError`
+        // (SSE) still fires through `buildDirectChatTraceCallbacks`.
+        onEngineError: () => {
           streamErrored = true;
-          turnFinished = true;
         },
-        onFinish: async (event) => {
-          // Silent-cancel invariant for the local org BYOK path: an
-          // aborted turn must not emit turn_finish, post usage to
-          // Convex, or run conversation persistence. `onStreamComplete`
-          // still runs via createUIMessageStream's onFinish below so
-          // per-request resources are released.
-          if (aborted || options.abortSignal?.aborted) {
-            aborted = true;
-            turnFinished = true;
-            return;
-          }
-
-          patchAiSdkRecordedSpansMessageRangesFromSteps(
-            traceContext.recordedSpans,
-            initialMessageHistoryLength,
-            event.steps,
-            traceTurn.promptIndex
-          );
-          traceTurn.turnSpans = [...traceContext.recordedSpans];
-          traceTurn.turnUsage =
-            toLiveChatTraceUsageLocal(event.totalUsage) ?? traceTurn.turnUsage;
-
-          if (!turnFinished) {
-            writeTraceEvent(writer, {
-              type: "turn_finish",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              finishReason: event.finishReason,
-              usage: traceTurn.turnUsage,
-            });
-            turnFinished = true;
-          }
-
+        // Route-3-only persistence wrapper: fire `onConversationComplete`
+        // (chat ingestion) AND post usage back to Convex. Silent-cancel
+        // is enforced by `runDirectChatTurn` — `onPersist` only fires on
+        // non-aborted completion, preserving the legacy `postLocalUsage`
+        // semantics (success only, never on abort).
+        onPersist: async (event) => {
           // Post usage to Convex (best-effort, non-blocking on failure).
+          // Preserves the legacy fire-and-forget behavior so an
+          // ingestion failure can't block the usage writeback or vice
+          // versa.
           postLocalUsage({
             projectId,
             providerKey: provider.providerKey,
             model: modelId,
-            usage: traceTurn.turnUsage,
+            usage: event.usage,
             finishReason: event.finishReason,
             chatSessionId,
             sourceType,
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
+            turnId: event.turnTrace.turnId,
+            promptIndex: event.turnTrace.promptIndex,
             authHeader,
             chatboxId,
             accessVersion,
@@ -656,40 +412,61 @@ export function handleLocalOrgChatModel(
             });
           });
 
-          if (!streamErrored) {
-            try {
-              await onConversationComplete?.(traceHistory, {
-                turnId: traceTurn.turnId,
-                promptIndex: traceTurn.promptIndex,
-                startedAt: traceTurn.turnStartedAt,
-                endedAt: Date.now(),
-                spans: [...traceTurn.turnSpans],
-                usage: traceTurn.turnUsage,
-                finishReason: event.finishReason,
-                modelId,
-              });
-            } catch (err) {
-              logger.warn("[org/local] onFinish ingestion error", {
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }
+          // Cursor PR-review fix (Medium "Failed turns persist sessions"):
+          // skip ingestion when the stream errored mid-flight; matches
+          // legacy `if (!streamErrored)` gate at the old
+          // `onConversationComplete` site. Billing already happened
+          // above so the only thing we're suppressing is persistence
+          // of a partial transcript.
+          if (streamErrored || !onConversationComplete) return;
+
+          // Cursor PR-review fix (Medium "History rebuild skips
+          // deduplication"): legacy code did
+          // `appendDedupedModelMessages(traceHistory, responseMessages)`
+          // against the FULL prefix (initial messages + accumulated
+          // responses). The engine dedupes `responseMessages` against
+          // itself across steps; the wrapper now dedupes again against
+          // the initial-messages prefix so messages that overlap by
+          // id / JSON identity don't double-write into the persisted
+          // transcript. Real-world impact is low (AI SDK rarely emits
+          // overlapping content with the prompt prefix), but restores
+          // the legacy defensive-dedup semantics.
+          const fullHistory: ModelMessage[] = [...messages];
+          appendDedupedModelMessages(fullHistory, event.responseMessages);
+          await onConversationComplete(fullHistory, event.turnTrace);
+        },
+        onPersistError: (err) => {
+          logger.warn("[org/local] onFinish ingestion error", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       });
 
-      for await (const chunk of result.toUIMessageStream({
-        messageMetadata: ({ part }) => {
-          if (part.type === "finish-step") {
-            return {
-              inputTokens: part.usage.inputTokens,
-              outputTokens: part.usage.outputTokens,
-              totalTokens: part.usage.totalTokens,
-            };
-          }
-        },
-        onError: (error) => formatLocalStreamError(error),
-      })) {
-        writer.write(chunk);
+      try {
+        for await (const chunk of handle.result.toUIMessageStream({
+          messageMetadata: ({ part }) => {
+            if (part.type === "finish-step") {
+              return {
+                inputTokens: part.usage.inputTokens,
+                outputTokens: part.usage.outputTokens,
+                totalTokens: part.usage.totalTokens,
+              };
+            }
+          },
+          onError: (error) => {
+            if (handle!.isAborted() || isAbortError(error)) return "";
+            return formatLocalStreamError(error);
+          },
+        })) {
+          writer.write(chunk);
+        }
+      } catch (error) {
+        if (handle.isAborted() || isAbortError(error)) {
+          return;
+        }
+        throw error;
+      } finally {
+        handle.cleanup();
       }
     },
   });
