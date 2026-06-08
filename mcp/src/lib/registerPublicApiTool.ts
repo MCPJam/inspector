@@ -84,14 +84,16 @@ export function registerPublicApiTool<InputSchema extends z.ZodTypeAny>(
 }
 
 function toolSuccess(payload: unknown) {
+  // `payload ?? null` guarantees a defined JSON string even for a null/empty
+  // result, so tool content never carries an undefined `text` field.
   return {
     content: [
-      { type: "text" as const, text: JSON.stringify(payload, null, 2) },
+      { type: "text" as const, text: JSON.stringify(payload ?? null, null, 2) },
     ],
     structuredContent:
       payload && typeof payload === "object"
         ? (payload as Record<string, unknown>)
-        : { value: payload },
+        : { value: payload ?? null },
   };
 }
 

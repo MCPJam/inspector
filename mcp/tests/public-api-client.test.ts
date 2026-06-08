@@ -116,4 +116,18 @@ describe("PublicApiClient", () => {
     expect(error.code).toBe("INTERNAL_ERROR");
     expect(error.status).toBe(502);
   });
+
+  it("raises on a 2xx response carrying a non-JSON body", async () => {
+    mockFetchOnce("<html>not json</html>", { status: 200, json: false });
+    const client = createPublicApiClient(ENV, "tok");
+    const error = await client.get("convex", "/me").catch((e) => e);
+    expect(error).toBeInstanceOf(PublicApiError);
+    expect(error.status).toBe(200);
+  });
+
+  it("returns null (never undefined) on an empty 2xx body", async () => {
+    mockFetchOnce("", { status: 200, json: false });
+    const client = createPublicApiClient(ENV, "tok");
+    expect(await client.get("convex", "/me")).toBeNull();
+  });
 });

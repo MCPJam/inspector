@@ -88,7 +88,8 @@ export function registerPublicApiTools(
       projectId: z.string().min(1).optional(),
       status: z.enum(["active", "archived"]).optional(),
       limit: z.number().int().positive().max(200).optional(),
-      before: z.number().int().optional(),
+      // Opaque cursor: pass the previous page's string nextCursor straight back.
+      before: z.string().min(1).optional(),
     }),
     outputSchema: pageOutputSchema,
     annotations: READ_ONLY,

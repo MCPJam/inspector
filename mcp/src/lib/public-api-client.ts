@@ -165,11 +165,12 @@ export class PublicApiClient {
 
     const text = await res.text();
     let json: any = undefined;
+    let parseFailed = false;
     if (text) {
       try {
         json = JSON.parse(text);
       } catch {
-        // Non-JSON body — surfaced via the status-only error path below.
+        parseFailed = true;
       }
     }
 
@@ -181,11 +182,28 @@ export class PublicApiClient {
           ? json.message
           : `Request to ${path} failed with status ${res.status}`;
       const details =
-        json && typeof json.details === "object" ? json.details : undefined;
+        json &&
+        typeof json.details === "object" &&
+        json.details !== null &&
+        !Array.isArray(json.details)
+          ? json.details
+          : undefined;
       throw new PublicApiError(code, message, res.status, details);
     }
 
-    return json as T;
+    if (parseFailed) {
+      // The v1 surface always returns JSON on success; a non-JSON 2xx body is a
+      // malformed response, not an empty one. Surface it rather than returning
+      // undefined (which tools would stringify into an undefined `text`).
+      throw new PublicApiError(
+        "INTERNAL_ERROR",
+        `Malformed (non-JSON) response from ${path}`,
+        res.status
+      );
+    }
+
+    // Empty 2xx body -> null, never undefined.
+    return (json ?? null) as T;
   }
 }
 
