@@ -3,7 +3,10 @@ import type { ToolSet } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
-import { getModelById } from "@/shared/types";
+// `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
+// (org-model-config.ts) — that helper falls back to BYOK provider parsing
+// when the chatbox modelId isn't in SUPPORTED_MODELS, which is the common
+// case for org-BYOK chatboxes (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
 import {
   handleMCPJamFreeChatModel,
@@ -14,6 +17,7 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import {
+  buildSyntheticModelDefinition,
   resolveSyntheticModelSource,
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
@@ -280,19 +284,12 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     abortSignal,
   } = opts;
 
-  const modelDefinition = getModelById(modelId);
-  if (!modelDefinition) {
-    await tryUpdateRunWithRetry(
-      convexHttpUrl,
-      convexAuthToken,
-      projectId,
-      runId,
-      {},
-      "failed",
-      "unknown-model",
-    );
-    throw new Error(`Unknown modelId for simulation: ${modelId}`);
-  }
+  // Resolve a ModelDefinition for the chatbox modelId. Catalog hits return
+  // unchanged; BYOK shapes (Ollama, custom: providers, OpenRouter-style
+  // ids) get a derived provider so the BYOK dispatch can run. Pre-fix this
+  // was a hard `Unknown modelId for simulation` failure before any BYOK
+  // dispatch ran.
+  const modelDefinition = buildSyntheticModelDefinition(modelId);
 
   let totalSucceeded = 0;
   let totalFailed = 0;

@@ -242,6 +242,15 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const requireToolApproval = runtime.config.requireToolApproval;
     const respectToolVisibility = runtime.config.respectToolVisibility;
     const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
+    // `runtime.config.accessVersion` is the server-resolved value the
+    // chatbox redeem produced (vs the client-supplied `body.accessVersion`,
+    // which the generate-sessions dialog never sends). Use the runtime
+    // value so the runner's /stream/org/resolve and /stream/org body
+    // payloads authorize against the right chatbox version. Falling back
+    // to body.accessVersion keeps the door open for an explicit client
+    // override should the dialog ever start sending one.
+    const accessVersion =
+      runtime.config.accessVersion ?? body.accessVersion;
 
     setImmediate(() => {
       startSimulation({
@@ -261,9 +270,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         // `chatSessions:createWidgetSnapshot` can authenticate against the
         // chatbox path. Without it the Sessions viewer can't render MCP App
         // widgets (e.g. Excalidraw) for synthetic threads.
-        ...(body.accessVersion !== undefined
-          ? { accessVersion: body.accessVersion }
-          : {}),
+        ...(accessVersion !== undefined ? { accessVersion } : {}),
         convexHttpUrl,
         convexAuthToken: bearerToken,
         authHeader,
@@ -279,7 +286,11 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
             {
               accessScope: "chat_v2",
               chatboxId,
-              accessVersion: body.accessVersion,
+              // Same reason as the runner-arg fix above: use the
+              // server-resolved accessVersion (the dialog doesn't send
+              // body.accessVersion) so the manager factory's chatbox
+              // access is authorized against the current version.
+              accessVersion,
               serverNames: selectedServerNames,
             },
           );

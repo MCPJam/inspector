@@ -18,7 +18,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { ModelDefinition } from "@/shared/types";
-import { resolveSyntheticModelSource } from "../org-model-config";
+import {
+  buildSyntheticModelDefinition,
+  resolveSyntheticModelSource,
+} from "../org-model-config";
 
 describe("resolveSyntheticModelSource", () => {
   it("returns `mcpjam` source with no orgRuntime for MCPJam-catalog models", async () => {
@@ -68,5 +71,63 @@ describe("resolveSyntheticModelSource", () => {
         projectId: "proj-1",
       }),
     ).rejects.toThrow(/derive org provider key/i);
+  });
+});
+
+describe("buildSyntheticModelDefinition", () => {
+  it("returns the catalog definition unchanged for a SUPPORTED_MODELS id", () => {
+    const result = buildSyntheticModelDefinition("openai/gpt-oss-120b");
+    expect(result.id).toBe("openai/gpt-oss-120b");
+    expect(result.provider).toBe("openai");
+    // Catalog hits carry contextLength and other fields the BYOK fallbacks
+    // can't derive — locking that round-trip stays intact.
+    expect(result.contextLength).toBeDefined();
+  });
+
+  it("parses custom:NAME/... into provider='custom' + customProviderName", () => {
+    const result = buildSyntheticModelDefinition(
+      "custom:my-provider/some-model",
+    );
+    expect(result).toEqual({
+      id: "custom:my-provider/some-model",
+      name: "custom:my-provider/some-model",
+      provider: "custom",
+      customProviderName: "my-provider",
+    });
+  });
+
+  it("derives provider from prefix for non-catalog known prefixes", () => {
+    expect(
+      buildSyntheticModelDefinition("anthropic/claude-3.5-sonnet").provider,
+    ).toBe("anthropic");
+    expect(
+      buildSyntheticModelDefinition("meta-llama/llama-3.1-405b").provider,
+    ).toBe("meta");
+    expect(
+      buildSyntheticModelDefinition("x-ai/grok-4").provider,
+    ).toBe("xai");
+    expect(
+      buildSyntheticModelDefinition("ollama/llama-3:8b").provider,
+    ).toBe("ollama");
+  });
+
+  it("falls back to provider='ollama' for bare ids (no slash, no recognized prefix)", () => {
+    // Catalog never carries bare ids today, so the realistic BYOK case is
+    // an Ollama-style local model stored on a chatbox runtime config.
+    const result = buildSyntheticModelDefinition("llama-3:8b");
+    expect(result).toEqual({
+      id: "llama-3:8b",
+      name: "llama-3:8b",
+      provider: "ollama",
+    });
+  });
+
+  it("falls back to provider='ollama' when the prefix isn't in the catalog map", () => {
+    // Unknown-prefix BYOK ids are vanishingly rare in practice but still
+    // get a sensible default that deriveOrgProviderKey can act on.
+    const result = buildSyntheticModelDefinition(
+      "experimentalprovider/some-model",
+    );
+    expect(result.provider).toBe("ollama");
   });
 });

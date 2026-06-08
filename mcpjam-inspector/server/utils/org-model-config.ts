@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
-import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
+import {
+  getModelById,
+  isMCPJamProvidedModel,
+  type ModelDefinition,
+  type ModelProvider,
+} from "@/shared/types";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import { HOSTED_MODE } from "../config.js";
@@ -734,5 +739,101 @@ export async function resolveSyntheticModelSource(args: {
   return {
     source: orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok",
     orgRuntime,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Synthetic model-definition builder — used by the synthetic runner when
+// the chatbox is on a BYOK model that isn't in the static SUPPORTED_MODELS
+// catalog (Ollama BYOK, custom: providers, OpenRouter-style ids, etc.).
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a model-id prefix to a ModelProvider. The catalog uses
+ * provider/model ids where the prefix is the canonical provider name
+ * with one quirk: `meta-llama/...` lives under provider `meta`, and
+ * `x-ai/...` lives under provider `xai`. Mirrors the catalog entries in
+ * `shared/types.ts::SUPPORTED_MODELS`.
+ */
+const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
+  anthropic: "anthropic",
+  azure: "azure",
+  deepseek: "deepseek",
+  google: "google",
+  "meta-llama": "meta",
+  minimax: "minimax",
+  moonshotai: "moonshotai",
+  openai: "openai",
+  ollama: "ollama",
+  openrouter: "openrouter",
+  qwen: "qwen",
+  mistral: "mistral",
+  "x-ai": "xai",
+  "z-ai": "z-ai",
+};
+
+/**
+ * Build a `ModelDefinition` from a bare modelId string (e.g. the value
+ * `runtime.config.modelId` returns from `fetchChatboxRuntimeConfig`).
+ *
+ * Resolution order:
+ *   1. `getModelById(modelId)` — MCPJam catalog hit returns the full
+ *      definition unchanged (correct provider, contextLength, etc.).
+ *   2. `custom:NAME/...` prefix — provider="custom", customProviderName
+ *      parsed from the segment after `custom:`. Matches the
+ *      `deriveOrgProviderKey` shape for custom providers.
+ *   3. Known catalog-prefix shape (`anthropic/...`, `meta-llama/...`,
+ *      `ollama/...`, etc.) — provider is derived from the prefix via
+ *      ID_PREFIX_TO_PROVIDER.
+ *   4. Bare id with no recognized prefix — fall back to "ollama" since
+ *      bare ids are how Ollama BYOK models are typically stored on
+ *      chatbox runtime configs (no catalog ID uses a bare shape).
+ *
+ * This is **synthetic-runner-specific** — real chat callers always have
+ * a client-supplied ModelDefinition with the provider set. Synthetic
+ * only has `runtime.config.modelId` (the chatbox runtime endpoint
+ * doesn't expose provider today). Hoisting the runner's catalog-only
+ * lookup into a function with BYOK fallbacks makes the previously-fatal
+ * `Unknown modelId for simulation` cases dispatchable.
+ */
+export function buildSyntheticModelDefinition(
+  modelId: string,
+): ModelDefinition {
+  const supported = getModelById(modelId);
+  if (supported) return supported;
+
+  if (modelId.startsWith("custom:")) {
+    const rest = modelId.slice("custom:".length);
+    const customProviderName = rest.split("/")[0];
+    return {
+      id: modelId,
+      name: modelId,
+      provider: "custom",
+      customProviderName: customProviderName || undefined,
+    };
+  }
+
+  const slashIdx = modelId.indexOf("/");
+  if (slashIdx > 0) {
+    const prefix = modelId.slice(0, slashIdx);
+    const provider = ID_PREFIX_TO_PROVIDER[prefix];
+    if (provider) {
+      return {
+        id: modelId,
+        name: modelId,
+        provider,
+      };
+    }
+  }
+
+  // Bare id (no `/`) — Ollama BYOK is the only realistic case today since
+  // no catalog id is bare. If the org has a different bare-id provider in
+  // the future, deriveOrgProviderKey will produce "ollama" and the
+  // resolver round-trip will fail with a clearer error than the
+  // previously-fatal catalog-miss path.
+  return {
+    id: modelId,
+    name: modelId,
+    provider: "ollama",
   };
 }
