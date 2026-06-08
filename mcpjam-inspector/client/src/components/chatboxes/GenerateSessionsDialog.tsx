@@ -104,14 +104,31 @@ export function GenerateSessionsDialog({
   }));
   const hasRequiredServers = serversPayload.some((s) => !s.optional);
 
-  // BYOK guard (plan v4 §H). The synthesis worker threads
-  // `synthesisRunId` into the MCPJam `/stream` usage record so
-  // per-run spend lands on `chatboxSynthesisRuns.spendUsdActual`. Org
-  // BYOK chats route through `/stream/org` instead, which isn't yet
-  // wired into the synthesis usage path. The server route is the
-  // load-bearing guard; this is the UI affordance so the button
-  // doesn't hand the user a 400 they have to debug.
+  // BYOK is now supported on synthetic runs — the runner dispatches
+  // org-BYOK models through /stream/org (or local-usage writeback) and
+  // the backend forwarder stamps synthesisRunId onto the resulting
+  // llmUsageRecord. The flag is kept to (a) show a spend-warning
+  // notice so users know provider credits will be consumed, and (b)
+  // render the rough cost preview below.
   const isByokChatbox = !isMCPJamProvidedModel(chatbox.modelId);
+
+  // Rough upper-bound cost preview. There's no per-model cost catalog
+  // on the client today (SUPPORTED_MODELS doesn't expose pricing), so
+  // this uses a coarse average tokens-per-turn × an average per-token
+  // rate. Marked as an estimate in the UI; follow-up should swap in
+  // per-model pricing from a shared catalog once one exists.
+  const ESTIMATED_TOKENS_PER_TURN = 4000; // input + output combined
+  const ESTIMATED_USD_PER_1K_TOKENS = 0.005; // coarse blended midpoint
+  const totalTurnsUpperBound = personaCount * sessionsPerPersona * maxTurns;
+  const estimatedCostUsd =
+    (totalTurnsUpperBound * ESTIMATED_TOKENS_PER_TURN *
+      ESTIMATED_USD_PER_1K_TOKENS) /
+    1000;
+  const formatUsd = (value: number): string => {
+    if (value < 0.01) return "< $0.01";
+    if (value < 1) return `$${value.toFixed(2)}`;
+    return `$${value.toFixed(2)}`;
+  };
 
   async function authHeader(): Promise<Record<string, string>> {
     const token = await getAccessToken();
@@ -369,11 +386,26 @@ export function GenerateSessionsDialog({
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  Synthetic sessions are not yet supported for chatboxes using
-                  your own model keys. Coming soon.
+                  This chatbox uses your organization&apos;s model key.
+                  Running synthetic sessions will consume your provider
+                  credits.
                 </span>
               </div>
             ) : null}
+
+            <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-2">
+                <span>Estimated upper-bound cost</span>
+                <span className="font-medium text-foreground">
+                  {formatUsd(estimatedCostUsd)}
+                </span>
+              </div>
+              <div className="mt-1 text-[11px] opacity-80">
+                {totalTurnsUpperBound} turns ({personaCount} ×{" "}
+                {sessionsPerPersona} × {maxTurns}). Estimate may vary —
+                actuals depend on the model and conversation length.
+              </div>
+            </div>
 
             {chatbox.requireToolApproval ? (
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
@@ -392,7 +424,7 @@ export function GenerateSessionsDialog({
               <Button
                 size="sm"
                 onClick={handleGenerate}
-                disabled={!hasRequiredServers || isByokChatbox || generating}
+                disabled={!hasRequiredServers || generating}
               >
                 {generating ? (
                   <>

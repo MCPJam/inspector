@@ -1,13 +1,24 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ToolSet } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
-import { getModelById } from "@/shared/types";
+import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
 import { logger } from "../../utils/logger.js";
 import {
   handleMCPJamFreeChatModel,
   type MCPJamHandlerOptions,
 } from "../../utils/mcpjam-stream-handler.js";
+import {
+  handleHostedOrgChatModel,
+  handleLocalOrgChatModel,
+} from "../../utils/org-model-stream-handler.js";
+import {
+  deriveOrgProviderKey,
+  isLocalRuntimeEligible,
+  resolveOrgProviderRuntime,
+  type OrgProviderRuntime,
+} from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import {
   persistChatSessionToConvex,
@@ -483,6 +494,11 @@ async function runOneSession(args: {
     let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =
       [];
     let anyTurnPersisted = false;
+    // Captured from the first drained turn so per-session persist calls
+    // (including the empty-history fallback below) stamp the correct
+    // modelSource on chatSessions. The chatbox modelId is pinned at start,
+    // so this is stable across turns.
+    let sessionModelSource: SyntheticModelSource | undefined;
 
     for (let turn = 0; turn < maxTurns; turn++) {
       if (abortSignal?.aborted) return "failed";
@@ -504,9 +520,14 @@ async function runOneSession(args: {
       } as ModelMessage);
       lastTranscript.push({ role: "user", content: next.message });
 
-      const { history: updatedHistory, turnTrace } = await drainAssistantTurn({
+      const {
+        history: updatedHistory,
+        turnTrace,
+        modelSource: turnModelSource,
+      } = await drainAssistantTurn({
         messages: messageHistory,
         modelId: String(modelDefinition.id),
+        modelDefinition,
         chatSessionId,
         sourceType: "chatbox",
         systemPrompt: prepared.enhancedSystemPrompt,
@@ -522,11 +543,18 @@ async function runOneSession(args: {
         projectId,
         authHeader,
         abortSignal,
-        // Tag the /stream usage record with the synthesis run so spend lands
-        // on `chatboxSynthesisRuns.spendUsdActual`. The BYOK guard at the
-        // route ensures we're on the /stream (MCPJam-provided) path here.
-        extraBodyFields: { synthesisRunId: runId },
+        // Threaded into the per-step /stream (or /stream/org) body and the
+        // /stream/org/local-usage writeback so the backend BYOK and
+        // JAM-paid writers can stamp synthesisRunId onto llmUsageRecord
+        // for per-run spend attribution.
+        synthesisRunId: runId,
       });
+      // Track the first turn's modelSource for the per-session persist
+      // calls. modelSource is stable across turns within a session because
+      // chatbox modelId is pinned by `fetchChatboxRuntimeConfig` at start.
+      if (sessionModelSource === undefined) {
+        sessionModelSource = turnModelSource;
+      }
 
       messageHistory = updatedHistory;
       const assistantText = extractAssistantText(updatedHistory);
@@ -559,7 +587,7 @@ async function runOneSession(args: {
       await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
-        modelSource: "mcpjam",
+        modelSource: sessionModelSource ?? "mcpjam",
         authHeader,
         projectId,
         sourceType: "chatbox",
@@ -604,10 +632,18 @@ async function runOneSession(args: {
       // Session ended before any assistant turn completed (persona returned
       // endSession on turn 0, or every turn aborted). Persist once with no
       // trace so the chatSessions row exists and the run summary lines up.
+      // No turn ever ran, so sessionModelSource is undefined. The empty
+      // session is attributed to the originally-resolved chatbox model
+      // class — derive it lazily from modelId so this fallback row's
+      // modelSource matches what real turns would have written.
+      const emptySessionModelSource: SyntheticModelSource =
+        isMCPJamProvidedModel(String(modelDefinition.id))
+          ? "mcpjam"
+          : "byok";
       await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
-        modelSource: "mcpjam",
+        modelSource: emptySessionModelSource,
         authHeader,
         projectId,
         sourceType: "chatbox",
@@ -767,34 +803,158 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
   );
 }
 
+type SyntheticModelSource = "mcpjam" | "byok" | "local_byok";
+
 /**
- * Drive one assistant turn through `handleMCPJamFreeChatModel`, returning the
- * post-turn message history and the per-turn trace captured by
- * `onConversationComplete`. The caller persists each successful turn through
- * the same `chat-ingestion.ts` path Playground uses, so synthetic sessions
- * look identical to normal Playground sessions in the Trace tab and the
- * Convex `chatSessionTurnTraces` table.
+ * Drive one assistant turn through the appropriate model handler:
+ *   - MCPJam-provided modelId → `handleMCPJamFreeChatModel` (JAM-paid)
+ *   - Org-BYOK cloud runtime → `handleHostedOrgChatModel`
+ *   - Org-BYOK local runtime → `handleLocalOrgChatModel`
  *
- * Drains the SSE response body (`createUIMessageStreamResponse` requires the
- * consumer to read the stream before `onFinish` runs).
+ * Mirrors `web-chat-turn.ts`'s three-way dispatch but re-implements the
+ * minimum branch logic here because the shared dispatcher's surface is
+ * UIMessage-shaped and bakes in persist/SSE concerns that synthetic runs
+ * own themselves (per-turn `persistChatSessionToConvex` from
+ * `runOneSession` with `synthetic: true`, `personaId`, `synthesisRunId`).
+ *
+ * User-API-key direct chats are NOT supported on the synthetic path —
+ * there's no "visitor" whose key to use. Such chatboxes are rejected at
+ * the route boundary; this dispatcher's only fallthrough is for an
+ * unexpected `resolveOrgProviderRuntime` shape, which throws.
+ *
+ * Returns the post-turn message history, the per-turn trace captured by
+ * `onConversationComplete`, and the resolved `modelSource` so the caller
+ * can stamp `persistChatSessionToConvex` correctly.
+ *
+ * Drains the SSE response body (`createUIMessageStreamResponse` requires
+ * the consumer to read the stream before `onFinish` runs).
  */
-async function drainAssistantTurn(
+export async function drainAssistantTurn(
   args: Omit<MCPJamHandlerOptions, "onConversationComplete" | "onStreamComplete"> & {
     chatSessionId: string;
+    /** Resolved provider info for org-BYOK dispatch. Falls back to lookup. */
+    modelDefinition: ModelDefinition;
+    /** Synthesis run id — stamped onto BYOK usage records for attribution. */
+    synthesisRunId: string;
   },
-): Promise<{ history: ModelMessage[]; turnTrace: PersistedTurnTrace | undefined }> {
+): Promise<{
+  history: ModelMessage[];
+  turnTrace: PersistedTurnTrace | undefined;
+  modelSource: SyntheticModelSource;
+}> {
   let captured: ModelMessage[] = [];
   let capturedTurnTrace: PersistedTurnTrace | undefined;
-  const { chatSessionId: _omit, ...rest } = args;
-  const options: MCPJamHandlerOptions = {
-    ...rest,
-    approvalMode: "auto-deny",
-    onConversationComplete: (fullHistory, turnTrace) => {
-      captured = [...fullHistory];
-      capturedTurnTrace = turnTrace;
-    },
+  const {
+    chatSessionId: _omitSession,
+    modelDefinition,
+    synthesisRunId,
+    extraBodyFields,
+    ...rest
+  } = args;
+
+  const modelIdStr = String(modelDefinition.id);
+  const onConversationComplete = (
+    fullHistory: ModelMessage[],
+    turnTrace: PersistedTurnTrace,
+  ) => {
+    captured = [...fullHistory];
+    capturedTurnTrace = turnTrace;
   };
-  const response = await handleMCPJamFreeChatModel(options);
+
+  let response: Response;
+  let modelSource: SyntheticModelSource;
+
+  if (isMCPJamProvidedModel(modelIdStr)) {
+    // MCPJam-paid path: synthesisRunId rides via extraBodyFields on /stream
+    // so the JAM-paid forwarder stamps it onto the llmUsageRecord.
+    modelSource = "mcpjam";
+    const options: MCPJamHandlerOptions = {
+      ...rest,
+      approvalMode: "auto-deny",
+      extraBodyFields: { ...(extraBodyFields ?? {}), synthesisRunId },
+      onConversationComplete,
+    };
+    response = await handleMCPJamFreeChatModel(options);
+  } else {
+    // Org-BYOK path: derive providerKey from the model definition, then
+    // resolve the runtime location (cloud vs local) the same way
+    // web-chat-turn does for real chats.
+    const providerKeyResult = deriveOrgProviderKey(modelDefinition);
+    if (!providerKeyResult.ok) {
+      throw new Error(
+        `Synthetic dispatch failed to derive org provider key: ${providerKeyResult.error}`,
+      );
+    }
+    const providerKey = providerKeyResult.key;
+
+    const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
+      ? await resolveOrgProviderRuntime(
+          args.projectId ?? "",
+          providerKey,
+          modelIdStr,
+          {
+            authHeader: args.authHeader,
+            chatboxId: args.chatboxId,
+            accessVersion: args.accessVersion,
+            serverIds: args.selectedServers,
+          },
+        )
+      : { runtimeLocation: "cloud", providerKey };
+
+    if (orgRuntime.runtimeLocation === "local") {
+      modelSource = "local_byok";
+      response = handleLocalOrgChatModel({
+        provider: orgRuntime.provider,
+        projectId: args.projectId ?? "",
+        modelId: modelIdStr,
+        chatSessionId: args.chatSessionId,
+        sourceType: args.sourceType,
+        messages: args.messages,
+        systemPrompt: args.systemPrompt,
+        temperature: args.temperature,
+        tools: args.tools as ToolSet,
+        progressivePlan: args.progressivePlan,
+        discoveryState: args.discoveryState,
+        authHeader: args.authHeader,
+        chatboxId: args.chatboxId,
+        accessVersion: args.accessVersion,
+        selectedServers: args.selectedServers,
+        serverIds: args.selectedServers,
+        requireToolApproval: args.requireToolApproval,
+        onConversationComplete,
+        abortSignal: args.abortSignal,
+        synthesisRunId,
+      });
+    } else {
+      modelSource = "byok";
+      response = await handleHostedOrgChatModel({
+        projectId: args.projectId ?? "",
+        providerKey: orgRuntime.providerKey,
+        modelId: modelIdStr,
+        chatSessionId: args.chatSessionId,
+        sourceType: args.sourceType,
+        messages: args.messages,
+        systemPrompt: args.systemPrompt,
+        temperature: args.temperature,
+        tools: args.tools as ToolSet,
+        progressivePlan: args.progressivePlan,
+        discoveryState: args.discoveryState,
+        authHeader: args.authHeader,
+        chatboxId: args.chatboxId,
+        accessVersion: args.accessVersion,
+        mcpClientManager: args.mcpClientManager,
+        selectedServers: args.selectedServers,
+        serverIds: args.selectedServers,
+        requireToolApproval: args.requireToolApproval,
+        onConversationComplete,
+        abortSignal: args.abortSignal,
+        // Threaded through to /stream/org so the BYOK forwarder stamps
+        // synthesisRunId onto the resulting llmUsageRecord.
+        extraBodyFields: { ...(extraBodyFields ?? {}), synthesisRunId },
+      });
+    }
+  }
+
   if (response.body) {
     const reader = response.body.getReader();
     while (true) {
@@ -805,6 +965,7 @@ async function drainAssistantTurn(
   return {
     history: captured.length > 0 ? captured : args.messages,
     turnTrace: capturedTurnTrace,
+    modelSource,
   };
 }
 
