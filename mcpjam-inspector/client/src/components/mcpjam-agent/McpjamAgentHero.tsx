@@ -14,15 +14,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
-  type KeyboardEvent,
 } from "react";
-import { ArrowUp, MessageSquareText } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { generateId } from "ai";
-import { Button } from "@mcpjam/design-system/button";
-import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { cn } from "@/lib/utils";
+import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
@@ -33,6 +30,7 @@ import {
 const DEFAULT_SUGGESTED_PROMPTS: ReadonlyArray<string> = [
   "How do I run an eval?",
   "What is progressive tool discovery?",
+  "What is cross host testing?",
 ];
 
 export interface McpjamAgentHeroProps {
@@ -79,6 +77,14 @@ export function McpjamAgentHero({
     return subscribeMcpjamAgentSessions(setRecentSessions);
   }, []);
 
+  useEffect(() => {
+    if (!ready) return;
+    const timer = window.setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [ready]);
+
   const latestRecent = useMemo<RecentMcpjamAgentSession | undefined>(
     () => recentSessions[0],
     [recentSessions]
@@ -110,25 +116,6 @@ export function McpjamAgentHero({
     [onSessionStart, posthog, ready, surface]
   );
 
-  const onFormSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      handleSubmit(value, "input");
-    },
-    [handleSubmit, value]
-  );
-
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      // Enter submits, Shift+Enter inserts a newline — matches chat-input.
-      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-        event.preventDefault();
-        handleSubmit(value, "input");
-      }
-    },
-    [handleSubmit, value]
-  );
-
   const onSuggestedClick = useCallback(
     (prompt: string) => {
       posthog?.capture("mcpjam_agent_suggested_prompt", {
@@ -153,54 +140,36 @@ export function McpjamAgentHero({
     onResumeSession(latestRecent.id);
   }, [latestRecent, onResumeSession, posthog, surface]);
 
-  const canSubmit = value.trim().length > 0 && ready;
+  const recentHeader =
+    latestRecent && onResumeSession ? (
+      <button
+        type="button"
+        onClick={onRecentClick}
+        className="group flex w-full cursor-pointer items-center gap-1.5 border-b border-border/60 px-4 py-2 text-[11px] text-muted-foreground transition hover:bg-muted/30 hover:text-foreground"
+      >
+        <MessageSquareText className="size-3 shrink-0" aria-hidden />
+        <span className="font-medium uppercase tracking-[0.06em]">
+          Recent chat
+        </span>
+        <span className="text-muted-foreground/50">·</span>
+        <span className="min-w-0 truncate text-foreground/70 group-hover:text-foreground">
+          {latestRecent.title}
+        </span>
+      </button>
+    ) : null;
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      {latestRecent && onResumeSession && (
-        <button
-          type="button"
-          onClick={onRecentClick}
-          className="group inline-flex w-fit items-center gap-2 rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-xs text-muted-foreground transition hover:border-border hover:bg-muted/70 hover:text-foreground"
-        >
-          <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
-          <span className="font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            Recent chat
-          </span>
-          <span className="text-muted-foreground/60">·</span>
-          <span className="truncate max-w-[24rem] text-foreground/80 group-hover:text-foreground">
-            {latestRecent.title}
-          </span>
-        </button>
-      )}
-
-      <form
-        onSubmit={onFormSubmit}
-        className="relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow"
-      >
-        <TextareaAutosize
-          ref={textareaRef}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={ready ? "Ask anything…" : "Loading…"}
-          minRows={2}
-          maxRows={10}
-          className="min-h-[3.25rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
-        />
-        <div className="flex items-center justify-end gap-2 px-1 pt-1">
-          <Button
-            type="submit"
-            size="sm"
-            disabled={!canSubmit}
-            title={ready ? undefined : "Loading project and model…"}
-            className="h-8 gap-1.5 rounded-full px-3"
-          >
-            <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-            <span>Send</span>
-          </Button>
-        </div>
-      </form>
+    <div className={cn("flex flex-col gap-2.5", className)}>
+      <McpjamAgentComposer
+        value={value}
+        onChange={setValue}
+        onSubmit={() => handleSubmit(value, "input")}
+        ready={ready}
+        loadingMessage="Loading project…"
+        placeholder="Ask anything…"
+        textareaRef={textareaRef}
+        header={recentHeader}
+      />
 
       <div className="flex flex-wrap gap-2">
         {suggestedPrompts.map((prompt) => (
@@ -208,7 +177,7 @@ export function McpjamAgentHero({
             key={prompt}
             type="button"
             onClick={() => onSuggestedClick(prompt)}
-            className="rounded-full border border-border/60 bg-card/40 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-border hover:bg-card hover:text-foreground"
+            className="rounded-full border border-border/60 bg-muted/10 px-3 py-1 text-xs text-muted-foreground transition hover:border-border hover:bg-muted/20 hover:text-foreground"
           >
             {prompt}
           </button>

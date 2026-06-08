@@ -2,27 +2,17 @@ import { useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import {
-  Sparkles,
   Loader2,
   Plus,
-  ArrowUpRight,
   Box,
   Wrench,
   Database,
   MessageSquareText,
   Server,
 } from "lucide-react";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardAction,
-  CardContent,
-} from "@mcpjam/design-system/card";
-import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
 import { useAppNavigate, routePaths } from "@/lib/app-navigation";
+
+const VISIBLE_COUNT = 3;
 
 interface RecommendedServer {
   name: string;
@@ -95,114 +85,68 @@ export function RecommendedServers({
     }
   }
 
+  const visible = servers?.slice(0, VISIBLE_COUNT);
+
   return (
-    <Card className="gap-0 overflow-hidden py-0">
-      <CardHeader className="px-6 pb-5 pt-6">
-        <div className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15">
-          <Sparkles className="size-[18px]" strokeWidth={1.75} />
-        </div>
-        <CardTitle className="mt-3 text-[15px] tracking-[-0.005em]">
-          Recommended servers
-        </CardTitle>
-        <CardDescription className="text-[12.5px]">
-          Hand-picked MCP servers to test with your clients.
-        </CardDescription>
-        <CardAction>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => navigate(routePaths.servers)}
-          >
-            Browse all
-            <ArrowUpRight />
-          </Button>
-        </CardAction>
-      </CardHeader>
+    <section className="rounded-xl border border-border/60">
+      <div className="border-b border-border/60 px-4 py-2">
+        <h2 className="text-[13px] font-medium text-foreground">Recommended servers</h2>
+      </div>
 
-      <div className="border-t border-border/60" />
-
-      <CardContent className="px-3 py-2">
-        {servers === undefined ? (
-          <ul aria-busy="true" aria-label="Loading recommended servers">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <li
-                key={i}
-                className={`flex items-center gap-4 rounded-lg px-3 py-3.5 ${
-                  i === 2 ? "" : "border-b border-border/40"
-                }`}
-              >
-                <div className="size-10 shrink-0 animate-pulse rounded-lg bg-muted" />
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="h-3.5 w-32 animate-pulse rounded-sm bg-muted" />
-                  <div className="h-3 w-48 animate-pulse rounded-sm bg-muted" />
-                </div>
-                <div className="h-8 w-[88px] shrink-0 animate-pulse rounded-md bg-muted" />
-              </li>
-            ))}
-          </ul>
-        ) : servers.length === 0 ? (
-          <div className="px-3 py-10 text-center">
-            <p className="text-sm text-muted-foreground">
-              No recommendations available right now.
-            </p>
-          </div>
-        ) : (
-          <ul>
-            {servers.map((server, i) => {
-              const isConnecting = connectingUrl === server.url;
-              const CategoryIcon = getCategoryIcon(server.category);
-              const isLast = i === servers.length - 1;
-              return (
-                <li
-                  key={server.url}
-                  className={`group flex items-center gap-4 rounded-lg px-3 py-3.5 transition-colors hover:bg-accent/60 ${
-                    isLast ? "" : "border-b border-border/40"
-                  }`}
+      {servers === undefined ? (
+        <ul aria-busy="true" aria-label="Loading recommended servers">
+          {Array.from({ length: VISIBLE_COUNT }).map((_, i) => (
+            <li
+              key={i}
+              className={`flex items-center gap-2.5 px-4 py-2 ${
+                i === VISIBLE_COUNT - 1 ? "" : "border-b border-border/40"
+              }`}
+            >
+              <div className="size-6 shrink-0 animate-pulse rounded bg-muted" />
+              <div className="h-3.5 w-24 animate-pulse rounded-sm bg-muted" />
+            </li>
+          ))}
+        </ul>
+      ) : visible && visible.length > 0 ? (
+        <ul>
+          {visible.map((server, i) => {
+            const isConnecting = connectingUrl === server.url;
+            const CategoryIcon = getCategoryIcon(server.category);
+            const isLast = i === visible.length - 1;
+            return (
+              <li key={server.url} className={isLast ? "" : "border-b border-border/40"}>
+                <button
+                  type="button"
+                  disabled={isConnecting || !projectId}
+                  onClick={() => handleConnect(server)}
+                  className="group flex w-full items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground ring-1 ring-inset ring-border/40">
-                    <CategoryIcon className="size-[18px]" strokeWidth={1.75} />
+                  <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60 text-muted-foreground">
+                    <CategoryIcon className="size-3.5" strokeWidth={1.75} />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-[14px] font-medium tracking-[-0.005em] text-foreground">
-                        {server.name}
-                      </p>
-                      <Badge
-                        variant="secondary"
-                        className="h-5 px-1.5 text-[10.5px] font-medium tracking-wide text-muted-foreground"
-                      >
-                        {server.category}
-                      </Badge>
-                    </div>
-                    <p className="mt-0.5 truncate text-[12.5px] text-muted-foreground">
-                      {server.description}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={isConnecting || !projectId}
-                    onClick={() => handleConnect(server)}
-                  >
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                    {server.name}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition group-hover:text-foreground group-disabled:opacity-50">
                     {isConnecting ? (
-                      <>
-                        <Loader2 className="animate-spin" />
-                        Connecting
-                      </>
+                      <Loader2 className="size-3 animate-spin" />
                     ) : (
                       <>
-                        <Plus />
+                        <Plus className="size-3" />
                         Connect
                       </>
                     )}
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-[11px] text-muted-foreground">
+          No recommendations right now.
+        </p>
+      )}
+    </section>
   );
 }

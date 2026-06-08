@@ -14,6 +14,7 @@ vi.mock("../thread/message-view", () => ({
     message: UIMessage;
     model: ModelDefinition;
     claudeFooterMode?: "none" | "animated" | "static";
+    mcpjamFooterActive?: boolean;
   }) => {
     mockMessageView(props);
     const { message, model } = props;
@@ -418,6 +419,52 @@ describe("TranscriptThread", () => {
       expect.objectContaining({
         message: expect.objectContaining({ id: "user-1" }),
         claudeFooterMode: "none",
+      })
+    );
+  });
+
+  it("attaches the MCPJam dot footer to the latest assistant message while loading", () => {
+    render(
+      <ChatboxHostStyleProvider value="mcpjam">
+        <TranscriptThread
+          {...defaultProps}
+          isLoading={true}
+          lastRenderableMessageId="assistant-1"
+        />
+      </ChatboxHostStyleProvider>
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        claudeFooterMode: "none",
+        mcpjamFooterActive: true,
+      })
+    );
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "user-1" }),
+        mcpjamFooterActive: false,
+      })
+    );
+  });
+
+  it("does not attach a Claude footer to MCPJam host messages", () => {
+    render(
+      <ChatboxHostStyleProvider value="mcpjam">
+        <TranscriptThread
+          {...defaultProps}
+          isLoading={false}
+          lastRenderableMessageId="assistant-1"
+        />
+      </ChatboxHostStyleProvider>
+    );
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ id: "assistant-1" }),
+        claudeFooterMode: "none",
+        mcpjamFooterActive: false,
       })
     );
   });

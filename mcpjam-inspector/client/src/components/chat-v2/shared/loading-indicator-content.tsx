@@ -2,7 +2,10 @@ import {
   useChatboxChatUiOverride,
   useChatboxHostStyle,
 } from "@/contexts/chatbox-client-style-context";
-import { type ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import {
+  getChatboxHostFamily,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-client-style";
 import { getLoadingIndicatorForStyle } from "@/lib/client-styles";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +33,24 @@ export function useResolvedHostStyleForIndicator(
 ): ChatboxHostStyle | null {
   const chatboxHostStyle = useChatboxHostStyle();
   return chatboxHostStyle ?? modelProviderToHostStyle(modelProvider);
+}
+
+/** Claude paints its mark beneath the last assistant bubble while streaming. */
+export function usesClaudeInlineStreamingFooter(
+  hostStyle: ChatboxHostStyle | null,
+): boolean {
+  return (
+    hostStyle != null &&
+    hostStyle !== "mcpjam" &&
+    getChatboxHostFamily(hostStyle) === "claude"
+  );
+}
+
+/** MCPJam uses its own dot indicator in the same footer slot. */
+export function usesMcpjamInlineStreamingFooter(
+  hostStyle: ChatboxHostStyle | null,
+): boolean {
+  return hostStyle === "mcpjam";
 }
 
 /**

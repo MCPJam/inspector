@@ -20,6 +20,7 @@ import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
+import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -62,6 +63,8 @@ interface MessageViewProps {
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
   claudeFooterMode?: ClaudeFooterMode;
+  /** MCPJam host: pulsing dots beneath the streaming assistant bubble. */
+  mcpjamFooterActive?: boolean;
   /**
    * Optional slot rendered below each user message's bubble. The host
    * (ChatTabV2) wires this when it has a persisted chat session, so a
@@ -154,6 +157,7 @@ function areMessageViewPropsEqual(
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.claudeFooterMode === next.claudeFooterMode &&
+    prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
     isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
     prev.showSenderAvatar === next.showSenderAvatar
@@ -187,6 +191,7 @@ function MessageViewImpl({
   interactive = true,
   reasoningDisplayMode = "inline",
   claudeFooterMode = "none",
+  mcpjamFooterActive = false,
   renderUserMessageActions,
   senderAvatar,
   showSenderAvatar = false,
@@ -372,6 +377,14 @@ function MessageViewImpl({
             </div>
           ))}
         </div>
+        {mcpjamFooterActive ? (
+          <div
+            data-testid="mcpjam-message-footer"
+            className="pt-4"
+          >
+            <MCPJamMarkIndicator />
+          </div>
+        ) : null}
         {showClaudeFooter ? (
           <div
             data-testid={`claude-message-footer-${claudeFooterMode}`}

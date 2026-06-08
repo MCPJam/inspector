@@ -6,7 +6,7 @@
  * the flag is off (or still loading).
  */
 import { useCallback } from "react";
-import { Sparkles } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -48,13 +48,14 @@ export function AgentSidePanelTrigger() {
         <Button
           type="button"
           variant="ghost"
-          size="icon"
+          size="sm"
           aria-label="Ask MCPJam"
           aria-pressed={isOpen}
           onClick={onClick}
-          className="h-9 w-9"
+          className="h-9 gap-1.5 px-2.5"
         >
-          <Sparkles className="h-4 w-4" aria-hidden />
+          <MessageCircle className="h-4 w-4" aria-hidden />
+          <span>Ask MCPJam</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">

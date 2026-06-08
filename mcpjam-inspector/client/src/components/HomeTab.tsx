@@ -233,15 +233,6 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
     email: user?.email,
   });
   const greeting = useMemo(() => getGreeting(new Date()), []);
-  const dateLabel = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
 
   if (!organizationId) {
     return (
@@ -296,55 +287,37 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
 
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-8 pb-20 pt-14">
-        {/* Greeting */}
-        <header className="flex flex-col gap-2">
-          <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            {dateLabel}
-          </p>
-          <h1 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[40px]">
-            {greeting},{" "}
-            <span className="font-semibold text-muted-foreground">
-              {firstName}
-            </span>
+      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8 sm:px-8">
+        <header className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
+            {greeting}, {firstName}
           </h1>
+          <OrgStatsStrip
+            memberCount={isLoading ? null : data!.memberCount}
+            projectCount={isLoading ? null : data!.projects.length}
+            totalServerCount={isLoading ? null : data!.totalServerCount}
+            evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
+            toolExecutionCount={toolExecutionCount?.value ?? null}
+            toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
+            messagesSentCount={messagesSentCount?.value ?? null}
+            messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
+          />
         </header>
 
         <McpjamAgentHero
           surface="home"
           onSessionStart={handleSessionStart}
           onResumeSession={handleResumeSession}
-          // The backend route requires `projectId`; without it, submit
-          // would 400. The hero's own model gate runs inside
-          // `useMcpjamAgentSession` on the thread side — the hero itself
-          // doesn't see the model, but `projectId` is the gate that
-          // matters at mint time.
           ready={Boolean(projectId)}
         />
 
-        {/* Slim stats — pills with dot separators */}
-        <OrgStatsStrip
-          memberCount={isLoading ? null : data!.memberCount}
-          projectCount={isLoading ? null : data!.projects.length}
-          totalServerCount={isLoading ? null : data!.totalServerCount}
-          evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
-          toolExecutionCount={toolExecutionCount?.value ?? null}
-          toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
-          messagesSentCount={messagesSentCount?.value ?? null}
-          messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
-        />
-
-        {/* What's new — release feed with hover preview + click-to-expand modal. */}
         <ProductUpdatesRow />
 
-        {/* Hero card */}
-        <RecommendedServers
-          servers={data?.recommendedServers}
-          projectId={projectId}
-        />
-
-        {/* Secondary cards */}
-        <div className="grid gap-5">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <RecommendedServers
+            servers={data?.recommendedServers}
+            projectId={projectId}
+          />
           <RecommendedClients projectId={projectId} />
         </div>
       </div>
