@@ -34,7 +34,7 @@ export function useEvalTraceBlob({
         return;
       }
 
-      if (!iteration?.blob) {
+      if (!iteration?.blob && !iteration?.chatSessionId) {
         setBlob(null);
         setLoading(false);
         setError(null);
@@ -46,9 +46,10 @@ export function useEvalTraceBlob({
       setError(null);
 
       try {
-        // Backend authorizes via the iteration's testSuite and derives the
-        // blob id server-side. We still gate on `iteration.blob` above to
-        // skip the roundtrip for blobless iterations.
+        // Backend authorizes via the iteration's testSuite and resolves the
+        // trace server-side from either the legacy blob or the unified
+        // chatSessions path. Gate skips the roundtrip only when neither
+        // source is present.
         const data = await getBlob({ iterationId: iteration._id });
         if (!cancelled) {
           setBlob(data);
@@ -71,7 +72,7 @@ export function useEvalTraceBlob({
     return () => {
       cancelled = true;
     };
-  }, [enabled, getBlob, iteration?.blob]);
+  }, [enabled, getBlob, iteration?.blob, iteration?.chatSessionId]);
 
   return {
     blob,
