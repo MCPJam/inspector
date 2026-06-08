@@ -1248,6 +1248,63 @@ describe("mcp-oauth", () => {
       ).toBe(false);
     });
 
+    it("drops stored token_endpoint_auth_method when a static client_secret is supplied", async () => {
+      // Regression: when DCR previously registered this server, the stored
+      // client info carries `token_endpoint_auth_method: "none"` (echoed
+      // back from our DCR metadata). On a later attempt the user provides
+      // a static client_id + client_secret. The upstream SDK honors the
+      // stored `"none"` hint and skips client auth on token exchange,
+      // surfacing as `invalid_client` from the server. The fix: when a
+      // static secret is configured, strip the inherited hint so the SDK
+      // auto-picks client_secret_basic / _post from server metadata.
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({
+          client_id: "dcr-registered-id",
+          token_endpoint_auth_method: "none",
+        })
+      );
+
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "static-client-id",
+        "static-client-secret"
+      );
+
+      const info = provider.clientInformation() as Record<string, unknown>;
+      expect(info.client_id).toBe("static-client-id");
+      expect(info.client_secret).toBe("static-client-secret");
+      expect(info).not.toHaveProperty("token_endpoint_auth_method");
+    });
+
+    it("advertises client_secret_basic in clientMetadata when a static secret is configured", async () => {
+      // The DCR metadata advertises `token_endpoint_auth_method`. Hard-coding
+      // "none" while we hold a confidential client secret tells the server
+      // to expect a public (PKCE-only) client and is the root cause of the
+      // stored hint that pollutes later token exchanges.
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const providerNoSecret = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "static-client-id"
+      );
+      expect(providerNoSecret.clientMetadata.token_endpoint_auth_method).toBe(
+        "none"
+      );
+
+      const providerWithSecret = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "static-client-id",
+        "static-client-secret"
+      );
+      expect(
+        providerWithSecret.clientMetadata.token_endpoint_auth_method
+      ).toBe("client_secret_basic");
+    });
+
     it("round-trips discovery state for the matching server URL", async () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const discoveryState = createDiscoveryState();
