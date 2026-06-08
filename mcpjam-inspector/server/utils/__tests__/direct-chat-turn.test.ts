@@ -191,6 +191,35 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(Array.isArray(prepareStepReturn.activeTools)).toBe(true);
   });
 
+  it("narrows the request_payload trace tools via prepareAdvertisedTools (step 0)", () => {
+    streamTextMock.mockReturnValueOnce(defaultStreamTextReturn());
+    let payloadTools: Record<string, unknown> | undefined;
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "system",
+      tools: {
+        search: { description: "s" } as any,
+        computer: { description: "c" } as any,
+        finish_widget: { description: "f" } as any,
+      },
+      // Hide computer/finish_widget at step 0 (no widget rendered yet).
+      prepareAdvertisedTools: ({ defaultToolNames }) =>
+        defaultToolNames.filter(
+          (n) => n !== "computer" && n !== "finish_widget",
+        ),
+      traceEvents: {
+        onRequestPayload: (event) => {
+          payloadTools = event.tools as Record<string, unknown>;
+        },
+      },
+    });
+    // The request_payload trace must reflect the narrowed step-0 advertised set
+    // (regression: previously it emitted the full tools map).
+    expect(payloadTools && Object.keys(payloadTools)).toEqual(["search"]);
+  });
+
   it("flips `isAborted` true when the abort signal fires", async () => {
     // PR 4a invariant (mirrors PR 3 "Abort no longer skips persistence"):
     // `streamText` can swallow AbortError silently. The helper exposes

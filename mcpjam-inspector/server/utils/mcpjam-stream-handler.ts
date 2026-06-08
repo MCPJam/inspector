@@ -76,6 +76,11 @@ function isApprovalFreeMetaToolName(
   return META_TOOL_NAMES.includes(name);
 }
 import { logger } from "./logger";
+import {
+  applyPrepareAdvertisedTools,
+  gateToolsToAdvertisedSubset,
+  type PrepareAdvertisedTools,
+} from "./advertised-tools";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
   mergeLiveChatTraceUsage,
@@ -332,6 +337,20 @@ export interface MCPJamHandlerOptions {
    */
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
   /**
+   * Browser-rendered MCP App eval PR 2 — optional per-step hook that narrows
+   * the *advertised* tool set the model sees this step. Called inside
+   * `processOneStep` after the active tool subset is resolved, with
+   * `{ stepIndex, defaultToolNames }` (the names that would otherwise be
+   * advertised). Returns the subset of names to keep, or `undefined` for "no
+   * narrowing". Names not in `defaultToolNames` are ignored (defense-in-depth:
+   * a caller can't smuggle in a non-advertised tool). A throw is logged and
+   * falls back to the default set. This is *runtime-conditional advertising*
+   * (e.g. hide `computer` / `finish_widget` until a widget has rendered) and
+   * is distinct from progressive discovery (lazy MCP tool catalogs). Chat /
+   * synthetic omit; the eval runner closes over harness state to decide.
+   */
+  prepareAdvertisedTools?: PrepareAdvertisedTools;
+  /**
    * Override the Convex endpoint path for the per-step LLM call.
    * Defaults to "/stream". Org BYOK chat uses "/stream/org".
    */
@@ -435,6 +454,8 @@ interface StepContext {
   // processOneStep, processStream/tool-execution catch, outer
   // agentic-loop catch). Optional.
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
+  // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
+  prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   abortSignal?: AbortSignal;
 }
 
@@ -1657,18 +1678,41 @@ async function processOneStep(
     onToolResult,
     // PR 5b-followup-2 structured-error callback.
     onEngineError,
+    // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
+    prepareAdvertisedTools,
   } = ctx;
 
   // Pick the active tool subset for this step. In non-progressive mode
   // (`progressivePlan` undefined or plan.enabled === false) this collapses
   // to the full list and matches prior behavior. In progressive mode the
   // model only sees meta-tools + loaded + pending-approval + newly-loaded.
-  const activeToolDefs: ToolDefinition[] =
+  let activeToolDefs: ToolDefinition[] =
     progressivePlan && progressivePlan.enabled && discoveryState
       ? resolveActiveToolNames(progressivePlan, discoveryState)
           .map((name) => toolDefsByName.get(name))
           .filter((def): def is ToolDefinition => def !== undefined)
       : toolDefs;
+
+  // Browser-rendered MCP App eval PR 2: runtime-conditional advertised-tool
+  // narrowing. The hook receives the names that would otherwise be advertised
+  // this step (`defaultToolNames`) and returns the subset to keep, or
+  // `undefined` for no narrowing. Filtering against the resolved set means any
+  // returned name not already advertised is ignored (defense-in-depth), and a
+  // throw is logged + falls back to the default set so a buggy hook can't
+  // crash the loop. Applied here so both the request_payload trace snapshot
+  // and the Convex `/stream` request see the same narrowed set.
+  if (prepareAdvertisedTools) {
+    const advertised = new Set(
+      applyPrepareAdvertisedTools({
+        defaultToolNames: activeToolDefs.map((def) => def.name),
+        stepIndex,
+        prepareAdvertisedTools,
+        onWarn: (message, meta) =>
+          logger.warn(`[mcpjam-stream-handler] ${message}`, meta),
+      }),
+    );
+    activeToolDefs = activeToolDefs.filter((def) => advertised.has(def.name));
+  }
 
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
@@ -1698,19 +1742,19 @@ async function processOneStep(
     stepIndex
   );
 
-  // For progressive discovery, the trace payload should reflect the *active*
-  // subset so request_payload snapshots show what the model actually saw.
-  const toolsForPayload: ToolSet =
-    progressivePlan && progressivePlan.enabled && discoveryState
-      ? Object.fromEntries(
-          activeToolDefs
-            .map((def): [string, unknown] | null => {
-              const t = (tools as Record<string, unknown>)[def.name];
-              return t === undefined ? null : [def.name, t];
-            })
-            .filter((pair): pair is [string, unknown] => pair !== null),
-        ) as ToolSet
-      : tools;
+  // The trace payload must reflect the *advertised* subset — `activeToolDefs`
+  // after BOTH progressive-discovery narrowing AND the prepareAdvertisedTools
+  // hook — so request_payload snapshots match what Convex actually received in
+  // `tools: activeToolDefs` below. Derived unconditionally: in the no-narrowing
+  // case `activeToolDefs === toolDefs`, so this reconstructs the full set.
+  const toolsForPayload: ToolSet = Object.fromEntries(
+    activeToolDefs
+      .map((def): [string, unknown] | null => {
+        const t = (tools as Record<string, unknown>)[def.name];
+        return t === undefined ? null : [def.name, t];
+      })
+      .filter((pair): pair is [string, unknown] => pair !== null),
+  ) as ToolSet;
 
   emitRequestPayload(writer, {
     turnId: traceTurn.turnId,
@@ -2099,11 +2143,22 @@ async function processOneStep(
       // emit a remembered/hallucinated call to a non-active name; gating
       // turns that into a structured error the model can recover from
       // via `load_mcp_tools` instead of executing an ungated tool.
-      const executableTools = gateToolsToActiveSubset(
+      let executableTools = gateToolsToActiveSubset(
         tracedTools as Record<string, unknown>,
         progressivePlan,
         () => discoveryState,
       );
+      // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
+      // set (`activeToolDefs`), gate execution to it too so a remembered /
+      // hallucinated call to a hidden tool (e.g. `computer` before a widget
+      // renders) becomes a recoverable tool-error instead of executing.
+      if (prepareAdvertisedTools) {
+        const advertised = new Set(activeToolDefs.map((def) => def.name));
+        executableTools = gateToolsToAdvertisedSubset(
+          executableTools,
+          () => advertised,
+        );
+      }
 
       // SEP-1865 App-Provided Tools: registered app aliases have no
       // `execute` function because they run inside the iframe via
@@ -2386,6 +2441,8 @@ export async function runChatEngineLoop(
     onStepFinish,
     // PR 5b-followup-2 callback.
     onEngineError,
+    // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
+    prepareAdvertisedTools,
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
@@ -2631,6 +2688,8 @@ export async function runChatEngineLoop(
             // the two `processOneStep` error sites (non-OK Convex
             // response + processStream/tool catch).
             onEngineError,
+            // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
+            prepareAdvertisedTools,
             abortSignal,
           });
 
