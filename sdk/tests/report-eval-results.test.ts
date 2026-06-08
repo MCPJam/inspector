@@ -698,7 +698,9 @@ describe("reportEvalResults", () => {
         widgetHtml: "<html>cached</html>",
       })
     );
-    expect(requestBody.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
+    expect(
+      requestBody.results[0].widgetSnapshots[0].widgetHtmlBlobId
+    ).toBeUndefined();
     expect(sentryMocks.addBreadcrumb).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "eval-reporting.widget-upload",
@@ -742,9 +744,35 @@ describe("reportEvalResults", () => {
     );
     expect(
       sentryMocks.captureEvalReportingFailure.mock.calls[0][1]
-    ).not.toHaveProperty(
-      "serverReplayConfigs"
-    );
+    ).not.toHaveProperty("serverReplayConfigs");
+  });
+
+  it("prints a clean eval quota error and does not retry", async () => {
+    const convexError =
+      'Uncaught ConvexError: {"code":"billing_limit_reached","message":"Limit \\"maxEvalIterationsPerMonth\\" reached on the team plan.","limit":"maxEvalIterationsPerMonth","gateKey":"maxEvalIterationsPerMonth","plan":"team","source":"subscription","currentValue":5001,"allowedValue":5000,"upgradePlan":"enterprise","enforcementState":"enforcing","resetsAt":1793491200000,"windowKind":"month"}\n' +
+      "    at reserveEvalIterations (../../convex/lib/tierLimits.ts:333:12)";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(errorResponse(500, convexError));
+    global.fetch = fetchMock as any;
+
+    await expect(
+      reportEvalResults({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "quota-failure",
+        results: [{ caseTitle: "case-1", passed: true }],
+      })
+    ).rejects.toMatchObject({
+      message:
+        "Eval iteration limit reached. Resets at 2026-11-01T00:00:00.000Z.",
+      attemptCount: 1,
+      code: "EVAL_REPORTING_ERROR",
+      endpoint: "/sdk/v1/evals/report",
+      statusCode: 500,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns null in safe mode when strict is false and captures once", async () => {
@@ -777,8 +805,6 @@ describe("reportEvalResults", () => {
     );
     expect(
       sentryMocks.captureEvalReportingFailure.mock.calls[0][1]
-    ).not.toHaveProperty(
-      "serverReplayConfigs"
-    );
+    ).not.toHaveProperty("serverReplayConfigs");
   });
 });

@@ -50,6 +50,11 @@ type BackendEnvelope<T> = {
   error?: string;
 } & T;
 
+type NormalizedReportingError = {
+  message: string;
+  isBillingLimitReached: boolean;
+};
+
 type EvalArtifactUploadUrlResponse = {
   uploadUrl: string;
 };
@@ -98,7 +103,8 @@ function toEvalReportingError(
     return error;
   }
 
-  const message = error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const { message } = normalizeReportingErrorMessage(rawMessage);
   return new EvalReportingError(message, {
     attemptCount,
     cause: error,
@@ -126,6 +132,115 @@ function jitter(base: number): number {
 
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
+}
+
+function extractFirstJsonObject(value: string): Record<string, unknown> | null {
+  const start = value.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index++) {
+    const char = value[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth++;
+      continue;
+    }
+    if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(value.slice(start, index + 1)) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function formatResetTime(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return new Date(value).toISOString();
+}
+
+function normalizeBillingLimitMessage(
+  payload: Record<string, unknown>
+): string | null {
+  if (payload.code !== "billing_limit_reached") {
+    return null;
+  }
+
+  const limit = payload.limit ?? payload.gateKey;
+  const resetsAt = formatResetTime(payload.resetsAt);
+  if (limit === "maxEvalIterationsPerMonth") {
+    if (resetsAt) {
+      return `Eval iteration limit reached. Resets at ${resetsAt}.`;
+    }
+
+    const currentValue = payload.currentValue;
+    const allowedValue = payload.allowedValue;
+    if (typeof currentValue === "number" && typeof allowedValue === "number") {
+      return `Eval iteration limit reached. This run would use ${currentValue}/${allowedValue} iterations.`;
+    }
+
+    return "Eval iteration limit reached.";
+  }
+
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return payload.message;
+  }
+  return "Billing limit reached.";
+}
+
+function normalizeReportingErrorMessage(
+  rawMessage: string
+): NormalizedReportingError {
+  if (!rawMessage.includes("billing_limit_reached")) {
+    return { message: rawMessage, isBillingLimitReached: false };
+  }
+
+  const payload = extractFirstJsonObject(rawMessage);
+  const billingMessage = payload ? normalizeBillingLimitMessage(payload) : null;
+  return {
+    message: billingMessage ?? "Billing limit reached.",
+    isBillingLimitReached: true,
+  };
+}
+
+function isBillingLimitReachedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.startsWith("Eval iteration limit reached.") ||
+    normalizeReportingErrorMessage(error.message).isBillingLimitReached
+  );
 }
 
 function generateExternalRunId(): string {
@@ -229,16 +344,24 @@ async function requestWithRetry<T>(
 
       if (response.ok) {
         if (responseBody && responseBody.ok === false) {
-          const message = responseBody.error ?? "Unknown SDK evals error";
-          throw new Error(message);
+          const rawMessage = responseBody.error ?? "Unknown SDK evals error";
+          const { message } = normalizeReportingErrorMessage(rawMessage);
+          throw new EvalReportingError(message, {
+            attemptCount: attempt + 1,
+            endpoint: path,
+            statusCode: response.status,
+          });
         }
         return (responseBody ?? {}) as T;
       }
 
-      const message =
+      const rawMessage =
         responseBody?.error ??
         `Request failed with status ${response.status}: ${response.statusText}`;
+      const { message, isBillingLimitReached } =
+        normalizeReportingErrorMessage(rawMessage);
       if (
+        !isBillingLimitReached &&
         isRetryableStatus(response.status) &&
         attempt < config.retryDelaysMs.length
       ) {
@@ -260,12 +383,13 @@ async function requestWithRetry<T>(
       const errorStatusCode =
         error instanceof EvalReportingError ? error.statusCode : undefined;
       const shouldRetry =
-        isAbortError ||
-        error instanceof TypeError ||
-        (typeof errorStatusCode === "number" &&
-          isRetryableStatus(errorStatusCode)) ||
-        (error instanceof Error &&
-          /network|fetch|timeout|429|5\d\d/i.test(error.message));
+        !isBillingLimitReachedError(error) &&
+        (isAbortError ||
+          error instanceof TypeError ||
+          (typeof errorStatusCode === "number" &&
+            isRetryableStatus(errorStatusCode)) ||
+          (error instanceof Error &&
+            /network|fetch|timeout|429|5\d\d/i.test(error.message)));
 
       if (shouldRetry && attempt < config.retryDelaysMs.length) {
         await sleep(jitter(config.retryDelaysMs[attempt]));

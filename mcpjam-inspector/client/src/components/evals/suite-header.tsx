@@ -47,7 +47,10 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { ValidatorsSection } from "./validators-section";
-import { resolveMatchOptions, type EvalMatchOptions } from "@/shared/eval-matching";
+import {
+  resolveMatchOptions,
+  type EvalMatchOptions,
+} from "@/shared/eval-matching";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
@@ -74,7 +77,7 @@ interface SuiteHeaderProps {
       matchOptionsOverride?: EvalMatchOptions;
       iterationOverride?: number;
       refreshSnapshot?: boolean;
-    },
+    }
   ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
@@ -104,6 +107,7 @@ interface SuiteHeaderProps {
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
+  evalRunsDisabledReason?: string | null;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
   /** Per-case runs from the test cases list / sidebar; not shown in the suite header. */
@@ -116,7 +120,7 @@ interface SuiteHeaderProps {
   runningTestCaseId?: string | null;
   /** Persists the suite's host attachments (multi-host fan-out target list). */
   onSuiteHostAttachmentsUpdate?: (
-    attachments: HostAttachmentDraft[],
+    attachments: HostAttachmentDraft[]
   ) => Promise<void>;
   /** Hosts available to attach (from `useHostList`). Optional for legacy callers. */
   projectHosts?: HostListItem[];
@@ -164,6 +168,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onGenerateTestCases,
     canGenerateTestCases = false,
     generateTestCasesDisabledReason,
+    evalRunsDisabledReason = null,
     isGeneratingTestCases = false,
     onCreateTestCase,
     blockTestCaseRuns: _blockTestCaseRuns = false,
@@ -215,7 +220,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         toast.success("Suite name updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update suite name"),
+          getBillingErrorMessage(error, "Failed to update suite name")
         );
         console.error("Failed to update suite name:", error);
         setEditedName(suite.name);
@@ -246,11 +251,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         toast.success("Server attachment updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update server attachment"),
+          getBillingErrorMessage(error, "Failed to update server attachment")
         );
       }
     },
-    [suite._id, updateSuite],
+    [suite._id, updateSuite]
   );
 
   const handleNameKeyDown = useCallback(
@@ -262,7 +267,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         setEditedName(suite.name);
       }
     },
-    [handleNameBlur, suite.name],
+    [handleNameBlur, suite.name]
   );
 
   // Calculate suite server status from the EFFECTIVE server list —
@@ -296,7 +301,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       }
     }
     return [...providers].filter(
-      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens),
+      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens)
     );
   }, [replayableLatestRun, testCases, hasToken]);
 
@@ -352,8 +357,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   }
 
   if (viewMode === "run-detail" && selectedRunDetails) {
-    const badgeMetricLabel =
-      suite.source === "sdk" ? "Pass Rate" : "Accuracy";
+    const badgeMetricLabel = suite.source === "sdk" ? "Pass Rate" : "Accuracy";
 
     if (omitRunDetailIdentity) {
       return hideRunActions ? null : (
@@ -383,13 +387,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           "mb-4 flex min-w-0",
           runDetailKpiStrip
             ? "flex-nowrap items-center gap-3"
-            : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4",
+            : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
         )}
       >
         <div
           className={cn(
             "flex min-w-0 flex-col gap-1",
-            runDetailKpiStrip ? "shrink-0" : "flex-1",
+            runDetailKpiStrip ? "shrink-0" : "flex-1"
           )}
         >
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -421,9 +425,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           <div className="min-w-0 flex-1 self-center">{runDetailKpiStrip}</div>
         ) : null}
         {!hideRunActions ? (
-          <div
-            className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}
-          >
+          <div className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}>
             <RunDetailPlaygroundActions
               suite={suite}
               selectedRun={selectedRunDetails}
@@ -474,18 +476,21 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             isRerunning ||
               replayingRunId != null ||
               runningTestCaseId != null ||
+              evalRunsDisabledReason ||
               testCaseCount === 0 ||
-              !hasServersConfigured,
+              !hasServersConfigured
           );
-          const runAllDisabledReasonTooltip = !hasServersConfigured
+          const runAllDisabledReasonTooltip = evalRunsDisabledReason
+            ? evalRunsDisabledReason
+            : !hasServersConfigured
             ? "Configure suite servers before running the full suite."
             : testCaseCount === 0
-              ? "Add a test case first."
-              : isRerunning || replayingRunId != null
-                ? "A suite or replay is already in progress."
-                : runningTestCaseId != null
-                  ? "Finish the in-progress test case run first."
-                  : null;
+            ? "Add a test case first."
+            : isRerunning || replayingRunId != null
+            ? "A suite or replay is already in progress."
+            : runningTestCaseId != null
+            ? "Finish the in-progress test case run first."
+            : null;
           const runAllConnectionHint =
             missingServers.length > 0 ? "Connect and run." : null;
           const hasRunOverride =
@@ -550,14 +555,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     ) : null}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent
-                  className="w-[22rem] space-y-3 p-3"
-                  align="end"
-                >
+                <PopoverContent className="w-[22rem] space-y-3 p-3" align="end">
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    These settings apply to the{" "}
-                    <strong>next run only</strong>. To change the suite&apos;s
-                    defaults, open Suite settings.
+                    These settings apply to the <strong>next run only</strong>.
+                    To change the suite&apos;s defaults, open Suite settings.
                   </p>
                   {onIterationOverrideChange ? (
                     <div className="flex items-center justify-between gap-3">
@@ -574,7 +575,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                         onChange={(e) => {
                           const raw = e.target.value;
                           onIterationOverrideChange(
-                            raw === "" ? undefined : Number(raw),
+                            raw === "" ? undefined : Number(raw)
                           );
                         }}
                         aria-label="Iterations per test case for the next run"
@@ -585,7 +586,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                             <option key={n} value={n}>
                               {n}
                             </option>
-                          ),
+                          )
                         )}
                       </select>
                     </div>
@@ -595,7 +596,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     density="compact"
                     value={runMatchOptionsOverride}
                     inheritedFrom={resolveMatchOptions(
-                      suite.defaultMatchOptions,
+                      suite.defaultMatchOptions
                     )}
                     onChange={setRunMatchOptionsOverride}
                     showBadges
@@ -651,7 +652,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     overviewRunAllCta != null ||
     (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
     (showTestCaseCtas && Boolean(onCreateTestCase));
-
   const overviewHasExportOrRun =
     Boolean(onOpenExportSuite) ||
     (!hideRunActions && (replayableLatestRun || !readOnlyConfig));
@@ -660,46 +660,46 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     <div
       className={cn(
         "mb-4 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2",
-        "md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-x-5 md:gap-y-2",
+        "md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-x-5 md:gap-y-2"
       )}
     >
       <div className="row-start-1 col-start-1 min-w-0 overflow-hidden">
         <div className="flex min-w-0 items-center gap-3">
-        {isEditingName ? (
-          <input
-            type="text"
-            value={editedName}
-            onChange={(e) => setEditedName(e.target.value)}
-            onBlur={handleNameBlur}
-            onKeyDown={handleNameKeyDown}
-            autoFocus
-            className="min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg h-8 py-0"
-          />
-        ) : readOnlyConfig ? (
-          <h2
-            className="min-w-0 flex-1 truncate px-2 text-base font-semibold leading-none md:text-lg flex h-8 items-center"
-            title={suite.name}
-          >
-            {suite.name}
-          </h2>
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={handleNameClick}
-            className="h-8 min-w-0 max-w-full flex-1 justify-start gap-0 px-2 text-left text-base font-semibold leading-none hover:bg-accent md:text-lg"
-            title={suite.name}
-          >
-            <span className="min-w-0 truncate text-left">{suite.name}</span>
-          </Button>
-        )}
-        {latestRunForMetadata ? (
-          <span className="shrink-0">
-            <CiMetadataDisplay
-              ciMetadata={latestRunForMetadata.ciMetadata}
-              compact={true}
+          {isEditingName ? (
+            <input
+              type="text"
+              value={editedName}
+              onChange={(e) => setEditedName(e.target.value)}
+              onBlur={handleNameBlur}
+              onKeyDown={handleNameKeyDown}
+              autoFocus
+              className="min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg h-8 py-0"
             />
-          </span>
-        ) : null}
+          ) : readOnlyConfig ? (
+            <h2
+              className="min-w-0 flex-1 truncate px-2 text-base font-semibold leading-none md:text-lg flex h-8 items-center"
+              title={suite.name}
+            >
+              {suite.name}
+            </h2>
+          ) : (
+            <Button
+              variant="ghost"
+              onClick={handleNameClick}
+              className="h-8 min-w-0 max-w-full flex-1 justify-start gap-0 px-2 text-left text-base font-semibold leading-none hover:bg-accent md:text-lg"
+              title={suite.name}
+            >
+              <span className="min-w-0 truncate text-left">{suite.name}</span>
+            </Button>
+          )}
+          {latestRunForMetadata ? (
+            <span className="shrink-0">
+              <CiMetadataDisplay
+                ciMetadata={latestRunForMetadata.ciMetadata}
+                compact={true}
+              />
+            </span>
+          ) : null}
         </div>
       </div>
       {isMobile ? (
@@ -715,7 +715,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ) : null}
         {overviewHasSuiteNav ? (
           <div className="flex items-center gap-2">
-            {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
+            {casesSidebarHidden &&
+            onShowCasesSidebar &&
+            runsViewMode === "runs" ? (
               <Button
                 type="button"
                 size="sm"
@@ -765,7 +767,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     buildEvalsPath({
                       type: "suite-edit",
                       suiteId: suite._id,
-                    }),
+                    })
                   )
                 }
               >
@@ -785,7 +787,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ) : null}
 
         {overviewHasCaseTools ? (
-          <div className="flex items-center gap-2 border-l border-border/40 pl-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-l border-border/40 pl-3">
             {overviewRunAllCta}
             {showTestCaseCtas && onGenerateTestCases ? (
               <Tooltip>
@@ -825,9 +827,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {isGeneratingTestCases
                     ? "Generating test cases…"
                     : !canGenerateTestCases
-                      ? generateTestCasesDisabledReason ??
-                        "Configure suite servers before generating cases."
-                      : "Generate suggested cases from your server's tools."}
+                    ? generateTestCasesDisabledReason ??
+                      "Configure suite servers before generating cases."
+                    : "Generate suggested cases from your server's tools."}
                 </TooltipContent>
               </Tooltip>
             ) : null}
@@ -868,21 +870,26 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                       variant="ghost"
                       size="sm"
                       className="h-8 gap-1.5 text-muted-foreground"
-                      disabled={isRerunning}
-                      onClick={() =>
-                        onRerun(suite, { refreshSnapshot: true })
-                      }
+                      disabled={Boolean(isRerunning || evalRunsDisabledReason)}
+                      onClick={() => onRerun(suite, { refreshSnapshot: true })}
                     >
                       <RotateCw
-                        className={`h-3.5 w-3.5 shrink-0 ${isRerunning ? "animate-spin" : ""}`}
+                        className={`h-3.5 w-3.5 shrink-0 ${
+                          isRerunning ? "animate-spin" : ""
+                        }`}
                         aria-hidden
                       />
                       Update snapshot
                     </Button>
                   </span>
                 </TooltipTrigger>
-                <TooltipContent variant="muted" side="bottom" className="max-w-[16rem]">
-                  Re-saves the suite&apos;s current server list as the frozen execution snapshot and starts a run.
+                <TooltipContent
+                  variant="muted"
+                  side="bottom"
+                  className="max-w-[16rem]"
+                >
+                  {evalRunsDisabledReason ??
+                    "Re-saves the suite's current server list as the frozen execution snapshot and starts a run."}
                 </TooltipContent>
               </Tooltip>
             ) : null}
@@ -914,40 +921,61 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                         replayableLatestRun
                           ? isReplayingLatestRun ||
                             !onReplayRun ||
+                            Boolean(evalRunsDisabledReason) ||
                             missingReplayProviderKeys.length > 0
-                          : !canTriggerLiveRun || isRerunning
+                          : !canTriggerLiveRun ||
+                            isRerunning ||
+                            Boolean(evalRunsDisabledReason)
                       }
                     >
                       <RotateCw
-                        className={`h-3.5 w-3.5 shrink-0 ${(replayableLatestRun ? isReplayingLatestRun : isRerunning) ? "animate-spin" : ""}`}
+                        className={`h-3.5 w-3.5 shrink-0 ${
+                          (
+                            replayableLatestRun
+                              ? isReplayingLatestRun
+                              : isRerunning
+                          )
+                            ? "animate-spin"
+                            : ""
+                        }`}
                         aria-hidden
                       />
-                      {(replayableLatestRun ? isReplayingLatestRun : isRerunning)
+                      {(
+                        replayableLatestRun ? isReplayingLatestRun : isRerunning
+                      )
                         ? replayableLatestRun
                           ? "Replaying..."
                           : "Running..."
                         : replayableLatestRun
-                          ? "Replay latest run"
-                          : "Run"}
+                        ? "Replay latest run"
+                        : "Run"}
                     </Button>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
                   {replayableLatestRun
-                    ? missingReplayProviderKeys.length > 0
-                      ? `Add your ${missingReplayProviderKeys.join(", ")} API key${missingReplayProviderKeys.length > 1 ? "s" : ""} in Settings to replay`
+                    ? evalRunsDisabledReason
+                      ? evalRunsDisabledReason
+                      : missingReplayProviderKeys.length > 0
+                      ? `Add your ${missingReplayProviderKeys.join(
+                          ", "
+                        )} API key${
+                          missingReplayProviderKeys.length > 1 ? "s" : ""
+                        } in Settings to replay`
                       : "Replay the latest CI run"
+                    : evalRunsDisabledReason
+                    ? evalRunsDisabledReason
                     : !hasServersConfigured
-                      ? "No MCP servers are configured for this suite"
-                      : missingServers.length > 0
-                        ? "Connect and run."
-                        : "Run all cases"}
+                    ? "No MCP servers are configured for this suite"
+                    : missingServers.length > 0
+                    ? "Connect and run."
+                    : "Run all cases"}
                 </TooltipContent>
               </Tooltip>
             ) : null}
           </div>
         ) : null}
-        </div>
+      </div>
     </div>
   );
 }

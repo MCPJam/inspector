@@ -14,6 +14,14 @@ const mocks = vi.hoisted(() => ({
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
   isDirectGuest: false,
+  evalIterationQuota: undefined as
+    | {
+        used: number;
+        allowed: number | null;
+        resetsAt: number;
+        windowKind: "day" | "month";
+      }
+    | undefined,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -29,6 +37,10 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useConvex: () => ({ query: vi.fn().mockResolvedValue([]) }),
+  useQuery: (name: unknown) =>
+    name === "billing:getEvalIterationQuota"
+      ? mocks.evalIterationQuota
+      : undefined,
   useMutation: () => vi.fn().mockResolvedValue({ _id: "stub-id" }),
 }));
 
@@ -47,6 +59,7 @@ vi.mock("@/lib/evals/generate-and-persist-tests", () => ({
 
 vi.mock("@/hooks/use-eval-tab-context", () => ({
   useEvalTabContext: () => ({
+    organizationId: "org-1",
     connectedServerNames: new Set(["server-a", "server-b"]),
     userMap: new Map(),
     canDeleteSuite: false,
@@ -232,10 +245,11 @@ describe("EvalsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isDirectGuest = false;
+    mocks.evalIterationQuota = undefined;
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
-        makeQueryState(selectedSuiteId),
+        makeQueryState(selectedSuiteId)
     );
   });
 
@@ -283,8 +297,26 @@ describe("EvalsTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "list" },
-        { replace: true },
+        { replace: true }
       );
+    });
+  });
+
+  it("passes eval iteration limit disabled state into the suite view", () => {
+    mocks.evalIterationQuota = {
+      used: 25,
+      allowed: 25,
+      resetsAt: Date.UTC(2026, 5, 2),
+      windowKind: "day",
+    };
+
+    render(<EvalsTab projectId="ws-1" />);
+
+    expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
+    expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+      evalRunsDisabledReason: expect.stringMatching(
+        /^Eval iteration limit reached\. Resets /
+      ),
     });
   });
 
@@ -295,18 +327,19 @@ describe("EvalsTab", () => {
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error",
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error"
         );
       });
 
       render(<EvalsTab projectId="project-1" />);
 
       expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Try again" })
+      ).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
       consoleError.mockRestore();
     }
   });
-
 });

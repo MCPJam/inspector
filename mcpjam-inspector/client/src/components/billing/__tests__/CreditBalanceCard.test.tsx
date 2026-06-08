@@ -22,11 +22,32 @@ let balanceState:
 let isLoadingState = false;
 let creditTopupsFlagState = true;
 let teamCreditsFlagState = true;
+let evalQuotaState:
+  | {
+      used: number;
+      allowed: number | null;
+      resetsAt: number;
+      windowKind: "day" | "month";
+    }
+  | undefined = undefined;
+let evalQuotaLoadingState = false;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
     balance: balanceState,
     isLoading: isLoadingState,
+  }),
+}));
+
+vi.mock("@/hooks/use-eval-iteration-quota", () => ({
+  useEvalIterationQuota: () => ({
+    quota: evalQuotaState,
+    isLoading: evalQuotaLoadingState,
+    isAtLimit: Boolean(
+      evalQuotaState &&
+        evalQuotaState.allowed !== null &&
+        evalQuotaState.used >= evalQuotaState.allowed
+    ),
   }),
 }));
 
@@ -73,6 +94,8 @@ describe("CreditBalanceCard", () => {
     isLoadingState = false;
     creditTopupsFlagState = true;
     teamCreditsFlagState = true;
+    evalQuotaState = undefined;
+    evalQuotaLoadingState = false;
     window.location.hash = "";
   });
 
@@ -187,6 +210,59 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders eval iteration usage in the admin usage card", () => {
+    evalQuotaState = {
+      used: 7_580,
+      allowed: 10_000,
+      resetsAt: Date.UTC(2026, 5, 23),
+      windowKind: "month",
+    };
+
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    const evalRow = screen.getByTestId("usage-eval-iterations");
+    expect(evalRow).toHaveTextContent(/Monthly eval iterations/);
+    expect(evalRow).toHaveTextContent(/7,580 \/ 10,000/);
+    expect(evalRow).not.toHaveTextContent(/Resets/);
+  });
+
+  it("shows eval iteration reset time only from the info tooltip", async () => {
+    const user = userEvent.setup();
+    evalQuotaState = {
+      used: 7_580,
+      allowed: 10_000,
+      resetsAt: Date.UTC(2026, 5, 23),
+      windowKind: "month",
+    };
+
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(screen.queryByText(/^Resets /)).not.toBeInTheDocument();
+
+    await user.hover(
+      within(screen.getByTestId("usage-eval-iterations")).getByRole("button", {
+        name: /About Monthly eval iterations/,
+      })
+    );
+
+    expect((await screen.findAllByText(/^Resets /)).length).toBeGreaterThan(0);
+  });
+
+  it("hides eval iteration usage for unlimited quotas", () => {
+    evalQuotaState = {
+      used: 0,
+      allowed: null,
+      resetsAt: Date.UTC(2026, 5, 23),
+      windowKind: "month",
+    };
+
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(
+      screen.queryByTestId("usage-eval-iterations")
+    ).not.toBeInTheDocument();
+  });
+
   it("shows an ask-admin hint instead of the Buy credits button for non-managers", () => {
     render(<CreditBalanceCard organizationId="org-1" />);
 
@@ -234,10 +310,10 @@ describe("CreditBalanceCard", () => {
 
   it("clarifies that credits are organization-scoped", () => {
     render(<CreditBalanceCard />);
-    expect(screen.getByText(/Organization model credits/)).toBeInTheDocument();
+    expect(screen.getByText(/Organization usage/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Shared credits are available to everyone in this organization/
+        /Model credits and eval iterations are shared across this organization/
       )
     ).toBeInTheDocument();
   });

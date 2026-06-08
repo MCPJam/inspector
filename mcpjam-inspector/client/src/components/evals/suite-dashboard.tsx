@@ -4,12 +4,7 @@ import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { SuiteRunsList } from "./suite-runs-list";
 import { TestCasesOverview } from "./test-cases-overview";
-import type {
-  EvalCase,
-  EvalIteration,
-  EvalSuite,
-  EvalSuiteRun,
-} from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 
 interface RunTrendPoint {
   runId: string;
@@ -48,6 +43,7 @@ export interface SuiteDashboardProps {
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;
   blockTestCaseRuns?: boolean;
+  runTestCaseDisabledReason?: string | null;
   connectedServerNames?: Set<string>;
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   testCasesClickHint?: string;
@@ -73,6 +69,7 @@ export function SuiteDashboard({
   onRunTestCase,
   runningTestCaseId,
   blockTestCaseRuns,
+  runTestCaseDisabledReason,
   connectedServerNames,
   onDeleteTestCasesBatch,
   testCasesClickHint,
@@ -88,7 +85,7 @@ export function SuiteDashboard({
   }, [suite.hostAttachments]);
 
   const [activeTab, setActiveTab] = useState<SuiteDashboardTab>(
-    hasRuns ? "runs" : "cases",
+    hasRuns ? "runs" : "cases"
   );
 
   const testCasesSection = (
@@ -111,6 +108,7 @@ export function SuiteDashboard({
       onRunTestCase={onRunTestCase}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={blockTestCaseRuns}
+      runTestCaseDisabledReason={runTestCaseDisabledReason}
       connectedServerNames={connectedServerNames}
     />
   );
@@ -130,7 +128,11 @@ export function SuiteDashboard({
     />
   );
 
-  const renderTab = (next: SuiteDashboardTab, label: string, count?: number) => {
+  const renderTab = (
+    next: SuiteDashboardTab,
+    label: string,
+    count?: number
+  ) => {
     const active = activeTab === next;
     return (
       <button
@@ -144,7 +146,7 @@ export function SuiteDashboard({
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
           active
             ? "border-primary text-foreground"
-            : "text-muted-foreground hover:text-foreground",
+            : "text-muted-foreground hover:text-foreground"
         )}
       >
         <span>{label}</span>

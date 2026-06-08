@@ -14,6 +14,11 @@ import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTop
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
+import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
+import {
+  formatEvalIterationResetTime,
+  getEvalIterationQuotaLabel,
+} from "@/lib/eval-iteration-quota";
 import {
   formatCreditResetText,
   formatMonthlyResetText,
@@ -61,6 +66,11 @@ export function CreditBalanceCard({
     organizationId,
     enabled: creditTopupsUiEnabled,
   });
+  const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
+    useEvalIterationQuota({
+      organizationId,
+      enabled: creditTopupsUiEnabled && Boolean(organizationId),
+    });
   const [isTopupOpen, setIsTopupOpen] = useState(false);
   const [topupSource, setTopupSource] =
     useState<CreditTopupSource>("billing_page");
@@ -110,6 +120,12 @@ export function CreditBalanceCard({
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const monthlyExhausted =
     showMonthly && monthlyRemaining <= 0 && paidRemaining <= 0;
+  const showEvalIterationUsage =
+    isEvalIterationQuotaLoading ||
+    (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
+  const evalIterationLabel = getEvalIterationQuotaLabel(
+    evalIterationQuota?.windowKind
+  );
 
   if (!creditTopupsUiEnabled) return null;
 
@@ -119,13 +135,14 @@ export function CreditBalanceCard({
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-              Credit usage
+              Usage
             </p>
             <p className="mt-1 text-sm font-semibold leading-snug">
-              Organization model credits
+              Organization usage
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Shared credits are available to everyone in this organization.
+              Model credits and eval iterations are shared across this
+              organization.
             </p>
           </div>
           {canManageCredits ? (
@@ -209,6 +226,44 @@ export function CreditBalanceCard({
             {formatMonthlyResetText(balance?.monthlyResetAt)}
             {canManageCredits ? " — or top up to keep going." : "."}
           </p>
+        ) : null}
+
+        {showEvalIterationUsage ? (
+          <UsageRow
+            label={evalIterationLabel}
+            tooltip={
+              evalIterationQuota
+                ? `Resets ${formatEvalIterationResetTime(
+                    evalIterationQuota.resetsAt
+                  )}`
+                : undefined
+            }
+            rightText={
+              isEvalIterationQuotaLoading ||
+              !evalIterationQuota ||
+              evalIterationQuota.allowed === null
+                ? null
+                : `${evalIterationQuota.used.toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()}`
+            }
+            fillPercent={
+              isEvalIterationQuotaLoading ||
+              !evalIterationQuota ||
+              !evalIterationQuota.allowed
+                ? 0
+                : Math.min(
+                    100,
+                    (evalIterationQuota.used / evalIterationQuota.allowed) * 100
+                  )
+            }
+            ariaLabel={`${evalIterationLabel} used`}
+            ariaValueText={
+              evalIterationQuota && evalIterationQuota.allowed !== null
+                ? `${evalIterationQuota.used.toLocaleString()} of ${evalIterationQuota.allowed.toLocaleString()} eval iterations used`
+                : undefined
+            }
+            isLoading={isEvalIterationQuotaLoading}
+            testId="usage-eval-iterations"
+          />
         ) : null}
 
         {!isLoading && hasPaidHistory && balance && (
