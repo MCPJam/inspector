@@ -111,6 +111,10 @@ export interface DirectChatTurnToolResultChunk {
   stepIndex: number;
   toolCallId: string;
   toolName: string;
+  /** The tool-call arguments (already normalized via `toTraceRecord`). Lets an
+   *  async consumer (the eval render-check) feed the real toolInput into the
+   *  widget shim, matching what post-turn snapshot capture injects. */
+  input: Record<string, unknown>;
   output: unknown;
   serverId: string | undefined;
 }
@@ -167,7 +171,9 @@ export interface DirectChatTurnTraceEvents {
   /** Fired for every tool-call chunk. */
   onToolCallChunk?: (event: DirectChatTurnToolCallChunk) => void;
   /** Fired for every tool-result chunk. */
-  onToolResultChunk?: (event: DirectChatTurnToolResultChunk) => void;
+  onToolResultChunk?: (
+    event: DirectChatTurnToolResultChunk,
+  ) => void | Promise<void>;
   /**
    * Fired after each step finishes — after spans have been emitted into
    * `traceContext` and `traceHistory` has been updated. Chat uses this to
@@ -361,6 +367,28 @@ export function runDirectChatTurn(
     traceTurn.promptIndex,
   ) as ToolSet;
 
+  // Progressive discovery narrows the cataloged MCP tools, but tools injected
+  // into the map *after* the catalog was built (e.g. the eval Computer Use
+  // tools) aren't part of discovery and must stay in the advertised default set
+  // — otherwise the prepareAdvertisedTools hook below could never surface them
+  // (it can only keep names already in the default set). This appends those
+  // non-cataloged extras to a progressive active-subset list; their per-step
+  // visibility stays governed by the hook (and execution by the
+  // advertised-subset gate). Returns the list unchanged when there are none
+  // (chat / hosted, where every tool is cataloged).
+  const withInjectedTools = (activeNames: string[]): string[] => {
+    if (!progressivePlan) return activeNames;
+    const cataloged = new Set(
+      progressivePlan.catalog.map((entry) => entry.modelName),
+    );
+    const seen = new Set(activeNames);
+    const out = [...activeNames];
+    for (const name of Object.keys(tools)) {
+      if (!cataloged.has(name) && !seen.has(name)) out.push(name);
+    }
+    return out;
+  };
+
   // Mirror the step-0 advertised set into the request-payload trace so it can't
   // claim tools the model won't see on the first step (parity with the hosted
   // processOneStep request_payload). Only narrows when the hook is set; chat
@@ -370,7 +398,9 @@ export function runDirectChatTurn(
   if (prepareAdvertisedTools) {
     const defaultToolNames =
       progressivePlan?.enabled && discoveryState
-        ? resolveActiveToolNames(progressivePlan, discoveryState)
+        ? withInjectedTools(
+            resolveActiveToolNames(progressivePlan, discoveryState),
+          )
         : Object.keys(tools);
     const advertised = new Set(
       applyPrepareAdvertisedTools({
@@ -449,7 +479,9 @@ export function runDirectChatTurn(
       let activeToolNames: string[] | undefined;
       if (progressivePlan?.enabled && discoveryState) {
         commitNewlyLoaded(discoveryState);
-        activeToolNames = resolveActiveToolNames(progressivePlan, discoveryState);
+        activeToolNames = withInjectedTools(
+          resolveActiveToolNames(progressivePlan, discoveryState),
+        );
       }
       // Browser-rendered MCP App eval PR 2: layer runtime-conditional
       // advertised-tool narrowing on top (e.g. hide `computer` /
@@ -495,12 +527,17 @@ export function runDirectChatTurn(
         return;
       }
       if (chunk.type === "tool-result") {
-        traceEvents?.onToolResultChunk?.({
+        // Awaited (the callback may be async — the eval runner renders the MCP
+        // App widget here so a rendered widget is mounted before the next
+        // step's `prepareStep` decides whether to advertise Computer Use).
+        // Existing void-returning consumers (chat trace) are unaffected.
+        await traceEvents?.onToolResultChunk?.({
           turnId: traceTurn.turnId,
           promptIndex: traceTurn.promptIndex,
           stepIndex: currentStepIndex,
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
+          input: toTraceRecord(chunk.input),
           output: chunk.output,
           serverId: readToolServerId(tracedTools, chunk.toolName),
         });

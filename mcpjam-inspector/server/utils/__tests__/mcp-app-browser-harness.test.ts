@@ -187,6 +187,31 @@ describe("McpAppBrowserHarness — render classification", () => {
     expect(second.status).toBe("rendered");
     expect(h.hasRenderedWidget()).toBe(true);
   }, 30_000);
+
+  it("reports screenshot_failed when the frame can't fit the byte budget", async () => {
+    // A 1-byte cap is unsatisfiable even at the lowest JPEG quality, so
+    // captureScreenshot throws and the render fails closed rather than emit an
+    // oversized image.
+    const h = makeHarness({
+      budgets: {
+        renderTimeoutMs: 1200,
+        settleTimeoutMs: 600,
+        screenshotMaxBytes: 1,
+      },
+    });
+    const obs = await h.renderWidget({
+      toolCallId: "tiny-1",
+      toolName: "show_seats",
+      serverId: "flights",
+      html: buttonHtml,
+      keepMounted: true,
+    });
+    expect(obs.status).toBe("screenshot_failed");
+    expect(obs.screenshotBase64).toBeUndefined();
+    // A failed render is not kept mounted.
+    expect(h.getMountedWidgetId()).toBeNull();
+    expect(h.hasRenderedWidget()).toBe(false);
+  }, 30_000);
 });
 
 describe("McpAppBrowserHarness — interaction", () => {
@@ -261,5 +286,47 @@ describe("McpAppBrowserHarness — interaction", () => {
       action: { action: "left_click", coordinate: [640, 400] },
     });
     expect(live.widgetToolCalls.map((c) => c.name)).toEqual(["reserve"]);
+  }, 30_000);
+
+  it("force-dismisses the widget once the per-widget step cap is reached", async () => {
+    const h = makeHarness({
+      budgets: {
+        renderTimeoutMs: 1200,
+        settleTimeoutMs: 600,
+        maxBrowserStepsPerWidget: 1,
+      },
+    });
+    const render = await h.renderWidget({
+      toolCallId: "cap-1",
+      toolName: "show_seats",
+      serverId: "flights",
+      html: buttonHtml,
+      keepMounted: true,
+    });
+    expect(render.status).toBe("rendered");
+    // getMountedWidgetId is the single source of truth for the live widget.
+    expect(h.getMountedWidgetId()).toBe("cap-1");
+
+    // First action consumes the only allowed step.
+    const first = await h.executeAction({
+      toolCallId: "cap-1",
+      action: { action: "left_click", coordinate: [640, 400] },
+    });
+    expect(first.note).toBeUndefined();
+
+    // Second action is over the step cap -> force-dismiss + distinct note.
+    const second = await h.executeAction({
+      toolCallId: "cap-1",
+      action: { action: "screenshot" },
+    });
+    expect(second.note).toBe("step_budget_exceeded");
+    // The widget is torn down: no longer live, and further actions no-op.
+    expect(h.getMountedWidgetId()).toBeNull();
+    expect(h.hasRenderedWidget()).toBe(false);
+    const third = await h.executeAction({
+      toolCallId: "cap-1",
+      action: { action: "screenshot" },
+    });
+    expect(third.note).toBe("no rendered widget");
   }, 30_000);
 });
