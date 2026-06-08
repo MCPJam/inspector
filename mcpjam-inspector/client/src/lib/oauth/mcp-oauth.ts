@@ -1978,16 +1978,18 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         // Add client secret if provided
         if (this.customClientSecret) {
           result.client_secret = this.customClientSecret;
-          // Drop any inherited `token_endpoint_auth_method` from a prior
+          // Drop only the specific `"none"` hint inherited from a prior
           // DCR registration. Our DCR metadata advertises "none" when no
           // secret is set, and servers echo that back into the stored
           // client info. The upstream SDK's `selectClientAuthMethod`
-          // honors the field when present, so leaving it here would
+          // honors the field when present, so leaving "none" here would
           // silently bypass the secret on token exchange and surface as
-          // `invalid_client`. Letting the SDK auto-pick (client_secret_basic
-          // or _post) from the auth server's metadata is the right default
-          // once a secret is configured.
-          delete result.token_endpoint_auth_method;
+          // `invalid_client`. Stored `client_secret_basic` / `_post` are
+          // left intact — they may be a legitimate per-client registration
+          // value, and either still results in the secret being sent.
+          if (result.token_endpoint_auth_method === "none") {
+            delete result.token_endpoint_auth_method;
+          }
         }
         return result;
       } else {

@@ -1279,6 +1279,35 @@ describe("mcp-oauth", () => {
       expect(info).not.toHaveProperty("token_endpoint_auth_method");
     });
 
+    it("preserves stored client_secret_post / _basic when merging static credentials", async () => {
+      // Companion to the "none" strip: the heal is intentionally narrow.
+      // A legitimately-registered confidential client may have
+      // token_endpoint_auth_method = "client_secret_post" (or "_basic")
+      // in stored info. Dropping it would let the SDK auto-pick — which
+      // prefers basic when both are listed in server metadata — and
+      // could downgrade a post-configured client. Both values still
+      // result in the secret being sent, so honoring them is correct.
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({
+          client_id: "dcr-registered-id",
+          token_endpoint_auth_method: "client_secret_post",
+        })
+      );
+
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "static-client-id",
+        "static-client-secret"
+      );
+
+      const info = provider.clientInformation() as Record<string, unknown>;
+      expect(info.token_endpoint_auth_method).toBe("client_secret_post");
+      expect(info.client_secret).toBe("static-client-secret");
+    });
+
     it("advertises client_secret_basic in clientMetadata when a static secret is configured", async () => {
       // The DCR metadata advertises `token_endpoint_auth_method`. Hard-coding
       // "none" while we hold a confidential client secret tells the server
