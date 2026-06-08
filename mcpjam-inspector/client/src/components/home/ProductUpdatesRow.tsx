@@ -134,7 +134,27 @@ export function ProductUpdatesRow() {
   if (updates === undefined) return null;
 
   const active = updates.filter((update) => !update.dismissed);
-  if (active.length === 0) return null;
+  if (active.length === 0) {
+    if (updates.length === 0) return null;
+
+    return (
+      <section className="flex min-h-0 flex-col rounded-xl border border-border/60">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 py-2">
+          <h2 className="text-[13px] font-medium text-foreground">
+            What&apos;s new
+          </h2>
+        </div>
+        <div className="px-4 py-5 text-center">
+          <p className="text-[13px] text-muted-foreground">
+            You&apos;re all caught up.
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground/70">
+            New product updates will show up here.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   const hiddenCount = Math.max(active.length - PREVIEW_LIMIT, 0);
   const visible = showAll ? active : active.slice(0, PREVIEW_LIMIT);
