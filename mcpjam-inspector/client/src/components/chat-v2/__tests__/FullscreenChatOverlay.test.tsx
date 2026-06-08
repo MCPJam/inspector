@@ -18,11 +18,16 @@ import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
 // LoadingIndicatorContent took without depending on the registry's actual
 // indicator markup. The mock renders the host-style id from context (via a
 // shared helper) or falls back to "default".
-vi.mock("../shared/loading-indicator-content", async () => {
+vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../shared/loading-indicator-content")
+    >();
   const { useChatboxHostStyle } = await import(
     "@/contexts/chatbox-client-style-context"
   );
   return {
+    ...actual,
     LoadingIndicatorContent: ({
       modelProvider,
     }: {

@@ -51,6 +51,7 @@ COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
+    npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
 
 COPY design-system ./design-system
