@@ -108,10 +108,7 @@ import type {
   MCPJamToolResultEvent,
 } from "../utils/mcpjam-stream-handler.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
-import {
-  lockEvalSessionAfterUpdate,
-  persistEvalTraceFanout,
-} from "./evals/persist-eval-trace.js";
+import { finalizeEvalIteration } from "./evals/finalize-iteration.js";
 import type {
   EvalStreamEvent,
   EvalStreamToolCall,
@@ -603,196 +600,6 @@ async function createIterationDirectly(
   }
 }
 
-// Helper to finish iteration directly (for quick runs without a recorder)
-async function finishIterationDirectly(
-  convexClient: ConvexHttpClient,
-  params: {
-    iterationId?: string;
-    passed: boolean;
-    toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
-    usage: UsageTotals;
-    messages: ModelMessage[];
-    spans?: EvalTraceSpan[];
-    prompts?: PromptTraceSummary[];
-    widgetSnapshots?: EvalTraceWidgetSnapshot[];
-    /**
-     * Resolved system prompt for the eval session. Forwarded to
-     * `persistEvalTraceFanout` → `appendEvalTurnTrace.systemPrompt`,
-     * which the backend persists to `chatSessions.systemPrompt` with
-     * first-write-wins semantics.
-     */
-    systemPrompt?: string;
-    status?: "completed" | "failed" | "cancelled";
-    startedAt?: number;
-    error?: string;
-    errorDetails?: string;
-    resultSource?: "reported" | "derived";
-    metadata?: Record<string, string | number | boolean>;
-  },
-): Promise<void> {
-  if (!params.iterationId) return;
-
-  // Check if iteration was cancelled before trying to update
-  try {
-    const iteration = await convexClient.query(
-      "testSuites:getTestIteration" as any,
-      { iterationId: params.iterationId },
-    );
-    if (iteration?.status === "cancelled") {
-      logger.debug(
-        "[evals] Skipping update for cancelled iteration:",
-        params.iterationId,
-      );
-      return;
-    }
-  } catch (error) {
-    // If we can't check status, continue anyway
-  }
-
-  const iterationStatus =
-    params.status ?? (params.passed ? "completed" : "failed");
-  const result = params.passed ? "passed" : "failed";
-
-  // PR-2 eval→chatSessions fanout. Mirrors recorder.finishIteration —
-  // see persist-eval-trace.ts for the contract. Fanout writes per-turn
-  // rows BEFORE updateTestIteration; the chatSessions lock fires AFTER
-  // updateTestIteration succeeds (PR-2 review fix #2). When the
-  // backend flag is off, today's legacy behavior runs unchanged.
-  // lockReason describes the transcript LIFECYCLE, not the verdict —
-  // see recorder.ts for the full rationale. A failed-verdict iteration
-  // that ran cleanly still gets eval_completed; eval_failed is reserved
-  // for cycle failures (provider errors, transport crashes, etc.).
-  //
-  // The `params.error` check covers a runner quirk (Codex review on
-  // #2446): some backend eval paths set `iterationError` but still
-  // pass `status: "completed"` to finishIteration (see
-  // evals-runner.ts:2079-2082 / :3962-3965). Treating those as
-  // eval_completed would lock an error transcript with the wrong reason.
-  const isCycleFailure =
-    iterationStatus === "failed" ||
-    (params.error !== undefined && params.error !== "");
-  const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
-    iterationStatus === "cancelled"
-      ? "eval_cancelled"
-      : isCycleFailure
-        ? "eval_failed"
-        : "eval_completed";
-  const fanout = await persistEvalTraceFanout({
-    convexClient,
-    iterationId: params.iterationId,
-    iterationStartedAt: params.startedAt,
-    messages: params.messages,
-    spans: params.spans,
-    prompts: params.prompts,
-    widgetSnapshots: params.widgetSnapshots,
-    systemPrompt: params.systemPrompt,
-  });
-  // Fall back to the W1 single-call path ONLY when the fanout failed
-  // before any turn landed. See recorder.ts / persist-eval-trace.ts.
-  const useW1Fallback =
-    fanout.persisted === false && fanout.turnsWritten === 0;
-  if (fanout.persisted === false) {
-    logger.warn(
-      useW1Fallback
-        ? "[evals] persistEvalTraceFanout failed before any turn landed (quick run); falling back to W1 single-call save"
-        : "[evals] persistEvalTraceFanout failed mid-stream (quick run); iteration finalized without re-attempting (would orphan partial turns)",
-      {
-        iterationId: params.iterationId,
-        turnsWritten: fanout.turnsWritten,
-        error: fanout.error.message,
-      },
-    );
-  }
-
-  // PR-2 review #5 (Cursor "Update failure after successful fanout"):
-  // track iteration-gone state so the lock can fire even when the
-  // update throws a transient error. Mirrors recorder.finishIteration.
-  let iterationGoneOrCancelled = false;
-  try {
-    await convexClient.action("testSuites:updateTestIteration" as any, {
-      iterationId: params.iterationId,
-      result,
-      status: iterationStatus,
-      actualToolCalls: sanitizeForConvexTransport(params.toolsCalled),
-      tokensUsed: params.usage.totalTokens ?? 0,
-      ...(useW1Fallback
-        ? {
-            messages: sanitizeForConvexTransport(params.messages),
-            // Mirrors `appendEvalTurnTrace.systemPrompt` (Cursor follow-up
-            // on PR-2481): after dropping the persistence-side prepend,
-            // this W1 single-call path would otherwise persist a
-            // transcript with no resolved system prompt. Backend PR #448
-            // adds `systemPrompt` to `updateTestIteration` with the same
-            // first-write-wins semantics as the per-turn append.
-            ...(params.systemPrompt
-              ? { systemPrompt: params.systemPrompt }
-              : {}),
-            ...(params.spans?.length
-              ? { spans: sanitizeForConvexTransport(params.spans) }
-              : {}),
-            ...(params.prompts?.length
-              ? { prompts: sanitizeForConvexTransport(params.prompts) }
-              : {}),
-            ...(params.widgetSnapshots?.length
-              ? {
-                  widgetSnapshots: sanitizeForConvexTransport(
-                    params.widgetSnapshots,
-                  ),
-                }
-              : {}),
-          }
-        : {}),
-      error: params.error,
-      errorDetails: params.errorDetails,
-      resultSource: params.resultSource,
-      // Merge user-provided metadata with token usage breakdown, then
-      // sanitize: metadata can carry nested predicate rows whose authored
-      // args may contain $-prefixed keys Convex rejects at the boundary.
-      metadata: sanitizeForConvexTransport({
-        ...(params.metadata ?? {}),
-        ...buildIterationUsageMetadata(params.usage),
-      }),
-    });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-
-    // Silently skip if iteration was deleted or cancelled
-    if (
-      errorMessage.includes("not found") ||
-      errorMessage.includes("unauthorized") ||
-      errorMessage.includes("cancelled")
-    ) {
-      iterationGoneOrCancelled = true;
-    } else {
-      logger.error(
-        "[evals] Failed to finish iteration:",
-        new Error(errorMessage),
-      );
-      // Fall through to the lock step. See recorder.ts for the
-      // rationale: chatSessions transcript is complete from the
-      // fanout's perspective; locking prevents partial writes on a
-      // retry. Iteration row's terminal status may stay stale until
-      // a retry/cron sweep — acceptable because the chatSessions
-      // layer is consistent.
-    }
-  }
-
-  // Lock the chatSession when fanout succeeded. Runs in BOTH the
-  // success branch and the transient-failure branch; skipped only
-  // when the iteration is gone. Mirrors recorder.finishIteration's
-  // pattern — see there for full rationale.
-  if (
-    fanout?.persisted === true &&
-    params.iterationId &&
-    !iterationGoneOrCancelled
-  ) {
-    await lockEvalSessionAfterUpdate({
-      convexClient,
-      iterationId: params.iterationId,
-      reason: terminalReason,
-    });
-  }
-}
 
 /**
  * Persist a failed iteration row when iteration setup throws BEFORE the
@@ -823,7 +630,10 @@ async function persistSetupFailedIteration(args: {
   if (args.recorder) {
     await args.recorder.finishIteration(failParams);
   } else {
-    await finishIterationDirectly(args.convexClient, failParams);
+    await finalizeEvalIteration({
+      ...failParams,
+      convexClient: args.convexClient,
+    });
   }
 }
 
@@ -1762,7 +1572,7 @@ const runIterationWithAiSdk = async ({
     if (recorder) {
       await recorder.finishIteration(finishParams);
     } else {
-      await finishIterationDirectly(convexClient, finishParams);
+      await finalizeEvalIteration({ ...finishParams, convexClient });
     }
 
     return {
@@ -1887,7 +1697,7 @@ const runIterationWithAiSdk = async ({
     if (recorder) {
       await recorder.finishIteration(failParams);
     } else {
-      await finishIterationDirectly(convexClient, failParams);
+      await finalizeEvalIteration({ ...failParams, convexClient });
     }
     return {
       evaluation,
@@ -2526,7 +2336,7 @@ const runIterationViaBackend = async ({
   if (recorder) {
     await recorder.finishIteration(finishParams);
   } else {
-    await finishIterationDirectly(convexClient, finishParams);
+    await finalizeEvalIteration({ ...finishParams, convexClient });
   }
 
   return {
@@ -3736,7 +3546,7 @@ const streamIterationWithAiSdk = async ({
     if (recorder) {
       await recorder.finishIteration(finishParams);
     } else {
-      await finishIterationDirectly(convexClient, finishParams);
+      await finalizeEvalIteration({ ...finishParams, convexClient });
     }
 
     return {
@@ -3884,7 +3694,7 @@ const streamIterationWithAiSdk = async ({
     if (recorder) {
       await recorder.finishIteration(failParams);
     } else {
-      await finishIterationDirectly(convexClient, failParams);
+      await finalizeEvalIteration({ ...failParams, convexClient });
     }
     return {
       evaluation,
@@ -4867,7 +4677,7 @@ const streamIterationViaBackend = async ({
   if (recorder) {
     await recorder.finishIteration(finishParams);
   } else {
-    await finishIterationDirectly(convexClient, finishParams);
+    await finalizeEvalIteration({ ...finishParams, convexClient });
   }
 
   return {

@@ -8,11 +8,7 @@ import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
-import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
-import {
-  lockEvalSessionAfterUpdate,
-  persistEvalTraceFanout,
-} from "./persist-eval-trace.js";
+import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
@@ -91,8 +87,6 @@ export type SuiteRunRecorder = {
     notes?: string;
   }): Promise<void>;
 };
-
-const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
 
 function isSuiteRunEnvironmentSnapshot(
   value: unknown,
@@ -203,217 +197,22 @@ export const createSuiteRunRecorder = ({
         return undefined;
       }
     },
-    async finishIteration({
-      iterationId,
-      passed,
-      toolsCalled,
-      usage,
-      messages,
-      spans,
-      prompts,
-      widgetSnapshots,
-      systemPrompt,
-      status,
-      startedAt,
-      error,
-      errorDetails,
-      resultSource,
-      metadata,
-    }) {
-      if (!iterationId || runDeleted) {
+    async finishIteration(params) {
+      if (runDeleted) {
         return;
       }
-
-      // Check if iteration was cancelled before trying to update
-      try {
-        const iteration = await convexClient.query(
-          "testSuites:getTestIteration" as any,
-          { iterationId },
-        );
-        if (iteration?.status === "cancelled") {
-          logger.debug(
-            "[evals] Skipping update for cancelled iteration:",
-            iterationId,
-          );
-          return;
-        }
-      } catch (error) {
-        // If we can't check status, continue anyway
-      }
-
-      const iterationStatus =
-        status ?? (passed ? DEFAULT_ITERATION_STATUS : "failed");
-      const result = passed ? "passed" : "failed";
-
-      // PR-2 eval→chatSessions fanout: when the backend flag is on,
-      // write the transcript as per-turn rows in the chatSessions path
-      // BEFORE calling updateTestIteration. The fanout no longer fires
-      // the terminal lock — that happens AFTER updateTestIteration
-      // succeeds so a downstream iteration-row failure cannot leave a
-      // locked transcript without a finalized iteration (PR-2 review
-      // fix #2, Cursor #ed44ef40). Idempotent on retry.
-      //
-      // Fanout result drives whether we still pass trace fields to
-      // updateTestIteration:
-      //   - null            → flag off; today's legacy behavior runs
-      //   - persisted:true  → trace lives in chatSessions; updateTestIteration
-      //                       called WITHOUT trace fields (no double-persist)
-      //   - persisted:false → fanout failed mid-stream; fall back to
-      //                       the legacy single-call path so the iteration
-      //                       is still complete and replayable.
-      // lockReason describes the transcript LIFECYCLE (did the eval cycle
-      // run to completion?), NOT the verdict. A failed-verdict iteration
-      // that ran cleanly (status: "completed", result: "failed") still
-      // gets eval_completed; eval_failed is reserved for cycle failures
-      // like provider errors, MCP transport crashes, etc. The verdict
-      // lives on testIteration.result (passed | failed | pending).
-      //
-      // The `error != null` check covers a runner quirk (Codex review on
-      // #2446): the backend eval paths sometimes set
-      // `iterationError` while still calling finishIteration with
-      // `status: "completed"` (see evals-runner.ts:2079-2082 and
-      // :3962-3965). Treating those as eval_completed would lock an
-      // error transcript with the wrong reason. Presence of `error`
-      // is the cycle-failure signal we already have in scope.
-      //
-      // Today this is defense-in-depth: the backend's
-      // internalUpdateTestIteration auto-lock (W1) fires first with the
-      // same status-based derivation, and internalLockEvalSession is
-      // "first lock wins" — so this recorder-side lock call no-ops. But
-      // if W1 ever doesn't run (iteration finalized without status
-      // patches) the wrong `passed`-based reason would land.
-      const isCycleFailure =
-        iterationStatus === "failed" || (error !== undefined && error !== "");
-      const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
-        iterationStatus === "cancelled"
-          ? "eval_cancelled"
-          : isCycleFailure
-            ? "eval_failed"
-            : "eval_completed";
-      const fanout = await persistEvalTraceFanout({
+      await finalizeEvalIteration({
         convexClient,
-        iterationId,
-        iterationStartedAt: startedAt,
-        messages,
-        spans,
-        prompts,
-        widgetSnapshots,
-        systemPrompt,
-      });
-      // Fall back to the W1 single-call path ONLY when the fanout failed
-      // before any turn landed. With turns already written, re-sending
-      // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
-      // orphan turns 1..N. See persist-eval-trace.ts for the contract.
-      const useW1Fallback =
-        fanout.persisted === false && fanout.turnsWritten === 0;
-      if (fanout.persisted === false) {
-        logger.warn(
-          useW1Fallback
-            ? "[evals] persistEvalTraceFanout failed before any turn landed; falling back to W1 single-call save"
-            : "[evals] persistEvalTraceFanout failed mid-stream; iteration finalized without re-attempting (would orphan partial turns)",
-          {
-            iterationId,
-            turnsWritten: fanout.turnsWritten,
-            error: fanout.error.message,
-          },
-        );
-      }
-
-      // PR-2 review #5 (Cursor "Update failure after successful fanout"):
-      // track whether the iteration is gone so we don't waste a lock
-      // call on a deleted session, AND so the lock fires even when
-      // the iteration update threw a transient error.
-      let iterationGoneOrCancelled = false;
-      try {
-        await convexClient.action("testSuites:updateTestIteration" as any, {
-          iterationId,
-          status:
-            iterationStatus === "completed" ? "completed" : iterationStatus,
-          result,
-          actualToolCalls: sanitizeForConvexTransport(toolsCalled),
-          tokensUsed: usage.totalTokens ?? 0,
-          ...(useW1Fallback
-            ? {
-                messages: sanitizeForConvexTransport(messages),
-                // Mirrors `appendEvalTurnTrace.systemPrompt` + the
-                // parallel fix in `finishIterationDirectly`. Cursor
-                // Bugbot follow-up "Recorder W1 omits systemPrompt":
-                // without this, suite runs that use the recorder
-                // (not the direct `finishIterationDirectly` path) and
-                // hit the W1 fallback persist a transcript with no
-                // resolved system prompt — the prepend was dropped
-                // earlier in this PR. Backend `updateTestIteration`
-                // accepts the slot (mcpjam-backend #449); first-write-
-                // wins semantics apply, no risk of clobbering a value
-                // already set by an earlier `appendEvalTurnTrace`.
-                ...(systemPrompt ? { systemPrompt } : {}),
-                ...(spans?.length
-                  ? { spans: sanitizeForConvexTransport(spans) }
-                  : {}),
-                ...(prompts?.length
-                  ? { prompts: sanitizeForConvexTransport(prompts) }
-                  : {}),
-                ...(widgetSnapshots?.length
-                  ? {
-                      widgetSnapshots:
-                        sanitizeForConvexTransport(widgetSnapshots),
-                    }
-                  : {}),
-              }
-            : {}),
-          error,
-          errorDetails,
-          resultSource,
-          // Merge user-provided metadata with token usage breakdown, then
-          // sanitize: metadata can carry nested predicate rows whose authored
-          // args may contain $-prefixed keys Convex rejects at the boundary.
-          metadata: sanitizeForConvexTransport({
-            ...(metadata ?? {}),
-            ...buildIterationUsageMetadata(usage),
-          }),
-        });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        // Check if run was deleted/not found or iteration was cancelled
-        if (
-          errorMessage.includes("not found") ||
-          errorMessage.includes("unauthorized") ||
-          errorMessage.includes("cancelled")
-        ) {
+        ...params,
+        // Suite-run-scoped short-circuit: flip the recorder's
+        // `runDeleted` flag when the shared finalize step sees a
+        // "not found" / "unauthorized" / "cancelled" update error so
+        // subsequent calls on this recorder no-op. The quick-run
+        // direct path (no recorder) passes no callback.
+        onRunDeleted: () => {
           runDeleted = true;
-          iterationGoneOrCancelled = true;
-        } else {
-          logger.error(
-            "[evals] Failed to record iteration result:",
-            new Error(errorMessage),
-          );
-          // Transient (non-cancellation) failure: fall through to the
-          // lock step. The chatSessions transcript is complete from
-          // the fanout's perspective; locking prevents a retry from
-          // accumulating partial writes against a row whose data
-          // already represents the final state. The iteration row's
-          // terminal status remains stale until a retry/cron sweep
-          // finalizes it — that's acceptable because the data is
-          // consistent at the chatSessions layer.
-        }
-      }
-
-      // Lock the chatSession when fanout succeeded — runs in BOTH the
-      // success branch (updateTestIteration succeeded → defense + UI
-      // hint) and the transient-failure branch (updateTestIteration
-      // threw a non-cancellation error → prevents partial writes on
-      // retry). Skipped only when the iteration is gone, where
-      // locking a deleted session is wasted work. Best-effort:
-      // lockEvalSessionAfterUpdate swallows its own failures.
-      if (fanout?.persisted === true && !iterationGoneOrCancelled) {
-        await lockEvalSessionAfterUpdate({
-          convexClient,
-          iterationId,
-          reason: terminalReason,
-        });
-      }
+        },
+      });
     },
     async finalize({ status, summary, notes }) {
       if (runDeleted) {
