@@ -268,7 +268,7 @@ describe("isGateAccessDenied", () => {
     ).toBe(true);
   });
 
-  it("denies maxProjects when a free organization is already at cap", () => {
+  it("respects explicit denied maxProjects gate decisions", () => {
     expect(
       isGateAccessDenied(
         premiumness({

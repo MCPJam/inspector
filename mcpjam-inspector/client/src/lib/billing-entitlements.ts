@@ -164,6 +164,8 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return "Chatboxes per project";
     case "maxEvalRunsPerMonth":
       return "Eval runs per month";
+    case "insightsPerDay":
+      return "Insights per day";
     default:
       return gateKey;
   }
@@ -278,6 +280,11 @@ export function formatBillingLimitReachedMessage(
     return canManageBilling
       ? `This project has reached its chatbox limit (${allowedValue}). Upgrade to continue.`
       : `This project has reached its chatbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "insightsPerDay") {
+    return canManageBilling
+      ? `This organization has reached its daily insights limit (${allowedValue}). Upgrade to continue.`
+      : `This organization has reached its daily insights limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxMembers") {
     return canManageBilling

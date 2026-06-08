@@ -16,7 +16,7 @@ type ToolSnapshotSource = {
   serverId: string;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -67,7 +67,7 @@ function readServerIdFromToolOutput(value: unknown): string | undefined {
   return undefined;
 }
 
-function extractHtmlFromResourceContent(content: unknown): string {
+export function extractHtmlFromResourceContent(content: unknown): string {
   if (!isRecord(content)) {
     return "";
   }
@@ -126,7 +126,7 @@ function normalizeWidgetCsp(value: unknown): Record<string, unknown> | null {
   return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
-function normalizeWidgetPermissions(
+export function normalizeWidgetPermissions(
   value: unknown,
 ): Record<string, unknown> | null {
   return isRecord(value) ? value : null;

@@ -2530,60 +2530,51 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(hasSystemEntry).toBe(false);
     });
 
-    it("prepends the resolved system prompt to persisted messages (PR 4d review — Codex P2)", async () => {
-      // Codex P2 review fix: pre-4d the system rode along as the first
-      // entry in `conversationMessages` and was naturally persisted via
-      // the messages-array path. PR 4d dropped that push to align the
-      // streamText wire shape with chat-v2; persistence had no
-      // dedicated `systemPrompt` slot on `appendEvalTurnTrace`, so the
-      // resolved system prompt was lost from the persisted transcript.
-      //
-      // Fix: prepend the resolved value as a `role: "system"` message
-      // at PERSISTENCE TIME (not in `conversationMessages` — the wire
-      // shape stays chat-aligned, no double-send). This restores the
-      // pre-4d persistence shape exactly: first message is
-      // `role: "system"` with the resolved content.
+    it("passes the resolved system prompt to appendEvalTurnTrace.systemPrompt (chatSessions.systemPrompt)", async () => {
+      // Pre-this-PR: the resolved system was spliced into the persisted
+      // `messages` array as a leading `{role:"system",...}` entry,
+      // because `appendEvalTurnTrace` had no dedicated `systemPrompt`
+      // slot. This PR adds the slot (backend-side) and threads the
+      // value through as a top-level arg on the action call, persisted
+      // to `chatSessions.systemPrompt` with first-write-wins semantics.
+      // The persisted `messages` array no longer carries a leading
+      // system entry (the wire shape and the persisted shape now agree
+      // on "system carried out-of-band").
       await runWithSuiteHostConfig({
         systemPrompt: "Resolved system prompt for persistence",
       });
 
-      const hasSystemPrefix = (msgs: unknown): boolean => {
-        if (!Array.isArray(msgs) || msgs.length === 0) return false;
-        const first = msgs[0] as { role?: string; content?: unknown };
-        if (first?.role !== "system") return false;
-        if (typeof first.content === "string") {
-          return first.content === "Resolved system prompt for persistence";
-        }
-        if (Array.isArray(first.content)) {
-          return first.content.some(
-            (part: any) =>
-              part?.type === "text" &&
-              part.text === "Resolved system prompt for persistence",
-          );
-        }
-        return false;
-      };
       const anyCallCarriesIt = convexClient.action.mock.calls.some((call) => {
+        if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
         const payload = call[1] as Record<string, unknown> | undefined;
-        if (!payload) return false;
-        if (hasSystemPrefix(payload.messages)) return true;
-        const turn = payload.turn as
-          | { sessionMessages?: unknown }
-          | undefined;
-        if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
-        return false;
+        return (
+          payload?.systemPrompt === "Resolved system prompt for persistence"
+        );
       });
       expect(anyCallCarriesIt).toBe(true);
+
+      // And the persisted `turn.sessionMessages` no longer carries the
+      // system as a leading message — the new wire shape moved it to
+      // the top-level field.
+      const appendCalls = convexClient.action.mock.calls.filter(
+        (call) => call[0] === "testSuites:appendEvalTurnTrace",
+      );
+      for (const call of appendCalls) {
+        const payload = call[1] as Record<string, unknown> | undefined;
+        const turn = payload?.turn as
+          | { sessionMessages?: Array<{ role?: string }> }
+          | undefined;
+        const first = turn?.sessionMessages?.[0];
+        expect(first?.role).not.toBe("system");
+      }
     });
 
-    it("prepends the resolved system to the backend runner's persisted transcript (PR 4d review — Codex P2 / Cursor Medium)", async () => {
-      // Codex P2 / Cursor Medium: `runIterationViaBackend` sends the
-      // resolved system to the model via `runAssistantTurn`'s
-      // `systemPrompt:` arg, but the engine's returned message history
-      // doesn't carry a system entry. `appendEvalTurnTrace` has no
-      // dedicated `systemPrompt` slot, so the persisted transcript
-      // omits a prompt that affected the model. Fix: prepend at
-      // persistence time, mirroring the local runner's fix.
+    it("passes the resolved system to appendEvalTurnTrace.systemPrompt in the backend runner", async () => {
+      // `runIterationViaBackend` sends the resolved system to the model
+      // via `runAssistantTurn`'s `systemPrompt:` arg. With the new
+      // dedicated slot on `appendEvalTurnTrace`, the persisted
+      // transcript carries it via `chatSessions.systemPrompt` (no
+      // leading `{role:"system",...}` entry in the messages array).
       const assistantTurnModule = await import("../../../utils/assistant-turn");
       const runAssistantTurnSpy = vi
         .spyOn(assistantTurnModule, "runAssistantTurn")
@@ -2640,32 +2631,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           },
         });
 
-        const hasSystemPrefix = (msgs: unknown): boolean => {
-          if (!Array.isArray(msgs) || msgs.length === 0) return false;
-          const first = msgs[0] as { role?: string; content?: unknown };
-          if (first?.role !== "system") return false;
-          if (typeof first.content === "string") {
-            return first.content === "Backend suite default";
-          }
-          if (Array.isArray(first.content)) {
-            return first.content.some(
-              (part: any) =>
-                part?.type === "text" &&
-                part.text === "Backend suite default",
-            );
-          }
-          return false;
-        };
         const anyCallCarriesIt = convexClient.action.mock.calls.some(
           (call) => {
+            if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
             const payload = call[1] as Record<string, unknown> | undefined;
-            if (!payload) return false;
-            if (hasSystemPrefix(payload.messages)) return true;
-            const turn = payload.turn as
-              | { sessionMessages?: unknown }
-              | undefined;
-            if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
-            return false;
+            return payload?.systemPrompt === "Backend suite default";
           },
         );
         expect(anyCallCarriesIt).toBe(true);
@@ -2729,34 +2699,15 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const wireMessages = streamCall.messages as Array<{ role: string }>;
       expect(wireMessages.some((m) => m.role === "system")).toBe(false);
 
-      // Persistence shape: first message is the resolved system,
-      // matching the non-stream runner's prefix.
-      const hasSystemPrefix = (msgs: unknown): boolean => {
-        if (!Array.isArray(msgs) || msgs.length === 0) return false;
-        const first = msgs[0] as { role?: string; content?: unknown };
-        if (first?.role !== "system") return false;
-        if (typeof first.content === "string") {
-          return first.content === "Stream-runner suite default";
-        }
-        if (Array.isArray(first.content)) {
-          return first.content.some(
-            (part: any) =>
-              part?.type === "text" &&
-              part.text === "Stream-runner suite default",
-          );
-        }
-        return false;
-      };
+      // Persistence shape: the resolved system flows through
+      // `appendEvalTurnTrace.systemPrompt` (persisted to
+      // `chatSessions.systemPrompt`), not as a leading system entry
+      // in the messages array.
       const persistedCarriesIt = convexClient.action.mock.calls.some(
         (call) => {
+          if (call[0] !== "testSuites:appendEvalTurnTrace") return false;
           const payload = call[1] as Record<string, unknown> | undefined;
-          if (!payload) return false;
-          if (hasSystemPrefix(payload.messages)) return true;
-          const turn = payload.turn as
-            | { sessionMessages?: unknown }
-            | undefined;
-          if (turn && hasSystemPrefix(turn.sessionMessages)) return true;
-          return false;
+          return payload?.systemPrompt === "Stream-runner suite default";
         },
       );
       expect(persistedCarriesIt).toBe(true);
@@ -3313,6 +3264,1095 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           expect.objectContaining({ type: "turn_finish" }),
         ]),
       );
+    });
+  });
+
+  describe("PR 5b — streamIterationViaBackend on runAssistantTurn + engine callbacks", () => {
+    // PR 5b replaces the inline `while (steps < MAX_STEPS)` Convex
+    // /stream loop in `streamIterationViaBackend` with a single
+    // `runAssistantTurn` call per turn, wired to the engine callbacks
+    // added in PR 5b-pre (onToolCall / onToolResult / onStepFinish)
+    // plus the existing `onLiveTextDelta` for text deltas. The legacy
+    // event vocabulary (text_delta / tool_call / tool_result /
+    // step_finish / trace_snapshot / turn_finish) is preserved so
+    // streamTestCase SSE consumers see the same byte shape.
+
+    it("emits the canonical SSE event vocabulary from engine callbacks (PR 5b)", async () => {
+      // Lock the byte-shape contract for the backend variant: the
+      // runner threads `onLiveTextDelta`, `onToolCall`, `onToolResult`,
+      // and `onStepFinish` into `runAssistantTurn`. The engine fires
+      // them in-order during the turn; the runner emits the matching
+      // SSE events. After the turn finishes, the runner emits
+      // turn_finish + trace_snapshot.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Fire the engine callbacks in the order the real engine
+          // would, then return the assembled turnResult.
+          opts.onLiveTextDelta?.("Working");
+          opts.onToolCall?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            input: { q: "status" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            output: { ok: true },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+            turnSpans: [],
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b SSE vocabulary",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-vocab",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-vocab",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        // CodeRabbit PR 5b review (nit): use ordered-index assertions,
+        // not arrayContaining — the latter accepts out-of-order
+        // regressions, but this test is supposed to lock the SSE event
+        // SEQUENCE the legacy inline loop emitted.
+        const types = emitted.map((e) => e.type as string);
+        const firstIndex = (t: string) => types.indexOf(t);
+        expect(firstIndex("turn_start")).toBeGreaterThanOrEqual(0);
+        expect(firstIndex("text_delta")).toBeGreaterThan(
+          firstIndex("turn_start"),
+        );
+        expect(firstIndex("tool_call")).toBeGreaterThan(
+          firstIndex("text_delta"),
+        );
+        expect(firstIndex("tool_result")).toBeGreaterThan(
+          firstIndex("tool_call"),
+        );
+        expect(firstIndex("step_finish")).toBeGreaterThan(
+          firstIndex("tool_result"),
+        );
+        expect(firstIndex("trace_snapshot")).toBeGreaterThan(
+          firstIndex("step_finish"),
+        );
+        expect(firstIndex("turn_finish")).toBeGreaterThan(
+          firstIndex("trace_snapshot"),
+        );
+        // Spot-check the data shapes carried on the events.
+        expect(emitted).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "text_delta",
+              content: "Working",
+            }),
+            expect.objectContaining({
+              type: "tool_call",
+              toolName: "search",
+              toolCallId: "call-1",
+            }),
+            expect.objectContaining({
+              type: "tool_result",
+              toolCallId: "call-1",
+              isError: false,
+            }),
+          ]),
+        );
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("emits per-step usage delta on step_finish SSE, not cumulative (PR 5b review — Cursor Medium #1)", async () => {
+      // Cursor PR 5b review fix: the engine reports turn-cumulative
+      // usage on each `onStepFinish` (`event.turnUsage`), but the
+      // legacy inline loop emitted PER-STEP token counts on
+      // `step_finish` SSE. Mid-turn step_finish SSEs from a multi-step
+      // hosted eval turn would otherwise show inflated counts vs the
+      // local-BYOK stream path / `consumeFullStreamAsEvalEvents`.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Two settled-OK steps. Step 1: 10 in / 5 out cumulative.
+          // Step 2: 25 in / 13 out cumulative (i.e. step 2 contributed
+          // +15 in / +8 out). Emitted step_finish SSEs must show the
+          // PER-STEP deltas, not the cumulative.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            turnSpans: [],
+            settledWithError: false,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 25, outputTokens: 13, totalTokens: 38 },
+            turnSpans: [],
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 25, outputTokens: 13, totalTokens: 38 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b step usage delta",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-usage-delta",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-usage-delta",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishEvents = emitted.filter(
+          (e) => e.type === "step_finish",
+        ) as Array<{
+          stepNumber: number;
+          usage: { inputTokens: number; outputTokens: number };
+        }>;
+        expect(stepFinishEvents).toHaveLength(2);
+        // Step 1 delta = cumulative-step-1 (no prior).
+        expect(stepFinishEvents[0]!.usage).toEqual({
+          inputTokens: 10,
+          outputTokens: 5,
+        });
+        // Step 2 delta = cumulative-step-2 − cumulative-step-1.
+        expect(stepFinishEvents[1]!.usage).toEqual({
+          inputTokens: 15,
+          outputTokens: 8,
+        });
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("includes in-flight assistant + tool content on mid-turn step_finish trace_snapshot (PR 5b review — Cursor Medium #2)", async () => {
+      // Cursor PR 5b review fix: mid-turn `step_finish` trace_snapshot
+      // would otherwise copy only `messageHistory`, which doesn't roll
+      // forward from `turnResult.messages` until AFTER `runAssistantTurn`
+      // returns. Live UI consumers watching SSE would see empty
+      // assistant transcripts mid-turn even though `tool_call` /
+      // `text_delta` SSE already fired. Mirror PR 5a's
+      // `activePartialResponseMessages` pattern: synthesize the
+      // partial response from chunk-event accumulators and stitch into
+      // mid-turn snapshots.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Stream text + tool call + tool result, then settle the
+          // step. The step_finish trace_snapshot must include the
+          // in-flight assistant text + tool-call + tool-result content.
+          opts.onLiveTextDelta?.("Looking up status");
+          opts.onToolCall?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            input: { q: "status" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-1",
+            toolName: "search",
+            output: { ok: true, items: 3 },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            turnSpans: [],
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b mid-turn snapshot fidelity",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-snap-fidelity",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-snap-fidelity",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        // The mid-turn step_finish trace_snapshot must carry the
+        // in-flight assistant content (text + tool-call) AND the
+        // synthetic tool-result message.
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        );
+        expect(stepFinishSnapshots.length).toBeGreaterThan(0);
+        const snap = stepFinishSnapshots[0] as {
+          trace: { messages: Array<{ role: string; content: unknown }> };
+        };
+        const messages = snap.trace.messages;
+        const assistantMsg = messages.find((m) => m.role === "assistant");
+        expect(assistantMsg).toBeDefined();
+        const assistantContent = assistantMsg!.content as Array<{
+          type: string;
+          text?: string;
+          toolCallId?: string;
+          toolName?: string;
+        }>;
+        expect(assistantContent).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "text",
+              text: "Looking up status",
+            }),
+            expect.objectContaining({
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "search",
+            }),
+          ]),
+        );
+        const toolMsg = messages.find((m) => m.role === "tool");
+        expect(toolMsg).toBeDefined();
+        const toolContent = toolMsg!.content as Array<{
+          type: string;
+          toolCallId?: string;
+        }>;
+        expect(toolContent).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "tool-result",
+              toolCallId: "call-1",
+            }),
+          ]),
+        );
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("accumulates partial response across multi-step turns; step 2 snapshot retains step 1 content (PR 5b review followup)", async () => {
+      // Original PR 5b fix for Cursor #2 reset the partial-response
+      // accumulators inside `onStepFinish`, which corrupted step N's
+      // snapshot by dropping step 1..N-1's assistant/tool content
+      // (`messageHistory` doesn't roll forward from `turnResult.messages`
+      // until AFTER `runAssistantTurn` returns, so during the turn the
+      // accumulators are the ONLY source of in-flight content).
+      // Lock the followup fix: a step-2 snapshot must carry BOTH
+      // step-1 AND step-2 partial assistant + tool content.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Step 1: model says "Step1 text", calls tool A, gets a result.
+          opts.onLiveTextDelta?.("Step1 text");
+          opts.onToolCall?.({
+            toolCallId: "call-a",
+            toolName: "search",
+            input: { q: "first" },
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-a",
+            toolName: "search",
+            output: { ok: true, step: 1 },
+            isError: false,
+            stepIndex: 0,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            turnSpans: [],
+            settledWithError: false,
+          });
+          // Step 2: model says "Step2 text", calls tool B, gets a result.
+          opts.onLiveTextDelta?.("Step2 text");
+          opts.onToolCall?.({
+            toolCallId: "call-b",
+            toolName: "lookup",
+            input: { q: "second" },
+            stepIndex: 1,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onToolResult?.({
+            toolCallId: "call-b",
+            toolName: "lookup",
+            output: { ok: true, step: 2 },
+            isError: false,
+            stepIndex: 1,
+            promptIndex: 0,
+            serverId: undefined,
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+            turnSpans: [],
+            settledWithError: false,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b cumulative partials across steps",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-multistep-snap",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-multistep-snap",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        ) as Array<{
+          stepIndex?: number;
+          trace: { messages: Array<{ role: string; content: unknown }> };
+        }>;
+        // Exactly one step_finish snapshot per settled-OK step.
+        expect(stepFinishSnapshots).toHaveLength(2);
+
+        // Step 2 snapshot must carry BOTH step 1 + step 2 partials.
+        const step2Snap = stepFinishSnapshots.find(
+          (s) => s.stepIndex === 1,
+        );
+        expect(step2Snap).toBeDefined();
+        const step2Messages = step2Snap!.trace.messages;
+
+        // Find the assistant message — should be a single rolling
+        // assistant with text + 2 tool-call parts (both steps' calls).
+        const assistantMsg = step2Messages.find((m) => m.role === "assistant");
+        expect(assistantMsg).toBeDefined();
+        const assistantContent = assistantMsg!.content as Array<{
+          type: string;
+          text?: string;
+          toolCallId?: string;
+          toolName?: string;
+        }>;
+        // Text from both steps must be present (concatenated rolling
+        // assistant text).
+        const textParts = assistantContent.filter((p) => p.type === "text");
+        expect(textParts.length).toBeGreaterThan(0);
+        const combinedText = textParts.map((p) => p.text ?? "").join("");
+        expect(combinedText).toContain("Step1 text");
+        expect(combinedText).toContain("Step2 text");
+        // Both tool calls must be present.
+        const toolCallParts = assistantContent.filter(
+          (p) => p.type === "tool-call",
+        );
+        expect(toolCallParts.map((p) => p.toolCallId).sort()).toEqual([
+          "call-a",
+          "call-b",
+        ]);
+
+        // Both tool-result messages must be present (one per call).
+        const toolMessages = step2Messages.filter((m) => m.role === "tool");
+        const allToolResultCallIds = toolMessages.flatMap((m) =>
+          (m.content as Array<{ type: string; toolCallId?: string }>)
+            .filter((p) => p.type === "tool-result")
+            .map((p) => p.toolCallId),
+        );
+        expect(allToolResultCallIds.sort()).toEqual(["call-a", "call-b"]);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("stitches engine turnSpans into mid-turn step_finish trace_snapshot (PR 5b-followup-2 — Cursor 'Step snapshots omit LLM spans')", async () => {
+      // PR 5b-followup-2 closes Cursor's PR 5b-round-3 finding: mid-turn
+      // `step_finish` `trace_snapshot` events would otherwise show only
+      // prior-turn `capturedSpans` + the runner's tool-instrumentation
+      // spans, dropping the active turn's engine-recorded per-step LLM
+      // spans (engine puts them on `turnTrace.spans` but eval only drains
+      // post-turn). Engine surface fix: `MCPJamStepFinishEvent.turnSpans`
+      // carries a defensive-copy snapshot at step settlement. Runner
+      // stitches it into the snapshot's spans alongside capturedSpans +
+      // traceCtx.recordedSpans.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Engine fires onStepFinish with two per-step LLM spans.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+            settledWithError: false,
+            turnSpans: [
+              {
+                category: "step",
+                status: "ok",
+                name: "llm-step-0",
+                stepIndex: 0,
+                promptIndex: 0,
+                startMs: 100,
+                endMs: 150,
+              } as any,
+            ],
+          });
+          opts.onStepFinish?.({
+            stepIndex: 1,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+            settledWithError: false,
+            turnSpans: [
+              {
+                category: "step",
+                status: "ok",
+                name: "llm-step-0",
+                stepIndex: 0,
+                promptIndex: 0,
+                startMs: 100,
+                endMs: 150,
+              } as any,
+              {
+                category: "step",
+                status: "ok",
+                name: "llm-step-1",
+                stepIndex: 1,
+                promptIndex: 0,
+                startMs: 200,
+                endMs: 250,
+              } as any,
+            ],
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Done" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b-followup-2 turnSpans",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-followup2-spans",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-followup2-spans",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishSnapshots = emitted.filter(
+          (e) =>
+            e.type === "trace_snapshot" &&
+            (e as { snapshotKind?: string }).snapshotKind === "step_finish",
+        ) as Array<{
+          stepIndex?: number;
+          trace: { spans?: Array<{ name?: string; category?: string }> };
+        }>;
+        expect(stepFinishSnapshots).toHaveLength(2);
+
+        // Step 1 snapshot must carry the step-0 LLM span the engine
+        // surfaced via turnSpans.
+        const step1Spans = stepFinishSnapshots[0]!.trace.spans ?? [];
+        expect(step1Spans.some((s) => s.name === "llm-step-0")).toBe(true);
+
+        // Step 2 snapshot must carry BOTH the step-0 + step-1 LLM
+        // spans (engine accumulates them on traceTurn.turnSpans;
+        // defensive copy means each snapshot carries the running set
+        // as of that step).
+        const step2Spans = stepFinishSnapshots[1]!.trace.spans ?? [];
+        expect(step2Spans.some((s) => s.name === "llm-step-0")).toBe(true);
+        expect(step2Spans.some((s) => s.name === "llm-step-1")).toBe(true);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("surfaces engine guardrail detail on error SSE via onEngineError (PR 5b-followup-2 — Cursor 'Stream guardrail errors lose detail')", async () => {
+      // PR 5b-followup-2 closes Cursor's PR 5b-round-3 finding: when the
+      // Convex `/stream` endpoint returns a non-OK with a structured
+      // guardrail body (e.g. 429 `{ code: "user_rate_limit", error:
+      // "Daily MCPJam model limit reached…", details: "Try again in N
+      // minutes." }`), the engine catches internally and emits an
+      // `error` UI chunk to the no-op writer (because `streamSink:
+      // "none"`). Before the followup, eval's runner mapped the missing
+      // `turnTrace` to a generic "Backend stream failed during
+      // iteration" — losing the actual reason. Engine surface fix:
+      // `onEngineError({code, message, details, httpStatus, rawText})`
+      // fires at the same site; runner captures the event and prefers
+      // its message over the generic fallback.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Engine catches a 429 and fires onEngineError with the
+          // parsed structured body, then returns with NO turnTrace
+          // (runSucceeded=false shape — what the runner detects as
+          // "engine catch fired mid-turn").
+          opts.onEngineError?.({
+            message:
+              "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. Try again in 30 minutes.",
+            code: "user_rate_limit",
+            details: "Try again in 30 minutes.",
+            httpStatus: 429,
+            rawText:
+              '{"code":"user_rate_limit","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","details":"Try again in 30 minutes."}',
+            promptIndex: 0,
+            stepIndex: 0,
+          });
+          // PR 5b-followup-2 review fix (Cursor High "Guardrail
+          // errors ignore captured engine"): after a non-OK Convex
+          // `/stream` response, `processOneStep` returns
+          // `{shouldContinue: false}` — the engine BREAKS the loop,
+          // fires a synthetic finish, sets `runSucceeded = true`, and
+          // returns with `turnTrace` POPULATED. Typical 429 guardrail
+          // turns add no assistant messages either, so the runner
+          // hits the `newMessages.length === 0` branch, NOT the
+          // `!turnTrace` branch. This mock mirrors the real shape so
+          // the test catches the regression where the no-content
+          // branch ignored `lastEngineError`.
+          return {
+            // turnTrace populated — runSucceeded=true on the 429 path.
+            messages: [{ role: "user", content: "Hello" } as any],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b-followup-2 guardrail detail",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-followup2-guardrail",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-followup2-guardrail",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const errorEvents = emitted.filter((e) => e.type === "error") as Array<{
+          message: string;
+          details?: string;
+        }>;
+        expect(errorEvents).toHaveLength(1);
+        // The eval SSE error event carries the structured guardrail
+        // message — NOT any of the runner's generic fallbacks for the
+        // three failure branches (`!turnTrace`, no-content, error-span).
+        expect(errorEvents[0]!.message).toContain(
+          "Daily MCPJam model limit reached",
+        );
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend stream failed during iteration",
+        );
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend step returned no content",
+        );
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend step failed mid-turn",
+        );
+        // The raw body is forwarded on `details` so the live UI can
+        // show the full JSON when an operator wants to inspect it.
+        expect(errorEvents[0]!.details).toContain('"code":"user_rate_limit"');
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("prefers captured engine error in the error-span failure branch (PR 5b-followup-2 review fix — Cursor High)", async () => {
+      // PR 5b-followup-2 review fix: same shape as the no-content
+      // branch, but for the third failure path — `turnTrace` has a
+      // non-tool error-status span. Without this fix the runner used
+      // the span-name fallback ("Backend step failed mid-turn: <span
+      // name>"), losing the engine's captured guardrail detail.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          opts.onEngineError?.({
+            message:
+              "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+            code: "user_rate_limit",
+            details: "Try again in 30 minutes.",
+            httpStatus: 429,
+            rawText:
+              '{"code":"user_rate_limit","error":"Daily MCPJam model limit reached. Use BYOK or try again tomorrow.","details":"Try again in 30 minutes."}',
+            promptIndex: 0,
+            stepIndex: 1,
+          });
+          // Engine produced one good step, then a later step errored.
+          // turnTrace.spans includes a non-tool error span; runner's
+          // error-span branch fires.
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "Partial" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [
+                {
+                  category: "step",
+                  status: "error",
+                  name: "llm-step-1",
+                  stepIndex: 1,
+                  promptIndex: 0,
+                  startMs: 200,
+                  endMs: 250,
+                } as any,
+              ],
+            },
+            usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b-followup-2 error-span engine error",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-followup2-errspan-engineerror",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-followup2-errspan-engineerror",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) =>
+            emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const errorEvents = emitted.filter((e) => e.type === "error") as Array<{
+          message: string;
+          details?: string;
+        }>;
+        expect(errorEvents).toHaveLength(1);
+        expect(errorEvents[0]!.message).toContain(
+          "Daily MCPJam model limit reached",
+        );
+        // Specifically NOT the span-name fallback.
+        expect(errorEvents[0]!.message).not.toContain(
+          "Backend step failed mid-turn",
+        );
+        expect(errorEvents[0]!.details).toContain('"code":"user_rate_limit"');
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("does NOT emit step_finish SSE when onStepFinish fires with settledWithError=true (PR 5b — Marcelo caveat)", async () => {
+      // Marcelo's PR 5b-pre review caveat: `MCPJamStepFinishEvent`
+      // settles with `settledWithError` carrying the engine's
+      // step-level OK/error state. The runner must NOT translate a
+      // failed-step settle into a `step_finish` SSE event — failed
+      // backend steps already surface via the failure detection paths
+      // (no `turnTrace`, error span on turnTrace, etc). Emitting
+      // step_finish for failed steps would surface a "step succeeded"
+      // SSE event to live UI consumers when the step actually failed.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockImplementationOnce(async (opts: any) => {
+          // Engine settled with error — runner must NOT emit
+          // step_finish SSE for this step.
+          opts.onStepFinish?.({
+            stepIndex: 0,
+            promptIndex: 0,
+            turnUsage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+            turnSpans: [],
+            settledWithError: true,
+          });
+          return {
+            messages: [
+              { role: "user", content: "Hello" } as any,
+              { role: "assistant", content: "" } as any,
+            ],
+            assistantMessages: [],
+            toolCalls: [],
+            toolResults: [],
+            turnTrace: {
+              turnId: "t_1",
+              promptIndex: 0,
+              startedAt: 0,
+              endedAt: 10,
+              modelId: "anthropic/claude-haiku-4.5",
+              spans: [],
+            },
+            usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+          } as any;
+        });
+
+      const emitted: Array<Record<string, unknown>> = [];
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b settledWithError gate",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-settle-gate",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-settle-gate",
+          suiteId: "suite-1",
+          runId: null,
+          emit: (event: unknown) => emitted.push(event as Record<string, unknown>),
+        } as any);
+
+        const stepFinishEvents = emitted.filter(
+          (e) => e.type === "step_finish",
+        );
+        expect(stepFinishEvents).toHaveLength(0);
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
+    });
+
+    it("passes `streamSink: 'none'` and `persistMode: 'caller'` to runAssistantTurn (PR 5b contract)", async () => {
+      // PR 5b contract bullet: the backend stream runner drives the
+      // engine in headless mode and owns its own caller-side
+      // persistence (recorder + verdict + locking semantics). This
+      // locks the call shape so a future refactor doesn't
+      // accidentally flip it to `streamSink: "ui"` or
+      // `persistMode: "handler"`, which would double-persist or
+      // wedge the SSE writer.
+      const assistantTurnModule = await import(
+        "../../../utils/assistant-turn"
+      );
+      const runAssistantTurnSpy = vi
+        .spyOn(assistantTurnModule, "runAssistantTurn")
+        .mockResolvedValueOnce({
+          messages: [
+            { role: "user", content: "Hello" } as any,
+            { role: "assistant", content: "Done" } as any,
+          ],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          turnTrace: {
+            turnId: "t_1",
+            promptIndex: 0,
+            startedAt: 0,
+            endedAt: 10,
+            modelId: "anthropic/claude-haiku-4.5",
+            spans: [],
+          },
+        } as any);
+
+      try {
+        await streamTestCase({
+          test: {
+            title: "PR 5b call shape",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-pr5b-callshape",
+          },
+          tools: {},
+          selectedServers: [],
+          mcpClientManager: mcpClientManager as any,
+          recorder: null,
+          modelApiKeys: {},
+          convexClient: convexClient as any,
+          convexHttpUrl: "https://example.convex.site",
+          convexAuthToken: "token",
+          testCaseId: "case-pr5b-callshape",
+          suiteId: "suite-1",
+          runId: null,
+          emit: () => {},
+        } as any);
+
+        expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+        const call = runAssistantTurnSpy.mock.calls[0]![0]!;
+        expect(call.streamSink).toBe("none");
+        expect(call.persistMode).toBe("caller");
+        expect(call.sourceType).toBe("eval");
+        expect(call.approvalMode).toBe("auto-deny");
+        // The four engine-callback wires that PR 5b adds.
+        expect(typeof call.onLiveTextDelta).toBe("function");
+        expect(typeof call.onToolCall).toBe("function");
+        expect(typeof call.onToolResult).toBe("function");
+        expect(typeof call.onStepFinish).toBe("function");
+      } finally {
+        runAssistantTurnSpy.mockRestore();
+      }
     });
   });
 });

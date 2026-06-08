@@ -34,7 +34,7 @@ import {
   runChatEngineLoop,
   type MCPJamHandlerOptions,
 } from "./mcpjam-stream-handler.js";
-import type { PersistedTurnTrace } from "./chat-ingestion.js";
+import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -87,6 +87,12 @@ export interface RunAssistantTurnOptions {
    */
   sourceType: "direct" | "chatbox" | "eval";
   /**
+   * Product-surface discriminator forwarded into chat-ingestion. Required
+   * so each caller (eval runner, session simulation, MCP route) explicitly
+   * picks the surface — see `ChatOrigin` in `chat-ingestion.ts`.
+   */
+  origin: ChatOrigin;
+  /**
    * Surface marker forwarded into chat-ingestion. Stage 1 only wires
    * the type-narrow union; existing callers still send the string
    * verbatim into `persistChatSessionToConvex`.
@@ -138,6 +144,32 @@ export interface RunAssistantTurnOptions {
   onStreamComplete?: MCPJamHandlerOptions["onStreamComplete"];
   onStreamWriterReady?: MCPJamHandlerOptions["onStreamWriterReady"];
   onLiveTextDelta?: MCPJamHandlerOptions["onLiveTextDelta"];
+  /**
+   * PR 5b-pre: chunk-level + step-level callbacks. Pass-throughs to
+   * `MCPJamHandlerOptions`. Eval's PR 5b backend stream runner uses
+   * these to emit SSE events from engine signals; chat / synthetic
+   * omit. See `MCPJamHandlerOptions.onToolCall` etc. for shape +
+   * timing.
+   */
+  onToolCall?: MCPJamHandlerOptions["onToolCall"];
+  onToolResult?: MCPJamHandlerOptions["onToolResult"];
+  onStepFinish?: MCPJamHandlerOptions["onStepFinish"];
+  /**
+   * PR 5b-followup-2: structured-error pass-through. Eval's backend
+   * stream runner uses this to surface guardrail detail (429
+   * daily-cap, hosted-model setup errors, etc.) on its `error` SSE
+   * event — `streamSink: "none"` consumers don't otherwise see the
+   * structured Convex `/stream` response body because the writer-side
+   * `error` chunk goes to the no-op writer. Chat / synthetic omit.
+   */
+  onEngineError?: MCPJamHandlerOptions["onEngineError"];
+
+  /**
+   * Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing
+   * pass-through. The eval runner uses this to hide `computer` /
+   * `finish_widget` until a widget has rendered. Chat / synthetic omit.
+   */
+  prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
 
   /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
@@ -311,6 +343,16 @@ function buildHandlerOptions(
       : {}),
     ...(opts.onLiveTextDelta
       ? { onLiveTextDelta: opts.onLiveTextDelta }
+      : {}),
+    // PR 5b-pre: pass-through chunk-level + step-level callbacks.
+    ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
+    ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
+    ...(opts.onStepFinish ? { onStepFinish: opts.onStepFinish } : {}),
+    // PR 5b-followup-2: pass-through structured-error callback.
+    ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
+    // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
+    ...(opts.prepareAdvertisedTools
+      ? { prepareAdvertisedTools: opts.prepareAdvertisedTools }
       : {}),
     ...(opts.endpointPath ? { endpointPath: opts.endpointPath } : {}),
     ...(opts.extraHeaders ? { extraHeaders: opts.extraHeaders } : {}),

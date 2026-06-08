@@ -61,6 +61,15 @@ export type SuiteRunRecorder = {
     spans?: EvalTraceSpan[];
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
+    /**
+     * Resolved system prompt for the eval session. Forwarded to
+     * `persistEvalTraceFanout` → `appendEvalTurnTrace.systemPrompt`,
+     * which the backend persists to `chatSessions.systemPrompt` with
+     * first-write-wins semantics. Replaces the persistence-side
+     * `{role:"system", ...}` prepend each runner used to splice into
+     * `messages`.
+     */
+    systemPrompt?: string;
     status?: IterationStatus;
     startedAt?: number;
     error?: string;
@@ -203,6 +212,7 @@ export const createSuiteRunRecorder = ({
       spans,
       prompts,
       widgetSnapshots,
+      systemPrompt,
       status,
       startedAt,
       error,
@@ -288,6 +298,7 @@ export const createSuiteRunRecorder = ({
         spans,
         prompts,
         widgetSnapshots,
+        systemPrompt,
       });
       // Fall back to the W1 single-call path ONLY when the fanout failed
       // before any turn landed. With turns already written, re-sending
@@ -324,6 +335,18 @@ export const createSuiteRunRecorder = ({
           ...(useW1Fallback
             ? {
                 messages: sanitizeForConvexTransport(messages),
+                // Mirrors `appendEvalTurnTrace.systemPrompt` + the
+                // parallel fix in `finishIterationDirectly`. Cursor
+                // Bugbot follow-up "Recorder W1 omits systemPrompt":
+                // without this, suite runs that use the recorder
+                // (not the direct `finishIterationDirectly` path) and
+                // hit the W1 fallback persist a transcript with no
+                // resolved system prompt — the prepend was dropped
+                // earlier in this PR. Backend `updateTestIteration`
+                // accepts the slot (mcpjam-backend #449); first-write-
+                // wins semantics apply, no risk of clobbering a value
+                // already set by an earlier `appendEvalTurnTrace`.
+                ...(systemPrompt ? { systemPrompt } : {}),
                 ...(spans?.length
                   ? { spans: sanitizeForConvexTransport(spans) }
                   : {}),

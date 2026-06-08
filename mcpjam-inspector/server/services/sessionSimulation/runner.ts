@@ -1,13 +1,26 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import type { ToolSet } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
-import { getModelById } from "@/shared/types";
+// `getModelById` lookup is now wrapped by `buildSyntheticModelDefinition`
+// (org-model-config.ts) — that helper falls back to BYOK provider parsing
+// when the chatbox modelId isn't in SUPPORTED_MODELS, which is the common
+// case for org-BYOK chatboxes (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
 import {
   handleMCPJamFreeChatModel,
   type MCPJamHandlerOptions,
 } from "../../utils/mcpjam-stream-handler.js";
+import {
+  handleHostedOrgChatModel,
+  handleLocalOrgChatModel,
+} from "../../utils/org-model-stream-handler.js";
+import {
+  buildSyntheticModelDefinition,
+  resolveSyntheticModelSource,
+  type SyntheticModelSource,
+} from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import {
   persistChatSessionToConvex,
@@ -271,19 +284,12 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     abortSignal,
   } = opts;
 
-  const modelDefinition = getModelById(modelId);
-  if (!modelDefinition) {
-    await tryUpdateRunWithRetry(
-      convexHttpUrl,
-      convexAuthToken,
-      projectId,
-      runId,
-      {},
-      "failed",
-      "unknown-model",
-    );
-    throw new Error(`Unknown modelId for simulation: ${modelId}`);
-  }
+  // Resolve a ModelDefinition for the chatbox modelId. Catalog hits return
+  // unchanged; BYOK shapes (Ollama, custom: providers, OpenRouter-style
+  // ids) get a derived provider so the BYOK dispatch can run. Pre-fix this
+  // was a hard `Unknown modelId for simulation` failure before any BYOK
+  // dispatch ran.
+  const modelDefinition = buildSyntheticModelDefinition(modelId);
 
   let totalSucceeded = 0;
   let totalFailed = 0;
@@ -483,6 +489,11 @@ async function runOneSession(args: {
     let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =
       [];
     let anyTurnPersisted = false;
+    // Captured from the first drained turn so per-session persist calls
+    // (including the empty-history fallback below) stamp the correct
+    // modelSource on chatSessions. The chatbox modelId is pinned at start,
+    // so this is stable across turns.
+    let sessionModelSource: SyntheticModelSource | undefined;
 
     for (let turn = 0; turn < maxTurns; turn++) {
       if (abortSignal?.aborted) return "failed";
@@ -504,9 +515,14 @@ async function runOneSession(args: {
       } as ModelMessage);
       lastTranscript.push({ role: "user", content: next.message });
 
-      const { history: updatedHistory, turnTrace } = await drainAssistantTurn({
+      const {
+        history: updatedHistory,
+        turnTrace,
+        modelSource: turnModelSource,
+      } = await drainAssistantTurn({
         messages: messageHistory,
         modelId: String(modelDefinition.id),
+        modelDefinition,
         chatSessionId,
         sourceType: "chatbox",
         systemPrompt: prepared.enhancedSystemPrompt,
@@ -518,15 +534,26 @@ async function runOneSession(args: {
         selectedServers: selectedServerIds,
         requireToolApproval,
         chatboxId,
-        accessVersion: undefined,
+        // The chatbox runtime-config redeem returns an accessVersion that
+        // /stream/org/resolve uses to authorize the actor against the
+        // versioned chatbox; threading the value (instead of undefined)
+        // matches what real-visitor synthetic-equivalent chats send.
+        accessVersion,
         projectId,
         authHeader,
         abortSignal,
-        // Tag the /stream usage record with the synthesis run so spend lands
-        // on `chatboxSynthesisRuns.spendUsdActual`. The BYOK guard at the
-        // route ensures we're on the /stream (MCPJam-provided) path here.
-        extraBodyFields: { synthesisRunId: runId },
+        // Threaded into the per-step /stream (or /stream/org) body and the
+        // /stream/org/local-usage writeback so the backend BYOK and
+        // JAM-paid writers can stamp synthesisRunId onto llmUsageRecord
+        // for per-run spend attribution.
+        synthesisRunId: runId,
       });
+      // Track the first turn's modelSource for the per-session persist
+      // calls. modelSource is stable across turns within a session because
+      // chatbox modelId is pinned by `fetchChatboxRuntimeConfig` at start.
+      if (sessionModelSource === undefined) {
+        sessionModelSource = turnModelSource;
+      }
 
       messageHistory = updatedHistory;
       const assistantText = extractAssistantText(updatedHistory);
@@ -559,10 +586,15 @@ async function runOneSession(args: {
       await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
-        modelSource: "mcpjam",
+        modelSource: sessionModelSource ?? "mcpjam",
         authHeader,
         projectId,
         sourceType: "chatbox",
+        // Synthetic chatbox simulation — distinguished from real chatbox
+        // traffic by the `synthetic: true` flag already on the row, not by
+        // origin. Training filters should combine `origin === 'chatbox'`
+        // with `synthetic !== true` to keep these out.
+        origin: "chatbox",
         surface: "share_link",
         chatboxId,
         sessionMessages: messageHistory,
@@ -599,13 +631,35 @@ async function runOneSession(args: {
       // Session ended before any assistant turn completed (persona returned
       // endSession on turn 0, or every turn aborted). Persist once with no
       // trace so the chatSessions row exists and the run summary lines up.
+      // No turn ever ran, so sessionModelSource is undefined. Use the same
+      // resolver `drainAssistantTurn` uses so a local-runtime org-BYOK
+      // chatbox doesn't get mis-attributed as cloud byok on the fallback
+      // row. Soft-fall-back to "byok" on resolver failure — real turns
+      // would have errored before reaching this persist; we're best-effort
+      // labeling an attribution row that exists only because the run
+      // ended before any turn ran.
+      let emptySessionModelSource: SyntheticModelSource;
+      try {
+        const resolution = await resolveSyntheticModelSource({
+          modelDefinition,
+          projectId,
+          authHeader,
+          chatboxId,
+          accessVersion,
+          serverIds: selectedServerIds,
+        });
+        emptySessionModelSource = resolution.source;
+      } catch {
+        emptySessionModelSource = "byok";
+      }
       await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
-        modelSource: "mcpjam",
+        modelSource: emptySessionModelSource,
         authHeader,
         projectId,
         sourceType: "chatbox",
+        origin: "chatbox",
         surface: "share_link",
         chatboxId,
         sessionMessages: messageHistory,
@@ -761,34 +815,179 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
   );
 }
 
+// `SyntheticModelSource` is imported from `org-model-config.ts` so the
+// runner and the shared resolver stay in lockstep.
+
 /**
- * Drive one assistant turn through `handleMCPJamFreeChatModel`, returning the
- * post-turn message history and the per-turn trace captured by
- * `onConversationComplete`. The caller persists each successful turn through
- * the same `chat-ingestion.ts` path Playground uses, so synthetic sessions
- * look identical to normal Playground sessions in the Trace tab and the
- * Convex `chatSessionTurnTraces` table.
+ * Drive one assistant turn through the appropriate model handler:
+ *   - MCPJam-provided modelId → `handleMCPJamFreeChatModel` (JAM-paid)
+ *   - Org-BYOK cloud runtime → `handleHostedOrgChatModel`
+ *   - Org-BYOK local runtime → `handleLocalOrgChatModel`
  *
- * Drains the SSE response body (`createUIMessageStreamResponse` requires the
- * consumer to read the stream before `onFinish` runs).
+ * Mirrors `web-chat-turn.ts`'s three-way dispatch but re-implements the
+ * minimum branch logic here because the shared dispatcher's surface is
+ * UIMessage-shaped and bakes in persist/SSE concerns that synthetic runs
+ * own themselves (per-turn `persistChatSessionToConvex` from
+ * `runOneSession` with `synthetic: true`, `personaId`, `synthesisRunId`).
+ *
+ * User-API-key direct chats are NOT supported on the synthetic path —
+ * there's no "visitor" whose key to use. Such chatboxes are rejected at
+ * the route boundary; this dispatcher's only fallthrough is for an
+ * unexpected `resolveOrgProviderRuntime` shape, which throws.
+ *
+ * Returns the post-turn message history, the per-turn trace captured by
+ * `onConversationComplete`, and the resolved `modelSource` so the caller
+ * can stamp `persistChatSessionToConvex` correctly.
+ *
+ * Drains the SSE response body (`createUIMessageStreamResponse` requires
+ * the consumer to read the stream before `onFinish` runs).
  */
-async function drainAssistantTurn(
+export async function drainAssistantTurn(
   args: Omit<MCPJamHandlerOptions, "onConversationComplete" | "onStreamComplete"> & {
     chatSessionId: string;
+    /** Resolved provider info for org-BYOK dispatch. Falls back to lookup. */
+    modelDefinition: ModelDefinition;
+    /** Synthesis run id — stamped onto BYOK usage records for attribution. */
+    synthesisRunId: string;
   },
-): Promise<{ history: ModelMessage[]; turnTrace: PersistedTurnTrace | undefined }> {
+): Promise<{
+  history: ModelMessage[];
+  turnTrace: PersistedTurnTrace | undefined;
+  modelSource: SyntheticModelSource;
+}> {
   let captured: ModelMessage[] = [];
   let capturedTurnTrace: PersistedTurnTrace | undefined;
-  const { chatSessionId: _omit, ...rest } = args;
-  const options: MCPJamHandlerOptions = {
-    ...rest,
-    approvalMode: "auto-deny",
-    onConversationComplete: (fullHistory, turnTrace) => {
-      captured = [...fullHistory];
-      capturedTurnTrace = turnTrace;
-    },
+  const {
+    chatSessionId: _omitSession,
+    modelDefinition,
+    synthesisRunId,
+    extraBodyFields,
+    ...rest
+  } = args;
+
+  const modelIdStr = String(modelDefinition.id);
+  const onConversationComplete = (
+    fullHistory: ModelMessage[],
+    turnTrace: PersistedTurnTrace,
+  ) => {
+    captured = [...fullHistory];
+    capturedTurnTrace = turnTrace;
   };
-  const response = await handleMCPJamFreeChatModel(options);
+
+  let response: Response;
+  let modelSource: SyntheticModelSource;
+
+  // Classify once, dispatch off the result. The same resolver is used by
+  // the empty-session fallback persist so the two attribution paths can't
+  // drift (e.g. if isLocalRuntimeEligible's allow-list ever changes, both
+  // sites pick it up automatically).
+  const resolution = await resolveSyntheticModelSource({
+    modelDefinition,
+    projectId: args.projectId ?? "",
+    authHeader: args.authHeader,
+    chatboxId: args.chatboxId,
+    accessVersion: args.accessVersion,
+    serverIds: args.selectedServers,
+  });
+
+  if (resolution.source === "mcpjam") {
+    // MCPJam-paid path: synthesisRunId rides via extraBodyFields on /stream
+    // so the JAM-paid forwarder stamps it onto the llmUsageRecord.
+    modelSource = "mcpjam";
+    const options: MCPJamHandlerOptions = {
+      ...rest,
+      approvalMode: "auto-deny",
+      extraBodyFields: { ...(extraBodyFields ?? {}), synthesisRunId },
+      onConversationComplete,
+    };
+    response = await handleMCPJamFreeChatModel(options);
+  } else {
+    // resolution.orgRuntime is guaranteed defined for non-"mcpjam" sources
+    // (the resolver only omits it when source === "mcpjam"). The type
+    // narrows after the explicit check below; cast comment + check keeps
+    // strict mode happy without weakening the contract.
+    const orgRuntime = resolution.orgRuntime!;
+
+    if (orgRuntime.runtimeLocation === "local") {
+      modelSource = "local_byok";
+      // Local-runtime org providers don't have an approval loop today —
+      // handleLocalOrgChatModel rejects synchronously with
+      // `tool_approval_unsupported` when requireToolApproval is true and
+      // any tools are exposed. Cloud BYOK paths handle this via
+      // `approvalMode: "auto-deny"` (the loop denies each call and
+      // continues); the local path has no equivalent yet, so a synthetic
+      // run on an approval-required chatbox would have every turn fail
+      // with the same error. Refuse upfront with a clear message rather
+      // than letting the per-turn errors stack up silently. Disable
+      // approval on the chatbox or switch the provider to cloud runtime
+      // to unblock.
+      if (
+        args.requireToolApproval === true &&
+        args.tools &&
+        Object.keys(args.tools as Record<string, unknown>).length > 0
+      ) {
+        throw new Error(
+          "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime.",
+        );
+      }
+      response = handleLocalOrgChatModel({
+        provider: orgRuntime.provider,
+        projectId: args.projectId ?? "",
+        modelId: modelIdStr,
+        chatSessionId: args.chatSessionId,
+        sourceType: args.sourceType,
+        messages: args.messages,
+        systemPrompt: args.systemPrompt,
+        temperature: args.temperature,
+        tools: args.tools as ToolSet,
+        progressivePlan: args.progressivePlan,
+        discoveryState: args.discoveryState,
+        authHeader: args.authHeader,
+        chatboxId: args.chatboxId,
+        accessVersion: args.accessVersion,
+        selectedServers: args.selectedServers,
+        serverIds: args.selectedServers,
+        requireToolApproval: args.requireToolApproval,
+        onConversationComplete,
+        abortSignal: args.abortSignal,
+        synthesisRunId,
+      });
+    } else {
+      modelSource = "byok";
+      response = await handleHostedOrgChatModel({
+        projectId: args.projectId ?? "",
+        providerKey: orgRuntime.providerKey,
+        modelId: modelIdStr,
+        chatSessionId: args.chatSessionId,
+        sourceType: args.sourceType,
+        messages: args.messages,
+        systemPrompt: args.systemPrompt,
+        temperature: args.temperature,
+        tools: args.tools as ToolSet,
+        progressivePlan: args.progressivePlan,
+        discoveryState: args.discoveryState,
+        authHeader: args.authHeader,
+        chatboxId: args.chatboxId,
+        accessVersion: args.accessVersion,
+        mcpClientManager: args.mcpClientManager,
+        selectedServers: args.selectedServers,
+        serverIds: args.selectedServers,
+        requireToolApproval: args.requireToolApproval,
+        // Synthetic runs have no human-in-the-loop. Auto-deny any
+        // approval-required tool call inside the loop so the run can
+        // make forward progress instead of pausing forever waiting for
+        // an approval that will never arrive. Matches the MCPJam-paid
+        // branch above.
+        approvalMode: "auto-deny",
+        onConversationComplete,
+        abortSignal: args.abortSignal,
+        // Threaded through to /stream/org so the BYOK forwarder stamps
+        // synthesisRunId onto the resulting llmUsageRecord.
+        extraBodyFields: { ...(extraBodyFields ?? {}), synthesisRunId },
+      });
+    }
+  }
+
   if (response.body) {
     const reader = response.body.getReader();
     while (true) {
@@ -799,6 +998,7 @@ async function drainAssistantTurn(
   return {
     history: captured.length > 0 ? captured : args.messages,
     turnTrace: capturedTurnTrace,
+    modelSource,
   };
 }
 

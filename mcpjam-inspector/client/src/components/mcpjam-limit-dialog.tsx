@@ -135,7 +135,7 @@ export function MCPJamLimitDialog() {
                   ? "Ask your org admin to top up credits."
                   : canBuyCredits
                   ? "Top up or bring your own key to allow your org to keep using MCPJam."
-                  : "Bring your own key to keep chatting on MCPJam's models without waiting for tomorrow's reset."}
+                  : "Bring your own key to keep chatting on MCPJam's models without waiting for your org's credits to reset."}
               </DialogDescription>
             </DialogHeader>
             {/* Non-managers get no CTAs — just the "ask your org admin" copy.

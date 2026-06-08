@@ -117,6 +117,14 @@ Each eval suite has a **Default Execution Config** section that controls the mod
 
 Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
 
+### How suite defaults apply to test cases
+
+The suite-level **system prompt** and **temperature** are runtime defaults: when a test case does not set its own system prompt or temperature, the suite values are used for that iteration. A per-case override always wins — the suite default only fills the gap.
+
+<Note>
+  If you have existing suites where test cases do not specify a system prompt, those cases will now run with the suite's system prompt applied. Cases that already set their own system prompt are unaffected.
+</Note>
+
 ## Reading results
 
 ### Suite view

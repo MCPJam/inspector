@@ -27,6 +27,9 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Install Playwright Chromium (MCP App browser-render eval harness)
+        run: npx playwright install --with-deps chromium
+
       - name: Run SDK → CLI → Inspector verification
         # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
         # The vitest workspace (server + client + shared) runs concurrently and

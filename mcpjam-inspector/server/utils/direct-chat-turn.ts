@@ -38,6 +38,12 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import type { PersistedTurnTrace } from "./chat-ingestion";
+import { logger } from "./logger";
+import {
+  applyPrepareAdvertisedTools,
+  gateToolsToAdvertisedSubset,
+  type PrepareAdvertisedTools,
+} from "./advertised-tools";
 
 /**
  * The chat-v2 user-API-key path (`streamDirectChatWithLiveTrace`) used to
@@ -105,6 +111,10 @@ export interface DirectChatTurnToolResultChunk {
   stepIndex: number;
   toolCallId: string;
   toolName: string;
+  /** The tool-call arguments (already normalized via `toTraceRecord`). Lets an
+   *  async consumer (the eval render-check) feed the real toolInput into the
+   *  widget shim, matching what post-turn snapshot capture injects. */
+  input: Record<string, unknown>;
   output: unknown;
   serverId: string | undefined;
 }
@@ -161,7 +171,9 @@ export interface DirectChatTurnTraceEvents {
   /** Fired for every tool-call chunk. */
   onToolCallChunk?: (event: DirectChatTurnToolCallChunk) => void;
   /** Fired for every tool-result chunk. */
-  onToolResultChunk?: (event: DirectChatTurnToolResultChunk) => void;
+  onToolResultChunk?: (
+    event: DirectChatTurnToolResultChunk,
+  ) => void | Promise<void>;
   /**
    * Fired after each step finishes — after spans have been emitted into
    * `traceContext` and `traceHistory` has been updated. Chat uses this to
@@ -189,6 +201,17 @@ export interface RunDirectChatTurnOptions {
   tools: ToolSet;
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
+  /**
+   * Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing —
+   * the AI-SDK-path equivalent of
+   * `MCPJamHandlerOptions.prepareAdvertisedTools`. Receives the names that
+   * would otherwise be advertised this step (the progressive active subset, or
+   * the full tool map in non-progressive mode) and returns the subset to keep,
+   * or `undefined` for no narrowing. Names outside the default set are ignored;
+   * a throw is logged and falls back to the default set. The eval runner uses
+   * it to hide `computer` / `finish_widget` until a widget has rendered.
+   */
+  prepareAdvertisedTools?: PrepareAdvertisedTools;
   abortSignal?: AbortSignal;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
@@ -283,6 +306,7 @@ export function runDirectChatTurn(
     tools,
     progressivePlan,
     discoveryState,
+    prepareAdvertisedTools,
     abortSignal,
     traceEvents,
     onPersist,
@@ -343,13 +367,62 @@ export function runDirectChatTurn(
     traceTurn.promptIndex,
   ) as ToolSet;
 
+  // Progressive discovery narrows the cataloged MCP tools, but tools injected
+  // into the map *after* the catalog was built (e.g. the eval Computer Use
+  // tools) aren't part of discovery and must stay in the advertised default set
+  // — otherwise the prepareAdvertisedTools hook below could never surface them
+  // (it can only keep names already in the default set). This appends those
+  // non-cataloged extras to a progressive active-subset list; their per-step
+  // visibility stays governed by the hook (and execution by the
+  // advertised-subset gate). Returns the list unchanged when there are none
+  // (chat / hosted, where every tool is cataloged).
+  const withInjectedTools = (activeNames: string[]): string[] => {
+    if (!progressivePlan) return activeNames;
+    const cataloged = new Set(
+      progressivePlan.catalog.map((entry) => entry.modelName),
+    );
+    const seen = new Set(activeNames);
+    const out = [...activeNames];
+    for (const name of Object.keys(tools)) {
+      if (!cataloged.has(name) && !seen.has(name)) out.push(name);
+    }
+    return out;
+  };
+
+  // Mirror the step-0 advertised set into the request-payload trace so it can't
+  // claim tools the model won't see on the first step (parity with the hosted
+  // processOneStep request_payload). Only narrows when the hook is set; chat
+  // (no hook) passes the full map unchanged. This trace is turn-level, so it
+  // reflects step 0; later steps' per-step narrowing isn't re-traced here.
+  let requestPayloadTools: ToolSet = tools;
+  if (prepareAdvertisedTools) {
+    const defaultToolNames =
+      progressivePlan?.enabled && discoveryState
+        ? withInjectedTools(
+            resolveActiveToolNames(progressivePlan, discoveryState),
+          )
+        : Object.keys(tools);
+    const advertised = new Set(
+      applyPrepareAdvertisedTools({
+        defaultToolNames,
+        stepIndex: 0,
+        prepareAdvertisedTools,
+        onWarn: (message, meta) =>
+          logger.warn(`[direct-chat-turn] ${message}`, meta),
+      }),
+    );
+    requestPayloadTools = Object.fromEntries(
+      Object.entries(tools).filter(([name]) => advertised.has(name)),
+    ) as ToolSet;
+  }
+
   traceEvents?.onRequestPayload?.({
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     stepIndex: 0,
     systemPrompt,
     messages: messageHistory,
-    tools,
+    tools: requestPayloadTools,
   });
 
   // Progressive mode: gate execution to the active subset. `activeTools`
@@ -358,10 +431,20 @@ export function runDirectChatTurn(
   // against the full map. Gating wraps each tool's `execute` to throw a
   // structured "not loaded" error, which the AI SDK surfaces as an error
   // tool-result the model can recover from via `load_mcp_tools`.
-  const executableTools = gateToolsToActiveSubset(
-    tracedTools as Record<string, unknown>,
-    progressivePlan,
-    () => discoveryState,
+  //
+  // The prepareAdvertisedTools hook (PR 2) is advertise = ENFORCE the same way:
+  // when it narrows the advertised set, `advertisedToolNames` (updated per step
+  // in prepareStep) gates execution too, so a hidden tool call (e.g. `computer`
+  // before a widget renders) becomes a recoverable tool error, not a silent
+  // side effect. `null` => no hook narrowing => no-op gate.
+  let advertisedToolNames: Set<string> | null = null;
+  const executableTools = gateToolsToAdvertisedSubset(
+    gateToolsToActiveSubset(
+      tracedTools as Record<string, unknown>,
+      progressivePlan,
+      () => discoveryState,
+    ) as Record<string, unknown>,
+    () => advertisedToolNames,
   ) as ToolSet;
 
   // Cursor PR 4a review #2 / CodeRabbit "outside-diff": the original
@@ -391,12 +474,35 @@ export function runDirectChatTurn(
         modelId,
         promptIndex: traceTurn.promptIndex,
       });
+      // Base advertised set: progressive discovery narrows to the active
+      // subset; otherwise the model sees the full tool map.
+      let activeToolNames: string[] | undefined;
       if (progressivePlan?.enabled && discoveryState) {
         commitNewlyLoaded(discoveryState);
-        const active = resolveActiveToolNames(progressivePlan, discoveryState);
-        return { activeTools: active };
+        activeToolNames = withInjectedTools(
+          resolveActiveToolNames(progressivePlan, discoveryState),
+        );
       }
-      return {};
+      // Browser-rendered MCP App eval PR 2: layer runtime-conditional
+      // advertised-tool narrowing on top (e.g. hide `computer` /
+      // `finish_widget` until a widget has rendered). Mirrors the
+      // stream-handler hook: names outside the default set are ignored, and a
+      // throw is logged + falls back to the default set.
+      if (prepareAdvertisedTools) {
+        activeToolNames = applyPrepareAdvertisedTools({
+          defaultToolNames: activeToolNames ?? Object.keys(tools),
+          stepIndex: stepNumber,
+          prepareAdvertisedTools,
+          onWarn: (message, meta) =>
+            logger.warn(`[direct-chat-turn] ${message}`, meta),
+        });
+        // advertise = ENFORCE: gate execution to this step's advertised set so
+        // a hidden tool call can't take effect (read by `executableTools`).
+        advertisedToolNames = new Set(activeToolNames);
+      }
+      return activeToolNames !== undefined
+        ? { activeTools: activeToolNames }
+        : {};
     },
     onChunk: async ({ chunk }) => {
       if (chunk.type === "text-delta") {
@@ -421,12 +527,17 @@ export function runDirectChatTurn(
         return;
       }
       if (chunk.type === "tool-result") {
-        traceEvents?.onToolResultChunk?.({
+        // Awaited (the callback may be async — the eval runner renders the MCP
+        // App widget here so a rendered widget is mounted before the next
+        // step's `prepareStep` decides whether to advertise Computer Use).
+        // Existing void-returning consumers (chat trace) are unaffected.
+        await traceEvents?.onToolResultChunk?.({
           turnId: traceTurn.turnId,
           promptIndex: traceTurn.promptIndex,
           stepIndex: currentStepIndex,
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
+          input: toTraceRecord(chunk.input),
           output: chunk.output,
           serverId: readToolServerId(tracedTools, chunk.toolName),
         });

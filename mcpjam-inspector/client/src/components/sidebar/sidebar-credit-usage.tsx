@@ -51,9 +51,7 @@ export function SidebarCreditUsage({
     teamCreditsUiEnabled && balance?.billingModel === "monthly_per_seat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
-  const paidRemaining = showMonthly
-    ? (balance?.paidCreditsRemaining ?? 0)
-    : (balance?.availableCredits ?? 0);
+  const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const resetText = balance
     ? showMonthly
       ? formatMonthlyResetText(balance.monthlyResetAt, {
@@ -102,11 +100,11 @@ export function SidebarCreditUsage({
                   ? (monthlyRemaining / monthlyTotal) * 100
                   : 0
                 : balance.freeDailyCreditsTotal > 0
-                  ? ((balance.freeDailyCreditsTotal -
-                      balance.freeDailyCreditsRemaining) /
-                      balance.freeDailyCreditsTotal) *
-                    100
-                  : 0
+                ? ((balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining) /
+                    balance.freeDailyCreditsTotal) *
+                  100
+                : 0
               : 0
           }
           isLoading={isLoading}

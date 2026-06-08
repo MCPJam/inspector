@@ -99,6 +99,22 @@ describe("formatErrorMessage", () => {
     expect(result).not.toHaveProperty("canTopUp");
   });
 
+  it("uses neutral billing copy when retry details are unavailable", () => {
+    const result = formatErrorMessage(
+      JSON.stringify({
+        code: "user_rate_limit",
+      }),
+    );
+
+    expect(result).toEqual({
+      code: "user_rate_limit",
+      message:
+        "Add your own API key in Settings > LLM Providers to keep chatting now, or add credits from Billing.",
+      isRetryable: false,
+      isMCPJamPlatformError: true,
+    });
+  });
+
   it("does not leak JSON delimiters from structured retry details", () => {
     const result = formatErrorMessage(
       JSON.stringify({

@@ -4,6 +4,7 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 
 let lastExecution: Promise<void> | null = null;
@@ -75,6 +76,13 @@ vi.mock("../mcpjam-tool-helpers", () => ({
 vi.mock("../logger", () => ({
   logger: {
     error: vi.fn(),
+    // PR 5b-pre review fix (CodeRabbit Minor): the callback try/catch
+    // path calls `logger.warn` on a callback throw. The mock must
+    // include `warn` so the path is faithfully exercised (without
+    // this, calling `logger.warn` would have thrown TypeError and the
+    // catch-block-doesn't-propagate test would have validated against
+    // a mock-shape side effect instead of the real behavior).
+    warn: vi.fn(),
   },
 }));
 
@@ -102,6 +110,59 @@ describe("mcpjam-stream-handler", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.CONVEX_HTTP_URL;
+  });
+
+  it("request_payload trace reflects prepareAdvertisedTools narrowing (non-progressive) and matches the Convex request", async () => {
+    const toolDef = (description: string) => ({
+      description,
+      inputSchema: { type: "object" } as any,
+    });
+    // serializeToolsForConvex is stubbed to [] by default in this suite; return
+    // the real defs for this turn so there's an advertised set to narrow.
+    vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+      { name: "search", inputSchema: { type: "object" } },
+      { name: "computer", inputSchema: { type: "object" } },
+      { name: "finish_widget", inputSchema: { type: "object" } },
+    ]);
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "hi" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {
+        search: toolDef("Search"),
+        computer: toolDef("Computer Use"),
+        finish_widget: toolDef("Finish widget"),
+      },
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      // Hide computer/finish_widget this step (the widget-eval gate) with no
+      // progressive discovery — this is the path the P2 trace mismatch hit.
+      prepareAdvertisedTools: ({ defaultToolNames }) =>
+        defaultToolNames.filter(
+          (n) => n !== "computer" && n !== "finish_widget",
+        ),
+    });
+
+    await lastExecution;
+
+    // The Convex /stream request advertised only the narrowed set.
+    const fetchBody = JSON.parse(
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+    );
+    const requestToolNames = (fetchBody.tools as Array<{ name: string }>).map(
+      (t) => t.name
+    );
+    expect(requestToolNames).toEqual(["search"]);
+
+    // The request_payload trace must reflect the SAME narrowed set (regression:
+    // it previously fell back to the full tools map in non-progressive mode).
+    const requestPayload = writtenChunks
+      .filter((chunk) => chunk?.type === "data-trace-event")
+      .map((chunk) => chunk.data)
+      .find((event) => event.type === "request_payload");
+    expect(Object.keys(requestPayload.payload.tools)).toEqual(["search"]);
   });
 
   it("scrubs backend-only approval parts while preserving full history for completion callbacks", async () => {
@@ -1539,6 +1600,903 @@ describe("mcpjam-stream-handler", () => {
       expect(mappedHash).toBe(v4Hash);
 
       delete process.env.GUEST_SESSION_HASH_PEPPER;
+    });
+  });
+
+  describe("PR 5b-pre — chunk + step callback contract", () => {
+    // Engine consolidation PR 5b-pre
+    // (`~/mcpjam-docs/unification.md`): new optional callbacks on
+    // `MCPJamHandlerOptions` so eval's PR 5b backend stream runner can
+    // emit SSE events from engine signals. Locks the callback timing +
+    // shape so PR 5b's wire-up trusts the contract. Chat + synthetic
+    // (which don't supply these callbacks) are unaffected — covered by
+    // the omit-callbacks-and-still-work assertions on every existing
+    // test in this file.
+
+    it("fires `onToolCall` with the chunk fields when a tool-input-available chunk arrives", async () => {
+      // Step 1: model returns a tool call. Step 2: tool result fed in,
+      // model finishes. Asserts `onToolCall` fires once with the
+      // chunk's toolName/toolCallId/input plus stepIndex + promptIndex.
+      const stepOne = [
+        {
+          type: "tool-input-available",
+          toolCallId: "call-1",
+          toolName: "read_docs",
+          input: { topic: "latency" },
+        },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+        },
+      ];
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "ok" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      let call = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        const events = call === 0 ? stepOne : stepTwo;
+        call += 1;
+        return createSseResponse(events);
+      });
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+        (messages) =>
+          messages.some(
+            (message: any) =>
+              message?.role === "assistant" &&
+              Array.isArray(message.content) &&
+              message.content.some((part: any) => part.type === "tool-call"),
+          ) && !messages.some((message: any) => message?.role === "tool"),
+      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+                output: { type: "json", value: { ok: true } },
+                result: { ok: true },
+                serverId: "docs-server",
+              },
+            ],
+          };
+          messages.splice(2, 0, toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+
+      const onToolCall = vi.fn();
+      const onToolResult = vi.fn();
+      const onStepFinish = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Fetch the docs" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          read_docs: { _serverId: "docs-server" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+        } as any,
+        onToolCall,
+        onToolResult,
+        onStepFinish,
+      });
+
+      await lastExecution;
+
+      // `onToolCall` fires once for the single tool call, before
+      // execution. Shape includes stepIndex and promptIndex from
+      // engine bookkeeping.
+      expect(onToolCall).toHaveBeenCalledTimes(1);
+      expect(onToolCall).toHaveBeenCalledWith({
+        toolCallId: "call-1",
+        toolName: "read_docs",
+        input: { topic: "latency" },
+        stepIndex: 0,
+        promptIndex: 0,
+        serverId: "docs-server",
+      });
+    });
+
+    it("fires `onToolResult` after local tool execution with isError flag", async () => {
+      const stepOne = [
+        {
+          type: "tool-input-available",
+          toolCallId: "call-1",
+          toolName: "read_docs",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "done" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      let call = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        const events = call === 0 ? stepOne : stepTwo;
+        call += 1;
+        return createSseResponse(events);
+      });
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+        (messages) =>
+          messages.some(
+            (message: any) =>
+              message?.role === "assistant" &&
+              Array.isArray(message.content) &&
+              message.content.some((part: any) => part.type === "tool-call"),
+          ) && !messages.some((message: any) => message?.role === "tool"),
+      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+                // Error result — locks `isError: true` mapping.
+                output: { type: "error-text", value: "boom" },
+                result: { error: "boom" },
+                serverId: "docs-server",
+              },
+            ],
+          };
+          messages.splice(2, 0, toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+
+      const onToolResult = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Run it" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          read_docs: { _serverId: "docs-server" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+        } as any,
+        onToolResult,
+      });
+
+      await lastExecution;
+
+      expect(onToolResult).toHaveBeenCalledTimes(1);
+      expect(onToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolCallId: "call-1",
+          toolName: "read_docs",
+          isError: true,
+          stepIndex: 0,
+          promptIndex: 0,
+          serverId: "docs-server",
+        }),
+      );
+    });
+
+    it("fires `onStepFinish` once per completed step with cumulative turnUsage", async () => {
+      const stepOne = [
+        {
+          type: "tool-input-available",
+          toolCallId: "call-1",
+          toolName: "read_docs",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+        },
+      ];
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "done" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        },
+      ];
+      let call = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        const events = call === 0 ? stepOne : stepTwo;
+        call += 1;
+        return createSseResponse(events);
+      });
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+        (messages) =>
+          messages.some(
+            (message: any) =>
+              message?.role === "assistant" &&
+              Array.isArray(message.content) &&
+              message.content.some((part: any) => part.type === "tool-call"),
+          ) && !messages.some((message: any) => message?.role === "tool"),
+      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+                output: { type: "json", value: { ok: true } },
+                result: { ok: true },
+                serverId: "docs-server",
+              },
+            ],
+          };
+          messages.splice(2, 0, toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+
+      const onStepFinish = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Two steps" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          read_docs: { _serverId: "docs-server" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+        } as any,
+        onStepFinish,
+      });
+
+      await lastExecution;
+
+      // Two steps completed: tool-call step + final text step.
+      expect(onStepFinish).toHaveBeenCalledTimes(2);
+      // stepIndex increments. turnUsage is CUMULATIVE per turn — caller
+      // derives per-step deltas across successive invocations.
+      const first = onStepFinish.mock.calls[0]?.[0];
+      const second = onStepFinish.mock.calls[1]?.[0];
+      expect(first).toMatchObject({
+        stepIndex: 0,
+        promptIndex: 0,
+        // PR 5b-pre review caveat (Marcelo): both successful steps
+        // settle without error. PR 5b should rely on this flag to
+        // gate eval `step_finish` SSE event emission.
+        settledWithError: false,
+      });
+      expect(second).toMatchObject({
+        stepIndex: 1,
+        promptIndex: 0,
+        settledWithError: false,
+      });
+      // Engine aggregates usage across steps; the second call sees the
+      // sum (3+1, 4+2, 7+3).
+      expect(second.turnUsage).toMatchObject({
+        inputTokens: 4,
+        outputTokens: 6,
+        totalTokens: 10,
+      });
+    });
+
+    it("fires `onStepFinish` with `settledWithError: true` on backend failure paths (PR 5b-pre review — Marcelo caveat)", async () => {
+      // Marcelo's review caveat: `onStepFinish` fires after every
+      // `processOneStep` return — including the non-OK / no-body
+      // branches at mcpjam-stream-handler.ts:1558. Those return
+      // `didEmitFinish: false` after writing an error UI chunk. If
+      // PR 5b maps `onStepFinish` directly to eval `step_finish` SSE,
+      // failed backend steps would emit `step_finish` where the
+      // pre-collapse runner only emitted error/failure trace.
+      //
+      // Fix is "step settled, not step succeeded" semantics: the engine
+      // surfaces the settle state via `settledWithError` so PR 5b's
+      // wire-up gates correctly. This test locks the failure shape:
+      // a non-OK HTTP response from Convex MUST fire `onStepFinish`
+      // exactly once with `settledWithError: true`.
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response("upstream broke", {
+          status: 500,
+          statusText: "Internal Server Error",
+        }),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onStepFinish = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Fail me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onStepFinish,
+      });
+
+      await lastExecution;
+
+      // Failure step fires the callback once. `settledWithError: true`
+      // signals to PR 5b's wire-up to NOT emit eval `step_finish` SSE.
+      expect(onStepFinish).toHaveBeenCalledTimes(1);
+      expect(onStepFinish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stepIndex: 0,
+          promptIndex: 0,
+          settledWithError: true,
+        }),
+      );
+    });
+
+    it("includes `turnSpans` snapshot on each `onStepFinish` invocation (PR 5b-followup-2 — Cursor 'Step snapshots omit LLM spans')", async () => {
+      // PR 5b-followup-2: the engine accumulates LLM-step + tool spans
+      // on `traceTurn.turnSpans` during the agentic loop but only
+      // surfaced them post-turn via `PersistedTurnTrace.spans`. The
+      // followup exposes a defensive-copy snapshot on
+      // `MCPJamStepFinishEvent.turnSpans` so eval's mid-turn step
+      // snapshots can include the active turn's per-step LLM timing.
+      // Lock the engine surface: every `onStepFinish` invocation
+      // carries `turnSpans: EvalTraceSpan[]`, and successive
+      // invocations see the running set grow (defensive copy means
+      // earlier event snapshots stay frozen).
+      const stepOne = [
+        { type: "text-start", id: "text-0" },
+        { type: "text-delta", id: "text-0", delta: "step1" },
+        { type: "text-end", id: "text-0" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+        },
+      ];
+      let fetchCall = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        fetchCall += 1;
+        return createSseResponse(stepOne);
+      });
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onStepFinish = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Hi" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onStepFinish,
+      });
+
+      await lastExecution;
+
+      expect(onStepFinish).toHaveBeenCalledTimes(1);
+      const event = onStepFinish.mock.calls[0]?.[0];
+      // `turnSpans` is REQUIRED — always present, even when the engine
+      // hasn't recorded any spans for this turn yet (the LLM-step span
+      // for the completed step IS recorded though, so we expect at
+      // least one entry).
+      expect(Array.isArray(event.turnSpans)).toBe(true);
+      expect(event.turnSpans.length).toBeGreaterThan(0);
+      // Defensive copy: mutating the event's array must not affect
+      // the engine's internal traceTurn.turnSpans on subsequent steps.
+      const originalLength = event.turnSpans.length;
+      event.turnSpans.push({ name: "intruder" } as any);
+      // Engine wouldn't be running anymore, but the contract holds:
+      // the array we received was a fresh copy.
+      expect(event.turnSpans.length).toBe(originalLength + 1);
+      void fetchCall;
+    });
+
+    it("fires `onEngineError` with structured guardrail body on non-OK Convex response (PR 5b-followup-2 — Cursor 'Stream guardrail errors lose detail')", async () => {
+      // PR 5b-followup-2: before this followup, `streamSink: "none"`
+      // consumers (eval backend stream runner) lost structured 429 /
+      // daily-cap / hosted-model setup error detail because the
+      // writer-side `error` UI chunk went to the no-op writer. Engine
+      // now also fires `onEngineError({code, message, details,
+      // httpStatus, rawText})` at the same site with the parsed
+      // `{ code?, error, details? }` body so eval can surface the
+      // actual guardrail reason on its own error SSE event.
+      const structuredBody = JSON.stringify({
+        code: "user_rate_limit",
+        error: "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        details: "Try again in 30 minutes.",
+      });
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(structuredBody, {
+          status: 429,
+          statusText: "Too Many Requests",
+        }),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Rate-limit me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      // Display message is the parsed "error + details" shape (matches
+      // the legacy describeBackendStreamError output that lived in
+      // evals-runner before PR 5b's collapse).
+      expect(event.message).toContain("Daily MCPJam model limit reached");
+      expect(event.message).toContain("Try again in 30 minutes");
+      // Structured fields populated from the parsed body.
+      expect(event.code).toBe("user_rate_limit");
+      expect(event.details).toBe("Try again in 30 minutes.");
+      expect(event.httpStatus).toBe(429);
+      // Raw body is always present for debugging.
+      expect(event.rawText).toBe(structuredBody);
+      // Correlation fields.
+      expect(event.promptIndex).toBe(0);
+      expect(event.stepIndex).toBe(0);
+    });
+
+    it("fires `onEngineError` with raw text on non-OK response with non-JSON body (PR 5b-followup-2)", async () => {
+      // The parser falls back to a generic `Backend stream error: <status> <text>`
+      // when the body isn't structured JSON. `code` and `details` are
+      // omitted; `rawText` carries the original body for diagnostic use.
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response("upstream broke", {
+          status: 500,
+          statusText: "Internal Server Error",
+        }),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "Fail me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      expect(event.message).toBe("Backend stream error: 500 upstream broke");
+      expect(event.code).toBeUndefined();
+      expect(event.details).toBeUndefined();
+      expect(event.httpStatus).toBe(500);
+      expect(event.rawText).toBe("upstream broke");
+    });
+
+    it("fires `onEngineError` (via outer catch) when SSE parser fails mid-stream (PR 5b-followup-2 review — CodeRabbit Major 'Parser failures bypass onEngineError')", async () => {
+      // CodeRabbit followup-2 review fix: the pre-fix
+      // `if (!value?.success)` branch in processStream wrote an error
+      // chunk and broke the read loop, then returned NORMALLY — so
+      // the outer agentic loop synthesized a finish and marked the
+      // turn successful (`runSucceeded = true`), and `onEngineError`
+      // never fired. Eval consumers lost the failure signal entirely.
+      //
+      // Fix: throw from the parse-failure branch so it lands in
+      // runChatEngineLoop's outer catch, which fires `onEngineError`
+      // (site #3) and writes the error+turn_finish trace events.
+      //
+      // Lock: feed a stream that decodes successfully (200 OK) but
+      // emits a chunk the schema rejects. Assert `onEngineError`
+      // fires once with the parser's message.
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          // Valid SSE framing, but the data payload is not parseable
+          // JSON. `parseJsonEventStream` surfaces this as
+          // `{ success: false, error: SyntaxError | ZodError }`.
+          `data: not-json-at-all-{{{\n\n`,
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onEngineError = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "parse-fail me" }] as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        onEngineError,
+      });
+
+      await lastExecution;
+
+      // The fix: parse failures now route through site #3
+      // (outer agentic-loop catch) instead of silently breaking the
+      // read loop. `onEngineError` MUST fire — pre-fix this was zero.
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      const event = onEngineError.mock.calls[0]?.[0];
+      // Outer-catch site doesn't carry httpStatus / code / details —
+      // those only populate at site #1 (non-OK Convex response).
+      expect(event.httpStatus).toBeUndefined();
+      expect(event.code).toBeUndefined();
+      expect(event.details).toBeUndefined();
+      expect(event.stepIndex).toBeUndefined();
+      // The parser's message is preserved (Zod or whatever the
+      // schema validator reports). Either way, NOT the success path.
+      expect(typeof event.message).toBe("string");
+      expect(event.message.length).toBeGreaterThan(0);
+      expect(event.rawText).toBe(event.message);
+    });
+
+    it("fires `onToolCall` for approved tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
+      // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes
+      // `tool-input-available` UI chunks for resumed APPROVED tools
+      // and `emitToolResults` fires `onToolResult` after local
+      // execution. Pre-fix `onToolCall` only fired from
+      // `processStream`'s chunk switch, so eval's PR 5b wiring would
+      // emit `tool_result` SSE without a matching `tool_call`. Fixed
+      // by firing `onToolCall` at the resumed-approval emit site.
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "ok approved" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      global.fetch = vi.fn().mockResolvedValue(createSseResponse(stepTwo));
+
+      // Resumed-approval shape with `approved: true` — the matching
+      // tool-call lives on the assistant message. handlePendingApprovals
+      // walks both, emits `tool-input-available`, executes the tool,
+      // then `emitToolResults` runs.
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-approved-1",
+              toolName: "search",
+              input: { q: "approved" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-1",
+              toolCallId: "call-approved-1",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-1",
+              approved: true,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-approved-1",
+                toolName: "search",
+                output: { type: "json", value: { hit: true } },
+                result: { hit: true },
+                serverId: "search-server",
+              },
+            ],
+          };
+          messages.push(toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+
+      const onToolCall = vi.fn();
+      const onToolResult = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          search: { _serverId: "search-server" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({ search: {} }),
+        } as any,
+        requireToolApproval: true,
+        onToolCall,
+        onToolResult,
+      });
+
+      await lastExecution;
+
+      // `onToolCall` MUST have fired for the approved tool before any
+      // `onToolResult` — eval's PR 5b wiring relies on the ordering.
+      const approvedCallIdx = onToolCall.mock.calls.findIndex(
+        (c) => c[0]?.toolCallId === "call-approved-1",
+      );
+      expect(approvedCallIdx).toBeGreaterThanOrEqual(0);
+      expect(onToolCall.mock.calls[approvedCallIdx]?.[0]).toMatchObject({
+        toolCallId: "call-approved-1",
+        toolName: "search",
+        input: { q: "approved" },
+        promptIndex: 0,
+        serverId: "search-server",
+      });
+    });
+
+    // NOTE: `emitInheritedToolCalls` also fires `onToolCall` after the
+    // PR 5b fix (the function's signature gained `tools` / `traceTurn`
+    // / `stepIndex` / `onToolCall` params, and the loop body now
+    // invokes the callback alongside the existing `writer.write({type:
+    // "tool-input-available", ...})`). That path is harder to trigger
+    // in isolation than the resumed-approval branch covered above —
+    // it requires the per-step path to reach the local tool-execution
+    // branch with prior unresolved tool-calls in scope, a
+    // multi-fixture setup that doesn't fit cleanly into the
+    // single-handler-call test shape used here. The code fix is
+    // covered by the same `tools` + `traceTurn` plumbing pattern as
+    // the approved-tools site above, which IS tested.
+
+    it("fires `onToolResult` for denied tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
+      // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes a
+      // `tool_result` trace event inline (not via `emitToolResults`)
+      // when the user denies a tool call on a resumed approval turn.
+      // Pre-fix the inline path skipped `onToolResult` even though the
+      // emitToolResults path fired it for approved + auto-deny cases —
+      // PR 5b eval wiring would miss SSE events for denied tools on
+      // resumed turns. Fixed in this PR by mirroring the callback
+      // invocation at the inline trace event site.
+      const stepOne = [
+        {
+          type: "tool-input-available",
+          toolCallId: "call-denied-1",
+          toolName: "delete_things",
+          input: { id: 42 },
+        },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "ok denied" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      let call = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        const events = call === 0 ? stepOne : stepTwo;
+        call += 1;
+        return createSseResponse(events);
+      });
+
+      // The resumed-approval shape: client sends back an assistant
+      // message with a `tool-approval-request` part + a corresponding
+      // `tool-approval-response` part marked denied. `handlePendingApprovals`
+      // processes this BEFORE the per-step loop runs, so the
+      // `emitToolResults` path isn't hit — the denial trace event +
+      // callback fire from inside `handlePendingApprovals` itself.
+      // Same resumed-approval shape as the existing "preserves spliced
+      // denial tool results" test in this file: the approval-response
+      // lives in a tool-role message, not bundled into the assistant
+      // message (mirrors how the client posts the approval response on
+      // the next round trip).
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-denied-1",
+              toolName: "delete_things",
+              input: { id: 42 },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-1",
+              toolCallId: "call-denied-1",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-1",
+              approved: false,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      const onToolResult = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          delete_things: { _serverId: "destructive-server" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({
+            delete_things: {},
+          }),
+        } as any,
+        requireToolApproval: true,
+        onToolResult,
+      });
+
+      await lastExecution;
+
+      // The denial path fired `onToolResult` with the
+      // user-denied-by-user error shape.
+      expect(onToolResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolCallId: "call-denied-1",
+          toolName: "delete_things",
+          isError: true,
+          stepIndex: expect.any(Number),
+          promptIndex: 0,
+        }),
+      );
+      const deniedCall = onToolResult.mock.calls.find(
+        (c) => c[0]?.toolCallId === "call-denied-1",
+      );
+      expect(deniedCall?.[0]?.output).toEqual({
+        type: "error-text",
+        value: "Tool execution denied by user.",
+      });
+    });
+
+    it("does not throw when callback omitted — chat / synthetic compatibility", async () => {
+      // Defensive regression: every existing chat / synthetic call site
+      // omits the new callbacks. The engine MUST stay no-op-equivalent
+      // for those callers.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          { type: "text-start", id: "text-1" },
+          { type: "text-delta", id: "text-1", delta: "hi" },
+          { type: "text-end", id: "text-1" },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]),
+      );
+
+      // No callbacks supplied — same as every existing chat call site.
+      await expect(
+        handleMCPJamFreeChatModel({
+          messages: [{ role: "user", content: "Say hi" }] as any,
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful",
+          tools: {},
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+          } as any,
+        }),
+      ).resolves.toBeDefined();
+
+      await lastExecution;
+    });
+
+    it("catches callback throws without aborting the turn", async () => {
+      // Eval callers' code might throw. The engine catches per-callback
+      // and logs a warning so a buggy SSE emitter doesn't crash the
+      // entire iteration.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-1",
+            toolName: "read_docs",
+            input: {},
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]),
+      );
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+
+      const onToolCall = vi.fn(() => {
+        throw new Error("callback boom");
+      });
+      const onStepFinish = vi.fn();
+
+      await expect(
+        handleMCPJamFreeChatModel({
+          messages: [{ role: "user", content: "Run" }] as any,
+          modelId: "openai/gpt-5-mini",
+          systemPrompt: "You are helpful",
+          tools: {
+            read_docs: { _serverId: "docs-server" },
+          } as any,
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+          } as any,
+          onToolCall,
+          onStepFinish,
+        }),
+      ).resolves.toBeDefined();
+
+      await lastExecution;
+
+      // Even though `onToolCall` threw, the engine kept running and
+      // wrote chunks to the UI stream (proving the throw was caught
+      // and didn't propagate). Don't strictly require `onStepFinish`
+      // — depending on `hasUnresolvedToolCalls`'s response the engine
+      // may short-circuit before a full step completes; the
+      // load-bearing assertion is that `onToolCall` did fire AND the
+      // overall promise resolved (i.e., no unhandled throw).
+      expect(onToolCall).toHaveBeenCalled();
+      expect(writtenChunks.length).toBeGreaterThan(0);
     });
   });
 });

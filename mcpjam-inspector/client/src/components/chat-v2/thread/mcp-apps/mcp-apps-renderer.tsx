@@ -60,7 +60,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { DEFAULT_HOST_STYLE, getHostStyleOrDefault } from "@/lib/client-styles";
 import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
-import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
+import { registerHostBridgeHandlers } from "./host-app-bridge";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
 import {
@@ -2749,518 +2749,319 @@ export function MCPAppsRendererSurface({
     onRequestTeardown,
   ]);
 
-  // ENFORCEMENT (live):
-  // `effectiveHostCapabilities` (above) is the contract advertised in
-  // ui/initialize, and the six chip-bound handlers below are only assigned
-  // when their cap is present — so advertise and enforce stay in lockstep.
-  // An unassigned `bridge.on*` slot causes the SDK to auto-respond to the
-  // widget's RPC with a "method not supported" envelope, matching strict
-  // host behavior.
-  //   • bridge.onopenlink            ← effectiveHostCapabilities.openLinks
-  //   • bridge.onmessage             ← effectiveHostCapabilities.message
-  //   • bridge.onupdatemodelcontext  ← effectiveHostCapabilities.updateModelContext
-  //   • bridge.oncalltool            ← effectiveHostCapabilities.serverTools
-  //   • bridge.onreadresource /
-  //     onlistresources /
-  //     onlistresourcetemplates      ← effectiveHostCapabilities.serverResources
-  //   • bridge.onloggingmessage      ← effectiveHostCapabilities.logging
-  //   • bridge.ondownloadfile        ← effectiveHostCapabilities.downloadFile
-  //   • bridge.onrequestteardown     ← matrix.requestTeardown (behavior
-  //                                    gate; not wire-advertised — the
-  //                                    notification is always delivered
-  //                                    by the SDK, but the host can
-  //                                    decline to act on it)
-  //
-  // Intentionally unconditional (no chip / not capability-negotiated in
-  // SEP-1865):
-  //   • bridge.oninitialized         — handshake plumbing
-  //   • bridge.onsizechange          — iframe resize is host-shell infra
-  //   • bridge.onrequestdisplaymode  — request acceptance is always OK;
-  //                                    the spec governs which modes are
-  //                                    granted, not whether requests reply
-  //   • bridge.onlistprompts         — no serverPrompts cap exists yet
-  //   • handleUploadFile / GetFileDownloadUrl
-  //                                  — legacy postMessage paths kept for
-  //                                    Apps SDK widgets; SEP-1865 hosts
-  //                                    use the matrix-gated
-  //                                    bridge.ondownloadfile above
+  // Adapter: bind the renderer's refs / state setters / store callbacks to the
+  // framework-free host bridge surface (`host-app-bridge.ts`). The shared
+  // module owns the SEP-1865 correctness surface (capability gating,
+  // model-only visibility, matrix-gated `sendToolCancelled`, the app-tool
+  // invocation lifecycle); the renderer-specific effects below stay here.
+  // The eval browser harness binds the same surface to its own callbacks.
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
-      bridge.oninitialized = () => {
-        const wasReady = isReadyRef.current;
-        setIsReady(true);
-        isReadyRef.current = true;
-        const appCaps = bridge.getAppCapabilities();
-        logWidgetDebug("ui-to-host", "debug/app-initialized", {
-          availableDisplayModes:
-            (appCaps?.availableDisplayModes as DisplayMode[] | undefined) ??
-            null,
-          wasReady,
-        });
-        const declaredAppModes = appCaps?.availableDisplayModes as
-          | DisplayMode[]
-          | undefined;
-        onAppSupportedDisplayModesChangeRef.current?.(declaredAppModes);
-        // SEP-1865: clamp the advertised + runtime mode set against the
-        // app's declaration. The next render of `hostContext` will pick
-        // up the new intersection and the post-init `setHostContext`
-        // effect will publish `host-context-changed` with the updated
-        // `availableDisplayModes` (matrix-gated by hostContextChanged).
-        setAppSupportedDisplayModes(declaredAppModes);
-        // If the guest re-initialized (e.g. an SDK-based app completing its
-        // own handshake after the openai-compat shim already initialized),
-        // bump reinitCount so the delivery effects re-send tool data.
-        if (wasReady) {
-          setReinitCount((c) => c + 1);
-        }
-
-        // SEP-1865 App-Provided Tools: when the app advertises `tools`
-        // capability, fetch its tool list with the SDK bridge and register
-        // it so the next chat POST can advertise no-execute AI SDK tools.
-        // Feature-detect the capability; do not install rejecting stubs.
-        if (appCaps?.tools) {
-          const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
-          appToolsBridgeIdRef.current = bridgeId;
-          setAppToolsBridgeIdState(bridgeId);
-          void refreshAppProvidedTools(bridge, bridgeId);
-
-          // SEP-1865 host UX: app-tools widgets are interactive — the
-          // dev will want to chat with them. Auto-promote to fullscreen
-          // so the existing fullscreen overlay (composer + chevron-
-          // toggle chat history) becomes the chat surface, with the
-          // widget filling the space behind it. Gates:
-          //  • `declaredAppModes` includes "fullscreen" — the app
-          //    actually renders in that mode (advertise=enforce)
-          //  • `!userPreferInlineRef.current` — user hasn't dismissed
-          //    fullscreen, and the host's `user-initiated-only` policy
-          //    isn't blocking host-initiated mode switches
-          //  • `!hasAutoPromotedForAppToolsRef.current` — one-shot so
-          //    shim re-init or a widget's own re-handshake doesn't
-          //    re-fire and overwrite a user-chosen mode
-          // `setDisplayModeRef.current` is used (not the closure-
-          // captured `setDisplayMode`) so this handler stays out of the
-          // useCallback dep array and doesn't churn the bridge wiring.
-          if (
-            !hasAutoPromotedForAppToolsRef.current &&
-            !userPreferInlineRef.current &&
-            declaredAppModes?.includes("fullscreen")
-          ) {
-            hasAutoPromotedForAppToolsRef.current = true;
-            setDisplayModeRef.current?.("fullscreen");
-          }
-        }
-      };
-
-      // SEP-1865 bridge handlers are gated by `effectiveHostCapabilities`
-      // alone. They are a SEPARATE surface from the `window.openai`
-      // shim — `ui/initialize` advertises `serverTools`, `openLinks`,
-      // `message`, etc. via that blob, and the advertise/enforce
-      // contract requires the handlers to honor whatever is
-      // advertised. Folding the shim matrix in here would break it:
-      // a Copilot-preset host advertises `serverTools` (the SEP
-      // contract) but disables `window.openai.callTool` (the shim
-      // surface), and gating the bridge by the shim would silently
-      // drop bridge tool calls while still claiming support. The
-      // shim caps stay scoped to the shim, enforced inside the
-      // runtime + the host-side `openai:*` postMessage handlers.
-      if (effectiveHostCapabilities.message) {
-        bridge.onmessage = async ({ content }) => {
-          const textContent = content.find(
-            (item) => item.type === "text"
-          )?.text;
-          if (textContent) {
-            onSendFollowUpRef.current?.(textContent);
-          }
-          return {};
-        };
-      }
-
-      if (effectiveHostCapabilities.openLinks) {
-        bridge.onopenlink = async ({ url }) => {
-          if (url) {
-            window.open(url, "_blank", "noopener,noreferrer");
-          }
-          return {};
-        };
-      }
-
-      if (effectiveHostCapabilities.serverTools) {
-        // Matrix-gated `sendToolCancelled` for app-initiated tool
-        // calls failing in this handler. Microsoft 365 Copilot does
-        // not deliver `ui/notifications/tool-cancelled` per its
-        // published Component-bridge table; simulated Copilot hosts
-        // must not see the cancelled callback even when the
-        // underlying tool throws. The handler still THROWS so the
-        // AppBridge's request/response path reports an error to the
-        // calling widget — only the side-channel notification is
-        // suppressed.
-        const sendToolCancelledIfAllowed = (reason: string) => {
-          const matrix = mcpAppsCapabilitiesRef.current;
-          if (matrix !== null && matrix.toolCancelled === false) return;
-          bridge.sendToolCancelled({ reason });
-        };
-        bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
-          // Check if tool is model-only (not callable by apps) per SEP-1865
-          const calledToolMeta = toolsMetadataRef.current?.[name];
-          if (isVisibleToModelOnly(calledToolMeta)) {
-            const error = new Error(
-              `Tool "${name}" is not callable by apps (visibility: model-only)`
-            );
-            sendToolCancelledIfAllowed(error.message);
-            throw error;
-          }
-
-          const invocationInput = (args ?? {}) as Record<string, unknown>;
-          const invocationId = `${
-            toolCallIdRef.current
-          }:app-tool:${appToolInvocationSequenceRef.current++}`;
-          const startedAt = Date.now();
-          onAppToolInvocationChangeRef.current?.({
-            id: invocationId,
-            parentToolCallId: toolCallIdRef.current,
-            toolName: name,
-            input: invocationInput,
-            status: "running",
-            startedAt,
-          });
-
-          if (!onCallToolRef.current) {
-            const error = new Error("Tool calls not supported");
-            onAppToolInvocationChangeRef.current?.({
-              id: invocationId,
-              parentToolCallId: toolCallIdRef.current,
-              toolName: name,
-              input: invocationInput,
-              errorText: error.message,
-              status: "error",
-              startedAt,
-              completedAt: Date.now(),
+      registerHostBridgeHandlers(bridge, {
+        effectiveHostCapabilities,
+        getMatrix: () => mcpAppsCapabilitiesRef.current,
+        getToolMetadata: (name) => toolsMetadataRef.current?.[name],
+        getToolCallId: () => toolCallIdRef.current,
+        nextInvocationSequence: () => appToolInvocationSequenceRef.current++,
+        onWidgetDebug: logWidgetDebug,
+        callbacks: {
+          onAppInitialized: (b) => {
+            const wasReady = isReadyRef.current;
+            setIsReady(true);
+            isReadyRef.current = true;
+            const appCaps = b.getAppCapabilities();
+            logWidgetDebug("ui-to-host", "debug/app-initialized", {
+              availableDisplayModes:
+                (appCaps?.availableDisplayModes as DisplayMode[] | undefined) ??
+                null,
+              wasReady,
             });
-            sendToolCancelledIfAllowed(error.message);
-            throw error;
-          }
+            const declaredAppModes = appCaps?.availableDisplayModes as
+              | DisplayMode[]
+              | undefined;
+            onAppSupportedDisplayModesChangeRef.current?.(declaredAppModes);
+            // SEP-1865: clamp the advertised + runtime mode set against the
+            // app's declaration. The next render of `hostContext` will pick
+            // up the new intersection and the post-init `setHostContext`
+            // effect will publish `host-context-changed` with the updated
+            // `availableDisplayModes` (matrix-gated by hostContextChanged).
+            setAppSupportedDisplayModes(declaredAppModes);
+            // If the guest re-initialized (e.g. an SDK-based app completing
+            // its own handshake after the openai-compat shim already
+            // initialized), bump reinitCount so the delivery effects re-send
+            // tool data.
+            if (wasReady) {
+              setReinitCount((c) => c + 1);
+            }
 
-          try {
-            const result = await onCallToolRef.current(name, invocationInput);
-            onAppToolInvocationChangeRef.current?.({
-              id: invocationId,
-              parentToolCallId: toolCallIdRef.current,
-              toolName: name,
-              input: invocationInput,
-              output: result,
-              status: "success",
-              startedAt,
-              completedAt: Date.now(),
-            });
-            return result as CallToolResult;
-          } catch (error) {
-            const errorText =
-              error instanceof Error ? error.message : String(error);
-            onAppToolInvocationChangeRef.current?.({
-              id: invocationId,
-              parentToolCallId: toolCallIdRef.current,
-              toolName: name,
-              input: invocationInput,
-              errorText,
-              status: "error",
-              startedAt,
-              completedAt: Date.now(),
-            });
-            // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
-            sendToolCancelledIfAllowed(errorText);
-            throw error;
-          }
-        };
-      }
+            // SEP-1865 App-Provided Tools: when the app advertises `tools`
+            // capability, fetch its tool list with the SDK bridge and register
+            // it so the next chat POST can advertise no-execute AI SDK tools.
+            if (appCaps?.tools) {
+              const bridgeId =
+                appToolsBridgeIdRef.current ?? crypto.randomUUID();
+              appToolsBridgeIdRef.current = bridgeId;
+              setAppToolsBridgeIdState(bridgeId);
+              void refreshAppProvidedTools(b, bridgeId);
 
-      if (effectiveHostCapabilities.serverResources) {
-        bridge.onreadresource = async ({ uri }) => {
-          const result = await readResource(serverIdRef.current, uri);
-          return result.content;
-        };
-
-        bridge.onlistresources = async (params) => {
-          return listResources(
-            serverIdRef.current,
-            (params as { cursor?: string } | undefined)?.cursor
-          );
-        };
-
-        bridge.onlistresourcetemplates = async (_params) => {
-          if (HOSTED_MODE) {
-            throw new Error(
-              "Resource templates are not supported in hosted mode"
-            );
-          }
-
-          const response = await authFetch(`/api/mcp/resource-templates/list`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serverId: serverIdRef.current,
-            }),
-          });
-          if (!response.ok) {
-            throw new Error(
-              `Resource template list failed: ${response.statusText}`
-            );
-          }
-          return response.json();
-        };
-      }
-
-      // onlistprompts: unconditional — no serverPrompts cap in SEP-1865 or
-      // the chip set. Revisit if/when a serverPrompts chip is added.
-      bridge.onlistprompts = async (params) => {
-        void params;
-        const prompts = await listPrompts(serverIdRef.current);
-        return { prompts };
-      };
-
-      if (effectiveHostCapabilities.logging) {
-        bridge.onloggingmessage = ({ level, data, logger }) => {
-          if (minimalMode) return;
-          const prefix = logger ? `[${logger}]` : "[MCP Apps]";
-          const message = `${prefix} ${level.toUpperCase()}:`;
-          if (level === "error" || level === "critical" || level === "alert") {
-            console.error(message, data);
-            return;
-          }
-          if (level === "warning") {
-            console.warn(message, data);
-            return;
-          }
-          console.info(message, data);
-        };
-      }
-
-      // Inline width is owned by the host shell. Some widgets report their
-      // preferred content width in `ui/notifications/size-changed`; applying it
-      // to the chat container shrinks wide hosted transcripts and leaves the
-      // app pinned to the left. Height remains app-driven for natural inline
-      // layout, while PIP/fullscreen keep their fixed shell sizing.
-      bridge.onsizechange = ({ height }) => {
-        if (effectiveDisplayModeRef.current !== "inline") return;
-        const iframe = sandboxRef.current?.getIframeElement();
-        if (!iframe) return;
-        if (height === undefined) return;
-
-        // The MCP App has requested a `height`, but if
-        // `box-sizing: border-box` is applied to the outer iframe element, then we
-        // must add border thickness to `height` to compute the actual
-        // necessary height (in order to prevent a resize feedback loop).
-        const style = getComputedStyle(iframe);
-        const isBorderBox = style.boxSizing === "border-box";
-
-        // Animate the change for a smooth transition.
-        const from: Keyframe = {};
-        const to: Keyframe = {};
-
-        let adjustedHeight = height;
-
-        if (adjustedHeight !== undefined) {
-          if (isBorderBox) {
-            adjustedHeight +=
-              parseFloat(style.borderTopWidth) +
-              parseFloat(style.borderBottomWidth);
-          }
-          from.height = `${iframe.offsetHeight}px`;
-          iframe.style.height = to.height = `${adjustedHeight}px`;
-          lastInlineHeightRef.current = `${adjustedHeight}px`;
-        }
-
-        iframe.animate([from, to], { duration: 300, easing: "ease-out" });
-        // size-changed fires on every resize/animation tick — chatty widgets
-        // can flood the traffic log. The corresponding ui/notifications/
-        // size-changed transport message is already suppressed above; rely on
-        // that for diagnostics rather than a host-side debug log here.
-      };
-
-      bridge.onrequestdisplaymode = async ({ mode }) => {
-        const requestedMode = mode ?? "inline";
-        // Host policy gate: SEP-1865 allows the host to decline
-        // widget-initiated `ui/request-display-mode`. The
-        // `widgetDisplayModeRequests` matrix row (Apps tab) decides:
-        //   - "accept": pass through to the existing sticky / clamp path
-        //   - "decline": always return the current mode
-        //   - "user-initiated-only": handled via the sticky-inline
-        //     ref check below — the ref is seeded `true` at mount so
-        //     the first widget request is gated until the user picks
-        //     a non-inline mode via the host display-mode picker.
-        const policy =
-          mcpAppsCapabilitiesRef.current?.widgetDisplayModeRequests ?? "accept";
-        if (requestedMode !== "inline" && policy === "decline") {
-          const granted = effectiveDisplayModeRef.current;
-          logWidgetDebug("ui-to-host", "ui/request-display-mode", {
-            requested: requestedMode,
-            granted,
-            reason: "policy-decline",
-          });
-          return { mode: granted };
-        }
-        // Sticky inline-preference override: if the user explicitly
-        // returned to inline (X click), or the policy seeded the flag
-        // at mount, decline widget non-inline requests by returning
-        // inline. Spec allows the host to return a different mode than
-        // requested. Cleared when the user explicitly re-enters
-        // fullscreen / PIP from the host display-mode picker.
-        if (requestedMode !== "inline" && userPreferInlineRef.current) {
-          logWidgetDebug("ui-to-host", "ui/request-display-mode", {
-            requested: requestedMode,
-            granted: "inline",
-            reason: "user-prefers-inline",
-          });
-          return { mode: "inline" };
-        }
-        const hostAvailableModes = extractHostDisplayModes(
-          hostContextRef.current as Record<string, unknown> | undefined
-        );
-        // Use device type for mobile detection (defaults to mobile-like behavior when not in playground)
-        const isMobile = isPlaygroundActiveRef.current
-          ? playgroundDeviceTypeRef.current === "mobile" ||
-            playgroundDeviceTypeRef.current === "tablet"
-          : true;
-        const mobileAdjustedMode: DisplayMode =
-          isMobile && requestedMode === "pip" ? "fullscreen" : requestedMode;
-        const actualMode = clampDisplayModeToAvailableModes(
-          mobileAdjustedMode,
-          hostAvailableModes
-        );
-
-        setDisplayModeRef.current(actualMode);
-
-        if (actualMode === "pip") {
-          onRequestPipRef.current?.(displayWidgetIdRef.current);
-        } else if (
-          (actualMode === "inline" || actualMode === "fullscreen") &&
-          ownsPipDisplayModeRef.current
-        ) {
-          onExitPipRef.current?.(
-            pipWidgetIdRef.current ?? displayWidgetIdRef.current
-          );
-        }
-
-        return { mode: actualMode };
-      };
-
-      if (effectiveHostCapabilities.updateModelContext) {
-        bridge.onupdatemodelcontext = async ({
-          content,
-          structuredContent,
-        }) => {
-          const currentToolCallId = toolCallIdRef.current;
-          // Store in debug store for UI display
-          setWidgetModelContext(currentToolCallId, {
-            content,
-            structuredContent,
-          });
-
-          // Notify parent component to queue for next model turn
-          onModelContextUpdateRef.current?.(currentToolCallId, {
-            content,
-            structuredContent,
-          });
-
-          return {};
-        };
-      }
-
-      // SEP-1865 `ui/download-file`: the view passes embedded resource
-      // contents (`text` or `blob`) and/or resource links. The host
-      // mediates the actual download since the iframe sandbox blocks
-      // direct anchor-clicks. We use a Blob + object-URL anchor (no
-      // confirmation prompt yet — opt-in confirmation is a follow-up).
-      if (effectiveHostCapabilities.downloadFile) {
-        bridge.ondownloadfile = async ({ contents }) => {
-          try {
-            for (const item of contents) {
-              if (item.type === "resource" && item.resource) {
-                const res = item.resource as {
-                  uri: string;
-                  text?: string;
-                  blob?: string;
-                  mimeType?: string;
-                };
-                const mimeType = res.mimeType ?? "application/octet-stream";
-                let blob: Blob;
-                if (typeof res.blob === "string") {
-                  const binary = atob(res.blob);
-                  const bytes = new Uint8Array(binary.length);
-                  for (let i = 0; i < binary.length; i++) {
-                    bytes[i] = binary.charCodeAt(i);
-                  }
-                  blob = new Blob([bytes], { type: mimeType });
-                } else {
-                  blob = new Blob([res.text ?? ""], { type: mimeType });
-                }
-                const url = URL.createObjectURL(blob);
-                try {
-                  const anchor = document.createElement("a");
-                  anchor.href = url;
-                  anchor.download = res.uri.split("/").pop() ?? "download";
-                  anchor.rel = "noopener";
-                  document.body.appendChild(anchor);
-                  anchor.click();
-                  anchor.remove();
-                } finally {
-                  // Defer revocation so the browser has a chance to
-                  // start the download before the object URL goes away.
-                  setTimeout(() => URL.revokeObjectURL(url), 1000);
-                }
-              } else if (item.type === "resource_link") {
-                const link = item as { uri: string };
-                // Refuse navigations that aren't a browser-fetchable scheme.
-                // `javascript:`/`data:` here would execute in the host origin,
-                // and MCP-style schemes (`ui://`, `file://`, server-defined)
-                // need host-side resolution that this path doesn't do yet —
-                // fail loud rather than silently opening an unusable tab.
-                const parsed = new URL(link.uri, window.location.href);
-                if (!["http:", "https:"].includes(parsed.protocol)) {
-                  throw new Error(
-                    `Unsupported download URI protocol: ${parsed.protocol}`
-                  );
-                }
-                window.open(parsed.href, "_blank", "noopener,noreferrer");
+              // SEP-1865 host UX: app-tools widgets are interactive — auto-
+              // promote to fullscreen so the existing fullscreen overlay
+              // becomes the chat surface. Gates: the app renders fullscreen,
+              // the user hasn't dismissed fullscreen, and this is one-shot.
+              if (
+                !hasAutoPromotedForAppToolsRef.current &&
+                !userPreferInlineRef.current &&
+                declaredAppModes?.includes("fullscreen")
+              ) {
+                hasAutoPromotedForAppToolsRef.current = true;
+                setDisplayModeRef.current?.("fullscreen");
               }
             }
-            return {};
-          } catch (err) {
-            logWidgetDebug("ui-to-host", "ui/download-file", {
-              error: err instanceof Error ? err.message : String(err),
-            });
-            return { isError: true };
-          }
-        };
-      }
+          },
+          onSendFollowUp: (text) => {
+            onSendFollowUpRef.current?.(text);
+          },
+          onOpenLink: (url) => {
+            window.open(url, "_blank", "noopener,noreferrer");
+          },
+          onCallTool: async (name, invocationInput) => {
+            if (!onCallToolRef.current) {
+              throw new Error("Tool calls not supported");
+            }
+            return (await onCallToolRef.current(
+              name,
+              invocationInput,
+            )) as CallToolResult;
+          },
+          onAppToolInvocation: (update) => {
+            onAppToolInvocationChangeRef.current?.(update);
+          },
+          onReadResource: async (uri) => {
+            const result = await readResource(serverIdRef.current, uri);
+            return result.content;
+          },
+          onListResources: async (params) => {
+            return listResources(
+              serverIdRef.current,
+              (params as { cursor?: string } | undefined)?.cursor,
+            );
+          },
+          onListResourceTemplates: async () => {
+            if (HOSTED_MODE) {
+              throw new Error(
+                "Resource templates are not supported in hosted mode",
+              );
+            }
+            const response = await authFetch(
+              `/api/mcp/resource-templates/list`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  serverId: serverIdRef.current,
+                }),
+              },
+            );
+            if (!response.ok) {
+              throw new Error(
+                `Resource template list failed: ${response.statusText}`,
+              );
+            }
+            return response.json();
+          },
+          onListPrompts: async () => {
+            const prompts = await listPrompts(serverIdRef.current);
+            return { prompts };
+          },
+          onLoggingMessage: ({ level, data, logger }) => {
+            if (minimalMode) return;
+            const prefix = logger ? `[${logger}]` : "[MCP Apps]";
+            const message = `${prefix} ${level.toUpperCase()}:`;
+            if (
+              level === "error" ||
+              level === "critical" ||
+              level === "alert"
+            ) {
+              console.error(message, data);
+              return;
+            }
+            if (level === "warning") {
+              console.warn(message, data);
+              return;
+            }
+            console.info(message, data);
+          },
+          onSizeChange: ({ height }) => {
+            // Inline width is owned by the host shell; height stays app-driven
+            // for natural inline layout while PIP/fullscreen keep fixed sizing.
+            if (effectiveDisplayModeRef.current !== "inline") return;
+            const iframe = sandboxRef.current?.getIframeElement();
+            if (!iframe) return;
+            if (height === undefined) return;
 
-      // SEP-1865 `ui/notifications/request-teardown`: the view asks the
-      // host to tear it down. Best-effort graceful close — fire
-      // `teardownResource` so the view can persist state, then bubble
-      // the request to the parent so it can actually unmount the
-      // iframe. `requestTeardown` is a behavior gate on the matrix
-      // (not a wire-advertised host capability); presets that set it
-      // false simulate hosts that ignore view-initiated teardown
-      // requests by leaving the handler unassigned, in which case the
-      // SDK logs the notification but does nothing.
-      if (mcpAppsCapabilitiesRef.current?.requestTeardown !== false) {
-        bridge.onrequestteardown = async () => {
-          logWidgetDebug("ui-to-host", "ui/notifications/request-teardown", {});
-          try {
-            await bridge.teardownResource({});
-          } catch (err) {
-            // Teardown best-effort; if the view never acks the
-            // resource-teardown request we still proceed to unmount so
-            // a misbehaving widget can't block its own removal.
-            logWidgetDebug("host-to-ui", "ui/resource-teardown", {
-              error: err instanceof Error ? err.message : String(err),
+            // If `box-sizing: border-box` applies to the outer iframe, add
+            // border thickness to `height` to avoid a resize feedback loop.
+            const style = getComputedStyle(iframe);
+            const isBorderBox = style.boxSizing === "border-box";
+
+            // Animate the change for a smooth transition.
+            const from: Keyframe = {};
+            const to: Keyframe = {};
+
+            let adjustedHeight = height;
+
+            if (adjustedHeight !== undefined) {
+              if (isBorderBox) {
+                adjustedHeight +=
+                  parseFloat(style.borderTopWidth) +
+                  parseFloat(style.borderBottomWidth);
+              }
+              from.height = `${iframe.offsetHeight}px`;
+              iframe.style.height = to.height = `${adjustedHeight}px`;
+              lastInlineHeightRef.current = `${adjustedHeight}px`;
+            }
+
+            iframe.animate([from, to], { duration: 300, easing: "ease-out" });
+          },
+          onRequestDisplayMode: async ({ mode }) => {
+            const requestedMode = mode ?? "inline";
+            // Host policy gate: SEP-1865 allows the host to decline
+            // widget-initiated `ui/request-display-mode`.
+            const policy =
+              mcpAppsCapabilitiesRef.current?.widgetDisplayModeRequests ??
+              "accept";
+            if (requestedMode !== "inline" && policy === "decline") {
+              const granted = effectiveDisplayModeRef.current;
+              logWidgetDebug("ui-to-host", "ui/request-display-mode", {
+                requested: requestedMode,
+                granted,
+                reason: "policy-decline",
+              });
+              return { mode: granted };
+            }
+            // Sticky inline-preference override: if the user explicitly
+            // returned to inline (or the policy seeded the flag at mount),
+            // decline widget non-inline requests by returning inline.
+            if (requestedMode !== "inline" && userPreferInlineRef.current) {
+              logWidgetDebug("ui-to-host", "ui/request-display-mode", {
+                requested: requestedMode,
+                granted: "inline",
+                reason: "user-prefers-inline",
+              });
+              return { mode: "inline" };
+            }
+            const hostAvailableModes = extractHostDisplayModes(
+              hostContextRef.current as Record<string, unknown> | undefined,
+            );
+            // Use device type for mobile detection (defaults to mobile-like
+            // behavior when not in playground).
+            const isMobile = isPlaygroundActiveRef.current
+              ? playgroundDeviceTypeRef.current === "mobile" ||
+                playgroundDeviceTypeRef.current === "tablet"
+              : true;
+            const mobileAdjustedMode: DisplayMode =
+              isMobile && requestedMode === "pip"
+                ? "fullscreen"
+                : requestedMode;
+            const actualMode = clampDisplayModeToAvailableModes(
+              mobileAdjustedMode,
+              hostAvailableModes,
+            );
+
+            setDisplayModeRef.current(actualMode);
+
+            if (actualMode === "pip") {
+              onRequestPipRef.current?.(displayWidgetIdRef.current);
+            } else if (
+              (actualMode === "inline" || actualMode === "fullscreen") &&
+              ownsPipDisplayModeRef.current
+            ) {
+              onExitPipRef.current?.(
+                pipWidgetIdRef.current ?? displayWidgetIdRef.current,
+              );
+            }
+
+            return { mode: actualMode };
+          },
+          onUpdateModelContext: (ctxToolCallId, { content, structuredContent }) => {
+            // Store in debug store for UI display.
+            setWidgetModelContext(ctxToolCallId, {
+              content,
+              structuredContent,
             });
-          }
-          onRequestTeardownRef.current?.(
-            toolCallIdRef.current,
-            displayWidgetIdRef.current
-          );
-        };
-      }
+            // Notify parent component to queue for next model turn.
+            onModelContextUpdateRef.current?.(ctxToolCallId, {
+              content,
+              structuredContent,
+            });
+          },
+          onDownloadFile: async ({ contents }) => {
+            // SEP-1865 `ui/download-file`: the host mediates the download
+            // since the iframe sandbox blocks direct anchor-clicks. Blob +
+            // object-URL anchor (no confirmation prompt yet — follow-up).
+            try {
+              for (const item of contents) {
+                if (item.type === "resource" && item.resource) {
+                  const res = item.resource as {
+                    uri: string;
+                    text?: string;
+                    blob?: string;
+                    mimeType?: string;
+                  };
+                  const mimeType = res.mimeType ?? "application/octet-stream";
+                  let blob: Blob;
+                  if (typeof res.blob === "string") {
+                    const binary = atob(res.blob);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) {
+                      bytes[i] = binary.charCodeAt(i);
+                    }
+                    blob = new Blob([bytes], { type: mimeType });
+                  } else {
+                    blob = new Blob([res.text ?? ""], { type: mimeType });
+                  }
+                  const url = URL.createObjectURL(blob);
+                  try {
+                    const anchor = document.createElement("a");
+                    anchor.href = url;
+                    anchor.download = res.uri.split("/").pop() ?? "download";
+                    anchor.rel = "noopener";
+                    document.body.appendChild(anchor);
+                    anchor.click();
+                    anchor.remove();
+                  } finally {
+                    // Defer revocation so the browser can start the download
+                    // before the object URL goes away.
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  }
+                } else if (item.type === "resource_link") {
+                  const link = item as { uri: string };
+                  // Refuse navigations that aren't a browser-fetchable scheme.
+                  const parsed = new URL(link.uri, window.location.href);
+                  if (!["http:", "https:"].includes(parsed.protocol)) {
+                    throw new Error(
+                      `Unsupported download URI protocol: ${parsed.protocol}`,
+                    );
+                  }
+                  window.open(parsed.href, "_blank", "noopener,noreferrer");
+                }
+              }
+              return {};
+            } catch (err) {
+              logWidgetDebug("ui-to-host", "ui/download-file", {
+                error: err instanceof Error ? err.message : String(err),
+              });
+              return { isError: true };
+            }
+          },
+          onRequestTeardown: (ctxToolCallId) => {
+            onRequestTeardownRef.current?.(
+              ctxToolCallId,
+              displayWidgetIdRef.current,
+            );
+          },
+        },
+      });
     },
     [
       setIsReady,
@@ -3268,7 +3069,7 @@ export function MCPAppsRendererSurface({
       logWidgetDebug,
       refreshAppProvidedTools,
       effectiveHostCapabilities,
-    ]
+    ],
   );
 
   useEffect(() => {

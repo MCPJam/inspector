@@ -4,7 +4,7 @@ import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 
 let balanceState:
   | {
-      availableCredits: number;
+      paidCreditsRemaining: number;
       hasPurchaseHistory: boolean;
       freeDailyPercentUsed: number;
       freeDailyResetAt: number;
@@ -15,7 +15,6 @@ let balanceState:
       monthlyAllowanceTotal?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
-      paidCreditsRemaining?: number;
     }
   | undefined;
 let isLoadingState = false;
@@ -44,7 +43,7 @@ describe("SidebarCreditUsage", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
     balanceState = {
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 12,
       freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
@@ -83,7 +82,7 @@ describe("SidebarCreditUsage", () => {
 
   it("keeps the sidebar strip focused on daily limits for paid users", () => {
     balanceState = {
-      availableCredits: 750,
+      paidCreditsRemaining: 750,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 40,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
@@ -102,7 +101,7 @@ describe("SidebarCreditUsage", () => {
 
   it("shows paid credits in the full account-menu variant", () => {
     balanceState = {
-      availableCredits: 750,
+      paidCreditsRemaining: 750,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 40,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
@@ -125,7 +124,7 @@ describe("SidebarCreditUsage", () => {
 
   it("keeps monthly allowance separate from paid credits in the full variant", () => {
     balanceState = {
-      availableCredits: 24_500,
+      paidCreditsRemaining: 988,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 0,
       freeDailyResetAt: 0,
@@ -136,7 +135,6 @@ describe("SidebarCreditUsage", () => {
       monthlyAllowanceTotal: 24_000,
       monthlyAllowanceRemaining: 24_000,
       monthlyResetAt: Date.now() + 16 * 24 * 60 * 60 * 1000,
-      paidCreditsRemaining: 988,
     };
 
     render(<SidebarCreditUsage variant="full" />);
@@ -156,7 +154,7 @@ describe("SidebarCreditUsage", () => {
   it("keeps the existing daily and paid rows when only the team flag is off", () => {
     teamCreditsFlagState = false;
     balanceState = {
-      availableCredits: 24_500,
+      paidCreditsRemaining: 988,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 0,
       freeDailyResetAt: 0,
@@ -167,24 +165,25 @@ describe("SidebarCreditUsage", () => {
       monthlyAllowanceTotal: 24_000,
       monthlyAllowanceRemaining: 24_000,
       monthlyResetAt: Date.now() + 16 * 24 * 60 * 60 * 1000,
-      paidCreditsRemaining: 988,
     };
 
     render(<SidebarCreditUsage variant="full" />);
 
-    expect(screen.queryByTestId("sidebar-usage-monthly")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("sidebar-usage-monthly")
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
       "Free daily credits"
     );
     const paidRow = screen.getByTestId("sidebar-usage-paid");
     expect(paidRow).toHaveTextContent("Paid credits");
-    expect(paidRow).toHaveTextContent("24,500");
-    expect(paidRow).not.toHaveTextContent("988");
+    expect(paidRow).toHaveTextContent("988");
+    expect(paidRow).not.toHaveTextContent("24,500");
   });
 
   it("omits the absolute reset date in the narrow strip variant", () => {
     balanceState = {
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 0,
       freeDailyResetAt: 0,
@@ -195,7 +194,6 @@ describe("SidebarCreditUsage", () => {
       monthlyAllowanceTotal: 18_000,
       monthlyAllowanceRemaining: 4_050,
       monthlyResetAt: Date.now() + 12 * 24 * 60 * 60 * 1000,
-      paidCreditsRemaining: 0,
     };
 
     render(<SidebarCreditUsage />);
@@ -218,7 +216,7 @@ describe("SidebarCreditUsage", () => {
 
   it("renders guest balance data with a sign-in upgrade hint", () => {
     balanceState = {
-      availableCredits: 0,
+      paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
       freeDailyResetAt: Date.now() + 2 * 60 * 60 * 1000,
@@ -258,7 +256,7 @@ describe("SidebarCreditUsage", () => {
     // wrapper is now a div with role=button, leaving the tooltip trigger as
     // the only real <button> in the row.
     balanceState = {
-      availableCredits: 600,
+      paidCreditsRemaining: 600,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 10,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
@@ -285,7 +283,7 @@ describe("SidebarCreditUsage", () => {
     const { default: userEvent } = await import("@testing-library/user-event");
     const onWrapperClick = vi.fn();
     balanceState = {
-      availableCredits: 600,
+      paidCreditsRemaining: 600,
       hasPurchaseHistory: true,
       freeDailyPercentUsed: 10,
       freeDailyResetAt: Date.now() + 60 * 60 * 1000,
