@@ -50,13 +50,18 @@ COPY mcpjam-inspector/server ./mcpjam-inspector/server
 COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
-    npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
-    npm run bundle:browser-harness -w @mcpjam/inspector && \
-    npm run build:server -w @mcpjam/inspector
+    npm run bundle:sandbox-proxies -w @mcpjam/inspector
 
+# `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
+# which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
+# client tree. It therefore has to run AFTER `mcpjam-inspector/client` is on
+# disk; `build:server` consumes the generated harness bundle so it runs in the
+# same step.
 COPY design-system ./design-system
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
+RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
+    npm run build:server -w @mcpjam/inspector
 RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
