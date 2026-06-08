@@ -41,6 +41,11 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     name: E2E Smoke (Playwright)
+    # This lane builds the web client/server and drives a browser; it never
+    # launches Electron, so skip the (occasionally flaky) Electron binary
+    # download during npm ci.
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
     steps:
       - name: Checkout code

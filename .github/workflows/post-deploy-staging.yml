@@ -78,6 +78,9 @@ jobs:
     # and release.yml polls deploy-staging.yml success as the release gate, so a
     # hard failure here would gate releases. Remove once the suite is promoted.
     continue-on-error: true
+    # Drives a deployed URL; never launches Electron, so skip its binary download.
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
