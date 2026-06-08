@@ -932,6 +932,26 @@ export async function drainAssistantTurn(
 
     if (orgRuntime.runtimeLocation === "local") {
       modelSource = "local_byok";
+      // Local-runtime org providers don't have an approval loop today —
+      // handleLocalOrgChatModel rejects synchronously with
+      // `tool_approval_unsupported` when requireToolApproval is true and
+      // any tools are exposed. Cloud BYOK paths handle this via
+      // `approvalMode: "auto-deny"` (the loop denies each call and
+      // continues); the local path has no equivalent yet, so a synthetic
+      // run on an approval-required chatbox would have every turn fail
+      // with the same error. Refuse upfront with a clear message rather
+      // than letting the per-turn errors stack up silently. Disable
+      // approval on the chatbox or switch the provider to cloud runtime
+      // to unblock.
+      if (
+        args.requireToolApproval === true &&
+        args.tools &&
+        Object.keys(args.tools as Record<string, unknown>).length > 0
+      ) {
+        throw new Error(
+          "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime.",
+        );
+      }
       response = handleLocalOrgChatModel({
         provider: orgRuntime.provider,
         projectId: args.projectId ?? "",

@@ -178,6 +178,57 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.synthesisRunId).toBe("run-xyz");
   });
 
+  it("refuses local-runtime org BYOK + requireToolApproval=true with non-empty tools (no auto-deny loop on the local path yet)", async () => {
+    resolveOrgProviderRuntimeMock.mockResolvedValue({
+      runtimeLocation: "local",
+      provider: { providerKey: "openai" } as any,
+    });
+
+    await expect(
+      drainAssistantTurn(
+        baseArgs({
+          modelId: "llama3",
+          modelDefinition: {
+            id: "llama3",
+            name: "Llama3 local",
+            provider: "ollama",
+          } as ModelDefinition,
+          requireToolApproval: true,
+          tools: { search: { description: "noop" } } as any,
+        }) as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(
+      /approval-required tool calls.*Disable tool approval/i,
+    );
+
+    // Refusal happens before the handler is invoked.
+    expect(handleLocalOrgChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("still dispatches local-runtime org BYOK when requireToolApproval is false", async () => {
+    const calls: unknown[] = [];
+    handleLocalOrgChatModelMock.mockImplementation(buildHandlerStub(calls));
+    resolveOrgProviderRuntimeMock.mockResolvedValue({
+      runtimeLocation: "local",
+      provider: { providerKey: "openai" } as any,
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+        requireToolApproval: false,
+        tools: { search: { description: "noop" } } as any,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(handleLocalOrgChatModelMock).toHaveBeenCalledTimes(1);
+  });
+
   it("throws with a clear message when org-BYOK derivation fails (custom provider without a name)", async () => {
     await expect(
       drainAssistantTurn(
