@@ -4,48 +4,22 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "evals: load trace via `chatSessionId` when the legacy `blob` is absent.\n\nAfter the eval→chatSessions unification dropped the legacy blob writer, new iterations are created with `chatSessionId` set and `blob` unset. `useEvalTraceBlob`'s pre-roundtrip guard still required `iteration.blob`, so the backend action was never called and the trace surface rendered \"No trace data is available for this run\" while tokens/tool counts populated normally. The hook now gates on either source and re-fires when `chatSessionId` resolves.",
-      "id": "eval-trace-loader-chat-session-guard"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
           "type": "minor"
         }
       ],
-      "summary": "eval reporter: send {hostConfig, hostConfigHash} on /sdk/v1/evals/* when backend advertises `evalsHostConfig` (Stage 5 Step 3).\n\nReporter probes `GET /sdk/v1/info` lazily (cached per baseUrl, fail-safe to \"no capability\"). When backend supports it AND iteration host snapshots are homogeneous, sends a normalized + content-hashed host config alongside results. Source order: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Heterogeneous per-iteration snapshots omit the run-level field (per-iteration wire support is a later stage). Old backends are unaffected.",
-      "id": "stage5-step3-sdk-reporter"
+      "summary": "Add Inspector public API v1 (`/api/v1`) with live-MCP routes for servers, tools, resources, and prompts. Includes a stable response envelope, internal-to-v1 error code mapping, contract tests, and a session-auth bypass so external clients can use bearer tokens without colliding with the web session middleware.",
+      "id": "public-api-v1-live-mcp"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.9.4",
-      "changesets": [
-        "eval-trace-loader-chat-session-guard"
-      ],
-      "newVersion": "2.9.5"
-    },
-    {
-      "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.12.0",
+      "oldVersion": "2.9.5",
       "changesets": [
-        "stage5-step3-sdk-reporter"
+        "public-api-v1-live-mcp"
       ],
-      "newVersion": "1.13.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.10.0"
     }
   ]
 }

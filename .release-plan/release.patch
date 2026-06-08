@@ -1,91 +1,37 @@
-diff --git a/.changeset/eval-trace-loader-chat-session-guard.md b/.changeset/eval-trace-loader-chat-session-guard.md
+diff --git a/.changeset/public-api-v1-live-mcp.md b/.changeset/public-api-v1-live-mcp.md
 deleted file mode 100644
-index b7f845377..000000000
---- a/.changeset/eval-trace-loader-chat-session-guard.md
+index 01316d2d9..000000000
+--- a/.changeset/public-api-v1-live-mcp.md
 +++ /dev/null
-@@ -1,7 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
--"@mcpjam/inspector": patch
-----
--
--evals: load trace via `chatSessionId` when the legacy `blob` is absent.
--
--After the eval→chatSessions unification dropped the legacy blob writer, new iterations are created with `chatSessionId` set and `blob` unset. `useEvalTraceBlob`'s pre-roundtrip guard still required `iteration.blob`, so the backend action was never called and the trace surface rendered "No trace data is available for this run" while tokens/tool counts populated normally. The hook now gates on either source and re-fires when `chatSessionId` resolves.
-diff --git a/.changeset/stage5-step3-sdk-reporter.md b/.changeset/stage5-step3-sdk-reporter.md
-deleted file mode 100644
-index 47609b7b8..000000000
---- a/.changeset/stage5-step3-sdk-reporter.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
--"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
 ----
 -
--eval reporter: send {hostConfig, hostConfigHash} on /sdk/v1/evals/* when backend advertises `evalsHostConfig` (Stage 5 Step 3).
--
--Reporter probes `GET /sdk/v1/info` lazily (cached per baseUrl, fail-safe to "no capability"). When backend supports it AND iteration host snapshots are homogeneous, sends a normalized + content-hashed host config alongside results. Source order: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Heterogeneous per-iteration snapshots omit the run-level field (per-iteration wire support is a later stage). Old backends are unaffected.
+-Add Inspector public API v1 (`/api/v1`) with live-MCP routes for servers, tools, resources, and prompts. Includes a stable response envelope, internal-to-v1 error code mapping, contract tests, and a session-auth bypass so external clients can use bearer tokens without colliding with the web session middleware.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index f320891f1..768e56b00 100644
+index 768e56b00..9620bb0ea 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.9.4",
-+  "version": "2.9.5",
+-  "version": "2.9.5",
++  "version": "2.10.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -118,7 +118,7 @@
-     "@hookform/resolvers": "^3.10.0",
-     "@lezer/highlight": "^1.2.3",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.10.1",
-+    "@mcpjam/sdk": "^1.13.0",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
-     "@ngrok/ngrok": "^1.6.0",
 diff --git a/package-lock.json b/package-lock.json
-index 093c67c8a..5b55a93cd 100644
+index 5b55a93cd..5a3796397 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.9.4",
-+      "version": "2.9.5",
+-      "version": "2.9.5",
++      "version": "2.10.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",
-@@ -317,7 +317,7 @@
-         "@hookform/resolvers": "^3.10.0",
-         "@lezer/highlight": "^1.2.3",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.10.1",
-+        "@mcpjam/sdk": "^1.13.0",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
-         "@ngrok/ngrok": "^1.6.0",
-@@ -36112,7 +36112,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "1.12.0",
-+      "version": "1.13.0",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/anthropic": "^2.0.17",
-diff --git a/sdk/package.json b/sdk/package.json
-index e009b8410..b4cb0bd79 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "1.12.0",
-+  "version": "1.13.0",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",
