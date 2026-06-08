@@ -97,6 +97,13 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
+  /**
+   * Approval mode forwarded into the wrapped MCPJam handler. Synthetic
+   * callers pass `"auto-deny"` so approval-required tool calls auto-deny
+   * inside the loop instead of pausing for a human (there is no visitor
+   * in a synthetic run). Direct chatters omit or pass `"prompt"`.
+   */
+  approvalMode?: "prompt" | "auto-deny";
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
@@ -133,6 +140,14 @@ export interface OrgModelHandlerOptions {
    * See MCPJamHandlerOptions.maxSteps. Forwarded as-is.
    */
   maxSteps?: number;
+  /**
+   * Extra body fields merged into the per-step Convex `/stream/org` POST.
+   * Synthetic chatbox runs use this to thread `synthesisRunId` so the
+   * backend BYOK writer can stamp it onto `llmUsageRecord` for per-run
+   * spend attribution. Sibling fields from the handler (providerKey,
+   * serverIds) take precedence on collision.
+   */
+  extraBodyFields?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +294,13 @@ export interface OrgLocalModelHandlerOptions {
    */
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
+  /**
+   * Synthesis run id for chatbox-session simulation runs. Forwarded to
+   * `/stream/org/local-usage` so the backend BYOK writer can stamp it
+   * onto the resulting `llmUsageRecord` for per-run spend attribution.
+   * Omitted for real chat traffic.
+   */
+  synthesisRunId?: string;
 }
 
 export function handleLocalOrgChatModel(
@@ -302,6 +324,7 @@ export function handleLocalOrgChatModel(
     onStreamComplete,
     onStreamWriterReady,
     onLiveTextDelta,
+    synthesisRunId,
   } = options;
 
   if (requireToolApproval && Object.keys(tools).length > 0) {
@@ -626,6 +649,7 @@ export function handleLocalOrgChatModel(
             accessVersion,
             selectedServers: options.selectedServers,
             serverIds: options.serverIds,
+            synthesisRunId,
           }).catch((err) => {
             logger.warn("[org/local] Failed to post local usage", {
               error: err instanceof Error ? err.message : String(err),
@@ -688,6 +712,12 @@ async function postLocalUsage(params: {
   accessVersion?: number;
   selectedServers?: string[];
   serverIds?: string[];
+  /**
+   * Synthesis run id for chatbox-session simulation runs. Backend BYOK
+   * writer stamps it onto `llmUsageRecord` so dashboards can query
+   * "all spend for synthesisRunId X" in one hop. Omitted for real chat.
+   */
+  synthesisRunId?: string;
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) return;
@@ -722,6 +752,9 @@ async function postLocalUsage(params: {
           : {}),
         ...((params.serverIds ?? params.selectedServers)?.length
           ? { serverIds: params.serverIds ?? params.selectedServers }
+          : {}),
+        ...(params.synthesisRunId
+          ? { synthesisRunId: params.synthesisRunId }
           : {}),
       }),
       signal: controller.signal,
@@ -764,6 +797,9 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
+    ...(options.approvalMode !== undefined
+      ? { approvalMode: options.approvalMode }
+      : {}),
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
@@ -776,6 +812,10 @@ export async function handleHostedOrgChatModel(
     discoveryState: options.discoveryState,
     endpointPath: "/stream/org",
     extraBodyFields: {
+      // Caller-provided fields first; sibling fields from this handler
+      // (providerKey, serverIds) override on collision so the hosted
+      // contract can't be silently broken by a downstream caller.
+      ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
       // chatboxId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.

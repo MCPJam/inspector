@@ -21,8 +21,6 @@ import {
 } from "../../services/session-agent.js";
 import { startSimulation } from "../../services/sessionSimulation/runner.js";
 import { logger } from "../../utils/logger.js";
-import { isMCPJamProvidedModel } from "@/shared/types";
-
 const chatboxSessions = new Hono();
 
 function requireConvexHttpUrl(): string {
@@ -209,19 +207,20 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       );
     }
 
-    // BYOK guard (plan v4 §H): synthetic runs require an MCPJam-provided
-    // model so per-run spend can be attributed to chatboxSynthesisRuns
-    // via the /stream usage-record path. Org BYOK chats route through
-    // /stream/org with the provider key, which the worker can't
-    // re-resolve without the user bearer.
-    if (!isMCPJamProvidedModel(runtime.config.modelId)) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.FEATURE_NOT_SUPPORTED,
-        "Synthetic sessions are not yet supported for chatboxes using your own model keys. Coming soon.",
-        { errorCode: "byok_unsupported" },
-      );
-    }
+    // BYOK is now supported on synthetic runs: the runner's
+    // `drainAssistantTurn` dispatches MCPJam-provided models through
+    // `/stream` and org-BYOK models (both cloud and local) through
+    // `/stream/org` (or local-usage writeback). The synthesisRunId is
+    // stamped onto the resulting llmUsageRecord by each path's backend
+    // forwarder so per-run spend rolls up via a query on
+    // `llmUsageRecord.synthesisRunId` regardless of model source.
+    //
+    // The only remaining unsupported case is user-API-key direct (where
+    // the request would carry the user's own provider key in the body
+    // instead of resolving via org settings). That path doesn't make
+    // product sense for synthetic — there's no "visitor" whose key to
+    // use — and the chatbox runtime never produces it, so there's no
+    // route-level gate to add here.
 
     const { runId } = await createRun(
       convexHttpUrl,
@@ -243,6 +242,15 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const requireToolApproval = runtime.config.requireToolApproval;
     const respectToolVisibility = runtime.config.respectToolVisibility;
     const progressiveToolDiscovery = runtime.config.progressiveToolDiscovery;
+    // `runtime.config.accessVersion` is the server-resolved value the
+    // chatbox redeem produced (vs the client-supplied `body.accessVersion`,
+    // which the generate-sessions dialog never sends). Use the runtime
+    // value so the runner's /stream/org/resolve and /stream/org body
+    // payloads authorize against the right chatbox version. Falling back
+    // to body.accessVersion keeps the door open for an explicit client
+    // override should the dialog ever start sending one.
+    const accessVersion =
+      runtime.config.accessVersion ?? body.accessVersion;
 
     setImmediate(() => {
       startSimulation({
@@ -262,9 +270,7 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
         // `chatSessions:createWidgetSnapshot` can authenticate against the
         // chatbox path. Without it the Sessions viewer can't render MCP App
         // widgets (e.g. Excalidraw) for synthetic threads.
-        ...(body.accessVersion !== undefined
-          ? { accessVersion: body.accessVersion }
-          : {}),
+        ...(accessVersion !== undefined ? { accessVersion } : {}),
         convexHttpUrl,
         convexAuthToken: bearerToken,
         authHeader,
@@ -280,7 +286,11 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
             {
               accessScope: "chat_v2",
               chatboxId,
-              accessVersion: body.accessVersion,
+              // Same reason as the runner-arg fix above: use the
+              // server-resolved accessVersion (the dialog doesn't send
+              // body.accessVersion) so the manager factory's chatbox
+              // access is authorized against the current version.
+              accessVersion,
               serverNames: selectedServerNames,
             },
           );
