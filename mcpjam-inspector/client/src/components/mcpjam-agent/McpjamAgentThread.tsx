@@ -11,19 +11,10 @@
  * save-view, prompts popover, attachments toolbar, etc.) — appropriate for
  * this conversational helper surface.
  */
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
-import { Button } from "@mcpjam/design-system/button";
-import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { cn } from "@/lib/utils";
+import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import { Thread } from "@/components/chat-v2/thread";
 import { MarkdownLinkBaseProvider } from "@/components/chat-v2/thread/memomized-markdown";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
@@ -134,28 +125,6 @@ export function McpjamAgentThread({
     [isReady, session, sessionId]
   );
 
-  const onFormSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      handleSubmit(draft);
-    },
-    [draft, handleSubmit]
-  );
-
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (
-        event.key === "Enter" &&
-        !event.shiftKey &&
-        !event.nativeEvent.isComposing
-      ) {
-        event.preventDefault();
-        handleSubmit(draft);
-      }
-    },
-    [draft, handleSubmit]
-  );
-
   useEffect(() => {
     if (session.hydrating) return;
     requestAnimationFrame(() => {
@@ -230,51 +199,18 @@ export function McpjamAgentThread({
   const shellStyle = getChatboxShellStyle("mcpjam", themeMode);
 
   const composer = (
-    <form
-      onSubmit={onFormSubmit}
-      className={cn(
-        "relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow",
-        // Match Thread's content column (max-w-4xl + px-4) so the composer
-        // sits exactly under the message column. Sidebar fills its parent.
-        fillsParent && composerColumnClassName
-      )}
-    >
-      <TextareaAutosize
-        ref={textareaRef}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder={isReady ? "Continue the conversation…" : "Loading…"}
-        minRows={2}
-        maxRows={8}
-        className="min-h-[3rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
-      />
-      <div className="flex items-center justify-end gap-2 px-1 pt-1">
-        {isStreaming ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => session.stop()}
-            className="h-8 gap-1.5 rounded-full px-3"
-          >
-            <Square className="h-3.5 w-3.5" aria-hidden />
-            <span>Stop</span>
-          </Button>
-        ) : (
-          <Button
-            type="submit"
-            size="sm"
-            disabled={draft.trim().length === 0 || !isReady}
-            title={isReady ? undefined : "Loading project and model…"}
-            className="h-8 gap-1.5 rounded-full px-3"
-          >
-            <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-            <span>Send</span>
-          </Button>
-        )}
-      </div>
-    </form>
+    <McpjamAgentComposer
+      value={draft}
+      onChange={setDraft}
+      onSubmit={() => handleSubmit(draft)}
+      ready={isReady}
+      loadingMessage="Loading project…"
+      placeholder="Continue the conversation…"
+      isStreaming={isStreaming}
+      onStop={() => session.stop()}
+      textareaRef={textareaRef}
+      className={fillsParent ? composerColumnClassName : undefined}
+    />
   );
 
   // Hydration / model-resolution placeholders — keep these in the host-style

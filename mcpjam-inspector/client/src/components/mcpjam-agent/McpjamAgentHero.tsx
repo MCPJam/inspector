@@ -14,15 +14,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
-  type KeyboardEvent,
 } from "react";
-import { ArrowUp, MessageSquareText } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { generateId } from "ai";
-import { Button } from "@mcpjam/design-system/button";
-import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { cn } from "@/lib/utils";
+import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
@@ -70,7 +67,6 @@ export function McpjamAgentHero({
 }: McpjamAgentHeroProps) {
   const posthog = usePostHog();
   const [value, setValue] = useState("");
-  const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [recentSessions, setRecentSessions] = useState<
@@ -120,25 +116,6 @@ export function McpjamAgentHero({
     [onSessionStart, posthog, ready, surface]
   );
 
-  const onFormSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      handleSubmit(value, "input");
-    },
-    [handleSubmit, value]
-  );
-
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      // Enter submits, Shift+Enter inserts a newline — matches chat-input.
-      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-        event.preventDefault();
-        handleSubmit(value, "input");
-      }
-    },
-    [handleSubmit, value]
-  );
-
   const onSuggestedClick = useCallback(
     (prompt: string) => {
       posthog?.capture("mcpjam_agent_suggested_prompt", {
@@ -163,85 +140,36 @@ export function McpjamAgentHero({
     onResumeSession(latestRecent.id);
   }, [latestRecent, onResumeSession, posthog, surface]);
 
-  const canSubmit = value.trim().length > 0 && ready;
-  // Keep the orange invite ring while the composer is empty — including when
-  // auto-focused on load, which is exactly when we want to prompt typing.
-  const showInvite = ready && value.length === 0;
+  const recentHeader =
+    latestRecent && onResumeSession ? (
+      <button
+        type="button"
+        onClick={onRecentClick}
+        className="group flex w-full cursor-pointer items-center gap-1.5 border-b border-border/60 px-4 py-2 text-[11px] text-muted-foreground transition hover:bg-muted/30 hover:text-foreground"
+      >
+        <MessageSquareText className="size-3 shrink-0" aria-hidden />
+        <span className="font-medium uppercase tracking-[0.06em]">
+          Recent chat
+        </span>
+        <span className="text-muted-foreground/50">·</span>
+        <span className="min-w-0 truncate text-foreground/70 group-hover:text-foreground">
+          {latestRecent.title}
+        </span>
+      </button>
+    ) : null;
 
   return (
     <div className={cn("flex flex-col gap-2.5", className)}>
-      <form
-        onSubmit={onFormSubmit}
-        onClick={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.closest("button")) return;
-          textareaRef.current?.focus();
-        }}
-        className={cn(
-          "relative cursor-text rounded-2xl border bg-card/60 shadow-sm transition-[border-color,box-shadow,background-color]",
-          showInvite
-            ? cn(
-                "border-primary/50 ring-2 ring-primary/25 shadow-[0_8px_24px_-12px] shadow-primary/30",
-                focused && "border-primary/60 bg-card/80",
-              )
-            : cn(
-                "border-border/70",
-                focused &&
-                  "border-foreground/30 bg-card/80 shadow-md ring-1 ring-foreground/10",
-              ),
-        )}
-      >
-        {latestRecent && onResumeSession && (
-          <button
-            type="button"
-            onClick={onRecentClick}
-            className="group flex w-full cursor-pointer items-center gap-1.5 border-b border-border/60 px-4 py-2 text-[11px] text-muted-foreground transition hover:bg-muted/30 hover:text-foreground"
-          >
-            <MessageSquareText className="size-3 shrink-0" aria-hidden />
-            <span className="font-medium uppercase tracking-[0.06em]">
-              Recent chat
-            </span>
-            <span className="text-muted-foreground/50">·</span>
-            <span className="min-w-0 truncate text-foreground/70 group-hover:text-foreground">
-              {latestRecent.title}
-            </span>
-          </button>
-        )}
-        <TextareaAutosize
-          ref={textareaRef}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={onKeyDown}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          placeholder={ready ? "Ask anything…" : "Loading…"}
-          minRows={3}
-          maxRows={8}
-          className="min-h-[5.5rem] resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[15px] leading-[1.625] caret-foreground shadow-none outline-none focus-visible:border-0 focus-visible:ring-0 md:text-[15px]"
-        />
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <span
-            className={cn(
-              "text-[11px] leading-none text-muted-foreground/70 transition-opacity",
-              !ready && "opacity-100",
-              ready && focused && value.length === 0 && "opacity-100",
-              ready && !(focused && value.length === 0) && "opacity-0",
-            )}
-          >
-            {ready ? "Enter to send · Shift+Enter for newline" : "Loading project…"}
-          </span>
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!canSubmit}
-            title={ready ? "Send" : "Loading project and model…"}
-            aria-label="Send"
-            className="size-8 shrink-0 self-center rounded-full shadow-none"
-          >
-            <ArrowUp className="size-4" aria-hidden />
-          </Button>
-        </div>
-      </form>
+      <McpjamAgentComposer
+        value={value}
+        onChange={setValue}
+        onSubmit={() => handleSubmit(value, "input")}
+        ready={ready}
+        loadingMessage="Loading project…"
+        placeholder="Ask anything…"
+        textareaRef={textareaRef}
+        header={recentHeader}
+      />
 
       <div className="flex flex-wrap gap-2">
         {suggestedPrompts.map((prompt) => (
