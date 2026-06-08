@@ -590,6 +590,13 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
   getState: () => ToolDiscoveryState | undefined,
 ): T {
   if (!plan?.enabled) return tools;
+  // Only tools the plan actually catalogs are subject to lazy loading. Tools
+  // outside the catalog — meta-tools, or tools injected into the map after the
+  // catalog was built (e.g. the eval Computer Use tools) — can't be activated
+  // via load_mcp_tools (they have no catalog toolId), so gating them here would
+  // make them permanently uncallable. They're always executable; any per-step
+  // visibility gating happens in the advertised-subset layer instead.
+  const catalogNames = new Set(plan.catalog.map((entry) => entry.modelName));
   const result: Record<string, unknown> = {};
   for (const [name, def] of Object.entries(tools)) {
     const original = def as Record<string, unknown>;
@@ -604,7 +611,7 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
       ...original,
       execute: async (input: unknown, ctx: unknown) => {
         const state = getState();
-        if (state) {
+        if (state && catalogNames.has(name)) {
           const activeNames = new Set(resolveActiveToolNames(plan, state));
           if (!activeNames.has(name)) {
             const toolId = lookupToolIdByModelName(plan.catalog, name);

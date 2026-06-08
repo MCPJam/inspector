@@ -191,6 +191,76 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(Array.isArray(prepareStepReturn.activeTools)).toBe(true);
   });
 
+  it("keeps non-cataloged injected tools advertisable under progressive discovery", async () => {
+    // Regression: progressive discovery narrows the default set to the cataloged
+    // active subset, which never contains tools injected after plan-build (the
+    // eval `computer` / `finish_widget`). `prepareAdvertisedTools` can only KEEP
+    // names already in the default set, so without the injected-tools union
+    // those tools could never be advertised even once a widget mounts.
+    let prepareStepReturn: any;
+    let seenDefaultNames: string[] = [];
+    streamTextMock.mockImplementationOnce((options: any) => {
+      prepareStepReturn = options.prepareStep({ stepNumber: 0 });
+      return defaultStreamTextReturn();
+    });
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "claude-opus-4-8",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {
+        search_tools: { description: "", execute: async () => ({}) },
+        computer: { description: "c", execute: async () => ({}) },
+        finish_widget: { description: "f", execute: async () => ({}) },
+      } as any,
+      progressivePlan: {
+        enabled: true,
+        reasons: [],
+        policy: {
+          thresholdPct: 0.03,
+          maxToolTokens: 10_000,
+          maxToolCount: 30,
+          searchLimit: 8,
+        },
+        catalog: [
+          {
+            toolId: "srv::search_tools",
+            modelName: "search_tools",
+            serverId: "srv",
+            originalName: "search_tools",
+            description: "",
+            fields: [],
+            inputSchema: {},
+            tokenEstimate: 100,
+          },
+        ],
+        totalTokenEstimate: 100,
+      } as any,
+      discoveryState: {
+        loadedToolIds: new Set(["srv::search_tools"]),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      } as any,
+      // Simulate a mounted widget: keep the full default set (no narrowing).
+      prepareAdvertisedTools: ({ defaultToolNames }) => {
+        seenDefaultNames = defaultToolNames;
+        return defaultToolNames;
+      },
+    });
+
+    await consumeDirectChatTurnHeadless(handle);
+
+    // The injected tools reach the hook's default set...
+    expect(seenDefaultNames).toEqual(
+      expect.arrayContaining(["computer", "finish_widget"]),
+    );
+    // ...and survive into the advertised activeTools for the step.
+    expect(prepareStepReturn.activeTools).toEqual(
+      expect.arrayContaining(["computer", "finish_widget", "search_tools"]),
+    );
+  });
+
   it("narrows the request_payload trace tools via prepareAdvertisedTools (step 0)", () => {
     streamTextMock.mockReturnValueOnce(defaultStreamTextReturn());
     let payloadTools: Record<string, unknown> | undefined;

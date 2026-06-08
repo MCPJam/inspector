@@ -367,6 +367,28 @@ export function runDirectChatTurn(
     traceTurn.promptIndex,
   ) as ToolSet;
 
+  // Progressive discovery narrows the cataloged MCP tools, but tools injected
+  // into the map *after* the catalog was built (e.g. the eval Computer Use
+  // tools) aren't part of discovery and must stay in the advertised default set
+  // — otherwise the prepareAdvertisedTools hook below could never surface them
+  // (it can only keep names already in the default set). This appends those
+  // non-cataloged extras to a progressive active-subset list; their per-step
+  // visibility stays governed by the hook (and execution by the
+  // advertised-subset gate). Returns the list unchanged when there are none
+  // (chat / hosted, where every tool is cataloged).
+  const withInjectedTools = (activeNames: string[]): string[] => {
+    if (!progressivePlan) return activeNames;
+    const cataloged = new Set(
+      progressivePlan.catalog.map((entry) => entry.modelName),
+    );
+    const seen = new Set(activeNames);
+    const out = [...activeNames];
+    for (const name of Object.keys(tools)) {
+      if (!cataloged.has(name) && !seen.has(name)) out.push(name);
+    }
+    return out;
+  };
+
   // Mirror the step-0 advertised set into the request-payload trace so it can't
   // claim tools the model won't see on the first step (parity with the hosted
   // processOneStep request_payload). Only narrows when the hook is set; chat
@@ -376,7 +398,9 @@ export function runDirectChatTurn(
   if (prepareAdvertisedTools) {
     const defaultToolNames =
       progressivePlan?.enabled && discoveryState
-        ? resolveActiveToolNames(progressivePlan, discoveryState)
+        ? withInjectedTools(
+            resolveActiveToolNames(progressivePlan, discoveryState),
+          )
         : Object.keys(tools);
     const advertised = new Set(
       applyPrepareAdvertisedTools({
@@ -455,7 +479,9 @@ export function runDirectChatTurn(
       let activeToolNames: string[] | undefined;
       if (progressivePlan?.enabled && discoveryState) {
         commitNewlyLoaded(discoveryState);
-        activeToolNames = resolveActiveToolNames(progressivePlan, discoveryState);
+        activeToolNames = withInjectedTools(
+          resolveActiveToolNames(progressivePlan, discoveryState),
+        );
       }
       // Browser-rendered MCP App eval PR 2: layer runtime-conditional
       // advertised-tool narrowing on top (e.g. hide `computer` /
