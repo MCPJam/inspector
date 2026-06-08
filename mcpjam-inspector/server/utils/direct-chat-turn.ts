@@ -361,13 +361,38 @@ export function runDirectChatTurn(
     traceTurn.promptIndex,
   ) as ToolSet;
 
+  // Mirror the step-0 advertised set into the request-payload trace so it can't
+  // claim tools the model won't see on the first step (parity with the hosted
+  // processOneStep request_payload). Only narrows when the hook is set; chat
+  // (no hook) passes the full map unchanged. This trace is turn-level, so it
+  // reflects step 0; later steps' per-step narrowing isn't re-traced here.
+  let requestPayloadTools: ToolSet = tools;
+  if (prepareAdvertisedTools) {
+    const defaultToolNames =
+      progressivePlan?.enabled && discoveryState
+        ? resolveActiveToolNames(progressivePlan, discoveryState)
+        : Object.keys(tools);
+    const advertised = new Set(
+      applyPrepareAdvertisedTools({
+        defaultToolNames,
+        stepIndex: 0,
+        prepareAdvertisedTools,
+        onWarn: (message, meta) =>
+          logger.warn(`[direct-chat-turn] ${message}`, meta),
+      }),
+    );
+    requestPayloadTools = Object.fromEntries(
+      Object.entries(tools).filter(([name]) => advertised.has(name)),
+    ) as ToolSet;
+  }
+
   traceEvents?.onRequestPayload?.({
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     stepIndex: 0,
     systemPrompt,
     messages: messageHistory,
-    tools,
+    tools: requestPayloadTools,
   });
 
   // Progressive mode: gate execution to the active subset. `activeTools`
