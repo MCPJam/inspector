@@ -233,15 +233,6 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
     email: user?.email,
   });
   const greeting = useMemo(() => getGreeting(new Date()), []);
-  const dateLabel = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
 
   if (!organizationId) {
     return (
@@ -296,20 +287,11 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
 
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-8 pb-20 pt-14">
-        {/* Greeting + org stats */}
-        <header className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              {dateLabel}
-            </p>
-            <h1 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[40px]">
-              {greeting},{" "}
-              <span className="font-semibold text-muted-foreground">
-                {firstName}
-              </span>
-            </h1>
-          </div>
+      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8 sm:px-8">
+        <header className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
+            {greeting}, {firstName}
+          </h1>
           <OrgStatsStrip
             memberCount={isLoading ? null : data!.memberCount}
             projectCount={isLoading ? null : data!.projects.length}
@@ -326,19 +308,12 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
           surface="home"
           onSessionStart={handleSessionStart}
           onResumeSession={handleResumeSession}
-          // The backend route requires `projectId`; without it, submit
-          // would 400. The hero's own model gate runs inside
-          // `useMcpjamAgentSession` on the thread side — the hero itself
-          // doesn't see the model, but `projectId` is the gate that
-          // matters at mint time.
           ready={Boolean(projectId)}
         />
 
-        {/* What's new — release feed with hover preview + click-to-expand modal. */}
         <ProductUpdatesRow />
 
-        {/* Recommended servers + clients */}
-        <div className="grid gap-5 lg:grid-cols-2 lg:items-stretch">
+        <div className="grid gap-4 sm:grid-cols-2">
           <RecommendedServers
             servers={data?.recommendedServers}
             projectId={projectId}

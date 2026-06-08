@@ -33,6 +33,7 @@ import {
 const DEFAULT_SUGGESTED_PROMPTS: ReadonlyArray<string> = [
   "How do I run an eval?",
   "What is progressive tool discovery?",
+  "What is cross host testing?",
 ];
 
 export interface McpjamAgentHeroProps {
@@ -156,48 +157,47 @@ export function McpjamAgentHero({
   const canSubmit = value.trim().length > 0 && ready;
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      {latestRecent && onResumeSession && (
-        <button
-          type="button"
-          onClick={onRecentClick}
-          className="group inline-flex w-fit items-center gap-2 rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-xs text-muted-foreground transition hover:border-border hover:bg-muted/70 hover:text-foreground"
-        >
-          <MessageSquareText className="h-3.5 w-3.5" aria-hidden />
-          <span className="font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            Recent chat
-          </span>
-          <span className="text-muted-foreground/60">·</span>
-          <span className="truncate max-w-[24rem] text-foreground/80 group-hover:text-foreground">
-            {latestRecent.title}
-          </span>
-        </button>
-      )}
-
+    <div className={cn("flex flex-col gap-2.5", className)}>
       <form
         onSubmit={onFormSubmit}
-        className="relative rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm transition focus-within:border-border focus-within:bg-card focus-within:shadow"
+        className="relative overflow-hidden rounded-2xl border border-border bg-muted/15 shadow-sm transition focus-within:border-foreground/25 focus-within:bg-muted/25 focus-within:shadow-md"
       >
+        {latestRecent && onResumeSession && (
+          <button
+            type="button"
+            onClick={onRecentClick}
+            className="group flex w-full items-center gap-1.5 border-b border-border/60 px-4 py-2 text-[11px] text-muted-foreground transition hover:bg-muted/30 hover:text-foreground"
+          >
+            <MessageSquareText className="size-3 shrink-0" aria-hidden />
+            <span className="font-medium uppercase tracking-[0.06em]">
+              Recent chat
+            </span>
+            <span className="text-muted-foreground/50">·</span>
+            <span className="min-w-0 truncate text-foreground/70 group-hover:text-foreground">
+              {latestRecent.title}
+            </span>
+          </button>
+        )}
         <TextareaAutosize
           ref={textareaRef}
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder={ready ? "Ask anything…" : "Loading…"}
-          minRows={2}
-          maxRows={10}
-          className="min-h-[3.25rem] resize-none border-0 bg-transparent px-3 py-2 text-[15px] shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
+          minRows={3}
+          maxRows={8}
+          className="min-h-[5.5rem] resize-none border-0 bg-transparent px-4 py-4 text-[15px] leading-relaxed shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
         />
-        <div className="flex items-center justify-end gap-2 px-1 pt-1">
+        <div className="flex items-center justify-end px-4 pb-4">
           <Button
             type="submit"
-            size="sm"
+            size="icon"
             disabled={!canSubmit}
-            title={ready ? undefined : "Loading project and model…"}
-            className="h-8 gap-1.5 rounded-full px-3"
+            title={ready ? "Send" : "Loading project and model…"}
+            aria-label="Send"
+            className="size-8 shrink-0 rounded-full"
           >
-            <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-            <span>Send</span>
+            <ArrowUp className="size-4" aria-hidden />
           </Button>
         </div>
       </form>
@@ -208,7 +208,7 @@ export function McpjamAgentHero({
             key={prompt}
             type="button"
             onClick={() => onSuggestedClick(prompt)}
-            className="rounded-full border border-border/60 bg-card/40 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-border hover:bg-card hover:text-foreground"
+            className="rounded-full border border-border/60 bg-muted/10 px-3 py-1 text-xs text-muted-foreground transition hover:border-border hover:bg-muted/20 hover:text-foreground"
           >
             {prompt}
           </button>

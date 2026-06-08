@@ -8,6 +8,7 @@ interface ProductUpdateExpandedPanelProps {
   entry: ProductUpdateEntry | null;
   sourceRect: DOMRect | null;
   onClose: () => void;
+  onDismiss?: (slug: string) => void;
 }
 
 const PANEL_WIDTH = 900;
@@ -96,6 +97,7 @@ export function ProductUpdateExpandedPanel({
   entry,
   sourceRect,
   onClose,
+  onDismiss,
 }: ProductUpdateExpandedPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(getViewportSize);
@@ -204,6 +206,20 @@ export function ProductUpdateExpandedPanel({
               <p className="text-base text-muted-foreground leading-relaxed whitespace-pre-line">
                 {entry.body}
               </p>
+              {onDismiss ? (
+                <div className="mt-6 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDismiss(entry.slug);
+                      onClose();
+                    }}
+                    className="rounded-full border border-border px-4 py-1.5 text-sm font-medium text-foreground transition hover:bg-accent"
+                  >
+                    Got it
+                  </button>
+                </div>
+              ) : null}
             </div>
           </motion.div>
         </>
