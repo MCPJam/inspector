@@ -8,6 +8,7 @@ import {
   type SessionToolRegistrar,
 } from "./tools/sessionToolRegistrar.js";
 import { registerShowServersTool } from "./tools/showServers.js";
+import { registerPublicApiTools } from "./tools/publicApiTools.js";
 
 interface McpProps extends Record<string, unknown> {
   bearerToken: string;
@@ -42,6 +43,7 @@ export class McpJamMcpServer extends McpAgent<Env, unknown, McpProps> {
     this.sessionToolRegistrar = registrar;
 
     registerShowServersTool(registrar, this);
+    registerPublicApiTools(registrar, this);
   }
 
   override async onConnect(conn: any, context: { request: Request }): Promise<void> {
