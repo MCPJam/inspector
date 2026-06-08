@@ -6,8 +6,9 @@ import { Hono } from "hono";
 // web/servers-doctor harness. Validates body synthesis (path params ->
 // web schema), the shared connection/authorize path, and the v1 envelope.
 
-const { runServerDoctorMock } = vi.hoisted(() => ({
+const { runServerDoctorMock, validateGuestTokenMock } = vi.hoisted(() => ({
   runServerDoctorMock: vi.fn(),
+  validateGuestTokenMock: vi.fn(),
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -19,6 +20,13 @@ vi.mock("@mcpjam/sdk", async () => {
     isMCPAuthError: vi.fn().mockReturnValue(false),
   };
 });
+
+// bearerAuthMiddleware calls validateGuestTokenDetailedAsync on every request
+// to detect guest JWTs. Stub it so the suite can drive the guest-vs-WorkOS
+// branch deterministically without spinning up the real guest-token service.
+vi.mock("../../../services/guest-token.js", () => ({
+  validateGuestTokenDetailedAsync: validateGuestTokenMock,
+}));
 
 import v1Routes from "../index.js";
 import { sessionAuthMiddleware } from "../../../middleware/session-auth.js";
@@ -63,6 +71,9 @@ describe("v1 live-op routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://convex.example.com";
+    // Default: bearer tokens in these tests aren't guest JWTs. Tests that
+    // exercise the guest-rejection guard override this to return a valid guest.
+    validateGuestTokenMock.mockResolvedValue({ valid: false });
     runServerDoctorMock.mockResolvedValue({
       status: "ready",
       target: { kind: "http", scope: "hosted", label: "Server" },
@@ -162,6 +173,33 @@ describe("v1 live-op routes", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code?: string };
     expect(body.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("rejects a guest JWT at the v1 boundary (401 UNAUTHORIZED, symmetric with Convex /v1/*)", async () => {
+    // Convex /v1/* rejects identity.issuer === GUEST_ISSUER. The Inspector v1
+    // router must mirror that — bearerAuthMiddleware admits guest tokens
+    // (sets c.set('guestId')), so the v1 router-level guard is what enforces
+    // the symmetry. Without it, a guest would pass the perimeter and only get
+    // 403'd by the deep Convex authorize-batch call, which is a different
+    // error code on a different layer.
+    validateGuestTokenMock.mockResolvedValue({
+      valid: true,
+      guestId: "guest_abc",
+    });
+    const res = await post(
+      makeApp(),
+      "/api/v1/projects/p1/servers/s1/doctor",
+      { serverName: "Example" },
+      "guest_bearer"
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      code: "UNAUTHORIZED",
+      message: expect.stringMatching(/guest/i),
+    });
+    // The guard short-circuits before the live-MCP path, so the doctor
+    // workflow never runs and the Convex authorize call is never made.
+    expect(runServerDoctorMock).not.toHaveBeenCalled();
   });
 
   it("reaches v1 through sessionAuthMiddleware with only Authorization: Bearer", async () => {
