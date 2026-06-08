@@ -37,7 +37,8 @@ import {
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
+import type { Predicate, PredicateResult } from "@/shared/eval-matching";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import {
   ProviderTokens,
@@ -268,6 +269,43 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+/**
+ * One row from `chatSessionChecks` — the persisted log of predicate-set runs
+ * against a stored chat session (Layer A substrate). Cross-surface checks
+ * (Layer C) reads these via the `getCheckRunsForSession` userQuery. Shape is
+ * hand-mirrored from backend Convex schema; codegen for `api.chatSessionChecks`
+ * lands with backend PR `feat/chat-session-checks-substrate` (#453), at which
+ * point the `as any` casts on the call sites can be dropped in favor of
+ * generated types.
+ */
+export interface ChatSessionCheckRow {
+  _id: string;
+  _creationTime?: number;
+  chatSessionId: string;
+  status: "running" | "completed" | "failed";
+  setKind: "suite_defaults" | "case_resolved" | "ad_hoc";
+  setRef?: string;
+  setVersion?: number;
+  /** Snapshotted predicate set as authored at run time. */
+  predicates: Predicate[];
+  /** Per-predicate verdicts. Populated once `status === "completed"`. */
+  predicateResults?: PredicateResult[];
+  /** Optional judge verdict (advisory, populated by judge runs). */
+  judge?: {
+    passed: boolean;
+    score?: number;
+    rationale?: string;
+  };
+  /** Optional goal-completion verdict (autoRun=false in current backend). */
+  goalCompletion?: {
+    completed: boolean;
+    rationale?: string;
+  };
+  /** Populated on `status === "failed"` — operator-readable error message. */
+  errorMessage?: string;
+  triggeredBy?: string;
+}
+
 export interface UseChatSessionReturn {
   // Chat state
   messages: UIMessage[];
@@ -405,6 +443,15 @@ export interface UseChatSessionReturn {
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
+
+  /**
+   * Live cross-surface check runs for this `chatSessionId`. Undefined until
+   * the Convex subscription resolves; empty array when no checks have ever
+   * been run on this session. Subscribers automatically re-render as
+   * `RunChecksModal` posts new runs through `/api/web/checks/run-predicates`
+   * and the backend writes `chatSessionChecks` rows.
+   */
+  checks: ChatSessionCheckRow[] | undefined;
 }
 
 function inferModelProviderFromId(modelId: string): ModelProvider {
@@ -2575,6 +2622,21 @@ export function useChatSession(
     previousSelectedServersRef.current = currentNames;
   }, [selectedServers]);
 
+  // Cross-surface checks subscription (Layer C). Gated on auth so guests +
+  // unauthenticated sessions don't fire `"skip"`-pattern queries. Cast via
+  // string form because the matching backend Convex codegen for
+  // `chatSessionChecks.getCheckRunsForSession` lands with PR #453; once
+  // merged + `convex codegen` runs, this can switch to `api.chatSessionChecks.getCheckRunsForSession`
+  // with generated types.
+  const checks = useQuery(
+    "chatSessionChecks:getCheckRunsForSession" as unknown as Parameters<
+      typeof useQuery
+    >[0],
+    isAuthenticated && chatSessionId
+      ? ({ chatSessionId } as unknown as Parameters<typeof useQuery>[1])
+      : "skip"
+  ) as ChatSessionCheckRow[] | undefined;
+
   // Token usage calculation
   const tokenUsage = useMemo<TokenUsage>(() => {
     let lastInputTokens = 0;
@@ -2706,5 +2768,8 @@ export function useChatSession(
     disableForAuthentication,
     submitBlocked,
     inputDisabled,
+
+    // Cross-surface checks
+    checks,
   };
 }

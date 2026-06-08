@@ -72,14 +72,22 @@ export function PredicatesList({ predicates }: { predicates: PredicateResult[] }
 
       <ul className="space-y-1.5">
         {predicates.map((row, i) => (
-          <PredicateRow key={i} row={row} />
+          <PredicateVerdictRow key={i} row={row} />
         ))}
       </ul>
     </div>
   );
 }
 
-function PredicateRow({ row }: { row: PredicateResult }) {
+/**
+ * Single predicate verdict row. Extracted (Layer C, cross-surface checks) so
+ * the on-demand `<ChatSessionVerdicts>` renderer in `components/checks/` can
+ * reuse the same visual treatment as the eval iteration gate. Eval still
+ * delegates to this via `<PredicatesList>` — the migration of eval to the
+ * `chatSessionChecks`-backed renderer is deferred (eval reads from
+ * `testIteration.metadata.predicates`, not `chatSessionChecks`).
+ */
+export function PredicateVerdictRow({ row }: { row: PredicateResult }) {
   return (
     <li
       className={`rounded border p-2 ${

@@ -65,6 +65,9 @@ vi.mock("lucide-react", () => ({
   MessageSquare: () => <span />,
   Server: () => <span />,
   X: () => <span />,
+  ListChecks: () => <span />,
+  Play: () => <span />,
+  XIcon: () => <span />,
 }));
 
 vi.mock("@mcpjam/design-system/button", () => ({

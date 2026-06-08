@@ -168,6 +168,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => mockConvexAuth,
+  // Layer C cross-surface checks subscription — not exercised by these
+  // tests; return undefined so the consumer sees "loading" semantics
+  // without firing real queries.
+  useQuery: () => undefined,
 }));
 
 vi.mock("@ai-sdk/react", async () => {

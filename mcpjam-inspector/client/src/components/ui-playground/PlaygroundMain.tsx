@@ -20,7 +20,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { Braces, Loader2, Trash2 } from "lucide-react";
+import { Braces, ListChecks, Loader2, Trash2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -130,6 +130,8 @@ import {
 } from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
+import { ChatSessionVerdicts } from "@/components/checks/ChatSessionVerdicts";
+import { RunChecksModal } from "@/components/checks/RunChecksModal";
 import { PlaygroundHostPicker } from "@/components/playground/PlaygroundHostPicker";
 import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
@@ -425,6 +427,11 @@ export function PlaygroundMain({
     WidgetModelContextEntry[]
   >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  // Layer-C cross-surface checks modal. Anchored on the chatSessionId from
+  // `useChatSession` so the run is filed against the exact session the user
+  // is looking at (live or rehydrated history).
+  const [showRunChecksModal, setShowRunChecksModal] = useState(false);
+  const [showVerdictsPanel, setShowVerdictsPanel] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
@@ -3083,30 +3090,59 @@ export function PlaygroundMain({
           }
           trailing={
             effectiveHasMessages ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowClearConfirm(true)}
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setShowVerdictsPanel(true);
+                        setShowRunChecksModal(true);
+                      }}
+                      data-testid="run-checks-trigger"
+                      aria-label="Run checks on this session"
+                    >
+                      <ListChecks className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    sideOffset={6}
+                    collisionPadding={12}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent
-                  variant="muted"
-                  sideOffset={6}
-                  collisionPadding={12}
-                >
-                  <p className="font-medium">Clear chat</p>
-                  <p className="text-xs font-light text-muted-foreground">
-                    {navigator.platform.includes("Mac")
-                      ? "⌘⇧K"
-                      : "Ctrl+Shift+K"}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
+                    <p className="font-medium">Run checks</p>
+                    <p className="text-xs font-light text-muted-foreground">
+                      Grade this session against a suite's default checks.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowClearConfirm(true)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    sideOffset={6}
+                    collisionPadding={12}
+                  >
+                    <p className="font-medium">Clear chat</p>
+                    <p className="text-xs font-light text-muted-foreground">
+                      {navigator.platform.includes("Mac")
+                        ? "⌘⇧K"
+                        : "Ctrl+Shift+K"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             ) : null
           }
         />
@@ -3117,6 +3153,36 @@ export function PlaygroundMain({
         onCancel={() => setShowClearConfirm(false)}
         onConfirm={handleClearChat}
       />
+
+      <RunChecksModal
+        open={showRunChecksModal}
+        onOpenChange={setShowRunChecksModal}
+        chatSessionId={chatSessionId}
+        projectId={convexProjectId}
+      />
+
+      {showVerdictsPanel && chatSessionId ? (
+        <div
+          className="shrink-0 border-b border-border/60 bg-background/40 px-3 py-2"
+          data-testid="playground-checks-panel"
+        >
+          <div className="mx-auto max-w-4xl space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Session checks
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVerdictsPanel(false)}
+                className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              >
+                Hide
+              </button>
+            </div>
+            <ChatSessionVerdicts chatSessionId={chatSessionId} />
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex-1 min-h-0 overflow-hidden">
         {isMultiModelLayoutMode ? (

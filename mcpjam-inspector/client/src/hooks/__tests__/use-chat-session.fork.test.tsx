@@ -115,6 +115,8 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  // Layer C cross-surface checks subscription — not exercised here.
+  useQuery: () => undefined,
 }));
 
 vi.mock("@ai-sdk/react", async () => {
