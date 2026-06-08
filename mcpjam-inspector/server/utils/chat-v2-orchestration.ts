@@ -438,6 +438,8 @@ export interface PrepareChatV2Options {
    */
   priorMessages?: ReadonlyArray<ModelMessage>;
   appTools?: AppToolEntry[];
+  /** Server-side built-in tools (e.g. web_search) with their own execute. */
+  builtInTools?: ToolSet;
 }
 
 /**
@@ -503,6 +505,7 @@ export async function prepareChatV2(
     respectToolVisibility,
     customProviders,
     appTools,
+    builtInTools,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -565,10 +568,28 @@ export async function prepareChatV2(
   // before skills so an app alias never collides with either (the
   // `app_<8hex>` namespace is opaque and disjoint from both).
   const appToolEntries = buildAppTools(appTools);
+  const builtInToolEntries = builtInTools ?? {};
+  // Collision guard: a built-in tool must not shadow — or be shadowed by — an
+  // MCP, app, or skill tool. Fail closed before streaming so `web_search` never
+  // silently resolves to a different tool (or vice versa).
+  for (const name of Object.keys(builtInToolEntries)) {
+    if (
+      Object.prototype.hasOwnProperty.call(mcpTools, name) ||
+      Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(finalSkillTools, name)
+    ) {
+      throw new Error(
+        `Built-in tool '${name}' collides with an existing MCP, app, or skill tool.`,
+      );
+    }
+  }
+  // Built-ins merge last so an explicit built-in wins, but the guard above
+  // means there is never actually a collision to resolve.
   const realTools = {
     ...mcpTools,
     ...appToolEntries,
     ...finalSkillTools,
+    ...builtInToolEntries,
   } as ToolSet;
 
   // 2. Decide whether progressive discovery applies, then mint meta-tools if
