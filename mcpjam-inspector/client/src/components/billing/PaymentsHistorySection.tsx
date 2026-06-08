@@ -25,6 +25,7 @@ import {
 import {
   useInvoiceHistory,
   type InvoiceHistoryEntry,
+  type InvoiceLine,
 } from "@/hooks/useInvoiceHistory";
 
 const formatUsd = (cents: number, currency = "usd"): string => {
@@ -66,6 +67,65 @@ function bucketEntryCount(count: number): string {
   return "20+";
 }
 
+const formatTeamSeatDelta = (delta: number): string => {
+  const sign = delta > 0 ? "+" : delta < 0 ? "-" : "";
+  const seats = Math.abs(delta);
+  return `${sign}${seats.toLocaleString()} Team ${
+    seats === 1 ? "seat" : "seats"
+  }`;
+};
+
+const extractTeamSeatQuantity = (line: InvoiceLine): number | null => {
+  if (typeof line.quantity === "number" && Number.isFinite(line.quantity)) {
+    return line.quantity;
+  }
+  const explicit = line.description.match(/(\d+)\s*[×x]\s*MCPJam Team/i);
+  if (explicit) return Number(explicit[1]);
+  return /MCPJam Team/i.test(line.description) ? 1 : null;
+};
+
+const isStripeProrationLine = (line: InvoiceLine): boolean =>
+  /remaining time|unused time/i.test(line.description);
+
+const isVisibleInvoice = (invoice: InvoiceHistoryEntry): boolean =>
+  invoice.status !== "void";
+
+const invoiceProratedSeatDelta = (
+  invoice: InvoiceHistoryEntry
+): number | null => {
+  const prorationLines = invoice.lines.filter(isStripeProrationLine);
+  if (prorationLines.length === 0) return null;
+
+  const remaining = prorationLines.find((line) =>
+    /remaining time/i.test(line.description)
+  );
+  const unused = prorationLines.find((line) =>
+    /unused time/i.test(line.description)
+  );
+  const toSeats = remaining ? extractTeamSeatQuantity(remaining) : null;
+  const fromSeats = unused ? extractTeamSeatQuantity(unused) : null;
+
+  return toSeats !== null && fromSeats !== null ? toSeats - fromSeats : null;
+};
+
+function summarizeProratedInvoice(invoice: InvoiceHistoryEntry): string | null {
+  if (invoice.status === "upcoming") {
+    const line = invoice.lines[0];
+    if (/prorated/i.test(line?.description ?? "")) {
+      return line.description;
+    }
+  }
+
+  if (!invoice.lines.some(isStripeProrationLine)) return null;
+
+  const seatDelta = invoiceProratedSeatDelta(invoice);
+  if (seatDelta !== null && seatDelta !== 0) {
+    return `${formatTeamSeatDelta(seatDelta)} · prorated`;
+  }
+
+  return "Team seat change · prorated";
+}
+
 // One unified history row: either a credit top-up (from our ledger) or a Stripe
 // invoice (subscription charge + mid-cycle seat prorations). Top-ups and
 // invoices are distinct Stripe objects, so there's no double-counting.
@@ -100,7 +160,7 @@ export function PaymentsHistorySection({
       ...(topups ?? []).map(
         (e): BillingRow => ({ kind: "topup", date: e.occurredAt, topup: e })
       ),
-      ...(invoices ?? []).map(
+      ...(invoices ?? []).filter(isVisibleInvoice).map(
         (inv): BillingRow => ({
           kind: "invoice",
           date: inv.createdAt,
@@ -286,6 +346,10 @@ function cleanLineDescription(desc: string): string {
 }
 
 function InvoiceLines({ invoice }: { invoice: InvoiceHistoryEntry }) {
+  const summary = summarizeProratedInvoice(invoice);
+  if (summary) {
+    return <span>{summary}</span>;
+  }
   if (invoice.lines.length === 0) {
     return <span className="text-muted-foreground">Subscription</span>;
   }

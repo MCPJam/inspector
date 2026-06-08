@@ -7,13 +7,22 @@ import type {
   PaymentHistoryEntry,
   UsePaymentsHistoryResult,
 } from "@/hooks/usePaymentsHistory";
+import type {
+  InvoiceHistoryEntry,
+  UseInvoiceHistoryResult,
+} from "@/hooks/useInvoiceHistory";
 
 let hookState: UsePaymentsHistoryResult = {
   entries: undefined,
   isLoading: true,
   isAuthenticated: false,
 };
-
+let invoiceHookState: UseInvoiceHistoryResult = {
+  entries: [],
+  upcoming: null,
+  isLoading: false,
+  error: null,
+};
 const captureMock = vi.fn();
 
 vi.mock("@/hooks/usePaymentsHistory", () => ({
@@ -23,7 +32,7 @@ vi.mock("@/hooks/usePaymentsHistory", () => ({
 // Invoices come from a separate Stripe-backed hook; these tests cover the
 // top-up path, so stub it empty (its own behavior is exercised elsewhere).
 vi.mock("@/hooks/useInvoiceHistory", () => ({
-  useInvoiceHistory: () => ({ entries: [], isLoading: false, error: null }),
+  useInvoiceHistory: () => invoiceHookState,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -56,6 +65,12 @@ describe("PaymentsHistorySection", () => {
       entries: undefined,
       isLoading: true,
       isAuthenticated: false,
+    };
+    invoiceHookState = {
+      entries: [],
+      upcoming: null,
+      isLoading: false,
+      error: null,
     };
     captureMock.mockReset();
   });
@@ -143,7 +158,7 @@ describe("PaymentsHistorySection", () => {
       expect(screen.getAllByText(/Not available/)).toHaveLength(2);
       // Pending → "Processing"
       expect(screen.getAllByText(/Processing/)).toHaveLength(2);
-      // Failed → em-dash
+      // Failed -> placeholder
       expect(screen.getAllByText("—")).toHaveLength(2);
     });
 
@@ -298,6 +313,92 @@ describe("PaymentsHistorySection", () => {
           "-1 Team seat · prorated · $300 card refund + $59.97 account credit"
         )
       ).toHaveLength(2);
+    });
+  });
+
+  describe("billing rows", () => {
+    it("collapses Stripe proration lines into a simple seat-change detail", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_prorated",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "paid",
+            amountDueCents: 35997,
+            amountPaidCents: 35997,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice",
+            lines: [
+              {
+                description: "Unused time on MCPJam Team after 11 Jun 2026",
+                amountCents: -35997,
+                quantity: 1,
+              },
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 71994,
+                quantity: 2,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getAllByText("+1 Team seat · prorated")).toHaveLength(2);
+      expect(screen.getAllByText("$359.97")).toHaveLength(2);
+      expect(
+        screen.queryByText(/Unused time on MCPJam Team/)
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/Remaining time on 2/)).not.toBeInTheDocument();
+    });
+
+    it("hides void Stripe invoices from payment history", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_void",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "void",
+            amountDueCents: 35968,
+            amountPaidCents: 0,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice-void",
+            lines: [
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 35968,
+                quantity: 2,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getByTestId("payments-history-empty")).toBeInTheDocument();
+      expect(screen.queryByText("void")).not.toBeInTheDocument();
+      expect(screen.queryByText("$359.68")).not.toBeInTheDocument();
     });
   });
 });

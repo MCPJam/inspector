@@ -94,14 +94,14 @@ export interface UseInvoiceHistoryResult {
  * manage billing).
  */
 export function useInvoiceHistory(
-  organizationId?: string | null,
+  organizationId?: string | null
 ): UseInvoiceHistoryResult {
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const listInvoices = useAction("billing:listOrganizationInvoices" as any);
 
   const [entries, setEntries] = useState<InvoiceHistoryEntry[] | undefined>(
-    undefined,
+    undefined
   );
   const [upcoming, setUpcoming] = useState<InvoiceHistoryEntry | null>(null);
   const [isLoading, setIsLoading] = useState(false);
