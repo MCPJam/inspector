@@ -297,7 +297,16 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 // Stripe-backed invoice hook used by the merged payment-history section; stub
 // it empty so these org-tab tests don't reach the action layer.
 vi.mock("@/hooks/useInvoiceHistory", () => ({
-  useInvoiceHistory: () => ({ entries: [], isLoading: false, error: null }),
+  useInvoiceHistory: () => ({
+    entries: [],
+    upcoming: null,
+    isLoading: false,
+    error: null,
+  }),
+}));
+
+vi.mock("@/hooks/useCreditActivity", () => ({
+  useCreditActivity: () => ({ entries: [], isLoading: false }),
 }));
 
 vi.mock("../organization/OrganizationAuditLog", () => ({

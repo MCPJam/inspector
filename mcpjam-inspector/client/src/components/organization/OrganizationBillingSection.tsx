@@ -42,7 +42,6 @@ import { buildComparePlanSectionsFromCatalog } from "@/components/organization/b
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
-import { CreditActivitySection } from "@/components/billing/CreditActivitySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlow";
 
@@ -343,11 +342,7 @@ function ComparePlanRowLabel({
   );
 }
 
-const COMPARE_PLAN_PERIOD_SUFFIXES = [
-  "/ seat / mo",
-  "/ day",
-  "/ mo",
-] as const;
+const COMPARE_PLAN_PERIOD_SUFFIXES = ["/ seat / mo", "/ day", "/ mo"] as const;
 
 function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
   if (cell.kind === "check") {
@@ -368,7 +363,7 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
   }
 
   const periodSuffix = COMPARE_PLAN_PERIOD_SUFFIXES.find((suffix) =>
-    cell.text.endsWith(suffix),
+    cell.text.endsWith(suffix)
   );
   if (periodSuffix) {
     const amount = cell.text.slice(0, -periodSuffix.length).trimEnd();
@@ -377,7 +372,9 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
         <span className="font-semibold tabular-nums text-foreground">
           {amount}
         </span>
-        <span className="font-normal text-muted-foreground">{periodSuffix}</span>
+        <span className="font-normal text-muted-foreground">
+          {periodSuffix}
+        </span>
       </span>
     );
   }
@@ -727,15 +724,7 @@ export function OrganizationBillingSection({
             canViewInvoices={
               !!(showPlanBilling && billingStatus?.canManageBilling)
             }
-          />
-        </ErrorBoundary>
-      ) : null}
-
-      {showCredits && canManageCredits ? (
-        <ErrorBoundary fallback={null}>
-          <CreditActivitySection
-            organizationId={organizationId}
-            canView={showCredits && canManageCredits}
+            canViewCreditActivity={showCredits && canManageCredits}
           />
         </ErrorBoundary>
       ) : null}

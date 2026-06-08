@@ -25,13 +25,21 @@ import {
 import {
   useInvoiceHistory,
   type InvoiceHistoryEntry,
+  type InvoiceLine,
 } from "@/hooks/useInvoiceHistory";
+import {
+  useCreditActivity,
+  type CreditActivityEntry,
+} from "@/hooks/useCreditActivity";
 
 const formatUsd = (cents: number, currency = "usd"): string => {
-  // USD whole-dollar amounts render without cents ("$5"); otherwise 2dp.
   if (currency.toLowerCase() === "usd") {
-    const dollars = cents / 100;
-    return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+    const sign = cents < 0 ? "-" : "";
+    const dollars = Math.abs(cents) / 100;
+    const formatted = Number.isInteger(dollars)
+      ? `$${dollars}`
+      : `$${dollars.toFixed(2)}`;
+    return `${sign}${formatted}`;
   }
   try {
     return new Intl.NumberFormat(undefined, {
@@ -41,6 +49,11 @@ const formatUsd = (cents: number, currency = "usd"): string => {
   } catch {
     return `$${(cents / 100).toFixed(2)}`;
   }
+};
+
+const formatCreditAmount = (credits: number): string => {
+  const sign = credits > 0 ? "+" : credits < 0 ? "-" : "";
+  return `${sign}${Math.abs(credits).toLocaleString()}`;
 };
 
 const formatDate = (epochMs: number): string => {
@@ -62,23 +75,163 @@ function bucketEntryCount(count: number): string {
   return "20+";
 }
 
-// One unified history row: either a credit top-up (from our ledger) or a Stripe
-// invoice (subscription charge + mid-cycle seat prorations). Top-ups and
-// invoices are distinct Stripe objects, so there's no double-counting.
+const formatTeamSeatDelta = (delta: number): string => {
+  const sign = delta > 0 ? "+" : delta < 0 ? "-" : "";
+  const seats = Math.abs(delta);
+  return `${sign}${seats.toLocaleString()} Team ${
+    seats === 1 ? "seat" : "seats"
+  }`;
+};
+
+const extractTeamSeatQuantity = (line: InvoiceLine): number | null => {
+  if (typeof line.quantity === "number" && Number.isFinite(line.quantity)) {
+    return line.quantity;
+  }
+  const explicit = line.description.match(/(\d+)\s*[×x]\s*MCPJam Team/i);
+  if (explicit) return Number(explicit[1]);
+  return /MCPJam Team/i.test(line.description) ? 1 : null;
+};
+
+const isStripeProrationLine = (line: InvoiceLine): boolean =>
+  /remaining time|unused time/i.test(line.description);
+
+const CREDIT_GRANT_INVOICE_MATCH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const isVisibleInvoice = (invoice: InvoiceHistoryEntry): boolean =>
+  invoice.status !== "void";
+
+const invoiceAmountCents = (invoice: InvoiceHistoryEntry): number => {
+  if (typeof invoice.totalCents === "number") return invoice.totalCents;
+  return invoice.amountPaidCents || invoice.amountDueCents;
+};
+
+const formatInvoiceAmount = (amountCents: number, currency = "usd"): string => {
+  if (amountCents < 0) {
+    return `${formatUsd(Math.abs(amountCents), currency)} credit`;
+  }
+  return formatUsd(amountCents, currency);
+};
+
+const invoiceProratedSeatDelta = (
+  invoice: InvoiceHistoryEntry
+): number | null => {
+  const prorationLines = invoice.lines.filter(isStripeProrationLine);
+  if (prorationLines.length === 0) return null;
+
+  const remaining = prorationLines.find((line) =>
+    /remaining time/i.test(line.description)
+  );
+  const unused = prorationLines.find((line) =>
+    /unused time/i.test(line.description)
+  );
+  const toSeats = remaining ? extractTeamSeatQuantity(remaining) : null;
+  const fromSeats = unused ? extractTeamSeatQuantity(unused) : null;
+
+  return toSeats !== null && fromSeats !== null ? toSeats - fromSeats : null;
+};
+
+function summarizeProratedInvoice(invoice: InvoiceHistoryEntry): string | null {
+  if (invoice.status === "upcoming") {
+    const line = invoice.lines[0];
+    if (/prorated/i.test(line?.description ?? "")) {
+      return line.description;
+    }
+  }
+
+  const prorationLines = invoice.lines.filter(isStripeProrationLine);
+  if (prorationLines.length === 0) return null;
+
+  const seatDelta = invoiceProratedSeatDelta(invoice);
+  if (seatDelta !== null && seatDelta !== 0) {
+    return `${formatTeamSeatDelta(seatDelta)} · prorated`;
+  }
+
+  const amount = invoiceAmountCents(invoice);
+  if (amount > 0) return "Team seat change · prorated";
+  if (amount < 0) return "Team seat credit · prorated";
+  return "Team seat change · prorated";
+}
+
+const creditActivityDetail = (entry: CreditActivityEntry): string => {
+  if (typeof entry.seatDelta === "number") {
+    const prorated = /prorated/i.test(entry.label) ? " · prorated" : "";
+    return `${formatTeamSeatDelta(entry.seatDelta)}${prorated}`;
+  }
+  return entry.label || "Credit activity";
+};
+
 type BillingRow =
   | { kind: "topup"; date: number; topup: PaymentHistoryEntry }
-  | { kind: "invoice"; date: number; invoice: InvoiceHistoryEntry };
+  | {
+      kind: "invoice";
+      date: number;
+      invoice: InvoiceHistoryEntry;
+      creditActivity: CreditActivityEntry[];
+    }
+  | { kind: "credit"; date: number; credit: CreditActivityEntry };
+
+type InvoiceBillingRow = Extract<BillingRow, { kind: "invoice" }>;
+
+const sumCredits = (entries: CreditActivityEntry[]): number | null => {
+  const total = entries.reduce((sum, entry) => sum + entry.amountCredits, 0);
+  return total === 0 ? null : total;
+};
+
+const topupCreditAmount = (entry: PaymentHistoryEntry): number | null => {
+  const match = entry.displayCredits.replace(/,/g, "").match(/\d+/);
+  if (!match) return null;
+  return Number(match[0]);
+};
+
+const shouldAttachCreditActivityToInvoice = (
+  entry: CreditActivityEntry,
+  row: InvoiceBillingRow
+): boolean => {
+  if (row.invoice.status !== "paid") return false;
+
+  const distance = Math.abs(row.invoice.createdAt - entry.createdAt);
+  if (distance > CREDIT_GRANT_INVOICE_MATCH_WINDOW_MS) return false;
+
+  const invoiceSeatDelta = invoiceProratedSeatDelta(row.invoice);
+  if (typeof entry.seatDelta === "number") {
+    return invoiceSeatDelta === entry.seatDelta;
+  }
+
+  return true;
+};
+
+const findMatchingInvoiceRow = (
+  entry: CreditActivityEntry,
+  invoiceRows: InvoiceBillingRow[],
+  matchedInvoiceIds: Set<string>
+): InvoiceBillingRow | null => {
+  let best: InvoiceBillingRow | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const row of invoiceRows) {
+    if (matchedInvoiceIds.has(row.invoice.id)) continue;
+    if (!shouldAttachCreditActivityToInvoice(entry, row)) continue;
+    const distance = Math.abs(row.invoice.createdAt - entry.createdAt);
+    if (distance < bestDistance) {
+      best = row;
+      bestDistance = distance;
+    }
+  }
+  return best;
+};
 
 export function PaymentsHistorySection({
   organizationId,
   canViewHistory = false,
   canViewInvoices = false,
+  canViewCreditActivity = false,
 }: {
   organizationId?: string | null;
   /** Credit top-ups (reactive query). Gated on credit-manage rights. */
   canViewHistory?: boolean;
   /** Stripe invoices (on-demand action). Gated on billing-manage (owner). */
   canViewInvoices?: boolean;
+  /** Credit ledger activity (allowance grants / claw-backs). */
+  canViewCreditActivity?: boolean;
 }) {
   const { entries: topups, isLoading: topupsLoading } = usePaymentsHistory(
     canViewHistory ? organizationId : null
@@ -88,54 +241,85 @@ export function PaymentsHistorySection({
     upcoming,
     isLoading: invoicesLoading,
   } = useInvoiceHistory(canViewInvoices ? organizationId : null);
+  const { entries: creditActivity, isLoading: creditActivityLoading } =
+    useCreditActivity(canViewCreditActivity ? organizationId : null);
   const posthog = usePostHog();
   const viewedRef = useRef(false);
 
   const rows = useMemo<BillingRow[]>(() => {
+    const invoiceRows: InvoiceBillingRow[] = (invoices ?? [])
+      .filter(isVisibleInvoice)
+      .map((inv) => ({
+        kind: "invoice",
+        date: inv.createdAt,
+        invoice: inv,
+        creditActivity: [],
+      }));
+    const standaloneCreditActivity: CreditActivityEntry[] = [];
+    const matchedInvoiceIds = new Set<string>();
+
+    for (const entry of creditActivity ?? []) {
+      const matchingInvoice = findMatchingInvoiceRow(
+        entry,
+        invoiceRows,
+        matchedInvoiceIds
+      );
+      if (matchingInvoice) {
+        matchingInvoice.creditActivity.push(entry);
+        matchedInvoiceIds.add(matchingInvoice.invoice.id);
+      } else {
+        standaloneCreditActivity.push(entry);
+      }
+    }
+
     const merged: BillingRow[] = [
       ...(topups ?? []).map(
         (e): BillingRow => ({ kind: "topup", date: e.occurredAt, topup: e })
       ),
-      ...(invoices ?? []).map(
-        (inv): BillingRow => ({
-          kind: "invoice",
-          date: inv.createdAt,
-          invoice: inv,
-        })
-      ),
+      ...invoiceRows,
+      ...(canViewInvoices
+        ? []
+        : standaloneCreditActivity.map(
+            (entry): BillingRow => ({
+              kind: "credit",
+              date: entry.createdAt,
+              credit: entry,
+            })
+          )),
     ];
     merged.sort((a, b) => b.date - a.date);
-    // Pin the projected next invoice to the very top.
     if (upcoming) {
       merged.unshift({
         kind: "invoice",
         date: upcoming.createdAt,
         invoice: upcoming,
+        creditActivity: [],
       });
     }
     return merged;
-  }, [topups, invoices, upcoming]);
+  }, [topups, invoices, creditActivity, upcoming, canViewInvoices]);
 
   const isLoading =
-    (canViewHistory && topupsLoading) || (canViewInvoices && invoicesLoading);
+    (canViewHistory && topupsLoading) ||
+    (canViewInvoices && invoicesLoading) ||
+    (canViewCreditActivity && creditActivityLoading);
 
-  // Fire the (top-up) view event once per mount when rows first load and aren't
-  // empty. Ref guard defeats StrictMode double-mount and the auth-resolve
-  // re-render that flips isLoading false.
   useEffect(() => {
     if (viewedRef.current) return;
     if (isLoading) return;
-    if (rows.length === 0) return;
-    viewedRef.current = true;
     const topupList = topups ?? [];
+    if (topupList.length === 0) return;
+    viewedRef.current = true;
     posthog?.capture("credit_topup_history_viewed", {
       entry_count_bucket: bucketEntryCount(topupList.length),
       has_failed: topupList.some((e) => e.status === "failed"),
       has_pending: topupList.some((e) => e.status === "pending"),
     });
-  }, [isLoading, posthog, rows, topups]);
+  }, [isLoading, posthog, topups]);
 
-  if (!canViewHistory && !canViewInvoices) return null;
+  if (!canViewHistory && !canViewInvoices && !canViewCreditActivity) {
+    return null;
+  }
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">
@@ -158,14 +342,13 @@ export function PaymentsHistorySection({
 function PaymentsTable({ rows }: { rows: BillingRow[] }) {
   return (
     <div data-testid="payments-history-table">
-      {/* Desktop: real table at sm+. Cap visible height; older rows scroll
-       * inside the card so the section never balloons. */}
       <div className="hidden sm:block max-h-[280px] overflow-y-auto rounded-md border border-border/40">
         <Table>
           <TableHeader className="sticky top-0 bg-background">
             <TableRow>
               <TableHead>Date</TableHead>
               <TableHead>Amount</TableHead>
+              <TableHead>Credits</TableHead>
               <TableHead>Details</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Receipt</TableHead>
@@ -178,17 +361,22 @@ function PaymentsTable({ rows }: { rows: BillingRow[] }) {
                   key={`t_${row.topup.sessionId}`}
                   entry={row.topup}
                 />
-              ) : (
+              ) : row.kind === "invoice" ? (
                 <InvoiceTableRow
                   key={`i_${row.invoice.id}`}
                   invoice={row.invoice}
+                  creditActivity={row.creditActivity}
+                />
+              ) : (
+                <CreditActivityTableRow
+                  key={`c_${row.credit.id}`}
+                  entry={row.credit}
                 />
               )
             )}
           </TableBody>
         </Table>
       </div>
-      {/* Mobile: stacked rows. Same height cap as desktop. */}
       <div className="flex flex-col gap-3 sm:hidden max-h-[400px] overflow-y-auto">
         {rows.map((row) =>
           row.kind === "topup" ? (
@@ -196,10 +384,16 @@ function PaymentsTable({ rows }: { rows: BillingRow[] }) {
               key={`tm_${row.topup.sessionId}`}
               entry={row.topup}
             />
-          ) : (
+          ) : row.kind === "invoice" ? (
             <InvoiceMobileRow
               key={`im_${row.invoice.id}`}
               invoice={row.invoice}
+              creditActivity={row.creditActivity}
+            />
+          ) : (
+            <CreditActivityMobileRow
+              key={`cm_${row.credit.id}`}
+              entry={row.credit}
             />
           )
         )}
@@ -218,8 +412,9 @@ function TopupTableRow({ entry }: { entry: PaymentHistoryEntry }) {
         {formatUsd(entry.pricePaidCents)}
       </TableCell>
       <TableCell className="whitespace-nowrap text-sm">
-        {entry.displayCredits}
+        <CreditAmount credits={topupCreditAmount(entry)} />
       </TableCell>
+      <TableCell className="whitespace-nowrap text-sm">Credit top-up</TableCell>
       <TableCell>
         <StatusBadge entry={entry} />
       </TableCell>
@@ -230,63 +425,113 @@ function TopupTableRow({ entry }: { entry: PaymentHistoryEntry }) {
   );
 }
 
-function InvoiceTableRow({ invoice }: { invoice: InvoiceHistoryEntry }) {
-  const amount = invoice.amountPaidCents || invoice.amountDueCents;
+function InvoiceTableRow({
+  invoice,
+  creditActivity,
+}: {
+  invoice: InvoiceHistoryEntry;
+  creditActivity: CreditActivityEntry[];
+}) {
+  const amount = invoiceAmountCents(invoice);
   return (
     <TableRow>
       <TableCell className="whitespace-nowrap align-top text-sm">
         {formatDate(invoice.createdAt)}
       </TableCell>
       <TableCell className="whitespace-nowrap align-top text-sm tabular-nums">
-        {formatUsd(amount, invoice.currency)}
+        {formatInvoiceAmount(amount, invoice.currency)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap align-top text-sm">
+        <CreditAmount credits={sumCredits(creditActivity)} />
       </TableCell>
       <TableCell className="align-top text-sm">
         <InvoiceLines invoice={invoice} />
       </TableCell>
       <TableCell className="align-top">
-        <InvoiceStatusBadge status={invoice.status} />
+        <InvoiceStatusBadge status={invoice.status} amountCents={amount} />
       </TableCell>
       <TableCell className="text-right align-top">
-        <InvoiceReceiptCell invoice={invoice} />
+        <InvoiceReceiptCell invoice={invoice} amountCents={amount} />
       </TableCell>
     </TableRow>
   );
 }
 
-// Stripe writes plan lines verbosely, e.g. "1 × MCPJam Team (at $360.00 / year)".
-// Drop the "N × " prefix and the "(at $X / interval)" parenthetical, and surface
-// the cadence as a clean word. Proration lines ("Remaining time on …") have no
-// "/ year" or trailing parens, so they pass through unchanged.
+function CreditActivityTableRow({ entry }: { entry: CreditActivityEntry }) {
+  return (
+    <TableRow>
+      <TableCell className="whitespace-nowrap align-top text-sm">
+        {formatDate(entry.createdAt)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap align-top text-sm tabular-nums">
+        <span className="text-muted-foreground">-</span>
+      </TableCell>
+      <TableCell className="whitespace-nowrap align-top text-sm">
+        <CreditAmount credits={entry.amountCredits} />
+      </TableCell>
+      <TableCell className="whitespace-nowrap align-top text-sm">
+        {creditActivityDetail(entry)}
+      </TableCell>
+      <TableCell className="align-top">
+        <CreditActivityStatusBadge entry={entry} />
+      </TableCell>
+      <TableCell className="text-right align-top">
+        <span className="text-sm text-muted-foreground">-</span>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function cleanLineDescription(desc: string): string {
   const cadence = /\/\s*year/i.test(desc)
     ? " · Annual"
     : /\/\s*month/i.test(desc)
     ? " · Monthly"
     : "";
-  // Keep the "N × " quantity prefix (it shows how many seats are billed); only
-  // drop the verbose "(at $X / interval)" pricing parenthetical.
   const name = desc.replace(/\s*\([^)]*\)\s*$/, "").trim();
   return `${name}${cadence}`;
 }
 
 function InvoiceLines({ invoice }: { invoice: InvoiceHistoryEntry }) {
+  const prorationSummary = summarizeProratedInvoice(invoice);
+  const prorationLines = invoice.lines.filter(isStripeProrationLine);
+  const regularLines = invoice.lines.filter(
+    (line) => !isStripeProrationLine(line)
+  );
+
+  if (prorationSummary && regularLines.length === 0) {
+    return <span className="text-foreground">{prorationSummary}</span>;
+  }
   if (invoice.lines.length === 0) {
     return <span className="text-muted-foreground">Subscription</span>;
   }
-  // Single line (just the plan charge): the Amount column already shows the
-  // total, so don't repeat it. Break amounts out only for multi-line invoices
-  // (plan + seat prorations), where the split is the useful part.
-  const showLineAmounts = invoice.lines.length > 1;
+  const lines = prorationSummary
+    ? [
+        ...regularLines.map((line) => ({
+          description: cleanLineDescription(line.description),
+          amountCents: line.amountCents,
+        })),
+        {
+          description: prorationSummary,
+          amountCents: prorationLines.reduce(
+            (sum, line) => sum + line.amountCents,
+            0
+          ),
+        },
+      ]
+    : invoice.lines.map((line) => ({
+        description: cleanLineDescription(line.description),
+        amountCents: line.amountCents,
+      }));
+  const showLineAmounts = lines.length > 1;
   return (
     <div className="flex flex-col gap-0.5">
-      {invoice.lines.map((line, i) => (
+      {lines.map((line, i) => (
         <div
           key={i}
           className="flex items-center justify-between gap-2 text-sm"
         >
-          <span className="truncate text-foreground">
-            {cleanLineDescription(line.description)}
-          </span>
+          <span className="truncate text-foreground">{line.description}</span>
           {showLineAmounts ? (
             <span className="tabular-nums text-muted-foreground">
               {formatUsd(line.amountCents, invoice.currency)}
@@ -303,13 +548,14 @@ function TopupMobileRow({ entry }: { entry: PaymentHistoryEntry }) {
     <div className="flex flex-col gap-1.5 rounded-md border border-border/60 p-3">
       <div className="flex items-center justify-between text-sm">
         <span>{formatDate(entry.occurredAt)}</span>
-        <span className="tabular-nums font-medium">
-          {formatUsd(entry.pricePaidCents)}
-        </span>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className="tabular-nums font-medium">
+            {formatUsd(entry.pricePaidCents)}
+          </span>
+          <CreditAmount credits={topupCreditAmount(entry)} />
+        </div>
       </div>
-      <div className="text-xs text-muted-foreground">
-        {entry.displayCredits}
-      </div>
+      <div className="text-xs text-muted-foreground">Credit top-up</div>
       <div className="flex items-center justify-between">
         <StatusBadge entry={entry} />
         <ReceiptCell entry={entry} />
@@ -318,26 +564,87 @@ function TopupMobileRow({ entry }: { entry: PaymentHistoryEntry }) {
   );
 }
 
-function InvoiceMobileRow({ invoice }: { invoice: InvoiceHistoryEntry }) {
-  const amount = invoice.amountPaidCents || invoice.amountDueCents;
+function InvoiceMobileRow({
+  invoice,
+  creditActivity,
+}: {
+  invoice: InvoiceHistoryEntry;
+  creditActivity: CreditActivityEntry[];
+}) {
+  const amount = invoiceAmountCents(invoice);
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border/60 p-3">
       <div className="flex items-center justify-between text-sm">
         <span>{formatDate(invoice.createdAt)}</span>
-        <span className="tabular-nums font-medium">
-          {formatUsd(amount, invoice.currency)}
-        </span>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className="tabular-nums font-medium">
+            {formatInvoiceAmount(amount, invoice.currency)}
+          </span>
+          <CreditAmount credits={sumCredits(creditActivity)} />
+        </div>
       </div>
       <InvoiceLines invoice={invoice} />
       <div className="flex items-center justify-between">
-        <InvoiceStatusBadge status={invoice.status} />
-        <InvoiceReceiptCell invoice={invoice} />
+        <InvoiceStatusBadge status={invoice.status} amountCents={amount} />
+        <InvoiceReceiptCell invoice={invoice} amountCents={amount} />
       </div>
     </div>
   );
 }
 
-function InvoiceStatusBadge({ status }: { status: string }) {
+function CreditActivityMobileRow({ entry }: { entry: CreditActivityEntry }) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-border/60 p-3">
+      <div className="flex items-center justify-between text-sm">
+        <span>{formatDate(entry.createdAt)}</span>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className="text-muted-foreground">-</span>
+          <CreditAmount credits={entry.amountCredits} />
+        </div>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {creditActivityDetail(entry)}
+      </div>
+      <div className="flex items-center justify-between">
+        <CreditActivityStatusBadge entry={entry} />
+        <span className="text-sm text-muted-foreground">-</span>
+      </div>
+    </div>
+  );
+}
+
+function CreditAmount({
+  credits,
+  className = "",
+}: {
+  credits: number | null;
+  className?: string;
+}) {
+  if (credits === null) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+  const tone =
+    credits > 0
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-muted-foreground";
+  return (
+    <span
+      className={["tabular-nums font-medium", tone, className]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {formatCreditAmount(credits)}
+    </span>
+  );
+}
+
+function InvoiceStatusBadge({
+  status,
+  amountCents,
+}: {
+  status: string;
+  amountCents: number;
+}) {
   if (status === "upcoming") {
     return (
       <Badge
@@ -346,6 +653,17 @@ function InvoiceStatusBadge({ status }: { status: string }) {
       >
         <Clock aria-hidden="true" />
         Upcoming
+      </Badge>
+    );
+  }
+  if (status === "paid" && amountCents < 0) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200"
+      >
+        <Undo2 aria-hidden="true" />
+        Credited
       </Badge>
     );
   }
@@ -379,9 +697,69 @@ function InvoiceStatusBadge({ status }: { status: string }) {
   );
 }
 
-function InvoiceReceiptCell({ invoice }: { invoice: InvoiceHistoryEntry }) {
+function CreditActivityStatusBadge({ entry }: { entry: CreditActivityEntry }) {
+  if (entry.kind === "granted") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100"
+      >
+        <CheckCircle2 aria-hidden="true" />
+        Granted
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200"
+    >
+      <Undo2 aria-hidden="true" />
+      Clawed back
+    </Badge>
+  );
+}
+
+function InvoiceReceiptCell({
+  invoice,
+  amountCents,
+}: {
+  invoice: InvoiceHistoryEntry;
+  amountCents: number;
+}) {
   const url = invoice.hostedInvoiceUrl ?? invoice.invoicePdfUrl;
-  if (!url) return <span className="text-sm text-muted-foreground">—</span>;
+
+  if (amountCents < 0) {
+    return (
+      <div className="flex flex-col items-end gap-0.5">
+        <span
+          className="text-sm text-muted-foreground"
+          title="Credited to the customer's Stripe balance, not refunded to the card."
+        >
+          Stripe balance
+        </span>
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            referrerPolicy="no-referrer"
+            data-ph-no-capture
+            aria-label={`View Stripe invoice for ${formatDate(
+              invoice.createdAt
+            )} balance credit (opens in new tab)`}
+            className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+          >
+            View invoice
+            <ExternalLink aria-hidden="true" className="size-3" />
+            <span className="sr-only">(opens in new tab)</span>
+          </a>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (!url) return <span className="text-sm text-muted-foreground">-</span>;
   return (
     <a
       href={url}
@@ -424,7 +802,6 @@ function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
   }
   if (status === "refunded" || status === "partially_refunded") {
     const isPartial = status === "partially_refunded";
-    // Hover detail like "$3 of $5 refunded" when we know the reversed amount.
     const detail =
       typeof entry.reversedPaidCents === "number"
         ? `${formatUsd(entry.reversedPaidCents)} of ${formatUsd(
@@ -491,8 +868,6 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
     );
   }
 
-  // No URL: distinguish the three cases so a succeeded-without-URL row
-  // doesn't read the same as a failed row (which legitimately has no receipt).
   const muted = "text-sm text-muted-foreground";
   if (entry.status === "succeeded") {
     return <span className={muted}>Not available</span>;
@@ -500,7 +875,7 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
   if (entry.status === "pending") {
     return <span className={muted}>Processing</span>;
   }
-  return <span className={muted}>—</span>;
+  return <span className={muted}>-</span>;
 }
 
 function EmptyState() {

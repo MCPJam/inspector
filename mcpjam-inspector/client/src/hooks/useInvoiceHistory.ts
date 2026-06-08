@@ -13,6 +13,7 @@ export interface InvoiceHistoryEntry {
   number?: string;
   createdAt: number;
   status: string;
+  totalCents?: number;
   amountDueCents: number;
   amountPaidCents: number;
   currency: string;
@@ -32,6 +33,7 @@ const normalizeEntry = (raw: unknown): InvoiceHistoryEntry | null => {
     number: typeof it.number === "string" ? it.number : undefined,
     createdAt: it.createdAt,
     status: typeof it.status === "string" ? it.status : "open",
+    totalCents: typeof it.totalCents === "number" ? it.totalCents : undefined,
     amountDueCents:
       typeof it.amountDueCents === "number" ? it.amountDueCents : 0,
     amountPaidCents:
@@ -92,14 +94,14 @@ export interface UseInvoiceHistoryResult {
  * manage billing).
  */
 export function useInvoiceHistory(
-  organizationId?: string | null,
+  organizationId?: string | null
 ): UseInvoiceHistoryResult {
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const listInvoices = useAction("billing:listOrganizationInvoices" as any);
 
   const [entries, setEntries] = useState<InvoiceHistoryEntry[] | undefined>(
-    undefined,
+    undefined
   );
   const [upcoming, setUpcoming] = useState<InvoiceHistoryEntry | null>(null);
   const [isLoading, setIsLoading] = useState(false);
