@@ -68,10 +68,13 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
 }));
 
 // Skip persistence — we want to assert in-memory state, not exercise Convex.
+// Hoisted so the test can read the serialized artifacts the real
+// finalizeEvalIteration forwards into the fanout (PR 6b).
+const persistEvalTraceFanoutMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ turnsWritten: 0, locked: false }),
+);
 vi.mock("../persist-eval-trace", () => ({
-  persistEvalTraceFanout: vi
-    .fn()
-    .mockResolvedValue({ turnsWritten: 0, locked: false }),
+  persistEvalTraceFanout: persistEvalTraceFanoutMock,
   lockEvalSessionAfterUpdate: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -471,5 +474,31 @@ describe("PR 8 — model-driven Computer Use loop (smoke)", () => {
       expect(finalToolNames).not.toContain("computer");
       expect(finalToolNames).not.toContain("finish_widget");
     }
+
+    // 8. PR 6b: the runner collected exactly one render observation and one
+    //    interaction step, and finalizeEvalIteration forwarded them (serialized)
+    //    into the fanout. The fixture produces exactly one of each: one
+    //    show_seats render + one computer left_click.
+    expect(persistEvalTraceFanoutMock).toHaveBeenCalledTimes(1);
+    const fanoutArgs = persistEvalTraceFanoutMock.mock.calls[0]![0];
+    expect(fanoutArgs.widgetRenderObservations).toHaveLength(1);
+    expect(fanoutArgs.browserInteractionSteps).toHaveLength(1);
+    expect(fanoutArgs.widgetRenderObservations[0]).toMatchObject({
+      toolCallId: "tc-show",
+      status: "rendered",
+      promptIndex: 0,
+    });
+    expect(fanoutArgs.browserInteractionSteps[0]).toMatchObject({
+      toolCallId: "tc-show",
+      stepIndex: 0,
+      promptIndex: 0,
+      action: "left_click",
+      coordinateX: 640,
+      coordinateY: 400,
+    });
+    // The widget→host tools/call was captured on the step.
+    expect(fanoutArgs.browserInteractionSteps[0].widgetToolCalls).toEqual([
+      expect.objectContaining({ name: "reserve", ok: true }),
+    ]);
   }, 60_000);
 });
