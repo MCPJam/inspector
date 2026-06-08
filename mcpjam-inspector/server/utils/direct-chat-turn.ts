@@ -339,6 +339,17 @@ export interface RunDirectChatTurnOptions {
    */
   toolChoice?: ToolChoice<Record<string, AiTool>>;
   /**
+   * Per-turn step ceiling. CodeRabbit PR-review fix (Major "Do not
+   * silently drop maxSteps"): the route-3 collapse silently lost
+   * `OrgLocalModelHandlerOptions.maxSteps` (legacy default 30,
+   * caller-configurable) when it switched to this helper's hardcoded
+   * `stepCountIs(20)`. Exposing the option here lets the local-org
+   * BYOK wrapper restore its legacy default + caller configurability
+   * without affecting other callers (route 4 + eval headless still
+   * omit and get the 20 default).
+   */
+  maxSteps?: number;
+  /**
    * Optional `experimental_telemetry` block forwarded verbatim to
    * `streamText`. Eval populates with suite/test/iteration metadata for
    * observability; chat currently omits.
@@ -437,7 +448,12 @@ export function runDirectChatTurn(
     toolChoice,
     experimentalTelemetry,
     traceStartedAt,
+    maxSteps,
   } = options;
+  const resolvedMaxSteps =
+    typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
+      ? Math.floor(maxSteps)
+      : 20;
 
   // Separate array for tracing — we must NOT mutate `messageHistory` because
   // `streamText` holds a reference and internally accumulates step responses.
@@ -585,7 +601,7 @@ export function runDirectChatTurn(
     ...(temperature !== undefined ? { temperature } : {}),
     system: providerSystemPrompt,
     tools: executableTools,
-    stopWhen: stepCountIs(20),
+    stopWhen: stepCountIs(resolvedMaxSteps),
     ...(abortSignal ? { abortSignal } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
@@ -742,7 +758,18 @@ export function runDirectChatTurn(
               }
             : undefined,
           settledWithError: false,
-          turnSpans: [...traceTurn.turnSpans],
+          // CodeRabbit PR-review fix (Major "Deep-clone turnSpans"):
+          // shallow `[...traceTurn.turnSpans]` only copies the array
+          // shell — span OBJECTS are still references to entries in
+          // `traceContext.recordedSpans`, and those get patched in
+          // place by `patchAiSdkRecordedSpansMessageRangesFromSteps`
+          // during `onFinish` (mutates `span.messageStartIndex` /
+          // `.messageEndIndex`). Consumers retaining earlier
+          // `onStepFinish` events would see historical spans mutate
+          // underneath them, breaking the "safe to retain across step
+          // boundaries" contract documented at line 217. Clone each
+          // span object so retained snapshots are immutable.
+          turnSpans: traceTurn.turnSpans.map((s) => ({ ...s })),
         },
         "onStepFinish",
       );

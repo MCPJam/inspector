@@ -296,18 +296,19 @@ export function handleLocalOrgChatModel(
     return createUIMessageStreamResponse({ stream });
   }
 
-  // NOTE on `maxSteps`: route 3 used to compute its own
-  // `resolvedMaxSteps` (defaulted to 30, overridable per request) and
-  // pass it as `stopWhen: stepCountIs(resolvedMaxSteps)` to its inline
-  // `streamText`. The shared engine (`runDirectChatTurn`) currently
-  // hardcodes `stepCountIs(20)` — same as route 4 (user-API-key). This
-  // convergence is intentional (engine consolidation route 3 collapse):
-  // local-org-BYOK now matches route 4's per-turn step ceiling. A
-  // follow-up may thread caller-overridable `maxSteps` through
-  // `RunDirectChatTurnOptions` if a real need surfaces; until then
-  // `options.maxSteps` is accepted but ignored on this route, matching
-  // the engine default. `handleHostedOrgChatModel` (cloud runtime) still
-  // honors `options.maxSteps` through the MCPJam handler.
+  // `maxSteps`: legacy route 3 defaulted to 30 + accepted caller
+  // override. CodeRabbit PR-review fix (Major "Do not silently drop
+  // maxSteps"): thread `options.maxSteps ?? 30` through
+  // `RunDirectChatTurnOptions.maxSteps` so the wrapper honors the
+  // caller-supplied ceiling AND preserves the legacy default. Route 4
+  // and eval headless still get the engine default (20) because they
+  // omit the option.
+  const resolvedMaxSteps =
+    typeof options.maxSteps === "number" &&
+    Number.isFinite(options.maxSteps) &&
+    options.maxSteps > 0
+      ? Math.floor(options.maxSteps)
+      : 30;
 
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
@@ -366,6 +367,7 @@ export function handleLocalOrgChatModel(
         discoveryState: options.discoveryState,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         ...(onLiveTextDelta ? { onLiveTextDelta } : {}),
+        maxSteps: resolvedMaxSteps,
         // Shared SSE-callback factory — byte-identical wire output with
         // route 4 (`streamDirectChatWithLiveTrace`).
         traceEvents: buildDirectChatTraceCallbacks(writer),
