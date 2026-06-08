@@ -70,6 +70,7 @@ export function McpjamAgentHero({
 }: McpjamAgentHeroProps) {
   const posthog = usePostHog();
   const [value, setValue] = useState("");
+  const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [recentSessions, setRecentSessions] = useState<
@@ -79,6 +80,14 @@ export function McpjamAgentHero({
   useEffect(() => {
     return subscribeMcpjamAgentSessions(setRecentSessions);
   }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const timer = window.setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [ready]);
 
   const latestRecent = useMemo<RecentMcpjamAgentSession | undefined>(
     () => recentSessions[0],
@@ -155,18 +164,38 @@ export function McpjamAgentHero({
   }, [latestRecent, onResumeSession, posthog, surface]);
 
   const canSubmit = value.trim().length > 0 && ready;
+  // Keep the orange invite ring while the composer is empty — including when
+  // auto-focused on load, which is exactly when we want to prompt typing.
+  const showInvite = ready && value.length === 0;
 
   return (
     <div className={cn("flex flex-col gap-2.5", className)}>
       <form
         onSubmit={onFormSubmit}
-        className="relative overflow-hidden rounded-2xl border border-border bg-muted/15 shadow-sm transition focus-within:border-foreground/25 focus-within:bg-muted/25 focus-within:shadow-md"
+        onClick={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.closest("button")) return;
+          textareaRef.current?.focus();
+        }}
+        className={cn(
+          "relative cursor-text rounded-2xl border bg-card/60 shadow-sm transition-[border-color,box-shadow,background-color]",
+          showInvite
+            ? cn(
+                "border-primary/50 ring-2 ring-primary/25 shadow-[0_8px_24px_-12px] shadow-primary/30",
+                focused && "border-primary/60 bg-card/80",
+              )
+            : cn(
+                "border-border/70",
+                focused &&
+                  "border-foreground/30 bg-card/80 shadow-md ring-1 ring-foreground/10",
+              ),
+        )}
       >
         {latestRecent && onResumeSession && (
           <button
             type="button"
             onClick={onRecentClick}
-            className="group flex w-full items-center gap-1.5 border-b border-border/60 px-4 py-2 text-[11px] text-muted-foreground transition hover:bg-muted/30 hover:text-foreground"
+            className="group flex w-full cursor-pointer items-center gap-1.5 border-b border-border/60 px-4 py-2 text-[11px] text-muted-foreground transition hover:bg-muted/30 hover:text-foreground"
           >
             <MessageSquareText className="size-3 shrink-0" aria-hidden />
             <span className="font-medium uppercase tracking-[0.06em]">
@@ -183,19 +212,31 @@ export function McpjamAgentHero({
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           placeholder={ready ? "Ask anything…" : "Loading…"}
           minRows={3}
           maxRows={8}
-          className="min-h-[5.5rem] resize-none border-0 bg-transparent px-4 py-4 text-[15px] leading-relaxed shadow-none outline-none focus-visible:border-0 focus-visible:ring-0"
+          className="min-h-[5.5rem] resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[15px] leading-[1.625] caret-foreground shadow-none outline-none focus-visible:border-0 focus-visible:ring-0 md:text-[15px]"
         />
-        <div className="flex items-center justify-end px-4 pb-4">
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <span
+            className={cn(
+              "text-[11px] leading-none text-muted-foreground/70 transition-opacity",
+              !ready && "opacity-100",
+              ready && focused && value.length === 0 && "opacity-100",
+              ready && !(focused && value.length === 0) && "opacity-0",
+            )}
+          >
+            {ready ? "Enter to send · Shift+Enter for newline" : "Loading project…"}
+          </span>
           <Button
             type="submit"
             size="icon"
             disabled={!canSubmit}
             title={ready ? "Send" : "Loading project and model…"}
             aria-label="Send"
-            className="size-8 shrink-0 rounded-full"
+            className="size-8 shrink-0 self-center rounded-full shadow-none"
           >
             <ArrowUp className="size-4" aria-hidden />
           </Button>
