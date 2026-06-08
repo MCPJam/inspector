@@ -424,6 +424,7 @@ vi.mock("../components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
+  useSidebar: () => ({ isMobile: false }),
 }));
 vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
