@@ -26,7 +26,8 @@
       "vars": {
         "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
         "CONVEX_URL": "https://proper-clownfish-150.convex.cloud",
-        "CONVEX_HTTP_URL": "https://proper-clownfish-150.convex.site"
+        "CONVEX_HTTP_URL": "https://proper-clownfish-150.convex.site",
+        "INSPECTOR_API_BASE": "https://staging.mcpjam.com"
       },
       "migrations": [
         {
@@ -54,7 +55,8 @@
       "vars": {
         "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
         "CONVEX_URL": "https://proper-clownfish-150.convex.cloud",
-        "CONVEX_HTTP_URL": "https://proper-clownfish-150.convex.site"
+        "CONVEX_HTTP_URL": "https://proper-clownfish-150.convex.site",
+        "INSPECTOR_API_BASE": "https://staging.mcpjam.com"
       },
       "migrations": [
         {
@@ -84,7 +86,8 @@
       "vars": {
         "AUTHKIT_DOMAIN": "login.mcpjam.com",
         "CONVEX_URL": "https://outstanding-fennec-304.convex.cloud",
-        "CONVEX_HTTP_URL": "https://outstanding-fennec-304.convex.site"
+        "CONVEX_HTTP_URL": "https://outstanding-fennec-304.convex.site",
+        "INSPECTOR_API_BASE": "https://api.mcpjam.com"
       },
       "migrations": [
         {
