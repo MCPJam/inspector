@@ -112,11 +112,12 @@ export function GenerateSessionsDialog({
   // render the rough cost preview below.
   const isByokChatbox = !isMCPJamProvidedModel(chatbox.modelId);
 
-  // Rough upper-bound cost preview. There's no per-model cost catalog
-  // on the client today (SUPPORTED_MODELS doesn't expose pricing), so
-  // this uses a coarse average tokens-per-turn × an average per-token
-  // rate. Marked as an estimate in the UI; follow-up should swap in
-  // per-model pricing from a shared catalog once one exists.
+  // Rough cost estimate (not an upper bound — uses a single blended
+  // midpoint rate with no safety multiplier, so it can under-estimate
+  // real spend if the model is on the expensive end). There's no
+  // per-model cost catalog on the client today (SUPPORTED_MODELS doesn't
+  // expose pricing); follow-up should swap in per-model pricing from a
+  // shared catalog once one exists.
   const ESTIMATED_TOKENS_PER_TURN = 4000; // input + output combined
   const ESTIMATED_USD_PER_1K_TOKENS = 0.005; // coarse blended midpoint
   const totalTurnsUpperBound = personaCount * sessionsPerPersona * maxTurns;
@@ -383,29 +384,32 @@ export function GenerateSessionsDialog({
             </div>
 
             {isByokChatbox ? (
-              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                <span>
-                  This chatbox uses your organization&apos;s model key.
-                  Running synthetic sessions will consume your provider
-                  credits.
-                </span>
-              </div>
-            ) : null}
+              <>
+                <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    This chatbox uses your organization&apos;s model key.
+                    Running synthetic sessions will consume your provider
+                    credits.
+                  </span>
+                </div>
 
-            <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-              <div className="flex items-center justify-between gap-2">
-                <span>Estimated upper-bound cost</span>
-                <span className="font-medium text-foreground">
-                  {formatUsd(estimatedCostUsd)}
-                </span>
-              </div>
-              <div className="mt-1 text-[11px] opacity-80">
-                {totalTurnsUpperBound} turns ({personaCount} ×{" "}
-                {sessionsPerPersona} × {maxTurns}). Estimate may vary —
-                actuals depend on the model and conversation length.
-              </div>
-            </div>
+                <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>Rough cost estimate</span>
+                    <span className="font-medium text-foreground">
+                      {formatUsd(estimatedCostUsd)}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[11px] opacity-80">
+                    {totalTurnsUpperBound} turns ({personaCount} ×{" "}
+                    {sessionsPerPersona} × {maxTurns}) at a coarse blended
+                    rate. Actuals depend on the model and conversation
+                    length and can vary above this number.
+                  </div>
+                </div>
+              </>
+            ) : null}
 
             {chatbox.requireToolApproval ? (
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">

@@ -97,6 +97,13 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
+  /**
+   * Approval mode forwarded into the wrapped MCPJam handler. Synthetic
+   * callers pass `"auto-deny"` so approval-required tool calls auto-deny
+   * inside the loop instead of pausing for a human (there is no visitor
+   * in a synthetic run). Direct chatters omit or pass `"prompt"`.
+   */
+  approvalMode?: "prompt" | "auto-deny";
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
@@ -790,6 +797,9 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
+    ...(options.approvalMode !== undefined
+      ? { approvalMode: options.approvalMode }
+      : {}),
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,

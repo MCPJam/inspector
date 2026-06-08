@@ -1,6 +1,8 @@
 /**
  * Tests for `GenerateSessionsDialog` plan v4 §J affordances:
- *   - BYOK chatbox: warning visible, Generate disabled.
+ *   - BYOK chatbox: spend warning + rough cost estimate visible; Generate
+ *     button is enabled (BYOK synthetic shipped — see PR #2486).
+ *   - MCPJam-provided chatbox: no BYOK warning, no cost estimate.
  *   - requireToolApproval chatbox: rewritten warning visible.
  *   - rate_limited run status: shows the "Rate-limited — budget reached"
  *     label with the amber treatment.
@@ -57,7 +59,7 @@ afterEach(() => {
 });
 
 describe("GenerateSessionsDialog — plan v4 §J affordances", () => {
-  it("shows the BYOK disabled state when modelId is a BYOK provider", () => {
+  it("shows the BYOK spend warning + rough cost estimate when modelId is a BYOK provider; Generate stays enabled", () => {
     const byokChatbox = {
       ...baseChatbox,
       modelId: "ollama/llama-3:8b",
@@ -69,15 +71,39 @@ describe("GenerateSessionsDialog — plan v4 §J affordances", () => {
         chatbox={byokChatbox}
       />,
     );
+    // Spend warning surfaces so the user knows provider credits will burn.
     expect(
       screen.getByText(
-        /Synthetic sessions are not yet supported for chatboxes using your own model keys/,
+        /will consume your provider credits/i,
       ),
     ).toBeInTheDocument();
+    // Rough cost estimate tile renders for BYOK chatboxes.
+    expect(screen.getByText(/Rough cost estimate/i)).toBeInTheDocument();
+    // Button is enabled — BYOK synthetic is supported.
     expect(
       (screen.getByRole("button", { name: "Generate personas" }) as HTMLButtonElement)
         .disabled,
-    ).toBe(true);
+    ).toBe(false);
+    // Old blocked-state copy must no longer appear (regression guard).
+    expect(
+      screen.queryByText(
+        /Synthetic sessions are not yet supported for chatboxes using your own model keys/i,
+      ),
+    ).toBeNull();
+  });
+
+  it("hides the BYOK warning + cost estimate for an MCPJam-provided model", () => {
+    render(
+      <GenerateSessionsDialog
+        isOpen
+        onClose={() => {}}
+        chatbox={baseChatbox}
+      />,
+    );
+    expect(
+      screen.queryByText(/will consume your provider credits/i),
+    ).toBeNull();
+    expect(screen.queryByText(/Rough cost estimate/i)).toBeNull();
   });
 
   it("shows the approval-mode warning when requireToolApproval is set", () => {

@@ -539,7 +539,11 @@ async function runOneSession(args: {
         selectedServers: selectedServerIds,
         requireToolApproval,
         chatboxId,
-        accessVersion: undefined,
+        // The chatbox runtime-config redeem returns an accessVersion that
+        // /stream/org/resolve uses to authorize the actor against the
+        // versioned chatbox; threading the value (instead of undefined)
+        // matches what real-visitor synthetic-equivalent chats send.
+        accessVersion,
         projectId,
         authHeader,
         abortSignal,
@@ -632,14 +636,39 @@ async function runOneSession(args: {
       // Session ended before any assistant turn completed (persona returned
       // endSession on turn 0, or every turn aborted). Persist once with no
       // trace so the chatSessions row exists and the run summary lines up.
-      // No turn ever ran, so sessionModelSource is undefined. The empty
-      // session is attributed to the originally-resolved chatbox model
-      // class — derive it lazily from modelId so this fallback row's
-      // modelSource matches what real turns would have written.
-      const emptySessionModelSource: SyntheticModelSource =
-        isMCPJamProvidedModel(String(modelDefinition.id))
-          ? "mcpjam"
-          : "byok";
+      // No turn ever ran, so sessionModelSource is undefined. Derive it
+      // from the same dispatch shape `drainAssistantTurn` uses so a local-
+      // runtime org-BYOK chatbox doesn't get mis-attributed as cloud
+      // byok on the fallback row.
+      let emptySessionModelSource: SyntheticModelSource;
+      const modelIdForEmpty = String(modelDefinition.id);
+      if (isMCPJamProvidedModel(modelIdForEmpty)) {
+        emptySessionModelSource = "mcpjam";
+      } else {
+        const keyResult = deriveOrgProviderKey(modelDefinition);
+        if (!keyResult.ok) {
+          // Couldn't derive a key — fall back to cloud byok rather than
+          // crashing this attribution path. Real turns would have failed
+          // before reaching the persist.
+          emptySessionModelSource = "byok";
+        } else if (isLocalRuntimeEligible(keyResult.key)) {
+          const runtime = await resolveOrgProviderRuntime(
+            projectId,
+            keyResult.key,
+            modelIdForEmpty,
+            {
+              authHeader,
+              chatboxId,
+              accessVersion,
+              serverIds: selectedServerIds,
+            },
+          );
+          emptySessionModelSource =
+            runtime.runtimeLocation === "local" ? "local_byok" : "byok";
+        } else {
+          emptySessionModelSource = "byok";
+        }
+      }
       await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
@@ -946,6 +975,12 @@ export async function drainAssistantTurn(
         selectedServers: args.selectedServers,
         serverIds: args.selectedServers,
         requireToolApproval: args.requireToolApproval,
+        // Synthetic runs have no human-in-the-loop. Auto-deny any
+        // approval-required tool call inside the loop so the run can
+        // make forward progress instead of pausing forever waiting for
+        // an approval that will never arrive. Matches the MCPJam-paid
+        // branch above.
+        approvalMode: "auto-deny",
         onConversationComplete,
         abortSignal: args.abortSignal,
         // Threaded through to /stream/org so the BYOK forwarder stamps

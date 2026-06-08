@@ -142,6 +142,9 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     const opts = calls[0] as any;
     expect(opts.extraBodyFields).toMatchObject({ synthesisRunId: "run-xyz" });
     expect(opts.providerKey).toBe("anthropic");
+    // Synthetic runs must auto-deny approval-required tool calls — there
+    // is no human in the loop. Regression guard for #2486 PR review.
+    expect(opts.approvalMode).toBe("auto-deny");
   });
 
   it("dispatches non-MCPJam models with local runtime through handleLocalOrgChatModel and threads synthesisRunId as a typed option", async () => {
