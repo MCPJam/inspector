@@ -63,3 +63,49 @@ export function applyPrepareAdvertisedTools(params: {
   const keep = new Set(narrowed);
   return defaultToolNames.filter((name) => keep.has(name));
 }
+
+/**
+ * Execution gate for the advertised subset (advertise = ENFORCE).
+ *
+ * `prepareAdvertisedTools` narrows what the model is *shown*, but the executable
+ * tool map still contains the hidden tools, so a hallucinated / remembered call
+ * to a hidden tool (e.g. `computer` before a widget renders) would otherwise
+ * still run. This wraps each tool's `execute` to throw a recoverable error when
+ * the tool isn't in the step's advertised set — the AI SDK (and the hosted
+ * `executeToolCallsFromMessages` path) surface the throw as a tool-error result
+ * the model can recover from, exactly like `gateToolsToActiveSubset` does for
+ * progressive discovery.
+ *
+ * `getAdvertised()` returns the current step's advertised names, or `null` for
+ * "no narrowing" (all tools executable — the gate is a no-op). Read at execute
+ * time so per-step changes are honored.
+ */
+export function gateToolsToAdvertisedSubset<
+  T extends Record<string, unknown>,
+>(tools: T, getAdvertised: () => ReadonlySet<string> | null): T {
+  const result: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(tools)) {
+    const original = def as Record<string, unknown>;
+    const execute = original.execute as
+      | ((input: unknown, ctx: unknown) => unknown)
+      | undefined;
+    if (typeof execute !== "function") {
+      result[name] = original;
+      continue;
+    }
+    result[name] = {
+      ...original,
+      execute: async (input: unknown, ctx: unknown) => {
+        const advertised = getAdvertised();
+        if (advertised && !advertised.has(name)) {
+          throw new Error(
+            `Tool '${name}' is not available in this step (not advertised to the model).`,
+          );
+        }
+        return execute(input, ctx);
+      },
+    };
+  }
+  return result as T;
+}
+

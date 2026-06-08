@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   applyPrepareAdvertisedTools,
+  gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "../advertised-tools";
 
@@ -131,5 +132,77 @@ describe("applyPrepareAdvertisedTools — rendered-widget gate (eval use case)",
       prepareAdvertisedTools: gate(() => true),
     });
     expect(out).toEqual(DEFAULTS);
+  });
+});
+
+describe("gateToolsToAdvertisedSubset — advertise = ENFORCE", () => {
+  const makeTools = () => {
+    const searchExec = vi.fn(async () => "search-result");
+    const computerExec = vi.fn(async () => "computer-result");
+    return {
+      tools: {
+        search: { description: "s", execute: searchExec },
+        computer: { description: "c", execute: computerExec },
+      },
+      searchExec,
+      computerExec,
+    };
+  };
+
+  it("executes a tool that is in the advertised set", async () => {
+    const { tools, searchExec } = makeTools();
+    const gated = gateToolsToAdvertisedSubset(
+      tools,
+      () => new Set(["search"]),
+    );
+    await expect(
+      (gated.search.execute as Function)({}, {}),
+    ).resolves.toBe("search-result");
+    expect(searchExec).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws a recoverable error for a hidden tool (and does not run it)", async () => {
+    const { tools, computerExec } = makeTools();
+    const gated = gateToolsToAdvertisedSubset(
+      tools,
+      () => new Set(["search"]),
+    );
+    await expect(
+      (gated.computer.execute as Function)({}, {}),
+    ).rejects.toThrow(/not available in this step/);
+    expect(computerExec).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when the advertised set is null (no narrowing)", async () => {
+    const { tools, computerExec } = makeTools();
+    const gated = gateToolsToAdvertisedSubset(tools, () => null);
+    await expect(
+      (gated.computer.execute as Function)({}, {}),
+    ).resolves.toBe("computer-result");
+    expect(computerExec).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the advertised set at execute time (per-step)", async () => {
+    const { tools, computerExec } = makeTools();
+    let advertised: ReadonlySet<string> | null = new Set(["search"]);
+    const gated = gateToolsToAdvertisedSubset(tools, () => advertised);
+    await expect(
+      (gated.computer.execute as Function)({}, {}),
+    ).rejects.toThrow();
+    // Widget rendered -> computer advertised on the next step.
+    advertised = new Set(["search", "computer"]);
+    await expect(
+      (gated.computer.execute as Function)({}, {}),
+    ).resolves.toBe("computer-result");
+    expect(computerExec).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes through tools that have no execute (e.g. app-provided aliases)", () => {
+    const aliasTool = { description: "alias" };
+    const gated = gateToolsToAdvertisedSubset(
+      { alias: aliasTool },
+      () => new Set<string>(),
+    );
+    expect(gated.alias).toBe(aliasTool);
   });
 });

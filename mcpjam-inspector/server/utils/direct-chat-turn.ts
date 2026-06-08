@@ -41,6 +41,7 @@ import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
 import {
   applyPrepareAdvertisedTools,
+  gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
 
@@ -375,10 +376,20 @@ export function runDirectChatTurn(
   // against the full map. Gating wraps each tool's `execute` to throw a
   // structured "not loaded" error, which the AI SDK surfaces as an error
   // tool-result the model can recover from via `load_mcp_tools`.
-  const executableTools = gateToolsToActiveSubset(
-    tracedTools as Record<string, unknown>,
-    progressivePlan,
-    () => discoveryState,
+  //
+  // The prepareAdvertisedTools hook (PR 2) is advertise = ENFORCE the same way:
+  // when it narrows the advertised set, `advertisedToolNames` (updated per step
+  // in prepareStep) gates execution too, so a hidden tool call (e.g. `computer`
+  // before a widget renders) becomes a recoverable tool error, not a silent
+  // side effect. `null` => no hook narrowing => no-op gate.
+  let advertisedToolNames: Set<string> | null = null;
+  const executableTools = gateToolsToAdvertisedSubset(
+    gateToolsToActiveSubset(
+      tracedTools as Record<string, unknown>,
+      progressivePlan,
+      () => discoveryState,
+    ) as Record<string, unknown>,
+    () => advertisedToolNames,
   ) as ToolSet;
 
   // Cursor PR 4a review #2 / CodeRabbit "outside-diff": the original
@@ -428,6 +439,9 @@ export function runDirectChatTurn(
           onWarn: (message, meta) =>
             logger.warn(`[direct-chat-turn] ${message}`, meta),
         });
+        // advertise = ENFORCE: gate execution to this step's advertised set so
+        // a hidden tool call can't take effect (read by `executableTools`).
+        advertisedToolNames = new Set(activeToolNames);
       }
       return activeToolNames !== undefined
         ? { activeTools: activeToolNames }

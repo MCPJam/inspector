@@ -78,6 +78,7 @@ function isApprovalFreeMetaToolName(
 import { logger } from "./logger";
 import {
   applyPrepareAdvertisedTools,
+  gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -2142,11 +2143,22 @@ async function processOneStep(
       // emit a remembered/hallucinated call to a non-active name; gating
       // turns that into a structured error the model can recover from
       // via `load_mcp_tools` instead of executing an ungated tool.
-      const executableTools = gateToolsToActiveSubset(
+      let executableTools = gateToolsToActiveSubset(
         tracedTools as Record<string, unknown>,
         progressivePlan,
         () => discoveryState,
       );
+      // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
+      // set (`activeToolDefs`), gate execution to it too so a remembered /
+      // hallucinated call to a hidden tool (e.g. `computer` before a widget
+      // renders) becomes a recoverable tool-error instead of executing.
+      if (prepareAdvertisedTools) {
+        const advertised = new Set(activeToolDefs.map((def) => def.name));
+        executableTools = gateToolsToAdvertisedSubset(
+          executableTools,
+          () => advertised,
+        );
+      }
 
       // SEP-1865 App-Provided Tools: registered app aliases have no
       // `execute` function because they run inside the iframe via
