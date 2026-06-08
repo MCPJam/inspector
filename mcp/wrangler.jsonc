@@ -87,7 +87,7 @@
         "AUTHKIT_DOMAIN": "login.mcpjam.com",
         "CONVEX_URL": "https://outstanding-fennec-304.convex.cloud",
         "CONVEX_HTTP_URL": "https://outstanding-fennec-304.convex.site",
-        "INSPECTOR_API_BASE": "https://mcpjam.com"
+        "INSPECTOR_API_BASE": "https://api.mcpjam.com"
       },
       "migrations": [
         {
