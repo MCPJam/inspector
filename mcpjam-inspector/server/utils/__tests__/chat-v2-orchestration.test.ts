@@ -25,6 +25,10 @@ import {
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import {
+  buildExaWebSearchTool,
+  WEB_SEARCH_TOOL_NAME,
+} from "../built-in-tools/exa-web-search";
+import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
   resolveActiveToolNames,
@@ -484,6 +488,106 @@ describe("prepareChatV2", () => {
         }),
       ).rejects.toThrow(/search_mcp_tools/);
     });
+  });
+});
+
+describe("prepareChatV2 built-in tools", () => {
+  const baseArgs = {
+    selectedServers: ["srv"],
+    modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+    systemPrompt: "Base prompt.",
+  };
+
+  function webSearchBuiltIn() {
+    return {
+      [WEB_SEARCH_TOOL_NAME]: buildExaWebSearchTool({
+        authHeader: "Bearer test",
+        projectId: "proj_1",
+        chatSessionId: "sess_1",
+      }),
+    };
+  }
+
+  it("merges a built-in tool into the model tool set with its execute intact", async () => {
+    const manager = mockManager({
+      some_mcp_tool: { description: "mcp", _serverId: "srv" },
+    });
+
+    const result = await prepareChatV2({
+      ...baseArgs,
+      mcpClientManager: manager,
+      builtInTools: webSearchBuiltIn(),
+    });
+
+    expect(Object.keys(result.allTools)).toContain(WEB_SEARCH_TOOL_NAME);
+    // Built-ins execute server-side (unlike the no-execute app-tool path).
+    const entry = result.allTools[WEB_SEARCH_TOOL_NAME] as {
+      execute?: unknown;
+    };
+    expect(typeof entry.execute).toBe("function");
+  });
+
+  it("fails closed when a built-in name collides with an MCP tool", async () => {
+    const manager = mockManager({
+      [WEB_SEARCH_TOOL_NAME]: {
+        description: "mcp web search",
+        _serverId: "srv",
+      },
+    });
+
+    await expect(
+      prepareChatV2({
+        ...baseArgs,
+        mcpClientManager: manager,
+        builtInTools: webSearchBuiltIn(),
+      }),
+    ).rejects.toThrow(/web_search.*collides/);
+  });
+
+  it("fails closed when a built-in name collides with a skill tool", async () => {
+    vi.mocked(getSkillToolsAndPrompt).mockResolvedValue({
+      tools: {
+        [WEB_SEARCH_TOOL_NAME]: {
+          description: "skill web search",
+          execute: async () => ({}),
+        },
+      } as any,
+      systemPromptSection: "",
+    });
+    const manager = mockManager({});
+
+    await expect(
+      prepareChatV2({
+        ...baseArgs,
+        mcpClientManager: manager,
+        builtInTools: webSearchBuiltIn(),
+      }),
+    ).rejects.toThrow(/web_search.*collides/);
+  });
+
+  it("fails closed when a built-in name collides with an app tool", async () => {
+    const manager = mockManager({});
+    const appTools: AppToolEntry[] = [
+      {
+        alias: WEB_SEARCH_TOOL_NAME,
+        appName: "Shadow",
+        serverId: "srv",
+        parentToolCallId: "call-1",
+        rawName: "web_search",
+        description: "shadow tool",
+        inputSchema: { type: "object", properties: {} },
+        readOnly: true,
+      },
+    ];
+
+    await expect(
+      prepareChatV2({
+        ...baseArgs,
+        mcpClientManager: manager,
+        appTools,
+        builtInTools: webSearchBuiltIn(),
+      }),
+    ).rejects.toThrow(/web_search.*collides/);
   });
 });
 

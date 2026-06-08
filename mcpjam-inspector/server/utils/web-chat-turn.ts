@@ -143,6 +143,8 @@ export interface WebChatTurnPrepareInputs {
   /** Optional progressive-discovery override. */
   progressiveToolDiscovery?: { enabled: boolean };
   appTools?: AppToolEntry[];
+  /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
+  builtInTools?: ToolSet;
   widgetModelContext?: WidgetModelContextEntry[];
 }
 
@@ -210,6 +212,7 @@ export async function streamWebChatTurn(
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
       appTools: prepare.appTools,
+      builtInTools: prepare.builtInTools,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
