@@ -58,7 +58,11 @@ import {
   MCPSidebar,
   computeHostsHubFlagEnabled,
 } from "./components/mcp-sidebar";
-import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
+import {
+  SidebarInset,
+  SidebarProvider,
+  useSidebar,
+} from "./components/ui/sidebar";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
 import {
   Alert,
@@ -399,7 +403,8 @@ type AppChromeHeaderProps = ComponentProps<typeof Header> & {
 };
 
 function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
-  if (hidden) {
+  const { isMobile } = useSidebar();
+  if (hidden && !isMobile) {
     return null;
   }
 
