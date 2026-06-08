@@ -5,7 +5,14 @@ import type { ModelDefinition } from "@/shared/types";
 const handleMCPJamFreeChatModelMock = vi.fn();
 const handleHostedOrgChatModelMock = vi.fn();
 const handleLocalOrgChatModelMock = vi.fn();
-const resolveOrgProviderRuntimeMock = vi.fn();
+// The runner calls the shared `resolveSyntheticModelSource` helper which
+// internally calls `resolveOrgProviderRuntime`. Mocking the latter via
+// module mocking doesn't intercept the call because both functions live
+// in the SAME module (vitest module mocks only intercept cross-module
+// imports). Mock the public entry point instead — that's also the
+// boundary the empty-session fallback uses, so the test naturally
+// exercises the same surface as production.
+const resolveSyntheticModelSourceMock = vi.fn();
 
 vi.mock("../../../utils/mcpjam-stream-handler.js", async () => {
   const actual = await vi.importActual<
@@ -37,8 +44,8 @@ vi.mock("../../../utils/org-model-config.js", async () => {
   >("../../../utils/org-model-config.js");
   return {
     ...actual,
-    resolveOrgProviderRuntime: (...args: unknown[]) =>
-      resolveOrgProviderRuntimeMock(...args),
+    resolveSyntheticModelSource: (...args: unknown[]) =>
+      resolveSyntheticModelSourceMock(...args),
   };
 });
 
@@ -92,7 +99,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     handleMCPJamFreeChatModelMock.mockReset();
     handleHostedOrgChatModelMock.mockReset();
     handleLocalOrgChatModelMock.mockReset();
-    resolveOrgProviderRuntimeMock.mockReset();
+    resolveSyntheticModelSourceMock.mockReset();
   });
 
   afterEach(() => {
@@ -102,6 +109,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   it("dispatches MCPJam-provided models through handleMCPJamFreeChatModel and threads synthesisRunId via extraBodyFields", async () => {
     const calls: unknown[] = [];
     handleMCPJamFreeChatModelMock.mockImplementation(buildHandlerStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
 
     const result = await drainAssistantTurn(
       baseArgs() as Parameters<typeof drainAssistantTurn>[0],
@@ -119,9 +127,9 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   it("dispatches non-MCPJam models with cloud runtime through handleHostedOrgChatModel and threads synthesisRunId via extraBodyFields", async () => {
     const calls: unknown[] = [];
     handleHostedOrgChatModelMock.mockImplementation(buildHandlerStub(calls));
-    resolveOrgProviderRuntimeMock.mockResolvedValue({
-      runtimeLocation: "cloud",
-      providerKey: "anthropic",
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "byok",
+      orgRuntime: { runtimeLocation: "cloud", providerKey: "anthropic" },
     });
 
     const result = await drainAssistantTurn(
@@ -150,12 +158,12 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   it("dispatches non-MCPJam models with local runtime through handleLocalOrgChatModel and threads synthesisRunId as a typed option", async () => {
     const calls: unknown[] = [];
     handleLocalOrgChatModelMock.mockImplementation(buildHandlerStub(calls));
-    resolveOrgProviderRuntimeMock.mockResolvedValue({
-      runtimeLocation: "local",
-      provider: {
-        providerKey: "openai",
-        // local providers carry resolved config including apiKey
-      } as any,
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
     });
 
     const result = await drainAssistantTurn(
@@ -179,9 +187,12 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   });
 
   it("refuses local-runtime org BYOK + requireToolApproval=true with non-empty tools (no auto-deny loop on the local path yet)", async () => {
-    resolveOrgProviderRuntimeMock.mockResolvedValue({
-      runtimeLocation: "local",
-      provider: { providerKey: "openai" } as any,
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
     });
 
     await expect(
@@ -208,9 +219,12 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   it("still dispatches local-runtime org BYOK when requireToolApproval is false", async () => {
     const calls: unknown[] = [];
     handleLocalOrgChatModelMock.mockImplementation(buildHandlerStub(calls));
-    resolveOrgProviderRuntimeMock.mockResolvedValue({
-      runtimeLocation: "local",
-      provider: { providerKey: "openai" } as any,
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
     });
 
     await drainAssistantTurn(
@@ -230,6 +244,14 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
   });
 
   it("throws with a clear message when org-BYOK derivation fails (custom provider without a name)", async () => {
+    // The resolver throws on deriveOrgProviderKey failure; runner propagates
+    // the same message it threw before the refactor.
+    resolveSyntheticModelSourceMock.mockRejectedValue(
+      new Error(
+        "Synthetic dispatch failed to derive org provider key: missing customProviderName",
+      ),
+    );
+
     await expect(
       drainAssistantTurn(
         baseArgs({

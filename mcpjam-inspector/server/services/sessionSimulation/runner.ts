@@ -3,7 +3,7 @@ import type { ToolSet } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import type { ModelDefinition } from "@/shared/types";
-import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
+import { getModelById } from "@/shared/types";
 import { logger } from "../../utils/logger.js";
 import {
   handleMCPJamFreeChatModel,
@@ -14,10 +14,8 @@ import {
   handleLocalOrgChatModel,
 } from "../../utils/org-model-stream-handler.js";
 import {
-  deriveOrgProviderKey,
-  isLocalRuntimeEligible,
-  resolveOrgProviderRuntime,
-  type OrgProviderRuntime,
+  resolveSyntheticModelSource,
+  type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import {
@@ -636,38 +634,26 @@ async function runOneSession(args: {
       // Session ended before any assistant turn completed (persona returned
       // endSession on turn 0, or every turn aborted). Persist once with no
       // trace so the chatSessions row exists and the run summary lines up.
-      // No turn ever ran, so sessionModelSource is undefined. Derive it
-      // from the same dispatch shape `drainAssistantTurn` uses so a local-
-      // runtime org-BYOK chatbox doesn't get mis-attributed as cloud
-      // byok on the fallback row.
+      // No turn ever ran, so sessionModelSource is undefined. Use the same
+      // resolver `drainAssistantTurn` uses so a local-runtime org-BYOK
+      // chatbox doesn't get mis-attributed as cloud byok on the fallback
+      // row. Soft-fall-back to "byok" on resolver failure — real turns
+      // would have errored before reaching this persist; we're best-effort
+      // labeling an attribution row that exists only because the run
+      // ended before any turn ran.
       let emptySessionModelSource: SyntheticModelSource;
-      const modelIdForEmpty = String(modelDefinition.id);
-      if (isMCPJamProvidedModel(modelIdForEmpty)) {
-        emptySessionModelSource = "mcpjam";
-      } else {
-        const keyResult = deriveOrgProviderKey(modelDefinition);
-        if (!keyResult.ok) {
-          // Couldn't derive a key — fall back to cloud byok rather than
-          // crashing this attribution path. Real turns would have failed
-          // before reaching the persist.
-          emptySessionModelSource = "byok";
-        } else if (isLocalRuntimeEligible(keyResult.key)) {
-          const runtime = await resolveOrgProviderRuntime(
-            projectId,
-            keyResult.key,
-            modelIdForEmpty,
-            {
-              authHeader,
-              chatboxId,
-              accessVersion,
-              serverIds: selectedServerIds,
-            },
-          );
-          emptySessionModelSource =
-            runtime.runtimeLocation === "local" ? "local_byok" : "byok";
-        } else {
-          emptySessionModelSource = "byok";
-        }
+      try {
+        const resolution = await resolveSyntheticModelSource({
+          modelDefinition,
+          projectId,
+          authHeader,
+          chatboxId,
+          accessVersion,
+          serverIds: selectedServerIds,
+        });
+        emptySessionModelSource = resolution.source;
+      } catch {
+        emptySessionModelSource = "byok";
       }
       await persistChatSessionToConvex({
         chatSessionId,
@@ -832,7 +818,8 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
   );
 }
 
-type SyntheticModelSource = "mcpjam" | "byok" | "local_byok";
+// `SyntheticModelSource` is imported from `org-model-config.ts` so the
+// runner and the shared resolver stay in lockstep.
 
 /**
  * Drive one assistant turn through the appropriate model handler:
@@ -893,7 +880,20 @@ export async function drainAssistantTurn(
   let response: Response;
   let modelSource: SyntheticModelSource;
 
-  if (isMCPJamProvidedModel(modelIdStr)) {
+  // Classify once, dispatch off the result. The same resolver is used by
+  // the empty-session fallback persist so the two attribution paths can't
+  // drift (e.g. if isLocalRuntimeEligible's allow-list ever changes, both
+  // sites pick it up automatically).
+  const resolution = await resolveSyntheticModelSource({
+    modelDefinition,
+    projectId: args.projectId ?? "",
+    authHeader: args.authHeader,
+    chatboxId: args.chatboxId,
+    accessVersion: args.accessVersion,
+    serverIds: args.selectedServers,
+  });
+
+  if (resolution.source === "mcpjam") {
     // MCPJam-paid path: synthesisRunId rides via extraBodyFields on /stream
     // so the JAM-paid forwarder stamps it onto the llmUsageRecord.
     modelSource = "mcpjam";
@@ -905,30 +905,11 @@ export async function drainAssistantTurn(
     };
     response = await handleMCPJamFreeChatModel(options);
   } else {
-    // Org-BYOK path: derive providerKey from the model definition, then
-    // resolve the runtime location (cloud vs local) the same way
-    // web-chat-turn does for real chats.
-    const providerKeyResult = deriveOrgProviderKey(modelDefinition);
-    if (!providerKeyResult.ok) {
-      throw new Error(
-        `Synthetic dispatch failed to derive org provider key: ${providerKeyResult.error}`,
-      );
-    }
-    const providerKey = providerKeyResult.key;
-
-    const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
-      ? await resolveOrgProviderRuntime(
-          args.projectId ?? "",
-          providerKey,
-          modelIdStr,
-          {
-            authHeader: args.authHeader,
-            chatboxId: args.chatboxId,
-            accessVersion: args.accessVersion,
-            serverIds: args.selectedServers,
-          },
-        )
-      : { runtimeLocation: "cloud", providerKey };
+    // resolution.orgRuntime is guaranteed defined for non-"mcpjam" sources
+    // (the resolver only omits it when source === "mcpjam"). The type
+    // narrows after the explicit check below; cast comment + check keeps
+    // strict mode happy without weakening the contract.
+    const orgRuntime = resolution.orgRuntime!;
 
     if (orgRuntime.runtimeLocation === "local") {
       modelSource = "local_byok";

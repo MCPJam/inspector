@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
-import type { ModelDefinition } from "@/shared/types";
+import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import { HOSTED_MODE } from "../config.js";
@@ -655,4 +655,84 @@ export async function resolveOrgProviderRuntimeForTarget(
     expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
   });
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Synthetic model-source classification — single source of truth for the
+// three-way MCPJam / cloud-BYOK / local-BYOK decision the synthetic runner
+// makes per session.
+// ---------------------------------------------------------------------------
+
+/** Persisted attribution label on chatSessions / llmUsageRecord rows. */
+export type SyntheticModelSource = "mcpjam" | "byok" | "local_byok";
+
+/**
+ * Result of {@link resolveSyntheticModelSource}.
+ *
+ * `orgRuntime` is present when `source !== "mcpjam"` so the synthetic
+ * dispatcher can reuse the resolved runtime (cloud providerKey OR local
+ * `OrgProviderResolvedConfig`) for the actual handler call — no
+ * duplicate `resolveOrgProviderRuntime` round-trip.
+ */
+export interface SyntheticModelResolution {
+  source: SyntheticModelSource;
+  orgRuntime?: OrgProviderRuntime;
+}
+
+/**
+ * Single source of truth for "what model-source class is this chatbox?"
+ * Mirrors the three-way split the chat path does in `web-chat-turn.ts`,
+ * narrowed to the surfaces synthetic can target (no user-API-key direct).
+ *
+ * Two callers in this PR:
+ *   1. `drainAssistantTurn` (turn dispatch) — uses both `source` and
+ *      `orgRuntime` to pick the handler.
+ *   2. The empty-session fallback persist — uses `source` only for
+ *      attribution.
+ *
+ * Pre-extraction, both encoded the same chain inline; this helper keeps
+ * them aligned so adding a runtime location (or changing
+ * `isLocalRuntimeEligible`'s allow-list) updates both call sites at once.
+ *
+ * Throws on `deriveOrgProviderKey` failure. Callers that need a soft
+ * fallback (empty-session attribution) should wrap in try/catch and
+ * default to `"byok"` — the failure means the real turns would have
+ * failed too; we're best-effort labeling a row that exists only because
+ * the run ended before any turn completed.
+ */
+export async function resolveSyntheticModelSource(args: {
+  modelDefinition: ModelDefinition;
+  projectId: string;
+  authHeader?: string;
+  chatboxId?: string;
+  accessVersion?: number;
+  serverIds?: string[];
+}): Promise<SyntheticModelResolution> {
+  const modelIdStr = String(args.modelDefinition.id);
+  if (isMCPJamProvidedModel(modelIdStr)) {
+    return { source: "mcpjam" };
+  }
+  const keyResult = deriveOrgProviderKey(args.modelDefinition);
+  if (!keyResult.ok) {
+    throw new Error(
+      `Synthetic dispatch failed to derive org provider key: ${keyResult.error}`,
+    );
+  }
+  const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(keyResult.key)
+    ? await resolveOrgProviderRuntime(
+        args.projectId,
+        keyResult.key,
+        modelIdStr,
+        {
+          authHeader: args.authHeader,
+          chatboxId: args.chatboxId,
+          accessVersion: args.accessVersion,
+          serverIds: args.serverIds,
+        },
+      )
+    : { runtimeLocation: "cloud", providerKey: keyResult.key };
+  return {
+    source: orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok",
+    orgRuntime,
+  };
 }
