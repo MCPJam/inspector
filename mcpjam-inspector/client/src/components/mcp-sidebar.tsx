@@ -72,6 +72,7 @@ import {
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import {
   useOrganizationBillingStatus,
   type BillingFeatureName,
@@ -825,6 +826,14 @@ export function MCPSidebar({
                           onExpand: learnMore.openExpandedModal,
                         }
                       : null
+                  }
+                  renderSlotAfter={
+                    section.id === "settings"
+                      ? (itemTitle) =>
+                          itemTitle === "Support" ? (
+                            <NotificationBell variant="sidebar" />
+                          ) : null
+                      : undefined
                   }
                 />
                 {evalsEntry ? (

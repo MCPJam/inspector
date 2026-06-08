@@ -50,9 +50,16 @@ interface NavMainProps {
   onItemClick?: (url: string) => void;
   /** Learn more hover card integration */
   learnMore?: LearnMoreProps | null;
+  /** Optional slot rendered immediately after a nav row, keyed by item title. */
+  renderSlotAfter?: (itemTitle: string) => React.ReactNode;
 }
 
-export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
+export function NavMain({
+  items,
+  onItemClick,
+  learnMore,
+  renderSlotAfter,
+}: NavMainProps) {
   const { open: sidebarOpen } = useSidebar();
 
   const handleClick = (url: string) => {
@@ -126,14 +133,18 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
       <SidebarGroupContent>
         <SidebarMenu>
           {items.map((item) => {
+            const slotAfter = renderSlotAfter?.(item.title) ?? null;
+
             if (item.announcement && !item.disabled) {
               return (
-                <AnnouncementNavRow
-                  key={item.title}
-                  item={{ ...item, announcement: item.announcement }}
-                  sidebarOpen={sidebarOpen}
-                  renderButton={renderButton}
-                />
+                <React.Fragment key={item.title}>
+                  <AnnouncementNavRow
+                    item={{ ...item, announcement: item.announcement }}
+                    sidebarOpen={sidebarOpen}
+                    renderButton={renderButton}
+                  />
+                  {slotAfter}
+                </React.Fragment>
               );
             }
 
@@ -142,35 +153,44 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
             if (item.disabled) {
               if (shouldShowHoverCard(item)) {
                 return (
-                  <SidebarMenuItem key={item.title}>
-                    {wrapWithHoverCard(
-                      item,
-                      <div className="w-full cursor-not-allowed">{button}</div>,
-                    )}
-                  </SidebarMenuItem>
+                  <React.Fragment key={item.title}>
+                    <SidebarMenuItem>
+                      {wrapWithHoverCard(
+                        item,
+                        <div className="w-full cursor-not-allowed">{button}</div>,
+                      )}
+                    </SidebarMenuItem>
+                    {slotAfter}
+                  </React.Fragment>
                 );
               }
 
               return (
-                <SidebarMenuItem key={item.title}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="w-full cursor-not-allowed">{button}</div>
-                    </TooltipTrigger>
-                    {item.disabledTooltip && (
-                      <TooltipContent side="right" align="center">
-                        {item.disabledTooltip}
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                </SidebarMenuItem>
+                <React.Fragment key={item.title}>
+                  <SidebarMenuItem>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="w-full cursor-not-allowed">{button}</div>
+                      </TooltipTrigger>
+                      {item.disabledTooltip && (
+                        <TooltipContent side="right" align="center">
+                          {item.disabledTooltip}
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </SidebarMenuItem>
+                  {slotAfter}
+                </React.Fragment>
               );
             }
 
             return (
-              <SidebarMenuItem key={item.title}>
-                {wrapWithHoverCard(item, button)}
-              </SidebarMenuItem>
+              <React.Fragment key={item.title}>
+                <SidebarMenuItem>
+                  {wrapWithHoverCard(item, button)}
+                </SidebarMenuItem>
+                {slotAfter}
+              </React.Fragment>
             );
           })}
         </SidebarMenu>

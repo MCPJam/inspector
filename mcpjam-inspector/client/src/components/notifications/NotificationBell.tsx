@@ -8,6 +8,10 @@ import {
 } from "@mcpjam/design-system/popover";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
+import {
   useNotifications,
   useNotificationMutations,
   Notification,
@@ -101,7 +105,11 @@ function NotificationItem({
   );
 }
 
-export function NotificationBell() {
+type NotificationBellProps = {
+  variant?: "header" | "sidebar";
+};
+
+export function NotificationBell({ variant = "header" }: NotificationBellProps) {
   const { isAuthenticated } = useConvexAuth();
   const { notifications, unreadCount, isLoading } = useNotifications({
     isAuthenticated,
@@ -138,78 +146,116 @@ export function NotificationBell() {
   }
 
   const displayCount = unreadCount > 9 ? "9+" : unreadCount;
+  const ariaLabel = `Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ""}`;
+  const unreadBadge =
+    unreadCount > 0 ? (
+      <span
+        className={cn(
+          "flex items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-white",
+          variant === "sidebar"
+            ? "ml-auto h-4 min-w-4 group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:-top-0.5 group-data-[collapsible=icon]:-right-0.5 group-data-[collapsible=icon]:ml-0"
+            : "absolute -top-0.5 -right-0.5 h-4 min-w-4",
+        )}
+      >
+        {displayCount}
+      </span>
+    ) : null;
+
+  const trigger =
+    variant === "sidebar" ? (
+      <SidebarMenuButton
+        tooltip="Notifications"
+        className="relative cursor-pointer"
+        aria-label={ariaLabel}
+      >
+        <Bell className="h-4 w-4" />
+        <span className="truncate">Notifications</span>
+        {unreadBadge}
+      </SidebarMenuButton>
+    ) : (
+      <Button
+        variant="ghost"
+        size="icon"
+        className="relative"
+        aria-label={ariaLabel}
+      >
+        <Bell className="h-5 w-5" />
+        {unreadBadge}
+      </Button>
+    );
+
+  const panel = (
+    <PopoverContent
+      className="w-80 p-0"
+      align={variant === "sidebar" ? "start" : "end"}
+      side={variant === "sidebar" ? "right" : "bottom"}
+      sideOffset={8}
+    >
+      <div className="flex items-center justify-between p-3 border-b">
+        <h4 className="font-semibold text-sm">Notifications</h4>
+        <div className="flex items-center gap-1">
+          {unreadCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto py-1 px-2 text-xs"
+              onClick={handleMarkAllAsRead}
+            >
+              Mark all read
+            </Button>
+          )}
+          {notifications.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto py-1 px-2 text-xs text-destructive hover:text-destructive"
+              onClick={handleClearAll}
+            >
+              Clear all
+            </Button>
+          )}
+        </div>
+      </div>
+      <ScrollArea className="h-[300px]">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-20">
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          </div>
+        ) : notifications.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+            <Inbox className="h-8 w-8 mb-2" />
+            <p className="text-sm">No notifications yet</p>
+          </div>
+        ) : (
+          <div>
+            {notifications.map((notification) => (
+              <NotificationItem
+                key={notification._id}
+                notification={notification}
+                onMarkAsRead={handleMarkAsRead}
+              />
+            ))}
+          </div>
+        )}
+      </ScrollArea>
+    </PopoverContent>
+  );
+
+  if (variant === "sidebar") {
+    return (
+      <SidebarMenuItem>
+        <Popover>
+          <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+          {panel}
+        </Popover>
+      </SidebarMenuItem>
+    );
+  }
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="relative"
-          aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ""}`}
-        >
-          <Bell className="h-5 w-5" />
-          {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center h-4 min-w-4 px-1 text-[10px] font-medium bg-destructive text-white rounded-full">
-              {displayCount}
-            </span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-80 p-0"
-        align="end"
-        side="bottom"
-        sideOffset={8}
-      >
-        <div className="flex items-center justify-between p-3 border-b">
-          <h4 className="font-semibold text-sm">Notifications</h4>
-          <div className="flex items-center gap-1">
-            {unreadCount > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-auto py-1 px-2 text-xs"
-                onClick={handleMarkAllAsRead}
-              >
-                Mark all read
-              </Button>
-            )}
-            {notifications.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-auto py-1 px-2 text-xs text-destructive hover:text-destructive"
-                onClick={handleClearAll}
-              >
-                Clear all
-              </Button>
-            )}
-          </div>
-        </div>
-        <ScrollArea className="h-[300px]">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-20">
-              <p className="text-sm text-muted-foreground">Loading...</p>
-            </div>
-          ) : notifications.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-              <Inbox className="h-8 w-8 mb-2" />
-              <p className="text-sm">No notifications yet</p>
-            </div>
-          ) : (
-            <div>
-              {notifications.map((notification) => (
-                <NotificationItem
-                  key={notification._id}
-                  notification={notification}
-                  onMarkAsRead={handleMarkAsRead}
-                />
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-      </PopoverContent>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      {panel}
     </Popover>
   );
 }
