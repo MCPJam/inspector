@@ -89,7 +89,12 @@ export interface BrowserActionResult {
   screenshotBase64?: string;
   widgetToolCalls: WidgetToolCall[];
   elapsedMs: number;
-  /** Set when a budget/limit forced a no-op (e.g. "budget_exceeded"). */
+  /**
+   * Set when a budget/limit forced a no-op. One of `"no rendered widget"`,
+   * `"step_budget_exceeded"` (per-widget step cap hit — widget force-dismissed),
+   * or `"screenshot_budget_exceeded"` (per-iteration screenshot cap hit — widget
+   * left mounted).
+   */
   note?: string;
 }
 
@@ -205,6 +210,20 @@ export class McpAppBrowserHarness {
     return this.mounted.size > 0;
   }
 
+  /**
+   * The tool-call id of the single currently-mounted widget, or `null`.
+   *
+   * The harness keeps at most one widget mounted at a time (`renderWidget`
+   * clears any prior mount before mounting the next), so this is the single
+   * source of truth for "which widget is live". Callers (the eval runner) gate
+   * Computer Use on this instead of tracking their own active-widget id, which
+   * could drift across prompt turns or after a `finish_widget` dismiss.
+   */
+  getMountedWidgetId(): string | null {
+    const first = this.mounted.keys().next();
+    return first.done ? null : first.value;
+  }
+
   /* ---- launch ---- */
 
   // Overridable for tests (force the binary-missing path without uninstalling
@@ -318,7 +337,13 @@ export class McpAppBrowserHarness {
         },
       ) => {
         const widget = this.mounted.get(payload.widgetId);
-        const serverId = widget?.serverId ?? "";
+        // Fail closed: a tools/call from a widget that isn't (or is no longer)
+        // mounted Node-side has no server to route to. Dispatching with an empty
+        // serverId would misroute to whatever resolves "" — refuse instead.
+        if (!widget) {
+          return { error: "widget not mounted" };
+        }
+        const serverId = widget.serverId;
         const startedAt = Date.now();
         // Count the RPC as in-flight BEFORE awaiting so `drainAfterAction` waits
         // for slow tool calls instead of returning before they land (and
@@ -467,8 +492,15 @@ export class McpAppBrowserHarness {
     try {
       screenshotBase64 = await this.captureScreenshot();
     } catch {
-      // mounted but couldn't screenshot — keep mount state consistent.
-      if (!input.keepMounted) await this.unmount(input.toolCallId);
+      // A widget we can't screenshot is useless for screenshot-driven Computer
+      // Use, so unmount it even when keepMounted was requested — keeping
+      // getMountedWidgetId() == "a usable, rendered widget" (the single source
+      // of truth the eval runner gates on). This includes the by-design
+      // oversized-screenshot case: `captureScreenshot` throws rather than emit
+      // an image over the byte budget, so a widget that renders but produces an
+      // unencodable-within-budget frame is reported as `screenshot_failed`
+      // (fail closed; at 1280×800 @ JPEG q20 effectively unreachable).
+      await this.unmount(input.toolCallId);
       return {
         ...base,
         status: "screenshot_failed",
@@ -522,15 +554,26 @@ export class McpAppBrowserHarness {
         note: "no rendered widget",
       };
     }
-    if (
-      widget.actionCount >= this.budgets.maxBrowserStepsPerWidget ||
-      this.screenshotCount >= this.budgets.totalScreenshotsPerIteration
-    ) {
+    // The step cap is per-widget and terminal: once a widget exhausts it, the
+    // contract ("…before forced dismiss") is to tear it down so a runaway widget
+    // can't keep being driven and the next render starts clean. The screenshot
+    // cap is per-ITERATION (shared across widgets), so don't dismiss this widget
+    // for it — just refuse further actions on it.
+    const stepBudgetExceeded =
+      widget.actionCount >= this.budgets.maxBrowserStepsPerWidget;
+    const screenshotBudgetExceeded =
+      this.screenshotCount >= this.budgets.totalScreenshotsPerIteration;
+    if (stepBudgetExceeded) {
+      await this.unmount(input.toolCallId);
+    }
+    if (stepBudgetExceeded || screenshotBudgetExceeded) {
       return {
         action: input.action,
         widgetToolCalls: [],
         elapsedMs: Date.now() - started,
-        note: "budget_exceeded",
+        note: stepBudgetExceeded
+          ? "step_budget_exceeded"
+          : "screenshot_budget_exceeded",
       };
     }
     widget.actionCount += 1;
@@ -642,9 +685,14 @@ export class McpAppBrowserHarness {
         return jpeg.toString("base64");
       }
     }
-    // Still over budget: return the smallest attempt.
+    // Still over the byte budget even at the lowest quality: fail closed rather
+    // than hand back an oversized image (callers treat a screenshot throw as
+    // `screenshot_failed` on render, or leave the action screenshot unset).
     const jpeg = await page.screenshot({ type: "jpeg", quality: 20 });
-    return jpeg.toString("base64");
+    throw new Error(
+      `screenshot exceeds byte budget after re-encoding ` +
+        `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`,
+    );
   }
 
   /* ---- teardown ---- */
