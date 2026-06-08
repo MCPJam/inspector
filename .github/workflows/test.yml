@@ -37,3 +37,41 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=6144"
         run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    name: E2E Smoke (Playwright)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build inspector
+        # Playwright's webServer boots `npm run start`, which serves built artifacts.
+        run: npm run build -w @mcpjam/inspector
+
+      - name: Run Playwright smoke
+        run: npm run test:e2e -w @mcpjam/inspector
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            mcpjam-inspector/playwright-report/
+            mcpjam-inspector/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
