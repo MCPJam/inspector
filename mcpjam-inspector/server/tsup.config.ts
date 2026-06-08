@@ -38,6 +38,13 @@ export default defineConfig({
     // Packages with dynamic requires
     "chalk",
     "supports-color",
+    // Headless-browser harness deps (eval browser-render): resolved at runtime,
+    // never bundled. `playwright` is a direct dep (auto-external); `playwright-core`
+    // is its transitive fallback (`await import("playwright-core")`) and must be
+    // listed explicitly, otherwise esbuild follows it into `bidiOverCdp` and
+    // fails on the optional `chromium-bidi` dependency.
+    "playwright",
+    "playwright-core",
   ],
   noExternal: [
     // Force bundling of problematic packages
