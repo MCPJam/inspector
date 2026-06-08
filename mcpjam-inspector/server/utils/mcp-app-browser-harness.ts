@@ -90,7 +90,7 @@ export interface BrowserActionResult {
   widgetToolCalls: WidgetToolCall[];
   elapsedMs: number;
   /**
-   * Set when a budget/limit forced a no-op. One of `"no rendered widget"`,
+   * Set when a budget/limit forced a no-op. One of `"no_rendered_widget"`,
    * `"step_budget_exceeded"` (per-widget step cap hit — widget force-dismissed),
    * or `"screenshot_budget_exceeded"` (per-iteration screenshot cap hit — widget
    * left mounted).
@@ -551,7 +551,7 @@ export class McpAppBrowserHarness {
         action: input.action,
         widgetToolCalls: [],
         elapsedMs: 0,
-        note: "no rendered widget",
+        note: "no_rendered_widget",
       };
     }
     // The step cap is per-widget and terminal: once a widget exhausts it, the

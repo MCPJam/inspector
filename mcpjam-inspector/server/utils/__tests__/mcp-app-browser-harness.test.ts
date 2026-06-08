@@ -241,7 +241,7 @@ describe("McpAppBrowserHarness — interaction", () => {
     expect(h.calls).toEqual([{ name: "reserve", args: { seat: 12 } }]);
   }, 30_000);
 
-  it("returns 'no rendered widget' when acting on an unmounted tool call", async () => {
+  it("returns 'no_rendered_widget' when acting on an unmounted tool call", async () => {
     const h = makeHarness();
     // Launch via a cheap render so the page exists, but don't keep it mounted.
     await h.renderWidget({
@@ -254,7 +254,7 @@ describe("McpAppBrowserHarness — interaction", () => {
       toolCallId: "tc-gone",
       action: { action: "screenshot" },
     });
-    expect(result.note).toBe("no rendered widget");
+    expect(result.note).toBe("no_rendered_widget");
     expect(result.widgetToolCalls).toEqual([]);
   }, 30_000);
 
@@ -279,7 +279,7 @@ describe("McpAppBrowserHarness — interaction", () => {
       toolCallId: "kept-1",
       action: { action: "left_click", coordinate: [640, 400] },
     });
-    expect(stale.note).toBe("no rendered widget");
+    expect(stale.note).toBe("no_rendered_widget");
     // kept-2 is the live widget.
     const live = await h.executeAction({
       toolCallId: "kept-2",
@@ -327,6 +327,6 @@ describe("McpAppBrowserHarness — interaction", () => {
       toolCallId: "cap-1",
       action: { action: "screenshot" },
     });
-    expect(third.note).toBe("no rendered widget");
+    expect(third.note).toBe("no_rendered_widget");
   }, 30_000);
 });
