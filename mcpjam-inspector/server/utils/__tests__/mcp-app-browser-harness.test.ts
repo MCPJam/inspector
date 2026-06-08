@@ -232,4 +232,34 @@ describe("McpAppBrowserHarness — interaction", () => {
     expect(result.note).toBe("no rendered widget");
     expect(result.widgetToolCalls).toEqual([]);
   }, 30_000);
+
+  it("drops the prior kept widget's mount on a second kept render", async () => {
+    const h = makeHarness();
+    await h.renderWidget({
+      toolCallId: "kept-1",
+      toolName: "first",
+      serverId: "s1",
+      html: buttonHtml,
+      keepMounted: true,
+    });
+    await h.renderWidget({
+      toolCallId: "kept-2",
+      toolName: "second",
+      serverId: "s1",
+      html: buttonHtml,
+      keepMounted: true,
+    });
+    // The page shows only kept-2 now; acting on kept-1 must NOT drive it.
+    const stale = await h.executeAction({
+      toolCallId: "kept-1",
+      action: { action: "left_click", coordinate: [640, 400] },
+    });
+    expect(stale.note).toBe("no rendered widget");
+    // kept-2 is the live widget.
+    const live = await h.executeAction({
+      toolCallId: "kept-2",
+      action: { action: "left_click", coordinate: [640, 400] },
+    });
+    expect(live.widgetToolCalls.map((c) => c.name)).toEqual(["reserve"]);
+  }, 30_000);
 });

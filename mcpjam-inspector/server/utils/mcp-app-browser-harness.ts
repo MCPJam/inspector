@@ -191,6 +191,8 @@ export class McpAppBrowserHarness {
   private consoleErrors: string[] = [];
   private blockedRequests: string[] = [];
   private toolCallBuffer: WidgetToolCall[] = [];
+  /** In-flight app->host RPC count, so an action waits for slow tool calls. */
+  private pendingRpcCount = 0;
   private screenshotCount = 0;
 
   constructor(opts: McpAppBrowserHarnessOptions) {
@@ -318,6 +320,10 @@ export class McpAppBrowserHarness {
         const widget = this.mounted.get(payload.widgetId);
         const serverId = widget?.serverId ?? "";
         const startedAt = Date.now();
+        // Count the RPC as in-flight BEFORE awaiting so `drainAfterAction` waits
+        // for slow tool calls instead of returning before they land (and
+        // detaching the call from the action that triggered it).
+        this.pendingRpcCount += 1;
         try {
           const result = await this.opts.callTool(
             serverId,
@@ -341,6 +347,8 @@ export class McpAppBrowserHarness {
             elapsedMs: Date.now() - startedAt,
           });
           return { error };
+        } finally {
+          this.pendingRpcCount -= 1;
         }
       },
     );
@@ -389,6 +397,11 @@ export class McpAppBrowserHarness {
     // the same iteration).
     this.consoleErrors = [];
     this.blockedRequests = [];
+    // Single widget per page: the in-page renderWidget disposes any prior
+    // widget, so drop stale Node mount entries too. Otherwise after two
+    // keepMounted renders, executeAction(oldToolCallId) would pass the mount
+    // check and drive the CURRENT page instead of the (gone) old widget.
+    this.mounted.clear();
     this.mounted.set(input.toolCallId, {
       serverId: input.serverId,
       actionCount: 0,
@@ -594,16 +607,19 @@ export class McpAppBrowserHarness {
     await page.waitForTimeout(50);
   }
 
-  /** Collect widget tool calls triggered by the action, waiting until the
-   *  buffer is stable across one interval (bounded by settleTimeoutMs). */
+  /** Collect widget tool calls triggered by the action. Waits until no RPC is
+   *  in flight AND the buffer is stable across one interval, so slow tool calls
+   *  aren't dropped (bounded by settleTimeoutMs). */
   private async drainAfterAction(): Promise<WidgetToolCall[]> {
     const page = this.page!;
-    const cap = Math.min(this.budgets.settleTimeoutMs, 800);
-    const deadline = Date.now() + cap;
+    const deadline = Date.now() + this.budgets.settleTimeoutMs;
     let prev = -1;
     while (Date.now() < deadline) {
       const n = this.toolCallBuffer.length;
-      if (n === prev) break;
+      // Stop only when nothing is in flight and the buffer didn't grow this
+      // interval — a slow `await callTool` keeps pendingRpcCount > 0 until it
+      // resolves and pushes its record.
+      if (this.pendingRpcCount === 0 && n === prev) break;
       prev = n;
       await page.waitForTimeout(60);
     }
@@ -612,8 +628,10 @@ export class McpAppBrowserHarness {
 
   private async captureScreenshot(): Promise<string> {
     const page = this.page!;
-    this.screenshotCount += 1;
     const png = await page.screenshot({ type: "png" });
+    // Count only successful captures so a transient screenshot failure (caller
+    // catches -> screenshot_failed) doesn't burn the per-iteration budget.
+    this.screenshotCount += 1;
     if (png.byteLength <= this.budgets.screenshotMaxBytes) {
       return png.toString("base64");
     }
