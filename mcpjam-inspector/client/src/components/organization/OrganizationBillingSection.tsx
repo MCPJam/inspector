@@ -42,6 +42,7 @@ import { buildComparePlanSectionsFromCatalog } from "@/components/organization/b
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
+import { CreditActivitySection } from "@/components/billing/CreditActivitySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlow";
 
@@ -930,6 +931,15 @@ export function OrganizationBillingSection({
             canViewInvoices={
               !!(showPlanBilling && billingStatus?.canManageBilling)
             }
+          />
+        </ErrorBoundary>
+      ) : null}
+
+      {showCredits && canManageCredits ? (
+        <ErrorBoundary fallback={null}>
+          <CreditActivitySection
+            organizationId={organizationId}
+            canView={showCredits && canManageCredits}
           />
         </ErrorBoundary>
       ) : null}
