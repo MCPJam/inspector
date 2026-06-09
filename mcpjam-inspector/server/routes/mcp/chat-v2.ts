@@ -113,7 +113,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 
     return JSON.stringify({
       code: "auth_error",
-      message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
+      message: `Invalid API key for ${providerName}. Check your organization's model providers configuration.`,
       statusCode,
       normalized: providerNormalized,
     });
@@ -823,7 +823,11 @@ chatV2.post("/", async (c) => {
       modelDefinition.provider !== "custom";
     if (process.env.CONVEX_HTTP_URL && isCloudByokProvider && apiKey) {
       return c.json(
-        { error: "BYOK requires sign-in", code: "byok_requires_signin" },
+        {
+          error:
+            "Personal provider keys aren't supported. Configure cloud models in your organization's settings (Organization Models).",
+          code: "personal_byok_unsupported",
+        },
         401
       );
     }

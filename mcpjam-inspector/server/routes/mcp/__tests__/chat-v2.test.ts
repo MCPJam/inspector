@@ -632,7 +632,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for openai. Check your organization's model providers configuration.",
       );
       expect(result.statusCode).toBe(401);
     });
@@ -649,7 +649,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for anthropic. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for anthropic. Check your organization's model providers configuration.",
       );
     });
 
@@ -667,7 +667,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for deepseek. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for deepseek. Check your organization's model providers configuration.",
       );
       expect(result.statusCode).toBe(401);
     });
@@ -686,7 +686,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for xai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for xai. Check your organization's model providers configuration.",
       );
     });
 
@@ -704,7 +704,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for google. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for google. Check your organization's model providers configuration.",
       );
     });
 
@@ -824,7 +824,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for openai. Check your organization's model providers configuration.",
       );
     });
   });
@@ -867,7 +867,7 @@ describe("POST /api/mcp/chat-v2", () => {
       }>(res);
 
       expect(status).toBe(401);
-      expect(data.code).toBe("byok_requires_signin");
+      expect(data.code).toBe("personal_byok_unsupported");
     });
 
     it("401s a cloud apiKey even with a bearer (no personal BYOK)", async () => {
@@ -877,7 +877,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const { status, data } = await expectJson<{ code: string }>(res);
 
       expect(status).toBe(401);
-      expect(data.code).toBe("byok_requires_signin");
+      expect(data.code).toBe("personal_byok_unsupported");
     });
 
     it("never gates Ollama (local daemon, not a cloud account)", async () => {

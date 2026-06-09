@@ -78,8 +78,20 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        const parsedTokens = JSON.parse(stored) as ProviderTokens;
-        setTokens(parsedTokens);
+        // Merge a (possibly legacy/partial) payload onto defaults so missing
+        // or malformed fields can't leave the state ill-shaped — e.g. an
+        // absent openRouterSelectedModels would otherwise make
+        // hasToken("openrouter") throw on `.length`.
+        const parsed = JSON.parse(stored) as Partial<ProviderTokens>;
+        setTokens({
+          ...defaultTokens,
+          ...parsed,
+          openRouterSelectedModels: Array.isArray(
+            parsed.openRouterSelectedModels,
+          )
+            ? parsed.openRouterSelectedModels
+            : defaultTokens.openRouterSelectedModels,
+        });
       }
     } catch (error) {
       console.warn(
