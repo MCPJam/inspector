@@ -30,6 +30,7 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
+import { buildHostsPath } from "./lib/app-navigation";
 
 export { getAppRouter };
 
@@ -51,11 +52,14 @@ export function createAppRouter(): AppRouter {
         { path: "home", element: <HomeRoute /> },
         { path: "servers", element: <ServersRoute /> },
         // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
-        // renamed Client → Host); `:hostId` deep-links are preserved.
-        { path: "clients", loader: () => redirect("/hosts") },
+        // renamed Client → Host). Route through `buildHostsPath` so the
+        // `:hostId` deep-link is re-encoded exactly like canonical links
+        // (router params arrive decoded; ids with reserved chars would
+        // otherwise split into extra path segments and fail to match).
+        { path: "clients", loader: () => redirect(buildHostsPath()) },
         {
           path: "clients/:hostId",
-          loader: ({ params }) => redirect(`/hosts/${params.hostId}`),
+          loader: ({ params }) => redirect(buildHostsPath(params.hostId)),
         },
         { path: "host-compare", element: <HostCompareRoute /> },
         { path: "hosts", element: <HostsRoute /> },
