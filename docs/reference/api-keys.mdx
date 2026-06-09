@@ -1,10 +1,10 @@
 ---
 title: "API keys"
-description: "The three different things called 'API key' in MCPJam, and when you need each one."
+description: "The four different things called 'API key' in MCPJam, and when you need each one."
 icon: "key"
 ---
 
-The word "API key" gets used for three distinct things in MCPJam. This page disambiguates them so you can tell which one a given error message is talking about.
+The word "API key" gets used for four distinct things in MCPJam. This page disambiguates them so you can tell which one a given error message is talking about.
 
 ## 1. LLM provider key
 
@@ -20,7 +20,30 @@ A secret you obtained from an LLM provider (OpenAI, Anthropic, Google, xAI, Groq
 
 **You do NOT need:** an LLM provider key to run inspector probes (Tools tab, Resources tab, Prompts tab, OAuth Debugger, conformance suites). Those only talk to MCP servers.
 
-## 2. `MCPJAM_API_KEY` (CLI auth)
+## 2. MCPJam v1 API key (`sk_…`)
+
+A long-lived secret you mint from the MCPJam web app for calling the v1 public API from CI, scripts, or other non-browser contexts. Each key is scoped to one MCPJam organization.
+
+**Where it lives:** **Settings → API Keys** in the MCPJam web app.
+
+**How to create one:**
+1. Open **Settings → API Keys**.
+2. Click **Create API key**.
+3. Give the key a name (e.g. `ci-pipeline`).
+4. Select the organization the key should act inside.
+5. Copy the `sk_…` value from the one-time reveal dialog — it is never shown again. Store it in a secret manager or CI environment variable.
+
+**When it's used:** Any request to `/api/v1/*` that uses `Authorization: Bearer sk_…`. The key carries the permissions of the owning user, scoped to the selected organization.
+
+**Revoking a key:** Open **Settings → API Keys**, click the trash icon next to the key, and type the key name to confirm. Revocation is immediate — any client still holding the value will receive `401` errors within seconds.
+
+**Errors you might see**
+- `401 UNAUTHORIZED` — the key is invalid, expired, or has been revoked.
+- `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"` — the key was created before org-binding support or its scope was removed. Revoke it and create a new one from **Settings → API Keys**.
+- `429` — the key has exceeded its per-minute rate limit. Back off and retry.
+- `403 FORBIDDEN` — `sk_…` keys cannot be used to manage other API keys (create/list/revoke). Use a session login for key management.
+
+## 3. `MCPJAM_API_KEY` (CLI auth)
 
 A token issued by the MCPJam hosted backend for headless usage of the `@mcpjam/cli` and `@mcpjam/sdk`.
 
@@ -33,7 +56,7 @@ A token issued by the MCPJam hosted backend for headless usage of the `@mcpjam/c
 **Errors you might see**
 - "Missing or invalid bearer token" → `MCPJAM_API_KEY` is unset or rotated. Re-run `mcpjam login` or refresh the env var.
 
-## 3. Playground BYOK (Bring Your Own Key)
+## 4. Playground BYOK (Bring Your Own Key)
 
 A per-server bearer token used to authenticate the inspector against an HTTP MCP server that requires `Authorization: Bearer ...`. The inspector forwards it to that one server only.
 
@@ -55,6 +78,7 @@ Either form ends up populating the same per-server request header. Pick the UI f
 | Concept | Stored in | Used for | "Invalid key" error path |
 | --- | --- | --- | --- |
 | LLM provider key | Settings → LLM Providers | Playground chat | `provider/auth_error` |
+| MCPJam v1 API key (`sk_…`) | Settings → API Keys | v1 public API from CI / scripts | `401 UNAUTHORIZED`, `ORPHANED_KEY` |
 | `MCPJAM_API_KEY` | `~/.mcpjam/config.json` or env | CLI / SDK auth to MCPJam backend | `auth/missing_bearer` |
 | Playground BYOK | Per-server card | MCP server requests | `auth/http_401`, `auth/http_403` |
 
