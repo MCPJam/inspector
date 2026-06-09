@@ -20,6 +20,7 @@ import guestSession from "./guest-session.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
 import checks from "./checks.js";
+import apiKeys from "./api-keys.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -61,6 +62,11 @@ web.route("/guest-session", guestSession);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);
+// `/api-keys` carries its own bearer-auth `.use()` because
+// `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
+// sub-router is reachable without a session JWT (WorkOS `sk_…` keys are
+// explicitly rejected with 403 inside the router).
+web.route("/api-keys", apiKeys);
 
 // Public guest JWKS compatibility endpoint.
 web.get("/guest-jwks", async (c) => {
