@@ -27,7 +27,11 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceSpan,
+  EvalTraceWidgetRenderObservationView,
+} from "@/shared/eval-trace";
 
 export interface TraceContentPart {
   type: string;
@@ -188,6 +192,10 @@ export interface TraceEnvelope {
   messages?: TraceSourceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];
   spans?: EvalTraceSpan[];
+  // PR 7: browser-rendered MCP App eval artifacts, surfaced by the backend
+  // trace envelope with screenshot blob ids resolved to `screenshotUrl`.
+  widgetRenderObservations?: EvalTraceWidgetRenderObservationView[];
+  browserInteractionSteps?: EvalTraceBrowserInteractionStepView[];
   traceStartedAtMs?: number;
   traceEndedAtMs?: number;
   [key: string]: unknown;
