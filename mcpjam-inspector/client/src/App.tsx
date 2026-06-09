@@ -3157,6 +3157,7 @@ export default function App() {
           <Toaster />
           <MCPJamLimitDialog />
           <div
+            data-testid="app-shell"
             aria-hidden={shouldShowBillingHandoffOverlay || undefined}
             className={
               shouldShowBillingHandoffOverlay
