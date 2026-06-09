@@ -94,6 +94,8 @@ export interface OrganizationBillingStatus {
   stripeCurrentPeriodEnd: number | null;
   stripePriceId: string | null;
   stripeSeatQuantity?: number | null;
+  paymentState?: "ok" | "past_due";
+  paymentGraceEndsAt?: number | null;
   trialStatus: string;
   trialPlan: OrganizationPlan | null;
   trialStartedAt: number | null;
