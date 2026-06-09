@@ -121,7 +121,7 @@ interface UseAutoConnectProjectServersResult {
  * servers are additionally auto-connected via the candidate path. Gated on a
  * host being active (`hostScopeKey` non-null). Selection is NOT managed here:
  * the connected set is the active set, mirrored by
- * `ActiveClientServerReconciler`.
+ * `ActiveHostServerReconciler`.
  */
 export function useAutoConnectProjectServers({
   projectId,

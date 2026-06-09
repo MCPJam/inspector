@@ -107,7 +107,7 @@ describe("cross-matrix isolation", () => {
     // component body and verify ITS internals never read the OpenAI
     // matrix.
     const body = await readSource(
-      "../../../../clients/redesigned/focus/AppsExtensionTab.tsx",
+      "../../../../hosts/redesigned/focus/AppsExtensionTab.tsx",
     );
     const matrixStart = body.indexOf("function McpAppsCapabilityMatrix");
     expect(matrixStart, "McpAppsCapabilityMatrix component not found").not.toBe(
@@ -132,7 +132,7 @@ describe("cross-matrix isolation", () => {
     // matrix refs. Same boundary-module caveat — we narrow to the
     // component body.
     const body = await readSource(
-      "../../../../clients/redesigned/focus/AppsExtensionTab.tsx",
+      "../../../../hosts/redesigned/focus/AppsExtensionTab.tsx",
     );
     const matrixStart = body.indexOf("function OpenaiAppsCapabilityMatrix");
     expect(matrixStart, "OpenaiAppsCapabilityMatrix component not found").not.toBe(

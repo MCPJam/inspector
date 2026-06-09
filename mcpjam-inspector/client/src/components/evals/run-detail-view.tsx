@@ -35,7 +35,7 @@ import { RunCaseListWithSections } from "./run-case-list";
 import type { RunCaseGroup } from "./run-case-groups";
 import { groupRunIterationsByTestCase } from "./run-case-groups";
 import { RunDetailKpiStrip } from "./run-detail-kpis";
-import { ClientChip } from "@/components/clients/client-chip";
+import { HostChip } from "@/components/hosts/host-chip";
 import {
   RunAccuracyHeroBand,
   RunInsightRail,
@@ -513,8 +513,8 @@ export function RunDetailView({
 
       {runClient && !showAccuracyHero ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className={runDetailMetaLabelClass}>Client</span>
-          <ClientChip
+          <span className={runDetailMetaLabelClass}>Host</span>
+          <HostChip
             name={runClient.displayName}
             hostId={runClient.hostId}
           />

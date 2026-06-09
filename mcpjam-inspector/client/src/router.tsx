@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from "react-router";
+import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import App, {
   AuthRoute,
   ChatAliasRoute,
@@ -7,7 +7,7 @@ import App, {
   ConformanceRoute,
   EvalsRoute,
   HostCompareRoute,
-  ClientsRoute,
+  HostsRoute,
   HomeRoute,
   LearningRoute,
   OAuthFlowRoute,
@@ -50,11 +50,16 @@ export function createAppRouter(): AppRouter {
         { index: true, element: <HomeRoute /> },
         { path: "home", element: <HomeRoute /> },
         { path: "servers", element: <ServersRoute /> },
-        { path: "clients", element: <ClientsRoute /> },
-        { path: "clients/:hostId", element: <ClientsRoute /> },
+        // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
+        // renamed Client → Host); `:hostId` deep-links are preserved.
+        { path: "clients", loader: () => redirect("/hosts") },
+        {
+          path: "clients/:hostId",
+          loader: ({ params }) => redirect(`/hosts/${params.hostId}`),
+        },
         { path: "host-compare", element: <HostCompareRoute /> },
-        { path: "hosts", element: <ClientsRoute /> },
-        { path: "hosts/:hostId", element: <ClientsRoute /> },
+        { path: "hosts", element: <HostsRoute /> },
+        { path: "hosts/:hostId", element: <HostsRoute /> },
         { path: "registry", element: <RegistryRoute /> },
         { path: "tools", element: <ToolsRoute /> },
         { path: "resources", element: <ResourcesRoute /> },

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { ClientChip } from "@/components/clients/client-chip";
+import { HostChip } from "@/components/hosts/host-chip";
 import { cn, getInitials } from "@/lib/utils";
 import {
   Avatar,
@@ -362,7 +362,7 @@ function StandaloneRunRow({
             Run {formatRunId(run._id)}
           </span>
           {run.namedHostId ? (
-            <ClientChip
+            <HostChip
               name={
                 hostNamesById?.get(run.namedHostId) ??
                 formatRunId(run.namedHostId)

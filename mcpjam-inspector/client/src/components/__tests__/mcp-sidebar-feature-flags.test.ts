@@ -416,7 +416,7 @@ describe("getHostedNavigationSections", () => {
 //
 // Regression: Ray reported the desktop Clients tab showed empty/no affordances
 // because `useFeatureFlagEnabled("hosts-enabled")` returned `undefined` in the
-// packaged app, which collapsed both the sidebar nav filter and `ClientsRoute`
+// packaged app, which collapsed both the sidebar nav filter and `HostsRoute`
 // gate to `false`. See `computeHostsHubFlagEnabled` in `mcp-sidebar.tsx`.
 describe("computeHostsHubFlagEnabled", () => {
   it("defaults on for desktop when PostHog has not resolved the flag", () => {
