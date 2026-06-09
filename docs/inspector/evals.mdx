@@ -152,6 +152,9 @@ When two or more host configurations are attached to a suite, a **By case / By h
   - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here.
+- **Browser tab** — appears on iterations where the eval ran MCP App widgets through the headless-browser harness. It has two sections:
+  - **Render observations** — one card per widget showing the latest render outcome (status badge, screenshot, turn number, and timing). Possible statuses include `Rendered`, `Render error`, `Bridge timeout`, `Blank screenshot`, `Browser unavailable`, and others. Console errors captured during rendering are shown in a collapsible list on the card.
+  - **Computer Use timeline** — the sequence of browser interactions the harness performed, grouped by widget. Each step shows the action (`Left click`, `Type`, `Scroll`, `Screenshot`, …), elapsed time, a step screenshot when available, and any tool calls the widget made during that step.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **AI Triage** — after a run completes, an AI Triage panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top 3** copies the top three combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
