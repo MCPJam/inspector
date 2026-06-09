@@ -533,7 +533,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.7", "Claude Opus 4.7", "anthropic"),
-  freeModel("anthropic/claude-fable-5", "Claude Fable 5", "anthropic"),
+  freeModel("anthropic/claude-fable-5", "Claude Fable 5", "anthropic", 1000000),
   {
     id: "openai/gpt-5.1-codex-mini",
     name: "GPT-5.1 Codex Mini (Free)",
