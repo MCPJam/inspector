@@ -1,0 +1,238 @@
+---
+title: "Public API v1"
+description: "Live-MCP diagnostics and inspection routes for server-to-server callers."
+icon: "square-terminal"
+---
+
+The Inspector Node exposes a resource-oriented public API at `/api/v1`. These routes let server-to-server callers — MCP workers, CI pipelines, agents, and CLIs — run live diagnostics and inspect MCP servers without a browser session.
+
+<Note>
+This API is a **hosted** surface. It is available when the Inspector Node is running in hosted mode (e.g. `app.mcpjam.com`). It is not available in the local `npx` or Docker builds.
+</Note>
+
+## Authentication
+
+Every `/api/v1` request must include a bearer token:
+
+```http
+Authorization: Bearer <your-token>
+```
+
+This is the same `MCPJAM_API_KEY` used by the CLI and SDK. See [API keys](/reference/api-keys) for how to obtain one.
+
+**Guest tokens are rejected.** The public API is a developer surface; guest sessions cannot call `/api/v1` routes.
+
+## Base URL
+
+```
+https://app.mcpjam.com/api/v1
+```
+
+## Request format
+
+All routes use `POST`. Path parameters (`projectId`, `serverId`) identify the target server. An optional JSON body can supply additional parameters; path parameters always take precedence over body fields with the same name.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/{operation}
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+The request body must be a valid JSON object (or empty). The maximum body size is 1 MB.
+
+## Response envelope
+
+### Success — single resource
+
+The resource object is returned directly at the top level:
+
+```json
+{ "status": "ready", "tools": [...], ... }
+```
+
+### Success — collection
+
+Collections use a cursor-based page envelope:
+
+```json
+{
+  "items": [...],
+  "nextCursor": "1700000000000"
+}
+```
+
+`nextCursor` is omitted when there are no further pages.
+
+### Error
+
+```json
+{
+  "code": "NOT_FOUND",
+  "message": "Server not found",
+  "details": { "serverId": "srv_abc" }
+}
+```
+
+`details` is omitted when empty.
+
+## Error codes
+
+| Code | HTTP status | Meaning |
+|------|-------------|---------|
+| `UNAUTHORIZED` | 401 | Missing or invalid bearer token, or guest token used |
+| `FORBIDDEN` | 403 | Token is valid but lacks permission for this resource |
+| `NOT_FOUND` | 404 | Project or server not found |
+| `VALIDATION_ERROR` | 400 | Missing or invalid request field |
+| `RATE_LIMITED` | 429 | Too many requests |
+| `FEATURE_NOT_SUPPORTED` | 422 | Operation not available for this account or server type |
+| `SERVER_UNREACHABLE` | 502 | Could not connect to the MCP server |
+| `TIMEOUT` | 504 | The MCP server did not respond in time |
+| `OAUTH_REQUIRED` | 401 | The MCP server requires an OAuth grant before connecting |
+| `INTERNAL_ERROR` | 500 | Unexpected server-side failure |
+
+`OAUTH_REQUIRED` is distinct from `UNAUTHORIZED`: it means the target MCP server itself requires an OAuth flow, not that your bearer token is bad.
+
+## Endpoints
+
+### Validate server
+
+Connect to the server, initialize the MCP session, and capture an inspection snapshot (tools, resources, prompts).
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/validate
+```
+
+**Response:** inspection snapshot object (same shape as the web `/servers/validate` route).
+
+---
+
+### Doctor
+
+Run the full SDK doctor workflow: probe → connect → initialize → capabilities check.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/doctor
+```
+
+**Response:** doctor result object.
+
+```json
+{
+  "status": "ready",
+  "checks": { ... },
+  "connection": { "status": "connected", "detail": "ok" },
+  "tools": [...],
+  "prompts": [...],
+  "resources": [...],
+  ...
+}
+```
+
+---
+
+### Check OAuth
+
+Lightweight probe that checks whether the server requires OAuth and returns its URL. No MCP connection is made.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/check-oauth
+```
+
+**Response:**
+
+```json
+{
+  "useOAuth": true,
+  "serverUrl": "https://my-server.example.com/mcp"
+}
+```
+
+---
+
+### List tools
+
+List the tools exposed by the server.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/tools
+```
+
+**Response:** `{ items, nextCursor? }` page of tool objects.
+
+<Note>
+Inspector-only enrichments (token counts, tools metadata) are not included in the public API response.
+</Note>
+
+---
+
+### List prompts
+
+List the prompts exposed by the server.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/prompts
+```
+
+**Response:** `{ items, nextCursor? }` page of prompt objects.
+
+---
+
+### List resources
+
+List the resources exposed by the server.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/resources
+```
+
+**Response:** `{ items, nextCursor? }` page of resource objects.
+
+---
+
+### Read resource
+
+Read a single resource by URI.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/resources/read
+```
+
+**Body:**
+
+```json
+{ "uri": "file:///path/to/resource" }
+```
+
+`uri` is required. A missing `uri` returns `400 VALIDATION_ERROR`.
+
+**Response:** resource contents object.
+
+---
+
+### Export
+
+Export the full server snapshot (tools, resources, prompts) as a single JSON object.
+
+```http
+POST /api/v1/projects/{projectId}/servers/{serverId}/export
+```
+
+**Response:** export object containing all server capabilities.
+
+## Example
+
+```bash
+curl -X POST \
+  https://app.mcpjam.com/api/v1/projects/proj_abc/servers/srv_xyz/tools \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+```json
+{
+  "items": [
+    { "name": "search", "description": "Search the web", "inputSchema": { ... } }
+  ]
+}
+```
