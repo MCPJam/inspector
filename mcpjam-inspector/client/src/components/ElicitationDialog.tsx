@@ -225,7 +225,17 @@ export function ElicitationDialog({
   };
 
   return (
-    <Dialog open={!!elicitationRequest} onOpenChange={() => {}}>
+    <Dialog
+      open={!!elicitationRequest}
+      onOpenChange={(open) => {
+        // Treat closing via the X button, Esc, or an outside click the same as
+        // pressing Cancel, so the dialog can never get stuck open. Ignore close
+        // attempts while a response is already in flight.
+        if (!open && !loading) {
+          void handleResponse("cancel");
+        }
+      }}
+    >
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">

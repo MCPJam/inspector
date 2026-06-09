@@ -235,12 +235,6 @@ const navigationSections: NavSection[] = [
         title: "Playground",
         url: "/playground",
         icon: MessageCircle,
-        announcement: {
-          id: "playground-tab-rename-2026-05",
-          badge: "NEW",
-          title: "Playground just got more powerful",
-          body: "Playground now includes everything from App Builder — generate, preview, and test MCP-powered apps without switching tabs.",
-        },
       },
     ],
   },
