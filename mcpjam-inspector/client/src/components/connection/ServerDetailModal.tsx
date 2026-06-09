@@ -37,6 +37,8 @@ import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
+import { ServerHistoryContent } from "./ServerHistoryContent";
+import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import type {
   ProjectServerConfigDto,
@@ -47,7 +49,11 @@ import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionC
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
-export type ServerDetailTab = "overview" | "configuration" | "tools-metadata";
+export type ServerDetailTab =
+  | "overview"
+  | "configuration"
+  | "tools-metadata"
+  | "history";
 
 interface ServerDetailModalProps {
   isOpen: boolean;
@@ -202,6 +208,9 @@ export function ServerDetailModal({
   // `sharedProjectServersRecord[name]?._id` and passes it down as
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
+  // The History tab surfaces persisted snapshot revisions, which only exist
+  // for project-scoped (hosted) servers. Hidden entirely in local mode.
+  const showHistory = Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
@@ -311,10 +320,7 @@ export function ServerDetailModal({
     // If this control enrolls the server only to save the protocol pin, remember
     // that provenance so clearing the pin can undo the implicit enrollment
     // without removing servers that were already explicitly auto-connected.
-    const autoEnrollKey = getProtocolOverrideAutoEnrollKey(
-      projectId,
-      serverId
-    );
+    const autoEnrollKey = getProtocolOverrideAutoEnrollKey(projectId, serverId);
     const autoEnrollRecord =
       protocolOverrideAutoEnrolledRef.current.get(autoEnrollKey) ??
       readProtocolOverrideAutoEnrollRecord(autoEnrollKey);
@@ -331,10 +337,10 @@ export function ServerDetailModal({
     const nextServerIds = shouldAutoEnrollForOverride
       ? [...currentServerIds, serverId]
       : shouldUndoAutoEnroll
-        ? currentServerIds.filter(
-            (currentServerId) => currentServerId !== serverId
-          )
-        : currentServerIds;
+      ? currentServerIds.filter(
+          (currentServerId) => currentServerId !== serverId
+        )
+      : currentServerIds;
     try {
       await setProjectServerConfigMutation({
         projectId,
@@ -556,7 +562,9 @@ export function ServerDetailModal({
     }
   };
 
-  const tabGridClass = "grid w-full grid-cols-3";
+  const tabGridClass = showHistory
+    ? "grid w-full grid-cols-4"
+    : "grid w-full grid-cols-3";
   const isConfigurationTab = activeTab === "configuration";
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -605,6 +613,14 @@ export function ServerDetailModal({
               )}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 mr-6">
+              {showHistory && projectId && serverId && (
+                <ServerHistoryDriftChip
+                  projectId={projectId}
+                  serverId={serverId}
+                  isViewing={activeTab === "history"}
+                  onClick={() => setActiveTab("history")}
+                />
+              )}
               <EffectiveProtocolVersionChip
                 hostDefault={resolvedHostDefaultMcpProtocolVersion}
                 serverOverride={currentMcpProtocolVersionOverride}
@@ -663,6 +679,9 @@ export function ServerDetailModal({
               <TabsTrigger value="configuration">Configuration</TabsTrigger>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="tools-metadata">Tools Metadata</TabsTrigger>
+              {showHistory && (
+                <TabsTrigger value="history">History</TabsTrigger>
+              )}
             </TabsList>
 
             <div className="relative mt-4 -mr-6 -ml-1">
@@ -782,6 +801,21 @@ export function ServerDetailModal({
                   )}
                 </div>
               </TabsContent>
+
+              {/* History: persisted snapshot revisions; works while disconnected */}
+              {showHistory && projectId && serverId && (
+                <TabsContent
+                  value="history"
+                  className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+                >
+                  <div className="pl-1 pr-6">
+                    <ServerHistoryContent
+                      projectId={projectId}
+                      serverId={serverId}
+                    />
+                  </div>
+                </TabsContent>
+              )}
             </div>
           </Tabs>
         </form>
