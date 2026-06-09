@@ -4,9 +4,8 @@ import { COMPARE_PLAN_MARKETING_SECTIONS } from "../compare-plan-marketing";
 describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
   it("mirrors the marketing compare table sections and row coverage", () => {
     expect(COMPARE_PLAN_MARKETING_SECTIONS.map((s) => s.title)).toEqual([
-      "Organization & projects",
+      "Credits & seats",
       "Evaluations",
-      "LLM Usage",
       "Security & Compliance",
       "Support",
       "Standard features",
@@ -26,7 +25,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (n, s) => n + s.rows.length,
       0,
     );
-    expect(rowCount).toBe(22);
+    expect(rowCount).toBe(15);
 
     const standardFeatures = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Standard features",
@@ -40,63 +39,65 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     ]);
   });
 
-  it("includes representative product and org/project cells", () => {
-    const evaluations = COMPARE_PLAN_MARKETING_SECTIONS.find(
-      (s) => s.title === "Evaluations",
-    );
-    expect(
-      evaluations?.rows.some((r) => r.label === "Eval iteration cap"),
-    ).toBe(false);
-    expect(
-      evaluations?.rows.some((r) => r.label === "Eval iteration overage"),
-    ).toBe(false);
-    expect(
-      evaluations?.rows.find((r) => r.label === "Triage Insights")?.free,
-    ).toEqual({ kind: "check" });
+  it("leads the table with credits and seat limits before Evaluations", () => {
+    const creditsAndSeats = COMPARE_PLAN_MARKETING_SECTIONS[0];
 
-    const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
-      (s) => s.title === "Organization & projects",
-    );
-    expect(
-      orgProjects?.rows.find((r) => r.label === "Seat limit")?.free,
-    ).toEqual({
+    expect(creditsAndSeats?.hideTitle).toBe(true);
+    expect(creditsAndSeats?.rows.map((row) => row.label)).toEqual([
+      "Included credits",
+      "Seat limit",
+    ]);
+    expect(creditsAndSeats?.rows[0]?.free).toEqual({
+      kind: "text",
+      text: "200 / day",
+    });
+    expect(creditsAndSeats?.rows[0]?.team).toEqual({
+      kind: "text",
+      text: "10,000 / seat / mo",
+      emphasize: true,
+    });
+    expect(creditsAndSeats?.rows[1]?.team).toEqual({
       kind: "text",
       text: "Unlimited",
-    });
-    const security = COMPARE_PLAN_MARKETING_SECTIONS.find(
-      (s) => s.title === "Security & Compliance",
-    );
-    expect(
-      security?.rows.find((r) => r.label === "SSO / SAML")?.enterprise,
-    ).toEqual({ kind: "check" });
-  });
-
-  it("keeps the LLM usage copy aligned to the daily per-user rate limit", () => {
-    const llmUsage = COMPARE_PLAN_MARKETING_SECTIONS.find(
-      (s) => s.title === "LLM Usage",
-    );
-    const rateLimitRow = llmUsage?.rows.find(
-      (r) => r.label === "Free daily credits / user",
-    );
-
-    expect(rateLimitRow?.team).toEqual({
-      kind: "text",
-      text: "$5",
       emphasize: true,
     });
   });
 
-  it("keeps insights data export on Enterprise only", () => {
+  it("leads Evaluations with eval iteration allowances", () => {
     const evaluations = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Evaluations",
     );
-    const exportRow = evaluations?.rows.find(
-      (r) => r.label === "Insights Data Export",
+    const evalIterations = evaluations?.rows[0];
+
+    expect(evalIterations?.label).toBe("Eval iterations");
+    expect(evalIterations?.free).toEqual({
+      kind: "text",
+      text: "25 / day",
+    });
+    expect(evalIterations?.team).toEqual({
+      kind: "text",
+      text: "5,000 / mo",
+      emphasize: true,
+    });
+    expect(evalIterations?.enterprise).toEqual({
+      kind: "text",
+      text: "Custom",
+      emphasize: true,
+    });
+  });
+
+  it("keeps Evaluations focused on iteration limits and traces", () => {
+    const evaluations = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Evaluations",
     );
 
-    expect(exportRow?.free).toEqual({ kind: "x" });
-    expect(exportRow?.team).toEqual({ kind: "x" });
-    expect(exportRow?.enterprise).toEqual({ kind: "check" });
+    expect(evaluations?.rows.map((row) => row.label)).toEqual([
+      "Eval iterations",
+      "Traces",
+    ]);
+    expect(
+      evaluations?.rows.find((r) => r.label === "Traces")?.enterprise,
+    ).toEqual({ kind: "check" });
   });
 
   it("keeps audit logs positioned on Enterprise only", () => {
@@ -115,24 +116,4 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     });
   });
 
-  it("advertises unlimited servers per project across every tier (matches backend entitlement)", () => {
-    const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
-      (s) => s.title === "Organization & projects",
-    );
-    const serversRow = orgProjects?.rows.find(
-      (r) => r.label === "Servers per project",
-    );
-
-    expect(serversRow?.free).toEqual({ kind: "text", text: "Unlimited" });
-    expect(serversRow?.team).toEqual({
-      kind: "text",
-      text: "Unlimited",
-      emphasize: true,
-    });
-    expect(serversRow?.enterprise).toEqual({
-      kind: "text",
-      text: "Unlimited",
-      emphasize: true,
-    });
-  });
 });
