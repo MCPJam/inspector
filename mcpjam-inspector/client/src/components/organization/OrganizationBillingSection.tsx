@@ -289,7 +289,7 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   "Role-based access control (RBAC)": {
     ariaLabel: "About RBAC",
     content:
-      "Basic Admin/Member-style access on Team; customizable roles and fine-grained permissions on Enterprise.",
+      "Basic Admin/Member-style access on Free and Team; customizable roles and fine-grained permissions on Enterprise.",
     contentClassName: "max-w-[22rem]",
   },
   "Data processing agreement (DPA)": {

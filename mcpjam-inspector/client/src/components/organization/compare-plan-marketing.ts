@@ -74,7 +74,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     rows: [
       {
         label: "Role-based access control (RBAC)",
-        free: x,
+        free: t("Basic"),
         team: t("Basic", true),
         enterprise: t("Custom", true),
       },
@@ -93,7 +93,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       {
         label: "Data processing agreement (DPA)",
         free: x,
-        team: t("Click-through", true),
+        team: x,
         enterprise: t("Custom", true),
       },
       {
