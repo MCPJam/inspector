@@ -221,9 +221,9 @@ apiKeys.post("/", async (c) =>
     }
 
     // Bind the key to the selected MCPJam org. A key with no binding is
-    // orphaned (rejected on /api/v1/* with 401 ORPHANED_KEY), so if the bind
-    // fails we revoke the WorkOS key immediately and report the failure —
-    // never leave an unusable key behind.
+    // orphaned (rejected on /api/v1/* with 401 UNAUTHORIZED, details.reason
+    // "ORPHANED_KEY"), so if the bind fails we revoke the WorkOS key
+    // immediately and report the failure — never leave an unusable key behind.
     try {
       await createWorkosKeyBinding({
         workosApiKeyId: workosKeyId,

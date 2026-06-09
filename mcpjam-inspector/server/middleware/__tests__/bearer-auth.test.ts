@@ -6,7 +6,7 @@
  *   - missing / wrong-format bearer → 401
  *   - `sk_` invalid → 401
  *   - `sk_` valid + bound → next() runs with identity AND org context set
- *   - `sk_` valid but NO org binding → 401 ORPHANED_KEY
+ *   - `sk_` valid but NO org binding → 401 UNAUTHORIZED (details.reason ORPHANED_KEY)
  *   - binding lookup throws → 500
  *   - request-local memoization (validate called once per request)
  *   - per-key rate limit triggers 429 after burst
@@ -157,7 +157,7 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     expect(lookupWorkosKeyBindingMock).toHaveBeenCalledWith("api_key_42");
   });
 
-  it("returns 401 ORPHANED_KEY when the key has no org binding", async () => {
+  it("returns 401 UNAUTHORIZED with details.reason ORPHANED_KEY when the key has no org binding", async () => {
     validateApiKeyMock.mockResolvedValueOnce({
       apiKey: { id: "api_key_orphan", owner: { id: "user_orphan" } },
     });
@@ -170,8 +170,15 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     });
 
     expect(res.status).toBe(401);
-    const body = (await res.json()) as { code?: string; message?: string };
-    expect(body.code).toBe("ORPHANED_KEY");
+    const body = (await res.json()) as {
+      code?: string;
+      message?: string;
+      details?: { reason?: string };
+    };
+    // Stays within the v1 contract's error-code union; the orphaned-key
+    // specifics live in the opaque `details` bag, not a new wire code.
+    expect(body.code).toBe("UNAUTHORIZED");
+    expect(body.details?.reason).toBe("ORPHANED_KEY");
     expect(body.message).toMatch(/not bound to an organization/i);
   });
 

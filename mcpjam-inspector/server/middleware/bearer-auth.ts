@@ -215,11 +215,17 @@ export async function bearerAuthMiddleware(
       logger.warn("Orphaned WorkOS API key (no org binding)", {
         workos_key_id: workosKeyId,
       });
+      // Stay within the v1 public error-code contract: the wire `code` is the
+      // canonical UNAUTHORIZED, with the specific reason carried in the opaque
+      // `details` bag (see routes/v1/contract.ts — `ORPHANED_KEY` is NOT a
+      // first-class v1 code). Clients that care can branch on
+      // `details.reason === "ORPHANED_KEY"`; everyone else sees a 401.
       return c.json(
         {
-          code: ErrorCode.ORPHANED_KEY,
+          code: ErrorCode.UNAUTHORIZED,
           message:
             "This API key is not bound to an organization. Re-create it from Settings → API keys.",
+          details: { reason: "ORPHANED_KEY" },
         },
         401,
       );
