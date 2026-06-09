@@ -229,7 +229,7 @@ Widgets can request mode changes from their own code; users can exit PiP or Full
 
 All widgets — whether they declare `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — render through a single unified renderer. The `window.openai` compatibility shim is always injected, so both `window.openai.*` calls and `ui/*` JSON-RPC messages work regardless of which metadata the tool declares.
 
-Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored.
+Widget rendering is gated on the active Host's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored.
 
 ## Per-Widget Debugging
 
