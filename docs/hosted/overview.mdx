@@ -117,3 +117,18 @@ The **Payment history** card on the org billing page lists your recent credit to
 If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
 
 To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
+
+### Payment failures and grace period
+
+If a subscription payment fails, your organization keeps its current plan and credits for a **7-day grace period** while Stripe retries the charge and sends you an email to update your card.
+
+During the grace period, org owners see a **"Payment failed — update your card"** banner at the top of the org billing page. Click **Update payment method** in the banner to open the Stripe billing portal and fix your card details.
+
+If the payment isn't resolved within 7 days, the subscription is cancelled and the organization is moved to the Free plan (credits are cleared).
+
+### Seat changes
+
+Adding or removing seats takes effect immediately and is billed in the current billing cycle:
+
+- **Adding a seat** — you are charged a prorated amount for the remainder of the current cycle right away.
+- **Removing a seat** — the unused portion of the seat's cost becomes account credit applied toward your next invoice.
