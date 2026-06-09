@@ -59,7 +59,19 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!allowed) {
+      // Sign-out (or initial guest load) clears both in-memory state AND
+      // localStorage so the next sign-in on the same browser — possibly a
+      // different WorkOS user — cannot silently rehydrate the previous
+      // user's keys.
       setTokens(defaultTokens);
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (error) {
+        console.warn(
+          "Failed to clear provider tokens from localStorage:",
+          error,
+        );
+      }
       setIsInitialized(true);
       return;
     }

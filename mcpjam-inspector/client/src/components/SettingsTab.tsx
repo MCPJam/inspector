@@ -132,7 +132,10 @@ export function SettingsTab({
                   variant="link"
                   className="h-auto p-0 text-sm justify-start"
                   onClick={() =>
-                    window.open("https://mcpjam.com/organizations", "_blank")
+                    window.open(
+                      "https://app.mcpjam.com/organizations",
+                      "_blank",
+                    )
                   }
                 >
                   Open mcpjam.com

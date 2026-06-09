@@ -806,18 +806,30 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Personal BYOK is not a supported path. Provider keys are an
+    // Personal cloud BYOK is not a supported path. Provider keys are an
     // organization-level concept: hosted clients hit /api/web/chat-v2
     // with a projectId and no client apiKey, and the org BYOK branch
     // above (~line 684) resolves the key from Convex. Reject any inbound
     // request that tries to bypass that on a Convex-attached deployment
-    // by hand-crafting an apiKey-bearing call to this route. Local OSS
-    // (no CONVEX_HTTP_URL) keeps the legacy user-apiKey path so existing
-    // localStorage keys still work until they're migrated out.
+    // by hand-crafting an apiKey-bearing call for a CLOUD provider.
+    //
+    // Ollama (local daemon, "local" placeholder apiKey) and `custom`
+    // (self-hosted OpenAI-compatible endpoints) are explicitly skipped:
+    // they have no shared cloud account to gate behind sign-in, and the
+    // org BYOK surface doesn't model them. Local OSS (no CONVEX_HTTP_URL)
+    // also bypasses — the frontend hook is the only enforcement on `npx`.
+    //
+    // projectId is checked with `typeof === "string"` to match the
+    // sibling org branch (~line 686); a non-string truthy projectId
+    // would otherwise sail past both guards.
+    const isCloudByokProvider =
+      modelDefinition.provider !== "ollama" &&
+      modelDefinition.provider !== "custom";
     if (
       process.env.CONVEX_HTTP_URL &&
+      isCloudByokProvider &&
       apiKey &&
-      !body.projectId
+      !(typeof body.projectId === "string" && body.projectId)
     ) {
       return c.json(
         { error: "BYOK requires sign-in", code: "byok_requires_signin" },
