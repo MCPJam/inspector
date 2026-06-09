@@ -8,7 +8,7 @@
  */
 import type { Context } from "hono";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import { mapRuntimeError } from "../web/errors.js";
+import { ErrorCode, mapRuntimeError } from "../web/errors.js";
 import {
   v1ErrorBody,
   v1Page,
@@ -47,6 +47,13 @@ export function v1PageJson<T>(c: Context, items: T[], nextCursor?: string) {
  * server demanding an OAuth grant) become OAUTH_REQUIRED so callers can drive
  * the grant; everything else flows through the Inspector's runtime classifier
  * and the internal->public code map.
+ *
+ * Hosted authorize/connect is *upstream* of the MCP SDK — it rejects a server
+ * that needs OAuth before any SDK call runs, throwing
+ * `WebRouteError(UNAUTHORIZED, details: { oauthRequired: true })` (see
+ * `routes/web/auth.ts`). The MCP-SDK predicate above can't see those, so we
+ * also promote them here. Without this branch, callers can't tell "your bearer
+ * is bad" from "this server needs OAuth" — both flatten to UNAUTHORIZED.
  */
 export function mapErrorToV1(error: unknown): {
   code: V1ErrorCode;
@@ -58,6 +65,16 @@ export function mapErrorToV1(error: unknown): {
     return { code: "OAUTH_REQUIRED", message };
   }
   const routeError = mapRuntimeError(error);
+  if (
+    routeError.code === ErrorCode.UNAUTHORIZED &&
+    routeError.details?.oauthRequired === true
+  ) {
+    return {
+      code: "OAUTH_REQUIRED",
+      message: routeError.message,
+      details: routeError.details,
+    };
+  }
   return {
     code: mapInternalCode(routeError.code),
     message: routeError.message,
