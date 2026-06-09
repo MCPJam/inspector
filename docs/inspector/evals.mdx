@@ -10,6 +10,21 @@ A benchmark score doesn't tell you whether your server holds up in production. E
 
 Evals require a signed-in MCPJam account. As a guest you'll see a sign-in prompt instead of the testing interface.
 
+## Eval iteration limits
+
+Each organization has a quota on the number of eval iterations it can run. An **iteration** is one execution of a single test case against one model.
+
+| Plan | Limit |
+|------|-------|
+| Guest (signed out) | 10 iterations / day |
+| Free | 25 iterations / day |
+| Team | 5,000 iterations / seat / month |
+| Enterprise | Unlimited |
+
+When your organization reaches its limit, **Run all** and per-case **Run** buttons are disabled and show a tooltip with the reset time. The limit resets automatically at the start of the next day (free/guest) or billing month (team). You can view current usage in the **Usage** card in the Admin Console billing section.
+
+For Team plans, the monthly allowance is prorated when seats are added or removed mid-period.
+
 ## How it's organized
 
 <Steps>
