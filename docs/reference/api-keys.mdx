@@ -78,6 +78,7 @@ Either form ends up populating the same per-server request header. Pick the UI f
 | Concept | Stored in | Used for | "Invalid key" error path |
 | --- | --- | --- | --- |
 | LLM provider key | Settings → LLM Providers | Playground chat | `provider/auth_error` |
+| MCPJam v1 API key (`sk_…`) | Settings → API Keys | v1 public API from CI / scripts | `401 UNAUTHORIZED`, `ORPHANED_KEY` |
 | `MCPJAM_API_KEY` | `~/.mcpjam/config.json` or env | CLI / SDK auth to MCPJam backend | `auth/missing_bearer` |
 | Playground BYOK | Per-server card | MCP server requests | `auth/http_401`, `auth/http_403` |
 
