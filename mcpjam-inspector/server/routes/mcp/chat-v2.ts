@@ -15,7 +15,6 @@ import {
 import type { ModelProvider } from "@/shared/types";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
-import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
 import {
@@ -151,34 +150,6 @@ function toPersistedUsage(
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
   };
-}
-
-/**
- * BYOK sign-in check for the local/mcp chat route.
- *
- * Unlike `/api/web/chat-v2`, this route mounts no auth middleware that
- * resolves a WorkOS identity into the request context, so there is no
- * `userId` to read here. Both signed-in and guest clients send an
- * `Authorization: Bearer …` header (guests carry a guest JWT — see the
- * client `use-chat-session.ts`), so presence alone can't tell them apart.
- *
- * Mirror `bearerAuthMiddleware`: a token that validates as a guest JWT is a
- * guest; anything else (a WorkOS token) is signed in. No bearer at all is a
- * guest. Fails open (treats as signed in) only when the guest-token service
- * itself errors, matching the middleware so a verifier blip can't 401 real
- * signed-in users.
- */
-async function isGuestByokCaller(
-  authHeader: string | undefined
-): Promise<boolean> {
-  if (!authHeader?.startsWith("Bearer ")) return true;
-  const token = authHeader.slice("Bearer ".length);
-  try {
-    const result = await validateGuestTokenDetailedAsync(token);
-    return result.valid && !!result.guestId;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -835,35 +806,22 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Personal cloud BYOK is not a supported path. Provider keys are an
-    // organization-level concept: hosted clients hit /api/web/chat-v2
-    // with a projectId and no client apiKey, and the org BYOK branch
-    // above (~line 684) resolves the key from Convex. Reject any inbound
-    // request that tries to bypass that on a Convex-attached deployment
-    // by hand-crafting an apiKey-bearing call for a CLOUD provider while
-    // signed out.
-    //
-    // "Signed out" is decided from the bearer token via `isGuestByokCaller`,
-    // not from the request body. This route has no auth middleware that
-    // resolves a WorkOS identity into the request context, so there is no
-    // userId to read here (an earlier revision read `requestLogContext.userId`
-    // and was always-null on this path, 401-ing signed-in users too). A guest
-    // JWT — or no bearer — is signed out; a WorkOS token is signed in.
+    // BYOK is organization-based: cloud provider keys come from the org's
+    // Convex config, never from a client-supplied apiKey. On a Convex-attached
+    // deployment the only supported cloud paths are MCPJam-provided models and
+    // org BYOK (projectId, no apiKey) — both handled above. So a request that
+    // still carries a client apiKey for a CLOUD provider is a personal-BYOK
+    // attempt we don't support; reject it regardless of the caller's identity.
     //
     // Ollama (local daemon, "local" placeholder apiKey) and `custom`
-    // (self-hosted OpenAI-compatible endpoints) are explicitly skipped:
-    // they have no shared cloud account to gate behind sign-in, and the
-    // org BYOK surface doesn't model them. Local OSS (no CONVEX_HTTP_URL)
-    // also bypasses — the frontend hook is the only enforcement on `npx`.
+    // (self-hosted OpenAI-compatible endpoints) are exempt — they're local /
+    // self-hosted, not a shared cloud account, and the org surface doesn't
+    // model them. Local OSS (no CONVEX_HTTP_URL) is exempt too; the frontend
+    // hook is the only enforcement on `npx`.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
-    if (
-      process.env.CONVEX_HTTP_URL &&
-      isCloudByokProvider &&
-      apiKey &&
-      (await isGuestByokCaller(requestAuthHeader))
-    ) {
+    if (process.env.CONVEX_HTTP_URL && isCloudByokProvider && apiKey) {
       return c.json(
         { error: "BYOK requires sign-in", code: "byok_requires_signin" },
         401

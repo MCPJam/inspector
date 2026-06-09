@@ -9,7 +9,6 @@ import {
 import type { Hono } from "hono";
 import { APICallError } from "@ai-sdk/provider";
 import type { ModelMessage } from "ai";
-import { validateGuestTokenDetailedAsync } from "../../../services/guest-token.js";
 
 // Track stream events for testing
 let capturedStreamEvents: any[] = [];
@@ -175,10 +174,6 @@ vi.mock("../../../utils/guest-auth.js", () => ({
   getProductionGuestAuthHeader: vi
     .fn()
     .mockResolvedValue("Bearer guest-test-token"),
-}));
-
-vi.mock("../../../services/guest-token.js", () => ({
-  validateGuestTokenDetailedAsync: vi.fn(),
 }));
 
 // Mock http-tool-calls for testing unresolved tool calls scenario
@@ -834,10 +829,10 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
-  describe("BYOK sign-in gate (Convex-attached)", () => {
-    // The gate only arms when the inspector is attached to Convex. Cloud
-    // BYOK from a guest (guest JWT, or no bearer) is rejected; a signed-in
-    // WorkOS caller falls through to the normal direct-key path.
+  describe("Cloud BYOK is org-based (Convex-attached)", () => {
+    // BYOK keys come from the org's Convex config. On a Convex-attached
+    // deployment a client-supplied apiKey for a cloud provider is a personal
+    // BYOK attempt, which isn't supported — rejected regardless of caller.
     beforeEach(() => {
       process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
     });
@@ -864,13 +859,8 @@ describe("POST /api/mcp/chat-v2", () => {
       apiKey: "sk-user-supplied-key",
     };
 
-    it("401s a guest (guest JWT) using a cloud provider key", async () => {
-      vi.mocked(validateGuestTokenDetailedAsync).mockResolvedValue({
-        valid: true,
-        guestId: "guest_1",
-      });
-
-      const res = await postWithAuth(cloudByokBody, "Bearer guest-jwt");
+    it("401s a cloud apiKey with no bearer", async () => {
+      const res = await postWithAuth(cloudByokBody);
       const { status, data } = await expectJson<{
         error: string;
         code: string;
@@ -880,36 +870,17 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(data.code).toBe("byok_requires_signin");
     });
 
-    it("401s a caller with no bearer at all", async () => {
-      const res = await postWithAuth(cloudByokBody);
+    it("401s a cloud apiKey even with a bearer (no personal BYOK)", async () => {
+      // Org-based: identity is irrelevant — a client apiKey for a cloud
+      // provider is never honored on a Convex-attached deployment.
+      const res = await postWithAuth(cloudByokBody, "Bearer any-token");
       const { status, data } = await expectJson<{ code: string }>(res);
 
       expect(status).toBe(401);
       expect(data.code).toBe("byok_requires_signin");
-      // No bearer ⇒ guest, decided without consulting the verifier.
-      expect(
-        vi.mocked(validateGuestTokenDetailedAsync),
-      ).not.toHaveBeenCalled();
     });
 
-    it("lets a signed-in (WorkOS) caller through to the direct path", async () => {
-      // A WorkOS token is not a guest JWT, so the verifier reports invalid.
-      vi.mocked(validateGuestTokenDetailedAsync).mockResolvedValue({
-        valid: false,
-        reason: "issuer_mismatch",
-      });
-
-      const res = await postWithAuth(cloudByokBody, "Bearer workos-token");
-
-      expect(res.status).toBe(200);
-    });
-
-    it("never gates Ollama, even for a guest (no shared cloud account)", async () => {
-      vi.mocked(validateGuestTokenDetailedAsync).mockResolvedValue({
-        valid: true,
-        guestId: "guest_1",
-      });
-
+    it("never gates Ollama (local daemon, not a cloud account)", async () => {
       const res = await postWithAuth(
         {
           messages: [{ role: "user", content: "Hello" }],
@@ -917,8 +888,16 @@ describe("POST /api/mcp/chat-v2", () => {
           apiKey: "local",
           ollamaBaseUrl: "http://localhost:11434",
         },
-        "Bearer guest-jwt",
+        "Bearer any-token",
       );
+
+      expect(res.status).toBe(200);
+    });
+
+    it("does not gate when not Convex-attached (local OSS)", async () => {
+      delete process.env.CONVEX_HTTP_URL;
+
+      const res = await postWithAuth(cloudByokBody, "Bearer any-token");
 
       expect(res.status).toBe(200);
     });
