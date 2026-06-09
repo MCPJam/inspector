@@ -292,7 +292,7 @@ export function SidebarContextSwitcher({
                     <TooltipContent side="top" sideOffset={6}>
                       {canCreateOrganization
                         ? "New organization"
-                        : "You can only create up to 2 organizations."}
+                        : "You can only create one organization. Ask to be invited to others."}
                     </TooltipContent>
                   </Tooltip>
                 </div>

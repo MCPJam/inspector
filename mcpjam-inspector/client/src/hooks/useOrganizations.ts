@@ -16,7 +16,7 @@ export interface Organization {
   isCreator?: boolean;
 }
 
-export const ORGANIZATION_CREATION_LIMIT = 2;
+export const ORGANIZATION_CREATION_LIMIT = 1;
 
 export interface OrganizationMember {
   _id: string;
