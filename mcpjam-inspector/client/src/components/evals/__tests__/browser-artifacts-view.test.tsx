@@ -66,6 +66,34 @@ describe("BrowserArtifactsView", () => {
     expect(screen.getByText("No screenshot")).toBeInTheDocument();
   });
 
+  it("shows diagnostic copy for failure statuses", () => {
+    render(
+      <BrowserArtifactsView
+        observations={[obs({ status: "bridge_timeout", screenshotUrl: null })]}
+      />,
+    );
+    expect(
+      screen.getByText(/Bridge handshake timed out/),
+    ).toBeInTheDocument();
+  });
+
+  it("prefers the first console error as the render_error description", () => {
+    render(
+      <BrowserArtifactsView
+        observations={[
+          obs({
+            status: "render_error",
+            screenshotUrl: null,
+            consoleErrors: ["TypeError: x is undefined"],
+          }),
+        ]}
+      />,
+    );
+    expect(
+      screen.getByTestId("render-observation-description"),
+    ).toHaveTextContent("TypeError: x is undefined");
+  });
+
   it("surfaces console errors in a collapsible details element", () => {
     render(
       <BrowserArtifactsView

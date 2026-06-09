@@ -75,6 +75,33 @@ const STATUS_META: Record<
   },
 };
 
+// Plain-language "why did it fail?" copy shown under the badge. `rendered` needs
+// no explanation; `render_error` prefers the first console error when present.
+const STATUS_DESCRIPTION: Record<
+  EvalTraceWidgetRenderStatus,
+  string | undefined
+> = {
+  rendered: undefined,
+  bridge_timeout:
+    "Bridge handshake timed out — the widget may have a slow init path.",
+  blank_screenshot: "Rendered but painted blank — check console errors.",
+  mount_failed: "Failed to mount in the browser.",
+  render_error: "Render error during mount.",
+  resource_read_failed: "Couldn't fetch the widget HTML.",
+  no_ui_resource: "No widget HTML in the tool response.",
+  screenshot_failed: "Rendered, but screenshot capture failed.",
+  browser_unavailable: "Browser sandbox unavailable (Chromium not installed).",
+};
+
+function statusDescription(
+  observation: EvalTraceWidgetRenderObservationView,
+): string | undefined {
+  if (observation.status === "render_error") {
+    return observation.consoleErrors?.[0] ?? STATUS_DESCRIPTION.render_error;
+  }
+  return STATUS_DESCRIPTION[observation.status];
+}
+
 const ACTION_ICON: Record<EvalTraceBrowserAction, LucideIcon> = {
   screenshot: Clock,
   left_click: MousePointerClick,
@@ -209,6 +236,7 @@ function RenderObservationCard({
     Icon: Ban,
   };
   const { Icon } = meta;
+  const description = statusDescription(observation);
   return (
     <div
       className="flex flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3"
@@ -228,6 +256,15 @@ function RenderObservationCard({
           turn {observation.promptIndex + 1} · {observation.elapsedMs}ms
         </span>
       </div>
+
+      {description ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="render-observation-description"
+        >
+          {description}
+        </p>
+      ) : null}
 
       <Screenshot
         url={observation.screenshotUrl}
