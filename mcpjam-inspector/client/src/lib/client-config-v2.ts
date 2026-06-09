@@ -113,6 +113,14 @@ export type HostConfigInputV2 = {
   progressiveToolDiscovery?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
+  /**
+   * Catalog ids of host-managed built-in tools (e.g. "web_search") attached
+   * to this config — a peer dimension to serverIds. Required at write time
+   * (defaults to []) so the editor draft can't silently drop the section.
+   * Resolved to AI SDK tools server-side via the built-in tool registry and
+   * validated against the backend `builtInTools` catalog on save.
+   */
+  builtInToolIds: string[];
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -182,6 +190,12 @@ export type HostConfigDtoV2 = {
   progressiveToolDiscovery?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
+  /**
+   * Catalog ids of attached built-in tools. Optional on the DTO because
+   * pre-feature rows persisted without it; `hostConfigDtoToInput` coerces
+   * `undefined` to [].
+   */
+  builtInToolIds?: string[];
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -233,6 +247,7 @@ export function emptyHostConfigInputV2(
     optionalServerIds: partial.optionalServerIds
       ? [...partial.optionalServerIds]
       : [],
+    builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
     connectionDefaults: {
       headers: partial.connectionDefaults?.headers
         ? { ...partial.connectionDefaults.headers }
@@ -315,6 +330,7 @@ export function hostConfigDtoToInput(
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
+    builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
     connectionDefaults: {
       headers: { ...dto.connectionDefaults.headers },
       requestTimeout: dto.connectionDefaults.requestTimeout,
@@ -751,6 +767,9 @@ export function hostConfigInputsEqual(
   if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
   if (!stringArrayEq(a.optionalServerIds, b.optionalServerIds)) return false;
+  // Order-insensitive, same semantics as server ids — toggling a built-in
+  // marks the draft dirty in the host/project/eval editors.
+  if (!stringArrayEq(a.builtInToolIds, b.builtInToolIds)) return false;
   if (
     a.connectionDefaults.requestTimeout !==
     b.connectionDefaults.requestTimeout

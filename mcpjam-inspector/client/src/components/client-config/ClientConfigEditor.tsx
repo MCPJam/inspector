@@ -56,6 +56,8 @@ import {
   getHostCapabilitiesForStyle,
   listHostStyles,
 } from "@/lib/client-styles";
+import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
+import { BuiltInToolCheckboxList } from "./BuiltInToolCheckboxList";
 
 export type HostConfigEditorOwner =
   | "project-default"
@@ -146,6 +148,17 @@ export function ClientConfigEditor({
   // ClientBuilderView — hiding it here prevents double-entry confusion.
   const showServersSection =
     owner !== "connection-only" && owner !== "eval-suite" && owner !== "host";
+
+  // Built-in tools are an attach surface for the AttachmentEditor owners
+  // (project default, chatbox, eval suite). Unlike servers, eval suites DO
+  // attach built-in tools. `host` is excluded — its tool exposure lives in the
+  // redesigned focus UI. Hide entirely on deployments whose catalog is empty
+  // (loading → undefined → hidden) so empty installs don't show a dead card.
+  const builtInToolCatalog = useBuiltInToolCatalog();
+  const showBuiltInToolsSection =
+    owner !== "connection-only" &&
+    owner !== "host" &&
+    (builtInToolCatalog?.length ?? 0) > 0;
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
 
@@ -331,6 +344,21 @@ export function ClientConfigEditor({
                   ),
                 });
               }}
+            />
+          </section>
+
+          <Separator className="my-6" />
+        </>
+      ) : null}
+
+      {showBuiltInToolsSection ? (
+        <>
+          <section className="space-y-4">
+            <BuiltInToolCheckboxList
+              label="Built-in tools"
+              selected={value.builtInToolIds}
+              available={builtInToolCatalog ?? []}
+              onChange={(builtInToolIds) => update({ builtInToolIds })}
             />
           </section>
 

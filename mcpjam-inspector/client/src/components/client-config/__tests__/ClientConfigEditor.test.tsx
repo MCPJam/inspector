@@ -1,10 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ClientConfigEditor } from "../ClientConfigEditor";
 import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+
+// The editor self-fetches the built-in tools catalog via Convex; mock it so
+// these tests don't need a ConvexProvider. Default `[]` keeps the section
+// hidden (the behavior the server-selection tests assume); the built-in tools
+// tests below override the return value.
+const { mockBuiltInToolCatalog } = vi.hoisted(() => ({
+  mockBuiltInToolCatalog: vi.fn(() => [] as unknown),
+}));
+vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
+  useBuiltInToolCatalog: () => mockBuiltInToolCatalog(),
+}));
 
 const SERVERS = [
   { id: "srv-a", name: "Server A" },
@@ -243,5 +254,49 @@ describe("ClientConfigEditor MCP profile clientInfo draft", () => {
     ).toBe("");
     // And the persisted envelope must still be empty — no stale flush.
     expect(current.mcpProfile?.initialize?.clientInfo).toBeUndefined();
+  });
+});
+
+describe("ClientConfigEditor built-in tools section", () => {
+  afterEach(() => {
+    mockBuiltInToolCatalog.mockReturnValue([]);
+  });
+
+  it("hides the section when the catalog is empty", () => {
+    mockBuiltInToolCatalog.mockReturnValue([]);
+    renderEditor({});
+    expect(screen.queryByText("Built-in tools")).toBeNull();
+  });
+
+  it("shows the section and toggles a tool into / out of builtInToolIds", () => {
+    mockBuiltInToolCatalog.mockReturnValue([
+      {
+        id: "web_search",
+        displayLabel: "Web Search",
+        description: "Search the web.",
+        category: "search",
+        billable: true,
+      },
+    ]);
+    const { onChange, getCurrent } = renderEditor({});
+
+    const heading = screen.getByText("Built-in tools");
+    const checkbox = heading.parentElement!.querySelector(
+      'input[type="checkbox"]',
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(onChange).toHaveBeenCalled();
+    expect(getCurrent().builtInToolIds).toEqual(["web_search"]);
+
+    // Toggling again removes it.
+    const checkbox2 = screen
+      .getByText("Built-in tools")
+      .parentElement!.querySelector(
+        'input[type="checkbox"]',
+      ) as HTMLInputElement;
+    fireEvent.click(checkbox2);
+    expect(getCurrent().builtInToolIds).toEqual([]);
   });
 });
