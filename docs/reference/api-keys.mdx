@@ -20,7 +20,30 @@ A secret you obtained from an LLM provider (OpenAI, Anthropic, Google, xAI, Groq
 
 **You do NOT need:** an LLM provider key to run inspector probes (Tools tab, Resources tab, Prompts tab, OAuth Debugger, conformance suites). Those only talk to MCP servers.
 
-## 2. `MCPJAM_API_KEY` (CLI auth)
+## 2. MCPJam v1 API key (`sk_…`)
+
+A long-lived secret you mint from the MCPJam web app for calling the v1 public API from CI, scripts, or other non-browser contexts. Each key is scoped to one MCPJam organization.
+
+**Where it lives:** **Settings → API Keys** in the MCPJam web app.
+
+**How to create one:**
+1. Open **Settings → API Keys**.
+2. Click **Create API key**.
+3. Give the key a name (e.g. `ci-pipeline`).
+4. Select the organization the key should act inside.
+5. Copy the `sk_…` value from the one-time reveal dialog — it is never shown again. Store it in a secret manager or CI environment variable.
+
+**When it's used:** Any request to `/api/v1/*` that uses `Authorization: Bearer sk_…`. The key carries the permissions of the owning user, scoped to the selected organization.
+
+**Revoking a key:** Open **Settings → API Keys**, click the trash icon next to the key, and type the key name to confirm. Revocation is immediate — any client still holding the value will receive `401` errors within seconds.
+
+**Errors you might see**
+- `401 UNAUTHORIZED` — the key is invalid, expired, or has been revoked.
+- `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"` — the key was created before org-binding support or its scope was removed. Revoke it and create a new one from **Settings → API Keys**.
+- `429` — the key has exceeded its per-minute rate limit. Back off and retry.
+- `403 FORBIDDEN` — `sk_…` keys cannot be used to manage other API keys (create/list/revoke). Use a session login for key management.
+
+## 3. `MCPJAM_API_KEY` (CLI auth)
 
 A token issued by the MCPJam hosted backend for headless usage of the `@mcpjam/cli` and `@mcpjam/sdk`.
 
