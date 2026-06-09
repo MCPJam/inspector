@@ -155,7 +155,8 @@
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
               "sdk/reference/apps-conformance",
-              "reference/api-keys"
+              "reference/api-keys",
+              "reference/api-v1"
             ]
           }
         ]
