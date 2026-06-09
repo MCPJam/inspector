@@ -80,8 +80,8 @@ function resolveHostData(context: HostBuilderContext): HostBuilderNodeData {
     : "No model selected";
   return {
     kind: "host",
-    title: "Client",
-    subtitle: hostName.trim() || "Untitled client",
+    title: "Host",
+    subtitle: hostName.trim() || "Untitled host",
     detailLine: `Model · ${modelName}`,
     hostStyle: draft.hostStyle,
     chips: [],

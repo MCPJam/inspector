@@ -186,7 +186,7 @@ export function HostConfigCompareView({
         ) : hosts.length === 0 ? (
           <div className="rounded-xl border border-border bg-card p-10 text-center">
             <p className="text-sm text-muted-foreground">
-              No hosts yet. Create one from the Clients tab to populate the
+              No hosts yet. Create one from the Host tab to populate the
               comparison.
             </p>
           </div>

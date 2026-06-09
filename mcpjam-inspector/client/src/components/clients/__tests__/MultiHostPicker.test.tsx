@@ -121,7 +121,7 @@ describe("MultiHostPicker", () => {
     await user.click(screen.getByTestId("multi-host-picker-trigger"));
 
     expect(
-      await screen.findByText("Add a second client to start comparing."),
+      await screen.findByText("Add a second host to start comparing."),
     ).toBeInTheDocument();
     // The old toggle is gone entirely.
     expect(screen.queryByTestId("multi-host-toggle")).toBeNull();

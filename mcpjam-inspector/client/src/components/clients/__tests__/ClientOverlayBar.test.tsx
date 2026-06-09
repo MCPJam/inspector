@@ -110,7 +110,7 @@ describe("ClientOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Client used for preview" }),
+      screen.getByRole("button", { name: "Host used for preview" }),
     );
 
     await waitFor(() => {
@@ -184,7 +184,7 @@ describe("ClientOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Client used for preview" }),
+      screen.getByRole("button", { name: "Host used for preview" }),
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");
@@ -209,7 +209,7 @@ describe("ClientOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Client used for preview" }),
+      screen.getByRole("button", { name: "Host used for preview" }),
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");

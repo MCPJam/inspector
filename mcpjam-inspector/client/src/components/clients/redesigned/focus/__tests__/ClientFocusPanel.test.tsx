@@ -161,7 +161,7 @@ describe("ClientFocusPanel", () => {
     expect(screen.queryByRole("tab", { name: /^General$/ })).toBeNull();
     expect(screen.queryByRole("tab", { name: /^Appearance$/ })).toBeNull();
     // The host-name textbox lives in the always-visible identity header.
-    expect(screen.getByRole("textbox", { name: "Client name" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Host name" })).toHaveValue(
       "My Host",
     );
   });

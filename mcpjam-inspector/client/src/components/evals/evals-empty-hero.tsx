@@ -3,7 +3,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 
 const FIRST_SUITE_EMPTY_DESCRIPTION =
-  "A suite groups test cases with the MCP servers they use. Run it across clients to get insights into your design.";
+  "A suite groups test cases with the MCP servers they use. Run it across hosts to get insights into your design.";
 
 interface EvalsEmptyHeroProps {
   onCreateSuite: () => void;

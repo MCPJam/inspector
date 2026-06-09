@@ -143,18 +143,18 @@ export function SuiteOverviewClientBar({
         <button
           type="button"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring dark:bg-background"
-          aria-label="Compare attached clients"
+          aria-label="Compare attached hosts"
           onClick={handleOpenCompare}
         >
           <GitCompare className="h-3.5 w-3.5" />
         </button>
       </TooltipTrigger>
-      <TooltipContent>Compare attached clients side by side</TooltipContent>
+      <TooltipContent>Compare attached hosts side by side</TooltipContent>
     </Tooltip>
   ) : null;
 
   const triggerLabel = useMemo(() => {
-    if (attachments.length === 0) return "No clients · pick one";
+    if (attachments.length === 0) return "No hosts · pick one";
     const firstName =
       hostNameByAttachment.get(attachments[0]!.namedHostId) ??
       projectHosts.find((h) => h.hostId === attachments[0]!.namedHostId)
@@ -181,7 +181,7 @@ export function SuiteOverviewClientBar({
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             !editable && "cursor-not-allowed opacity-50",
           )}
-          aria-label="Attached clients"
+          aria-label="Attached hosts"
         >
           {triggerLogoLabel ? (
             <HostLogoMark label={triggerLogoLabel} />
@@ -203,13 +203,13 @@ export function SuiteOverviewClientBar({
         <div className="space-y-0.5">
           <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-0.5">
             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Clients
+              Hosts
             </span>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label="What is a client attachment?"
+                  aria-label="What is a host attachment?"
                   className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Info className="size-3" />
@@ -217,16 +217,16 @@ export function SuiteOverviewClientBar({
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-[240px]">
                 <p className="text-xs leading-snug">
-                  Clients are the MCP hosts this suite evaluates. Attach
-                  one or more to compare how each handles the same
-                  scenarios.
+                  Hosts are the configurations this suite evaluates.
+                  Attach one or more to compare how each handles the
+                  same scenarios.
                 </p>
               </TooltipContent>
             </Tooltip>
           </div>
           {projectHosts.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              No clients in this project yet — add one below.
+              No hosts in this project yet — add one below.
             </p>
           ) : null}
           {projectHosts.map((host) => {
@@ -267,7 +267,7 @@ export function SuiteOverviewClientBar({
                   {isLastAttached ? (
                     <TooltipContent side="right">
                       <p className="text-xs">
-                        Attach another client first
+                        Attach another host first
                       </p>
                     </TooltipContent>
                   ) : null}
@@ -308,7 +308,7 @@ export function SuiteOverviewClientBar({
               className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
             >
               <span className="size-3.5 shrink-0" aria-hidden />
-              <span>Manage clients…</span>
+              <span>Manage hosts…</span>
             </button>
           </div>
         </div>
@@ -374,7 +374,7 @@ export function SuiteOverviewClientBar({
               clientPicker
             ) : attachments.length === 0 ? (
               <span className="shrink-0 text-[13px] font-normal text-muted-foreground">
-                No clients attached
+                No hosts attached
               </span>
             ) : (
               attachments.map((attachment) => {

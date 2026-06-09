@@ -39,7 +39,7 @@ export function ConnectViewHeader({
               { value: "servers", label: "Servers" },
               {
                 value: "host",
-                label: "Client",
+                label: "Host",
                 disabled: !previewedHostId,
               },
               { value: "compare", label: "Compare" },
