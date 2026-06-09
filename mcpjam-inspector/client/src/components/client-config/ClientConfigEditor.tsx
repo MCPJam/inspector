@@ -149,16 +149,15 @@ export function ClientConfigEditor({
   const showServersSection =
     owner !== "connection-only" && owner !== "eval-suite" && owner !== "host";
 
-  // Built-in tools are an attach surface for the AttachmentEditor owners
-  // (project default, chatbox, eval suite). Unlike servers, eval suites DO
-  // attach built-in tools. `host` is excluded — its tool exposure lives in the
-  // redesigned focus UI. Hide entirely on deployments whose catalog is empty
+  // Built-in tools are an attach surface for every editor owner that drives a
+  // model turn — project default, chatbox, eval suite, and the Connect host
+  // editor. Unlike servers (which the host editor manages via the canvas),
+  // built-ins have no canvas equivalent, so the in-editor list is the only
+  // attach surface here. Hide entirely on deployments whose catalog is empty
   // (loading → undefined → hidden) so empty installs don't show a dead card.
   const builtInToolCatalog = useBuiltInToolCatalog();
   const showBuiltInToolsSection =
-    owner !== "connection-only" &&
-    owner !== "host" &&
-    (builtInToolCatalog?.length ?? 0) > 0;
+    owner !== "connection-only" && (builtInToolCatalog?.length ?? 0) > 0;
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
 

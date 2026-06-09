@@ -21,6 +21,8 @@ import { SUPPORTED_MODELS } from "@/shared/types";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useClientDraftValidation";
 import type { HostAttentionIssue } from "../types";
+import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
+import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -83,6 +85,12 @@ export function BehaviorTab({
 
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
+
+  // Built-in tools catalog. `undefined` while loading or if the backend isn't
+  // deployed; `[]` on populated deployments with no enabled rows. Hide the
+  // FocusBlock entirely in both cases so empty installs don't render a dead card.
+  const builtInToolCatalog = useBuiltInToolCatalog();
+  const showBuiltInTools = (builtInToolCatalog?.length ?? 0) > 0;
 
   // Labels and descriptions are sourced from the shared field schema so
   // the focus tab and the cross-host comparison matrix stay in sync.
@@ -246,6 +254,17 @@ export function BehaviorTab({
         />
 
       </FocusBlock>
+
+      {showBuiltInTools ? (
+        <FocusBlock title="Built-in tools">
+          <BuiltInToolCheckboxList
+            label="Attached"
+            selected={draft.builtInToolIds}
+            available={builtInToolCatalog ?? []}
+            onChange={(builtInToolIds) => update({ builtInToolIds })}
+          />
+        </FocusBlock>
+      ) : null}
 
       <FocusBlock title={fSystemPrompt.label}>
         <Textarea
