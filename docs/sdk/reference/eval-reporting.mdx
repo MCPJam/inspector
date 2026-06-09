@@ -530,6 +530,53 @@ type PredicateResult = {
 
 ---
 
+---
+
+## EvalReportingError
+
+`reportEvalResults()` and `createEvalRunReporter().finalize()` throw an `EvalReportingError` when reporting fails. You can import it to distinguish reporting failures from other errors.
+
+```typescript
+import { EvalReportingError } from "@mcpjam/sdk";
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `message` | `string` | Human-readable error description. For billing limit errors this is a clean message such as `"Eval iteration limit reached. Resets at <ISO timestamp>."` |
+| `code` | `string` | Always `"EVAL_REPORTING_ERROR"`. |
+| `statusCode` | `number \| undefined` | HTTP status code from the server, if available. |
+| `endpoint` | `string \| undefined` | The SDK endpoint path that failed. |
+| `attemptCount` | `number \| undefined` | Number of attempts made before giving up. |
+| `isBillingLimitReached` | `boolean` | `true` when the error is caused by an org eval iteration quota being exceeded. Use this to distinguish quota errors from transient network failures. |
+
+### Example
+
+```typescript
+import { reportEvalResults, EvalReportingError } from "@mcpjam/sdk";
+
+try {
+  await reportEvalResults({
+    suiteName: "Nightly",
+    results: [{ caseTitle: "healthcheck", passed: true }],
+  });
+} catch (error) {
+  if (error instanceof EvalReportingError && error.isBillingLimitReached) {
+    console.warn("Eval iteration quota reached:", error.message);
+    // Do not retry — billing limit errors are not retried automatically.
+  } else {
+    throw error;
+  }
+}
+```
+
+<Note>
+Billing limit errors are never retried by the SDK. When `isBillingLimitReached` is `true`, `attemptCount` will be `1` regardless of your retry configuration.
+</Note>
+
+---
+
 ## Related
 
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
