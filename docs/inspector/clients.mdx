@@ -1,34 +1,34 @@
 ---
-title: "Clients"
-description: "Reusable MCP client configurations for testing servers and apps under realistic conditions"
+title: "Hosts"
+description: "Reusable MCP host configurations for testing servers and apps under realistic conditions"
 icon: "user-cog"
 ---
 
 <Note>
-Open the **Connect** tab in the left sidebar to manage Clients (labelled **Servers** in some builds). The page name "Clients" refers to the configuration object, not the sidebar label.
+Open the **Connect** tab in the left sidebar to manage Hosts (labelled **Servers** in some builds). The page name "Hosts" refers to the configuration object, not the sidebar label.
 </Note>
 
-A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Chatboxes, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
+A **Host** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Chatboxes, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
 
-Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly *before* shipping to a specific host.
+Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Hosts let you reproduce those environments in MCPJam so you can verify your server behaves correctly *before* shipping to a specific host.
 
-## Why Clients exist
+## Why Hosts exist
 
-Without Clients, every Chat or Eval would be tied to whatever ambient settings were active when you ran it. That makes results hard to reproduce and hard to share. Clients fix this by giving you:
+Without Hosts, every Chat or Eval would be tied to whatever ambient settings were active when you ran it. That makes results hard to reproduce and hard to share. Hosts fix this by giving you:
 
-- **Reproducibility** — A snapshot of every setting that affects a run, so a teammate hitting the same Client gets the same conditions.
+- **Reproducibility** — A snapshot of every setting that affects a run, so a teammate hitting the same Host gets the same conditions.
 - **Host emulation** — Configure the inspector to look like Claude Desktop, ChatGPT, or your own host so you can verify your MCP server or MCP App degrades gracefully across them.
 - **Faster iteration** — Switch between configurations with one click instead of editing fields in five places.
 
 ## What you can configure
 
-A Client groups settings into two layers: the **protocol layer** (how the MCP connection itself behaves) and the **app layer** (what an MCP App running inside the client is allowed to do).
+A Host groups settings into two layers: the **protocol layer** (how the MCP connection itself behaves) and the **app layer** (what an MCP App running inside the host is allowed to do).
 
 ### Protocol-level settings
 
 These map directly to fields the inspector sends during the standard MCP `initialize` handshake and on every subsequent request.
 
-- **Supported protocol versions** — The ordered list of MCP protocol versions the client advertises. The first entry is sent as `protocolVersion`; the rest form the accept-set. Useful for testing how your server handles older or newer clients.
+- **Supported protocol versions** — The ordered list of MCP protocol versions the host advertises. The first entry is sent as `protocolVersion`; the rest form the accept-set. Useful for testing how your server handles older or newer clients.
 - **`clientInfo`** — The `name`, `version`, and any additional fields sent in `initialize.params.clientInfo`. Set this to match a real host's identifier when you want your server to take a host-specific code path.
 - **Client capabilities** — The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
 - **Request timeout** — Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
@@ -36,19 +36,19 @@ These map directly to fields the inspector sends during the standard MCP `initia
 
 ### Per-server connection overrides
 
-You can override the request timeout and headers **per server** from the project-wide server list. This lets a single project connect to one server with a long timeout and an auth header while keeping defaults for the others.
+You can override the request timeout and headers **per server** from the project-wide server list. This lets a single project connect to one server with a long timeout and an auth header while keeping host defaults for the others.
 
 ### Agent behavior
 
-These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Client focus panel.
+These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Host focus panel.
 
 - **Require tool approval** — When on, the model pauses before each tool call so you can approve or deny it manually.
-- **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
+- **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `[\"app\"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
 - **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
 
 ### MCP App settings (SEP-1865)
 
-When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
+When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Host controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
 
 - **Host capabilities** — The set of `HostCapabilities` keys the inspector advertises in the `ui/initialize` handshake. Each host preset reflects that host's published capability subset: for example, the **Copilot** preset advertises only `openLinks`, `serverTools`, `updateModelContext`, and `message` — matching Microsoft 365 Copilot's published Component-bridge table — and omits `serverResources` and `logging`. Use this to verify your app degrades gracefully when a capability it relies on is absent.
 - **Sandbox CSP mode** — `host-default`, `declared`, or `relaxed`. Controls the baseline Content Security Policy the inspector applies to your app's iframe.
@@ -85,36 +85,36 @@ The Apps Extension tab contains two independent capability matrices that never c
   settings are what matter.
 </Note>
 
-## Creating a Client
+## Creating a Host
 
-1. Open the **Clients** tab in the inspector.
-2. Click **New Client**.
+1. Open the **Host** tab in the Connect view.
+2. Click **Add host**.
 3. Give it a name (e.g. `Claude Desktop`, `ChatGPT`, `Strict CSP`).
 4. Open the focus panel to drill into protocol or MCP App settings.
 5. Click **Save**.
 
 <Note>
-  Server selection is project-wide, not per-client. Use the **Auto-connect**
+  Server selection is project-wide, not per-host. Use the **Auto-connect**
   toggle in the Servers tab header to enroll all project servers for
   auto-connection. Per-server overrides (headers, timeout) are also configured
   there.
 </Note>
 
-The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
+The canvas on the left shows a live diagram of the Host — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Hosts so you can see what changed.
 
-## Using a Client
+## Using a Host
 
-Once saved, a Client shows up in the picker at the top of every consumer:
+Once saved, a Host shows up in the picker at the top of every consumer:
 
 - **Chat** — Drives the model, system prompt, attached servers, and connection settings for the conversation.
 - **Chatboxes** — Same as Chat, but persisted as a saved chatbox configuration.
-- **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
+- **Evals** — Every test run inside an Eval uses the selected Host, so results are reproducible across teammates.
 
-Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
+Switching the active Host in any of these views swaps the entire configuration in place. There's no separate "apply" step.
 
 ## Server attachments
 
-A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple *which servers are active* from the Client configuration itself, so you can swap the server set without touching the model or prompt settings.
+A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple *which servers are active* from the Host configuration itself, so you can swap the server set without touching the model or prompt settings.
 
 ### Eval suites
 
@@ -135,24 +135,24 @@ When you create an eval suite, you can pick a server attachment in the **Servers
 The **Servers** section on the chatbox Publish tab shows which project servers the chatbox connects to. Click **Edit servers** to open the attachment editor and update the selection.
 
 - If no servers are picked, the chatbox displays an amber warning. Chat sessions started from that chatbox will have no tools until at least one server is selected.
-- The server pick is sticky — editing the client's model or system prompt does not change it.
+- The server pick is sticky — editing the host's model or system prompt does not change it.
 
-## Managing Clients
+## Managing Hosts
 
-From the Clients index page:
+From the Host tab in the Connect view:
 
-- **Duplicate** — Copy a Client when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
-- **Delete** — Removes the Client. The inspector blocks deletion if any chatbox or eval still depends on it; resolve those first, or use force delete if you're sure.
+- **Duplicate** — Copy a Host when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
+- **Delete** — Removes the Host. The inspector blocks deletion if any chatbox or eval still depends on it; resolve those first, or use force delete if you're sure.
 
 <Tip>
-  Keep one Client per host you intend to ship to. Duplicate it to make scoped
+  Keep one Host per real host you intend to ship to. Duplicate it to make scoped
   variants for individual debugging sessions instead of editing the original —
   that way your "known-good" baselines stay stable.
 </Tip>
 
 ## Sharing across a project
 
-Clients are scoped to the project, like servers and views. Every member of a shared project sees the same Client list and any saves sync automatically. This means a teammate can reproduce your exact test conditions by selecting the same Client from the picker — no copy-pasting settings.
+Hosts are scoped to the project, like servers and views. Every member of a shared project sees the same Host list and any saves sync automatically. This means a teammate can reproduce your exact test conditions by selecting the same Host from the picker — no copy-pasting settings.
 
 ## Comparing hosts
 
@@ -160,7 +160,7 @@ The **Compare** view lets you see how multiple host configurations stack up side
 
 ### Opening Compare
 
-Compare is the third tab in the Connect section of the sidebar (`Servers | Client | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
+Compare is the third tab in the Connect section of the sidebar (`Servers | Host | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
 
 ### Deep-linking to a specific selection
 
@@ -178,8 +178,8 @@ In the Eval Playground, the **Hosts** row next to **+ Attach host** includes a *
 
 ## Best practices
 
-- **Mirror your target hosts.** Create one Client per real host you care about (`Claude Desktop`, `ChatGPT`, your own product) and keep its `clientInfo`, capabilities, and sandbox settings aligned with what that host actually advertises.
-- **Test the negative paths.** Build a "minimal" Client with most capabilities disabled and a strict CSP — running your server against it surfaces assumptions that won't hold on more restrictive hosts.
-- **Pin Evals to a Client.** Always select a Client before running an eval suite so the results are reproducible. Evals run against ambient settings drift the moment someone toggles something elsewhere.
-- **Duplicate before debugging.** When you're chasing a bug, duplicate the Client first and tweak the copy. Your baseline stays intact for comparison.
+- **Mirror your target hosts.** Create one Host per real host you care about (`Claude Desktop`, `ChatGPT`, your own product) and keep its `clientInfo`, capabilities, and sandbox settings aligned with what that host actually advertises.
+- **Test the negative paths.** Build a "minimal" Host with most capabilities disabled and a strict CSP — running your server against it surfaces assumptions that won't hold on more restrictive hosts.
+- **Pin Evals to a Host.** Always select a Host before running an eval suite so the results are reproducible. Evals run against ambient settings drift the moment someone toggles something elsewhere.
+- **Duplicate before debugging.** When you're chasing a bug, duplicate the Host first and tweak the copy. Your baseline stays intact for comparison.
 - **Share Compare links.** Toggle down to the hosts you care about and copy the URL — the `?hosts=` parameter preserves your selection for teammates.
