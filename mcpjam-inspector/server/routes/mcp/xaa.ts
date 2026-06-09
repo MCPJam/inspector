@@ -50,10 +50,10 @@ const proxyTokenSchema = z.object({
 interface CreateXaaRouterOptions {
   issuerBasePath: "/api/mcp" | "/api/web";
   httpsOnlyProxy: boolean;
-  // When behind a TLS-terminating proxy (hosted mode), the issuer must be
-  // reconstructed from X-Forwarded-Proto/Host because c.req.url uses the
-  // internal http:// scheme. Leave false for local (no proxy) so the headers
-  // can't be spoofed into advertising https for a plain-http localhost run.
+  // When behind a TLS-terminating proxy (hosted mode), the issuer scheme must
+  // be reconstructed from X-Forwarded-Proto because c.req.url is http://
+  // internally. Leave false for local (no proxy) so the header can't be
+  // spoofed into advertising https for a plain-http localhost run.
   trustForwardedHeaders?: boolean;
   protectedMiddlewares?: MiddlewareHandler[];
 }
@@ -101,10 +101,16 @@ function getIssuerForRequest(
   const parsed = new URL(c.req.url);
 
   if (trustForwardedHeaders) {
+    // Only the scheme is reconstructed from a forwarded header: the edge
+    // terminates TLS so c.req.url is http:// internally. The host already
+    // comes from the validated Host header in c.req.url, so we do NOT trust
+    // X-Forwarded-Host — honoring it would let a client inject an arbitrary
+    // issuer/jwks_uri (and a forged `iss` on the signed ID-JAG). Restrict to
+    // a known scheme so a forwarded value can't switch to another protocol.
     const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
-    const host = c.req.header("x-forwarded-host")?.split(",")[0]?.trim();
-    if (proto) parsed.protocol = proto;
-    if (host) parsed.host = host;
+    if (proto === "https" || proto === "http") {
+      parsed.protocol = proto;
+    }
   }
 
   return getXAAIssuerUrl(`${parsed.origin}${issuerBasePath}`);

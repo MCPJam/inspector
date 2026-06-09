@@ -51,15 +51,17 @@ describe("web xaa routes", () => {
     expect(discoveryBody.issuer).toBe("https://www.mcpjam.com/api/web/xaa");
   });
 
-  it("reconstructs an https issuer from forwarded proxy headers", async () => {
-    // Behind a TLS-terminating proxy the internal request is http://, but
-    // X-Forwarded-Proto/Host carry the public-facing https origin.
+  it("reconstructs an https issuer from X-Forwarded-Proto, ignoring X-Forwarded-Host", async () => {
+    // Behind a TLS-terminating proxy the internal request is http://; only the
+    // scheme is taken from X-Forwarded-Proto. The host comes from the request's
+    // Host header (here app.mcpjam.com), NOT from X-Forwarded-Host, which an
+    // attacker could spoof to forge the issuer/jwks_uri.
     const discoveryResponse = await app.request(
-      "http://internal.local/api/web/xaa/.well-known/openid-configuration",
+      "http://app.mcpjam.com/api/web/xaa/.well-known/openid-configuration",
       {
         headers: {
           "x-forwarded-proto": "https",
-          "x-forwarded-host": "app.mcpjam.com",
+          "x-forwarded-host": "evil.example.com",
         },
       },
     );
@@ -72,16 +74,16 @@ describe("web xaa routes", () => {
     );
   });
 
-  it("signs the ID-JAG iss with the forwarded https origin", async () => {
+  it("signs the ID-JAG iss with the forwarded https scheme and validated host", async () => {
     const headers = {
       "Content-Type": "application/json",
       Authorization: "Bearer workos-token",
       "x-forwarded-proto": "https",
-      "x-forwarded-host": "app.mcpjam.com",
+      "x-forwarded-host": "evil.example.com",
     };
 
     const authenticateResponse = await app.request(
-      "http://internal.local/api/web/xaa/authenticate",
+      "http://app.mcpjam.com/api/web/xaa/authenticate",
       {
         method: "POST",
         headers,
@@ -91,7 +93,7 @@ describe("web xaa routes", () => {
     const authenticateBody = await authenticateResponse.json();
 
     const tokenExchangeResponse = await app.request(
-      "http://internal.local/api/web/xaa/token-exchange",
+      "http://app.mcpjam.com/api/web/xaa/token-exchange",
       {
         method: "POST",
         headers,
