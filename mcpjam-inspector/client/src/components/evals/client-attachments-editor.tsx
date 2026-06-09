@@ -98,8 +98,8 @@ export function ClientAttachmentsEditor({
               location="eval_runner"
               placeholder={
                 attachedIds.size === hosts.length && hosts.length > 0
-                  ? "All clients attached"
-                  : "Choose a client to attach"
+                  ? "All hosts attached"
+                  : "Choose a host to attach"
               }
               includeNone={false}
               disabled={

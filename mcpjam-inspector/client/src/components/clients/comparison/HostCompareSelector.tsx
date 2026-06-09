@@ -175,9 +175,9 @@ function HostCompareOverflowMenu({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[240px] p-0">
         <Command shouldFilter>
-          <CommandInput placeholder="Search clients" />
+          <CommandInput placeholder="Search hosts" />
           <CommandList>
-            <CommandEmpty>No matching clients.</CommandEmpty>
+            <CommandEmpty>No matching hosts.</CommandEmpty>
             {hosts.map((host) => {
               const selected = selectedSet.has(host.hostId);
               const subject = subjectsByHost[host.hostId];

@@ -166,7 +166,7 @@ export function ClientOverlayBar({
     setIsDeleting(true);
     try {
       await deleteHost({ hostId });
-      toast.success(`Client "${host.name}" deleted`);
+      toast.success(`Host "${host.name}" deleted`);
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface a delete-failure toast after the client
       // has already been removed.
@@ -180,7 +180,7 @@ export function ClientOverlayBar({
         // swallow — analytics must not block the success path
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete client";
+      const msg = err instanceof Error ? err.message : "Failed to delete host";
       if (msg.includes("consumer")) {
         toast.error(
           `${msg} — use force delete or remove dependent chatboxes/evals first`,
@@ -237,7 +237,7 @@ export function ClientOverlayBar({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="Client used for preview"
+                aria-label="Host used for preview"
                 data-testid="host-overlay-current"
                 className={cn(
                   "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
@@ -308,7 +308,7 @@ export function ClientOverlayBar({
                 className="group pr-1.5"
               >
                 <Plus className="size-3.5" />
-                <span className="flex-1">Add client</span>
+                <span className="flex-1">Add host</span>
                 <span
                   className="ml-2 flex shrink-0 items-center gap-0.5"
                   onPointerDown={(e) => e.stopPropagation()}
@@ -320,7 +320,7 @@ export function ClientOverlayBar({
                       <button
                         key={id}
                         type="button"
-                        aria-label={`Add ${template.label} client`}
+                        aria-label={`Add ${template.label} host`}
                         title={`Add ${template.label}`}
                         data-testid={`host-overlay-quick-add-${id}`}
                         onClick={(e) => {
@@ -348,7 +348,7 @@ export function ClientOverlayBar({
 
           <button
             type="button"
-            aria-label="Next client"
+            aria-label="Next host"
             data-testid="host-overlay-next"
             disabled={arrowDisabled}
             onClick={() => cycle(1)}

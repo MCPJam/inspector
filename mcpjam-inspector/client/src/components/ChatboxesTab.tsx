@@ -226,10 +226,10 @@ export function ChatboxesTab({
             onClick={() => {
               navigate(buildClientsPath(previewedHostId));
             }}
-            title="Open this client's config in Connect"
+            title="Open this host's config in Connect"
           >
             <Settings2 className="mr-1.5 size-4" />
-            Edit client config
+            Edit host config
           </Button>
           {publishLink ? (
             <Button

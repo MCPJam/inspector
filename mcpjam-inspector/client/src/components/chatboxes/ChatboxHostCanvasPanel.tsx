@@ -13,7 +13,7 @@ import {
 import { buildClientsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
- * Read-only embedding of the Connect "Client" graph for the chatbox's
+ * Read-only embedding of the Connect "Host" graph for the chatbox's
  * bound host. Identity edits live on the Connect tab; clicking anywhere
  * in the canvas routes there via `onRequestEdit`.
  */

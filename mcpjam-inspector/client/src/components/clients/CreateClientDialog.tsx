@@ -97,7 +97,7 @@ export function CreateClientDialog({
         name: trimmed,
         input: { ...seed, serverIds: [] },
       });
-      toast.success(`Client "${trimmed}" created`);
+      toast.success(`Host "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
       // Telemetry is best-effort: a posthog throw must not bubble into the
@@ -115,7 +115,7 @@ export function CreateClientDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create client");
+      toast.error(err instanceof Error ? err.message : "Failed to create host");
     } finally {
       setIsSaving(false);
     }
@@ -125,7 +125,7 @@ export function CreateClientDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New Client</DialogTitle>
+          <DialogTitle>New Host</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
@@ -163,7 +163,7 @@ export function CreateClientDialog({
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
-              placeholder="My Client"
+              placeholder="My Host"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCreate()}

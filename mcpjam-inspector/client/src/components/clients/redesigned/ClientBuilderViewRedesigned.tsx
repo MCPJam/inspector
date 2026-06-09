@@ -436,7 +436,7 @@ export function ClientBuilderViewRedesigned({
               }}
               options={[
                 { value: "servers", label: "Servers" },
-                { value: "host", label: "Client" },
+                { value: "host", label: "Host" },
                 { value: "compare", label: "Compare" },
               ]}
             />

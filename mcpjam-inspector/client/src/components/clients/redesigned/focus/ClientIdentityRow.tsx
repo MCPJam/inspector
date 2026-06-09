@@ -24,8 +24,8 @@ export function ClientIdentityRow({
       <Input
         value={hostDisplayName}
         onChange={(event) => onHostDisplayNameChange(event.target.value)}
-        placeholder="Client name"
-        aria-label="Client name"
+        placeholder="Host name"
+        aria-label="Host name"
         className={cn(
           "h-8 min-w-0 flex-1 text-[13px]",
           hasNameIssue && "border-amber-500",

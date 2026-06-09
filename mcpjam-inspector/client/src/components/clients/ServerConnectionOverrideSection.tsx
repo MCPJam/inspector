@@ -151,7 +151,7 @@ function ServerOverrideRow({
               }
             />
             <Label htmlFor={`override-${server.id}`} className="text-xs">
-              {hasOverride ? "Override active" : "Using client defaults"}
+              {hasOverride ? "Override active" : "Using host defaults"}
             </Label>
           </div>
           {hasOverride && (
@@ -166,7 +166,7 @@ function ServerOverrideRow({
                 <Label className="text-xs">Timeout override (ms)</Label>
                 <Input
                   type="number"
-                  placeholder="Using client default"
+                  placeholder="Using host default"
                   value={override?.requestTimeoutOverride ?? ""}
                   onChange={(e) => {
                     const val = e.target.value;
