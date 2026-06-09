@@ -18,6 +18,7 @@ export type BillingLimitName =
   | "maxServersPerProject"
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth"
+  | "maxEvalIterationsPerMonth"
   | "insightsPerDay";
 
 /** Mirrors backend premiumness gate keys exactly. */
@@ -31,6 +32,7 @@ export type PremiumnessGateKey =
   | "maxServersPerProject"
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth"
+  | "maxEvalIterationsPerMonth"
   | "insightsPerDay";
 
 export type BillingEnforcementState =
@@ -182,19 +184,19 @@ export interface StartOrganizationPlanChangeOptions {
 
 export function useOrganizationBillingStatus(
   organizationId: string | null,
-  options?: UseOrganizationBillingStatusOptions,
+  options?: UseOrganizationBillingStatusOptions
 ): OrganizationBillingStatus | undefined {
   const enabled = options?.enabled ?? true;
 
   return useQuery(
     "billing:getOrganizationBillingStatus" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip",
+    enabled && organizationId ? ({ organizationId } as any) : "skip"
   ) as OrganizationBillingStatus | undefined;
 }
 
 export function useOrganizationBilling(
   organizationId: string | null,
-  options?: UseOrganizationBillingOptions,
+  options?: UseOrganizationBillingOptions
 ) {
   const projectId = options?.projectId ?? null;
   const enabled = options?.enabled ?? true;
@@ -207,41 +209,41 @@ export function useOrganizationBilling(
 
   const entitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
   ) as OrganizationEntitlements | undefined;
 
   const organizationPremiumness = useQuery(
     "billing:getOrganizationPremiumness" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
   ) as PremiumnessState | undefined;
 
   const projectPremiumness = useQuery(
     "billing:getProjectPremiumness" as any,
-    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip",
+    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip"
   ) as PremiumnessState | undefined;
 
   const planCatalog = useQuery(
     "billing:getPlanCatalog" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
   ) as PlanCatalog | undefined;
 
   const startPlanChangeAction = useAction(
-    "billing:startOrganizationPlanChange" as any,
+    "billing:startOrganizationPlanChange" as any
   );
   const createPortal = useAction(
-    "billing:createOrganizationBillingPortalSession" as any,
+    "billing:createOrganizationBillingPortalSession" as any
   );
   const createCancellationPortal = useAction(
-    "billing:createOrganizationBillingPortalCancellationSession" as any,
+    "billing:createOrganizationBillingPortalCancellationSession" as any
   );
   const createIntervalChangePortal = useAction(
-    "billing:createOrganizationBillingPortalIntervalChangeSession" as any,
+    "billing:createOrganizationBillingPortalIntervalChangeSession" as any
   );
   const cancelScheduledBillingChangeAction = useAction(
-    "billing:cancelOrganizationScheduledBillingChange" as any,
+    "billing:cancelOrganizationScheduledBillingChange" as any
   );
   const selectFreeAfterTrialMutation = useMutation(
-    "billing:selectOrganizationFreePlanAfterTrial" as any,
+    "billing:selectOrganizationFreePlanAfterTrial" as any
   );
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
@@ -262,7 +264,7 @@ export function useOrganizationBilling(
       returnUrl: string,
       tier: "team" = "team",
       billingInterval: BillingInterval = "monthly",
-      options: StartOrganizationPlanChangeOptions = {},
+      options: StartOrganizationPlanChangeOptions = {}
     ): Promise<OrganizationPlanChangeResult> => {
       if (!organizationId) throw new Error("Organization is required");
       setIsStartingPlanChange(true);
@@ -287,7 +289,7 @@ export function useOrganizationBilling(
         setPendingPlanChangeTarget(null);
       }
     },
-    [organizationId, startPlanChangeAction],
+    [organizationId, startPlanChangeAction]
   );
 
   const openPortal = useCallback(
@@ -310,7 +312,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createPortal, organizationId],
+    [createPortal, organizationId]
   );
 
   const openIntervalChangePortal = useCallback(
@@ -336,7 +338,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createIntervalChangePortal, organizationId],
+    [createIntervalChangePortal, organizationId]
   );
 
   const openCancellationPortal = useCallback(
@@ -361,7 +363,7 @@ export function useOrganizationBilling(
         setIsOpeningPortal(false);
       }
     },
-    [createCancellationPortal, organizationId],
+    [createCancellationPortal, organizationId]
   );
 
   const cancelScheduledBillingChange = useCallback(async () => {

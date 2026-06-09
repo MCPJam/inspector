@@ -187,6 +187,7 @@ export function SuiteIterationsView({
   onContinueInChat,
   projectServers,
   generateTestCasesDisabledReason,
+  evalRunsDisabledReason,
   isDirectGuest = false,
   ensureServersReady,
 }: {
@@ -219,6 +220,7 @@ export function SuiteIterationsView({
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
+  evalRunsDisabledReason?: string | null;
   isGeneratingTestCases?: boolean;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
@@ -418,12 +420,7 @@ export function SuiteIterationsView({
       iterations: caseGroupsForSelectedRun,
       runTrendData,
     });
-  }, [
-    viewMode,
-    selectedRunDetails,
-    caseGroupsForSelectedRun,
-    runTrendData,
-  ]);
+  }, [viewMode, selectedRunDetails, caseGroupsForSelectedRun, runTrendData]);
 
   // Derive selectedIterationId from route
   const selectedIterationId =
@@ -451,17 +448,15 @@ export function SuiteIterationsView({
   const iterationsForSelectedRunTestCase = useMemo(() => {
     if (!selectedRunId || !selectedRunTestCaseId) return [];
     return caseGroupsForSelectedRun.filter(
-      (iteration) => iteration.testCaseId === selectedRunTestCaseId,
+      (iteration) => iteration.testCaseId === selectedRunTestCaseId
     );
-  }, [
-    selectedRunId,
-    selectedRunTestCaseId,
-    caseGroupsForSelectedRun,
-  ]);
+  }, [selectedRunId, selectedRunTestCaseId, caseGroupsForSelectedRun]);
 
   const selectedRunTestCase = useMemo(() => {
     if (!selectedRunTestCaseId) return null;
-    return cases.find((testCase) => testCase._id === selectedRunTestCaseId) ?? null;
+    return (
+      cases.find((testCase) => testCase._id === selectedRunTestCaseId) ?? null
+    );
   }, [cases, selectedRunTestCaseId]);
 
   const handleSelectIteration = (iterationId: string) => {
@@ -510,11 +505,11 @@ export function SuiteIterationsView({
   // fires exactly one write.
   const persistedDefaultPredicatesKey = useMemo(
     () => JSON.stringify(suite.defaultPredicates ?? []),
-    [suite.defaultPredicates],
+    [suite.defaultPredicates]
   );
   const draftDefaultPredicatesKey = useMemo(
     () => JSON.stringify(draftDefaultPredicates),
-    [draftDefaultPredicates],
+    [draftDefaultPredicates]
   );
   const defaultChecksInFlightRef = useRef<Promise<unknown> | null>(null);
   useEffect(() => {
@@ -545,9 +540,7 @@ export function SuiteIterationsView({
           await promise;
           toast.success("Default checks updated");
         } catch (error) {
-          toast.error(
-            getBillingErrorMessage(error, "Failed to update suite"),
-          );
+          toast.error(getBillingErrorMessage(error, "Failed to update suite"));
           console.error("Failed to update default checks:", error);
         } finally {
           if (defaultChecksInFlightRef.current === promise) {
@@ -751,6 +744,7 @@ export function SuiteIterationsView({
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
+            evalRunsDisabledReason={evalRunsDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
@@ -887,8 +881,11 @@ export function SuiteIterationsView({
                     onRunTestCase={onRunTestCaseWithOverride}
                     runningTestCaseId={runningTestCaseId}
                     blockTestCaseRuns={Boolean(
-                      rerunningSuiteId || replayingRunId
+                      rerunningSuiteId ||
+                        replayingRunId ||
+                        evalRunsDisabledReason
                     )}
+                    runTestCaseDisabledReason={evalRunsDisabledReason}
                     connectedServerNames={connectedServerNames}
                     onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                     testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
@@ -995,9 +992,7 @@ export function SuiteIterationsView({
                         // For multi-host suites the matrix is the "runs" mode;
                         // remap cross-host so TestCasesOverview's by-host gate
                         // (runsViewMode === "runs") still fires for deep links.
-                        runsViewMode === "cross-host"
-                          ? "runs"
-                          : runsViewMode
+                        runsViewMode === "cross-host" ? "runs" : runsViewMode
                       }
                       onViewModeChange={(value) =>
                         navigation.toSuiteOverview(suite._id, value)
@@ -1027,8 +1022,11 @@ export function SuiteIterationsView({
                       onRunTestCase={onRunTestCaseWithOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
-                        rerunningSuiteId || replayingRunId
+                        rerunningSuiteId ||
+                          replayingRunId ||
+                          evalRunsDisabledReason
                       )}
+                      runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
                     />
                   )}
@@ -1104,7 +1102,7 @@ export function SuiteIterationsView({
                               route.suiteId,
                               route.runId,
                               undefined,
-                              { insightsFocus: true },
+                              { insightsFocus: true }
                             )
                         : undefined
                     }
@@ -1114,7 +1112,7 @@ export function SuiteIterationsView({
                       Boolean(
                         route.insightsFocus &&
                           !route.iteration &&
-                          !route.testCaseId,
+                          !route.testCaseId
                       )
                     }
                     onEditTestCase={onEditTestCase}
@@ -1154,7 +1152,7 @@ export function SuiteIterationsView({
                       setDefaultMinimumPassRate(rate);
                       localStorage.setItem(
                         `suite-${suite._id}-criteria-rate`,
-                        String(rate),
+                        String(rate)
                       );
                       try {
                         await updateSuite({
@@ -1166,12 +1164,12 @@ export function SuiteIterationsView({
                         toast.error(
                           getBillingErrorMessage(
                             error,
-                            "Failed to update suite",
-                          ),
+                            "Failed to update suite"
+                          )
                         );
                         console.error("Failed to update suite:", error);
                         setDefaultMinimumPassRate(
-                          suite.defaultPassCriteria?.minimumPassRate ?? 100,
+                          suite.defaultPassCriteria?.minimumPassRate ?? 100
                         );
                       }
                     }}
@@ -1197,11 +1195,11 @@ export function SuiteIterationsView({
                       toast.success("Default validators updated");
                     } catch (error) {
                       toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite"),
+                        getBillingErrorMessage(error, "Failed to update suite")
                       );
                       console.error(
                         "Failed to update default validators:",
-                        error,
+                        error
                       );
                     }
                   }}
@@ -1255,7 +1253,7 @@ export function SuiteIterationsView({
                       toast.success("Judges updated");
                     } catch (error) {
                       toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite"),
+                        getBillingErrorMessage(error, "Failed to update suite")
                       );
                       console.error("Failed to update judges:", error);
                     }

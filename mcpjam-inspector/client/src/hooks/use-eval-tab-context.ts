@@ -36,9 +36,9 @@ export function useEvalTabContext({
       new Set(
         Object.entries(appState.servers)
           .filter(([, server]) => server.connectionStatus === "connected")
-          .map(([name]) => name),
+          .map(([name]) => name)
       ),
-    [appState.servers],
+    [appState.servers]
   );
 
   // Suite visibility already implies suite access; let the backend mutation
@@ -61,6 +61,7 @@ export function useEvalTabContext({
   }, [members]);
 
   return {
+    organizationId,
     connectedServerNames,
     userMap,
     canDeleteSuite,

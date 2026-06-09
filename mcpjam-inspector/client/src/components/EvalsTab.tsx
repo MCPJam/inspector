@@ -26,8 +26,13 @@ import { useProjectServers } from "@/hooks/useViews";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
+import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
-import { aggregateSuite, formatRunId, getEffectiveSuiteServers } from "./evals/helpers";
+import {
+  aggregateSuite,
+  formatRunId,
+  getEffectiveSuiteServers,
+} from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
   createPlaygroundSuiteNavigation,
@@ -40,7 +45,11 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { EvalsSuiteListSidebar } from "./evals/evals-suite-list-sidebar";
-import { CreateSuiteDialog, type CreateSuitePayload } from "./evals/create-suite-dialog";
+import {
+  CreateSuiteDialog,
+  type CreateSuitePayload,
+} from "./evals/create-suite-dialog";
+import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -51,7 +60,7 @@ interface EvalsTabProps {
   projectId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   ensureServersReady?: (
-    serverNames: string[],
+    serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
   handleConnect?: (config: ServerFormData) => void;
 }
@@ -124,6 +133,7 @@ function EvalsTabContent({
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const {
+    organizationId,
     connectedServerNames,
     userMap,
     canDeleteSuite,
@@ -134,6 +144,14 @@ function EvalsTabContent({
     projectId: projectId ?? null,
     isDirectGuest,
   });
+  const { quota: evalIterationQuota } = useEvalIterationQuota({
+    organizationId,
+    enabled: Boolean(organizationId),
+  });
+  const evalRunsDisabledReason = useMemo(
+    () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
+    [evalIterationQuota]
+  );
   const { servers: projectServers = [] } = useProjectServers({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -141,7 +159,7 @@ function EvalsTabContent({
   const mutations = useEvalMutations({ isDirectGuest });
   const convex = useConvex();
   const createServerAttachmentMutation = useMutation(
-    "serverAttachments:createServerAttachment" as any,
+    "serverAttachments:createServerAttachment" as any
   ) as unknown as (args: {
     projectId: string;
     name: string;
@@ -172,8 +190,10 @@ function EvalsTabContent({
 
   const visibleSuites = useMemo(
     () =>
-      overviewQueries.sortedSuites.filter((entry) => entry.suite.source !== "sdk"),
-    [overviewQueries.sortedSuites],
+      overviewQueries.sortedSuites.filter(
+        (entry) => entry.suite.source !== "sdk"
+      ),
+    [overviewQueries.sortedSuites]
   );
 
   const selectedSuiteEntry = useMemo(() => {
@@ -188,9 +208,9 @@ function EvalsTabContent({
   const latestRunBySuiteId = useMemo(
     () =>
       new Map(
-        visibleSuites.map((entry) => [entry.suite._id, entry.latestRun ?? null]),
+        visibleSuites.map((entry) => [entry.suite._id, entry.latestRun ?? null])
       ),
-    [visibleSuites],
+    [visibleSuites]
   );
 
   const handlers = useEvalHandlers({
@@ -213,6 +233,34 @@ function EvalsTabContent({
     deletingRunId,
     directDeleteTestCase,
   } = handlers;
+
+  const guardEvalIterationQuota = useCallback(() => {
+    if (!evalRunsDisabledReason) {
+      return true;
+    }
+    toast.error(evalRunsDisabledReason);
+    return false;
+  }, [evalRunsDisabledReason]);
+
+  const handleRerunWithQuota = useCallback(
+    (...args: Parameters<typeof handlers.handleRerun>) => {
+      if (!guardEvalIterationQuota()) {
+        return;
+      }
+      return handlers.handleRerun(...args);
+    },
+    [guardEvalIterationQuota, handlers]
+  );
+
+  const handleRunTestCaseWithQuota = useCallback(
+    (...args: Parameters<typeof handlers.handleRunTestCase>) => {
+      if (!guardEvalIterationQuota()) {
+        return Promise.resolve(null);
+      }
+      return handlers.handleRunTestCase(...args);
+    },
+    [guardEvalIterationQuota, handlers]
+  );
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(projectId),
@@ -255,7 +303,12 @@ function EvalsTabContent({
     if (!selectedSuiteEntry) {
       navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
     }
-  }, [overviewQueries.isOverviewLoading, route.type, selectedSuiteEntry, selectedSuiteId]);
+  }, [
+    overviewQueries.isOverviewLoading,
+    route.type,
+    selectedSuiteEntry,
+    selectedSuiteId,
+  ]);
 
   // Wait for auth to settle before firing view events. The parent
   // ErrorBoundary keys on (projectId, isAuthenticated), so projectId
@@ -294,7 +347,7 @@ function EvalsTabContent({
     const match = visibleSuites.find(
       (entry) =>
         isQuickstartSuite(entry.suite) ||
-        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME,
+        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME
     );
     return match?.suite._id ?? null;
   }, [visibleSuites]);
@@ -336,14 +389,11 @@ function EvalsTabContent({
 
   const showQuickstart = Boolean(handleConnect);
 
-  const handleCreateDialogChange = useCallback(
-    (open: boolean) => {
-      if (!open) {
-        navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
-      }
-    },
-    [],
-  );
+  const handleCreateDialogChange = useCallback((open: boolean) => {
+    if (!open) {
+      navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+    }
+  }, []);
 
   const handleCreateSuite = useCallback(
     async (payload: CreateSuitePayload) => {
@@ -382,9 +432,8 @@ function EvalsTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId],
+    [mutations.createTestSuiteMutation, projectId]
   );
-
 
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
@@ -425,7 +474,7 @@ function EvalsTabContent({
     }
 
     const missingServers = suiteServers.filter(
-      (serverName) => !connectedServerNames.has(serverName),
+      (serverName) => !connectedServerNames.has(serverName)
     );
     if (missingServers.length > 0) {
       if (ensureServersReady) {
@@ -437,7 +486,9 @@ function EvalsTabContent({
       }
       return {
         canGenerate: false,
-        disabledReason: `Connect ${missingServers.join(", ")} to generate cases for this suite.`,
+        disabledReason: `Connect ${missingServers.join(
+          ", "
+        )} to generate cases for this suite.`,
       };
     }
 
@@ -486,15 +537,13 @@ function EvalsTabContent({
         );
       }
     },
-    [directDeleteTestCase, selectedSuiteId, selectedTestId],
+    [directDeleteTestCase, selectedSuiteId, selectedTestId]
   );
 
   const handleDeleteSuitesBatch = useCallback(
     async (suiteIds: string[]) => {
       const settledDeletes = await Promise.allSettled(
-        suiteIds.map((suiteId) =>
-          mutations.deleteSuiteMutation({ suiteId }),
-        ),
+        suiteIds.map((suiteId) => mutations.deleteSuiteMutation({ suiteId }))
       );
       const succeededIds = new Set<string>();
       settledDeletes.forEach((result, i) => {
@@ -504,7 +553,7 @@ function EvalsTabContent({
       });
       const failedDeletes = settledDeletes.filter(
         (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
+          result.status === "rejected"
       );
 
       if (failedDeletes.length > 0) {
@@ -513,21 +562,21 @@ function EvalsTabContent({
           toast.error(
             `Deleted ${succeededIds.size} suite${
               succeededIds.size === 1 ? "" : "s"
-            }; ${failedDeletes.length} failed.`,
+            }; ${failedDeletes.length} failed.`
           );
         } else {
           toast.error(
             getBillingErrorMessage(
               failedDeletes[0]?.reason,
-              "Failed to delete suites",
-            ),
+              "Failed to delete suites"
+            )
           );
         }
       } else {
         toast.success(
           suiteIds.length === 1
             ? "Suite deleted"
-            : `Deleted ${suiteIds.length} suites`,
+            : `Deleted ${suiteIds.length} suites`
         );
       }
 
@@ -535,7 +584,7 @@ function EvalsTabContent({
         navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
       }
     },
-    [mutations.deleteSuiteMutation, selectedSuiteId],
+    [mutations.deleteSuiteMutation, selectedSuiteId]
   );
 
   const hasDetailRoute =
@@ -563,9 +612,7 @@ function EvalsTabContent({
             <BreadcrumbLink asChild>
               <button
                 type="button"
-                onClick={() =>
-                  navigatePlaygroundEvalsRoute({ type: "list" })
-                }
+                onClick={() => navigatePlaygroundEvalsRoute({ type: "list" })}
                 className="inline-flex border-0 bg-transparent p-0 font-medium"
               >
                 Suites
@@ -668,7 +715,7 @@ function EvalsTabContent({
         <div className="flex h-full min-h-0 flex-col">
           {breadcrumb ? (
             <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
                 {breadcrumb}
               </div>
             </div>
@@ -701,6 +748,7 @@ function EvalsTabContent({
           onDeleteSuitesBatch={handleDeleteSuitesBatch}
           deleteInProgress={Boolean(handlers.deletingSuiteId)}
           onRunAll={handlers.handleRerun}
+          runAllDisabledReason={evalRunsDisabledReason}
           onEditSuite={playgroundNavigation.toSuiteEdit}
           rerunningSuiteId={handlers.rerunningSuiteId}
           replayingRunId={handlers.replayingRunId}
@@ -740,7 +788,7 @@ function EvalsTabContent({
           canGenerateTestCases={generateState.canGenerate}
           generateTestCasesDisabledReason={generateState.disabledReason}
           isGeneratingTestCases={handlers.isGeneratingTests}
-          onRerun={handlers.handleRerun}
+          onRerun={handleRerunWithQuota}
           onCancelRun={handlers.handleCancelRun}
           onDelete={handlers.handleDelete}
           onDeleteRun={handlers.handleDeleteRun}
@@ -759,16 +807,17 @@ function EvalsTabContent({
           onContinueInChat={onContinueInChat}
           canDeleteRuns={canDeleteRuns}
           hideRunActions
+          evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
             void (async () => {
-              const data = await handlers.handleRunTestCase(
+              const data = await handleRunTestCaseWithQuota(
                 selectedSuite,
                 testCase,
                 {
                   location: "test_cases_overview",
                   iterationOverride: opts?.iterationOverride,
-                },
+                }
               );
               const firstIterationId =
                 data?.iteration?._id ??
@@ -781,7 +830,7 @@ function EvalsTabContent({
                   {
                     openCompare: true,
                     iteration: firstIterationId,
-                  },
+                  }
                 );
               }
             })();

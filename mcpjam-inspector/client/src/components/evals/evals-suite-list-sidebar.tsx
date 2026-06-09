@@ -86,6 +86,7 @@ type EvalsSuiteListSidebarProps = {
   rerunningSuiteId?: string | null;
   replayingRunId?: string | null;
   runningTestCaseId?: string | null;
+  runAllDisabledReason?: string | null;
 };
 
 const SUITE_ROW_GRID =
@@ -106,10 +107,7 @@ function suiteRowStatusLabel(entry: EvalSuiteOverviewEntry): string {
   if (!latestRun) {
     return "—";
   }
-  if (
-    latestRun.status === "running" ||
-    latestRun.status === "pending"
-  ) {
+  if (latestRun.status === "running" || latestRun.status === "pending") {
     return "Run";
   }
   const counts = getSuitePassFailCounts(entry);
@@ -287,7 +285,7 @@ function SuiteTableHeader({
   const gridClass = batchDeleteEnabled
     ? cn(
         SUITE_ROW_GRID,
-        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]",
+        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]"
       )
     : SUITE_ROW_GRID;
 
@@ -328,7 +326,7 @@ function SuiteTableHeader({
               size="sm"
               className={cn(
                 "h-6 shrink-0 px-2 text-[11px]",
-                EVAL_DESTRUCTIVE_BUTTON_CLASS,
+                EVAL_DESTRUCTIVE_BUTTON_CLASS
               )}
               onClick={onDeleteSelected}
               disabled={selectionBlocked}
@@ -363,6 +361,7 @@ function SuiteOverviewRow({
   onRunAll,
   onEditSuite,
   runAllBlocked,
+  runAllDisabledReason,
   isThisSuiteRerunning,
 }: {
   entry: EvalSuiteOverviewEntry;
@@ -375,17 +374,17 @@ function SuiteOverviewRow({
   onRunAll?: (suite: EvalSuite) => void | Promise<void>;
   onEditSuite?: (suiteId: string) => void;
   runAllBlocked: boolean;
+  runAllDisabledReason?: string | null;
   isThisSuiteRerunning: boolean;
 }) {
   const suite = entry.suite;
-  const suiteTitle =
-    stripTimestampSuffix(suite.name || "") || "Untitled suite";
+  const suiteTitle = stripTimestampSuffix(suite.name || "") || "Untitled suite";
   const servers = getEffectiveSuiteServers(suite);
   const rowTitle = evalOverviewEntryOutcomeTitle(entry);
   const statusLabel = suiteRowStatusLabel(entry);
   const latestRun = entry.latestRun;
   const lastRunTimestamp = latestRun
-    ? (latestRun.completedAt ?? latestRun.createdAt)
+    ? latestRun.completedAt ?? latestRun.createdAt
     : undefined;
   const statusStripeClass = evalOverviewEntryMiniBarClass(entry);
 
@@ -399,7 +398,7 @@ function SuiteOverviewRow({
   const gridClass = batchDeleteEnabled
     ? cn(
         SUITE_ROW_GRID,
-        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]",
+        "[grid-template-columns:1.25rem_minmax(0,1fr)_4rem_5.5rem_4.25rem]"
       )
     : SUITE_ROW_GRID;
 
@@ -410,13 +409,13 @@ function SuiteOverviewRow({
         "group/row relative overflow-hidden rounded-md border transition-colors",
         isSelected
           ? "border-primary/35 bg-primary/[0.05]"
-          : "border-transparent hover:border-border/60 hover:bg-muted/25",
+          : "border-transparent hover:border-border/60 hover:bg-muted/25"
       )}
     >
       <div
         className={cn(
           "absolute bottom-0 left-0 top-0 w-0.5",
-          statusStripeClass,
+          statusStripeClass
         )}
         aria-hidden
       />
@@ -436,7 +435,9 @@ function SuiteOverviewRow({
         <button
           type="button"
           aria-label={`Select suite: ${suiteTitle}`}
-          title={`${rowTitle}\n${servers.length > 0 ? servers.join(", ") : "No servers configured"}`}
+          title={`${rowTitle}\n${
+            servers.length > 0 ? servers.join(", ") : "No servers configured"
+          }`}
           className="flex min-h-8 min-w-0 cursor-pointer items-center gap-2 self-center text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1"
           onClick={() => onSelectSuite(suite._id)}
         >
@@ -454,7 +455,7 @@ function SuiteOverviewRow({
             METRIC_CELL_CLASS,
             entry.passRateTrend && entry.passRateTrend.length >= 3
               ? "min-h-8 flex-col items-end justify-center gap-0.5 text-right"
-              : "justify-end text-right",
+              : "justify-end text-right"
           )}
           onClick={() => onSelectSuite(suite._id)}
         >
@@ -475,12 +476,7 @@ function SuiteOverviewRow({
           {statusLabel === "—" ? (
             <MetricPlaceholder />
           ) : (
-            <span
-              className={cn(
-                METRIC_EMPTY_CLASS,
-                "font-mono",
-              )}
-            >
+            <span className={cn(METRIC_EMPTY_CLASS, "font-mono")}>
               {statusLabel}
             </span>
           )}
@@ -531,6 +527,7 @@ function SuiteOverviewRow({
             }
             aria-busy={onRunAll ? isThisSuiteRerunning : undefined}
             disabled={onRunAll ? runAllBlocked : false}
+            title={runAllDisabledReason ?? undefined}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -573,11 +570,12 @@ export function EvalsSuiteListSidebar({
   rerunningSuiteId = null,
   replayingRunId = null,
   runningTestCaseId = null,
+  runAllDisabledReason = null,
 }: EvalsSuiteListSidebarProps) {
   useTick();
 
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set()
   );
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -600,7 +598,7 @@ export function EvalsSuiteListSidebar({
     if (suiteSearch.trim()) {
       const query = suiteSearch.trim().toLowerCase();
       list = list.filter((entry) =>
-        (entry.suite.name || "").toLowerCase().includes(query),
+        (entry.suite.name || "").toLowerCase().includes(query)
       );
     }
 
@@ -666,7 +664,10 @@ export function EvalsSuiteListSidebar({
   }, [onDeleteSuitesBatch, selectedForBatch]);
 
   const runAllBlocked = Boolean(
-    rerunningSuiteId || replayingRunId != null || runningTestCaseId != null,
+    rerunningSuiteId ||
+      replayingRunId != null ||
+      runningTestCaseId != null ||
+      runAllDisabledReason
   );
 
   return (
@@ -726,7 +727,7 @@ export function EvalsSuiteListSidebar({
               allVisibleSelected={
                 visibleSuites.length > 0 &&
                 visibleSuites.every((entry) =>
-                  selectedForBatch.has(entry.suite._id),
+                  selectedForBatch.has(entry.suite._id)
                 )
               }
               visibleCount={visibleSuites.length}
@@ -752,8 +753,7 @@ export function EvalsSuiteListSidebar({
                   {visibleSuites.map((entry) => {
                     const suite = entry.suite;
                     const isSelected = selectedSuiteId === suite._id;
-                    const isThisSuiteRerunning =
-                      rerunningSuiteId === suite._id;
+                    const isThisSuiteRerunning = rerunningSuiteId === suite._id;
 
                     return (
                       <SuiteOverviewRow
@@ -768,6 +768,7 @@ export function EvalsSuiteListSidebar({
                         onRunAll={onRunAll}
                         onEditSuite={onEditSuite}
                         runAllBlocked={runAllBlocked}
+                        runAllDisabledReason={runAllDisabledReason}
                         isThisSuiteRerunning={isThisSuiteRerunning}
                       />
                     );
