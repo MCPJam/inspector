@@ -24,6 +24,14 @@ export interface RequestLocalMap {
    * key is orphaned); `undefined` means "not looked up yet".
    */
   workosApiKeyBinding: { mcpjamOrganizationId: string } | null;
+  /**
+   * Set once the per-key WorkOS rate-limit token has been debited for this
+   * request. The limit is per user-visible request, not per middleware
+   * invocation — this guards against double counting if `bearerAuthMiddleware`
+   * ever runs on both a parent and a child router (the same scenario the
+   * caches above defend against).
+   */
+  workosRateLimitConsumed: boolean;
 }
 
 export function getRequestLocal<K extends keyof RequestLocalMap>(

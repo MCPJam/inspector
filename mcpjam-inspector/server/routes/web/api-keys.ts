@@ -43,15 +43,17 @@ import {
 
 const apiKeys = new Hono();
 
-// `sessionAuthMiddleware` bypasses `/api/web/*` entirely (session-auth.ts:103),
-// so this sub-router must explicitly require a bearer.
-apiKeys.use("*", bearerAuthMiddleware);
-
-// Privilege isolation: a WorkOS API key authenticates as the owning user
-// but it must NOT be able to mint or revoke other API keys (would create
-// a privilege loop). Session-only here.
+// Privilege isolation: a WorkOS API key authenticates as the owning user but
+// it must NOT mint or revoke other API keys (would create a privilege loop).
+// Reject `sk_…` BEFORE bearerAuthMiddleware validates it — `sk_` is the same
+// unambiguous discriminator the middleware uses (bearer-auth.ts), so this is
+// equivalent to a post-validation `authMethod` check while skipping a ~200ms
+// WorkOS validate plus Convex identity/binding lookups on a request that always
+// ends in 403. (Bonus: invalid/revoked keys get the same 403, not a 401, so the
+// endpoint can't be used to probe key validity.)
 apiKeys.use("*", async (c, next) => {
-  if (c.get("authMethod") === "workos_api_key") {
+  const auth = c.req.header("authorization") ?? "";
+  if (auth.startsWith("Bearer sk_")) {
     return c.json(
       {
         code: ErrorCode.FORBIDDEN,
@@ -62,6 +64,10 @@ apiKeys.use("*", async (c, next) => {
   }
   return next();
 });
+
+// `sessionAuthMiddleware` bypasses `/api/web/*` entirely (session-auth.ts:103),
+// so this sub-router must explicitly require a bearer.
+apiKeys.use("*", bearerAuthMiddleware);
 
 const WORKOS_BASE_URL = "https://api.workos.com";
 

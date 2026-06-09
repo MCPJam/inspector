@@ -152,18 +152,23 @@ export async function bearerAuthMiddleware(
     const workosKeyId = validation.apiKey.id;
     const workosUserId = validation.apiKey.owner.id;
 
-    // Per-key rate limit. Reject BEFORE doing the Convex user lookup
-    // so a flood can't tie up the database either.
-    const waitMs = consumeWorkOSToken(workosKeyId);
-    if (waitMs !== null) {
-      return c.json(
-        {
-          code: ErrorCode.RATE_LIMITED,
-          message: "API key rate limit exceeded. Slow down and retry.",
-        },
-        429,
-        { "Retry-After": String(Math.ceil(waitMs / 1000)) },
-      );
+    // Per-key rate limit. Reject BEFORE doing the Convex user lookup so a
+    // flood can't tie up the database either. Debit once per request (memoized
+    // like the validation/binding lookups above) so the limit isn't double
+    // counted if the middleware ever runs on both a parent and child router.
+    if (!getRequestLocal(c, "workosRateLimitConsumed")) {
+      const waitMs = consumeWorkOSToken(workosKeyId);
+      if (waitMs !== null) {
+        return c.json(
+          {
+            code: ErrorCode.RATE_LIMITED,
+            message: "API key rate limit exceeded. Slow down and retry.",
+          },
+          429,
+          { "Retry-After": String(Math.ceil(waitMs / 1000)) },
+        );
+      }
+      setRequestLocal(c, "workosRateLimitConsumed", true);
     }
 
     let mcpjamUser;
