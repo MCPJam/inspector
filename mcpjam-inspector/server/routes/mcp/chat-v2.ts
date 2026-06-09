@@ -806,6 +806,25 @@ chatV2.post("/", async (c) => {
       });
     }
 
+    // Personal BYOK is not a supported path. Provider keys are an
+    // organization-level concept: hosted clients hit /api/web/chat-v2
+    // with a projectId and no client apiKey, and the org BYOK branch
+    // above (~line 684) resolves the key from Convex. Reject any inbound
+    // request that tries to bypass that on a Convex-attached deployment
+    // by hand-crafting an apiKey-bearing call to this route. Local OSS
+    // (no CONVEX_HTTP_URL) keeps the legacy user-apiKey path so existing
+    // localStorage keys still work until they're migrated out.
+    if (
+      process.env.CONVEX_HTTP_URL &&
+      apiKey &&
+      !body.projectId
+    ) {
+      return c.json(
+        { error: "BYOK requires sign-in", code: "byok_requires_signin" },
+        401
+      );
+    }
+
     // User-provided models: direct streamText
     const llmModel = createLlmModel(
       modelDefinition,
