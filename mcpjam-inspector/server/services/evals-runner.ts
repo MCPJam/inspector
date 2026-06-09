@@ -39,7 +39,6 @@ import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
   McpAppBrowserHarness,
   DEFAULT_VIEWPORT,
-  type WidgetRenderObservation,
 } from "../utils/mcp-app-browser-harness";
 import {
   buildComputerUseTools,
@@ -86,8 +85,13 @@ import type {
   EvalTraceSpan,
   PromptTraceSummary,
   EvalTraceWidgetSnapshot,
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
-import { appendDedupedModelMessages } from "@/shared/eval-trace";
+import {
+  appendDedupedModelMessages,
+  isEvalTraceBrowserStepNote,
+} from "@/shared/eval-trace";
 import {
   deriveLegacyPromptFields,
   resolvePromptTurns,
@@ -1066,7 +1070,14 @@ const runIterationWithAiSdk = async ({
   const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
     current: null,
   };
-  const widgetRenderObservations: WidgetRenderObservation[] = [];
+  const widgetRenderObservations: RunnerWidgetRenderObservation[] = [];
+  // PR 6b: Computer Use interaction steps, collected via the harness `onAction`
+  // callback wired into buildComputerUseTools below. This local AI-SDK path is
+  // the only place Computer Use runs, so it is the only place the array is
+  // non-empty (hosted + streaming paths land in PR 9/PR 10).
+  // `stepIndexByToolCallId` stamps a monotonic per-widget step ordinal.
+  const browserInteractionSteps: RunnerBrowserInteractionStep[] = [];
+  const stepIndexByToolCallId = new Map<string, number>();
   const ensureWidgetHarness = (): McpAppBrowserHarness => {
     if (!widgetHarnessRef.current) {
       widgetHarnessRef.current = new McpAppBrowserHarness({
@@ -1128,6 +1139,44 @@ const runIterationWithAiSdk = async ({
           getActiveToolCallId: () =>
             widgetHarnessRef.current?.getMountedWidgetId() ?? null,
           viewport: DEFAULT_VIEWPORT,
+          // PR 6b: collect one browserInteractionStep per executeAction. The
+          // screenshot stays base64 here; finalizeEvalIteration uploads it once
+          // for both the W2 and W1 persistence paths.
+          onAction: (result, { toolCallId }) => {
+            const stepIndex = (stepIndexByToolCallId.get(toolCallId) ?? -1) + 1;
+            stepIndexByToolCallId.set(toolCallId, stepIndex);
+            // The harness types `note` as an open string; the backend union is
+            // closed and rejects the whole turn on an unknown literal. Narrow
+            // through the guard — keep the step, drop an unrecognized note.
+            let note: RunnerBrowserInteractionStep["note"];
+            if (result.note !== undefined) {
+              if (isEvalTraceBrowserStepNote(result.note)) {
+                note = result.note;
+              } else {
+                logger.warn("[evals] dropping unknown browser-step note", {
+                  note: result.note,
+                  toolCallId,
+                });
+              }
+            }
+            browserInteractionSteps.push({
+              toolCallId,
+              stepIndex,
+              promptIndex: activePromptIndex,
+              action: result.action.action,
+              coordinateX: result.action.coordinate?.[0],
+              coordinateY: result.action.coordinate?.[1],
+              text: result.action.text,
+              scrollDirection: result.action.scrollDirection,
+              scrollAmount: result.action.scrollAmount,
+              duration: result.action.duration,
+              screenshotBase64: result.screenshotBase64,
+              widgetToolCalls: result.widgetToolCalls,
+              elapsedMs: result.elapsedMs,
+              ...(note ? { note } : {}),
+              ts: Date.now(),
+            });
+          },
         })
       : {};
 
@@ -1317,7 +1366,12 @@ const runIterationWithAiSdk = async ({
                 harness: ensureWidgetHarness(),
                 keepMounted: computerUseVersion !== null,
               });
-              widgetRenderObservations.push(obs);
+              // Stamp promptIndex at push-time — the harness type stays pure;
+              // the runner is the single source of truth for promptIndex.
+              widgetRenderObservations.push({
+                ...obs,
+                promptIndex: activePromptIndex,
+              });
               // No separate active-widget bookkeeping: a `rendered` + kept widget
               // stays in the harness mount (the single source of truth that the
               // gate and getActiveToolCallId both read); every other outcome is
@@ -1549,6 +1603,11 @@ const runIterationWithAiSdk = async ({
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+      // PR 6b: per-iteration browser artifacts, non-empty only on this local
+      // AI-SDK Computer Use path. finalizeEvalIteration serializes them once
+      // (screenshot upload + sanitize) for both the W2 and W1 persistence paths.
+      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
+      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
       ...(iterationError ? { error: iterationError } : {}),
@@ -1675,6 +1734,9 @@ const runIterationWithAiSdk = async ({
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+      // PR 6b: browser artifacts collected before the failure still persist.
+      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
+      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,

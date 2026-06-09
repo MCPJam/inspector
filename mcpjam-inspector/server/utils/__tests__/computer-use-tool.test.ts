@@ -10,6 +10,7 @@ import {
   type ComputerImplOutput,
 } from "../computer-use-tool";
 import type { McpAppBrowserHarness } from "../mcp-app-browser-harness";
+import { logger } from "../logger";
 
 describe("resolveComputerUseToolVersion", () => {
   it("resolves every mapped model id to its version", () => {
@@ -267,6 +268,78 @@ describe("buildComputerUseTools", () => {
     const impl = (await exec({ action: "screenshot" }, {})) as ComputerImplOutput;
     expect(impl.note).toBe("no_rendered_widget");
     expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it("onAction fires once per real action with the harness result + toolCallId", async () => {
+    const { harness } = stubHarness();
+    const onAction = vi.fn();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-active",
+      viewport: { width: 1280, height: 800 },
+      onAction,
+    });
+    const exec = (tools.computer as { execute: Function }).execute;
+    await exec({ action: "left_click", coordinate: [10, 20] }, {});
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    const [result, context] = onAction.mock.calls[0]!;
+    // The raw harness BrowserActionResult — not the model-facing impl output.
+    expect(result).toMatchObject({
+      screenshotBase64: "iVBORscreenshot",
+      widgetToolCalls: [
+        { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 4 },
+      ],
+      elapsedMs: 7,
+    });
+    expect(context).toEqual({ toolCallId: "tc-active" });
+  });
+
+  it("onAction does NOT fire on the no-widget short-circuit", async () => {
+    const { harness, executeAction } = stubHarness();
+    const onAction = vi.fn();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => null,
+      viewport: { width: 1280, height: 800 },
+      onAction,
+    });
+    const exec = (tools.computer as { execute: Function }).execute;
+    const impl = (await exec({ action: "screenshot" }, {})) as ComputerImplOutput;
+
+    expect(impl.note).toBe("no_rendered_widget");
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("a throwing onAction is caught + logged; execute still returns the result", async () => {
+    const { harness } = stubHarness();
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const onAction = vi.fn(() => {
+      throw new Error("emitter boom");
+    });
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-active",
+      viewport: { width: 1280, height: 800 },
+      onAction,
+    });
+    const exec = (tools.computer as { execute: Function }).execute;
+    const impl = (await exec(
+      { action: "left_click", coordinate: [1, 2] },
+      {},
+    )) as ComputerImplOutput;
+
+    // A buggy emitter must not crash the agent loop.
+    expect(impl.widgetToolCalls).toHaveLength(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[computer-use] onAction callback threw",
+      expect.objectContaining({ error: "emitter boom" }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("finish_widget.execute dismisses the named widget", async () => {
