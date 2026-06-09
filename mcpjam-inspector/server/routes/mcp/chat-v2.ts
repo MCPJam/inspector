@@ -15,6 +15,7 @@ import {
 import type { ModelProvider } from "@/shared/types";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
+import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
 import {
@@ -150,6 +151,34 @@ function toPersistedUsage(
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
   };
+}
+
+/**
+ * BYOK sign-in check for the local/mcp chat route.
+ *
+ * Unlike `/api/web/chat-v2`, this route mounts no auth middleware that
+ * resolves a WorkOS identity into the request context, so there is no
+ * `userId` to read here. Both signed-in and guest clients send an
+ * `Authorization: Bearer …` header (guests carry a guest JWT — see the
+ * client `use-chat-session.ts`), so presence alone can't tell them apart.
+ *
+ * Mirror `bearerAuthMiddleware`: a token that validates as a guest JWT is a
+ * guest; anything else (a WorkOS token) is signed in. No bearer at all is a
+ * guest. Fails open (treats as signed in) only when the guest-token service
+ * itself errors, matching the middleware so a verifier blip can't 401 real
+ * signed-in users.
+ */
+async function isGuestByokCaller(
+  authHeader: string | undefined
+): Promise<boolean> {
+  if (!authHeader?.startsWith("Bearer ")) return true;
+  const token = authHeader.slice("Bearer ".length);
+  try {
+    const result = await validateGuestTokenDetailedAsync(token);
+    return result.valid && !!result.guestId;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -814,12 +843,12 @@ chatV2.post("/", async (c) => {
     // by hand-crafting an apiKey-bearing call for a CLOUD provider while
     // signed out.
     //
-    // The gate keys off `authenticatedUserId` — the verified WorkOS
-    // identity resolved server-side from the request context (~line 579),
-    // never anything in the request body. An earlier revision gated on the
-    // presence of a client-supplied `projectId`; a signed-out caller could
-    // forge that value to sail past both this guard and the org branch
-    // above, defeating the sign-in requirement.
+    // "Signed out" is decided from the bearer token via `isGuestByokCaller`,
+    // not from the request body. This route has no auth middleware that
+    // resolves a WorkOS identity into the request context, so there is no
+    // userId to read here (an earlier revision read `requestLogContext.userId`
+    // and was always-null on this path, 401-ing signed-in users too). A guest
+    // JWT — or no bearer — is signed out; a WorkOS token is signed in.
     //
     // Ollama (local daemon, "local" placeholder apiKey) and `custom`
     // (self-hosted OpenAI-compatible endpoints) are explicitly skipped:
@@ -833,7 +862,7 @@ chatV2.post("/", async (c) => {
       process.env.CONVEX_HTTP_URL &&
       isCloudByokProvider &&
       apiKey &&
-      !authenticatedUserId
+      (await isGuestByokCaller(requestAuthHeader))
     ) {
       return c.json(
         { error: "BYOK requires sign-in", code: "byok_requires_signin" },
