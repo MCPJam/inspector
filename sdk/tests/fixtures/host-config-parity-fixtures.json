@@ -1,5 +1,5 @@
 {
-  "__inputHash": "32a8406b9ff8d090c2ba3e0c2f4093c3af06e9a54fb6f5913c24e72458ca29c4",
+  "__inputHash": "ce77ad7441fe0c6eb84ddfb0d224e243a5ad192d5db9472b866818bf349f775c",
   "rows": [
     {
       "label": "base-minimal",
@@ -373,6 +373,48 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"hostCapabilitiesOverride\":{},\"chatUiOverride\":{\"logo\":\"x\"}}",
       "sha256": "688fa1203c5197fe044ef781fbe5ca459cc963d3cb919310161fbc1179c05785"
+    },
+    {
+      "label": "builtin-tool-ids-empty-omitted",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "builtInToolIds": []
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "f6df30e89bb13c7b9fe2a098bcdd1e2778a0612d831cd4497471ca8ef2a4d729"
+    },
+    {
+      "label": "builtin-tool-ids-unsorted-dupes",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "builtInToolIds": [
+          "web_search",
+          "code_exec",
+          "web_search"
+        ]
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"builtInToolIds\":[\"code_exec\",\"web_search\"],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "f52dc644d170085356969ceb86f3a370cd7a9fc8648a53481b318ba478a72d7a"
     },
     {
       "label": "adversarial-stray-deny-must-be-dropped",
