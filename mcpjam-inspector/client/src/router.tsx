@@ -29,6 +29,7 @@ import App, {
   ViewsRoute,
   XAAFlowRoute,
 } from "./App";
+import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import { buildHostsPath } from "./lib/app-navigation";
 
@@ -92,6 +93,7 @@ export function createAppRouter(): AppRouter {
         { path: "views", element: <ViewsRoute /> },
         { path: "support", element: <SupportRoute /> },
         { path: "settings", element: <SettingsRoute /> },
+        { path: "settings/api-keys", element: <ApiKeysRoute /> },
         { path: "profile", element: <ProfileRoute /> },
         { path: "project-settings", element: <ProjectSettingsRoute /> },
         { path: "client-config", element: <ServersRedirectRoute /> },
