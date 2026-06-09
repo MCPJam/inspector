@@ -54,7 +54,7 @@
             "icon": "plug",
             "pages": [
               "inspector/home",
-              "inspector/clients",
+              "inspector/hosts",
               "inspector/projects",
               "inspector/protocol-versions"
             ]
