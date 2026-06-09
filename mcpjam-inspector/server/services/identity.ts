@@ -1,4 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
+import { getInspectorClientRuntimeConfig } from "../env.js";
 
 /**
  * Resolve an MCPJam user from a WorkOS user id (the user's `externalId`
@@ -20,9 +21,19 @@ export interface ResolvedMcpjamUser {
 export async function resolveUserByExternalId(
   externalId: string
 ): Promise<ResolvedMcpjamUser | null> {
-  const convexUrl = process.env.CONVEX_URL;
+  // ConvexHttpClient needs the deployment (`.convex.cloud`) URL. Inspector
+  // boot only *requires* CONVEX_HTTP_URL (the `.convex.site` HTTP-actions
+  // origin), and `getInspectorClientRuntimeConfig()` derives the `.convex.cloud`
+  // query URL from it — so a deployment that sets only CONVEX_HTTP_URL still
+  // resolves identity here (previously this threw "CONVEX_URL is not set",
+  // 500-ing all sk_ auth and API-key minting). Fall back to an explicit
+  // CONVEX_URL if the derivation can't produce one.
+  const convexUrl =
+    getInspectorClientRuntimeConfig().convexUrl ?? process.env.CONVEX_URL;
   if (!convexUrl) {
-    throw new Error("CONVEX_URL is not set");
+    throw new Error(
+      "Convex deployment URL is not configured (set CONVEX_HTTP_URL or CONVEX_URL)",
+    );
   }
 
   const client = new ConvexHttpClient(convexUrl);
@@ -37,6 +48,7 @@ export async function resolveUserByExternalId(
     { externalId }
   )) as { _id: string } | null | undefined;
 
-  if (!result || typeof result._id !== "string") return null;
+  if (!result || typeof result !== "object" || typeof result._id !== "string")
+    return null;
   return { _id: result._id };
 }
