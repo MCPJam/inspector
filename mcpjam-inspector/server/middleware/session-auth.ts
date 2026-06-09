@@ -104,6 +104,14 @@ export async function sessionAuthMiddleware(
     return next();
   }
 
+  // Hosted public API (v1) uses bearer auth + Convex authorization, exactly like
+  // /api/web/* — its own bearerAuthMiddleware runs in routes/v1. Server-to-server
+  // callers (MCP worker, CLI, agents) send `Authorization: Bearer`, not the
+  // browser session token, so they must not be gated by session auth here.
+  if (path.startsWith("/api/v1/")) {
+    return next();
+  }
+
   // Allow unprotected API routes without auth
   if (UNPROTECTED_ROUTES.some((route) => path === route)) {
     return next();
