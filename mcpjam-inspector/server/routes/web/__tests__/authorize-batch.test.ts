@@ -32,6 +32,9 @@ function makeContext(): { c: Context; vars: Record<string, unknown> } {
   const vars: Record<string, unknown> = { requestLogContext: { ...baseContext } };
   const c = {
     var: new Proxy(vars, { get: (t, p) => t[p as string] }),
+    // Faithful to Hono: `c.get(k)` mirrors `c.var[k]`. The delegated-auth
+    // header builder reads context via `c.get(...)`.
+    get: (key: string) => vars[key],
     set: (key: string, value: unknown) => {
       vars[key] = value;
     },

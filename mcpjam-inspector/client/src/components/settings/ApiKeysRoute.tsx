@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useConvexAuth } from "convex/react";
 import { Key, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -6,6 +7,7 @@ import { SettingsSection } from "../setting/SettingsSection";
 import { CreateApiKeyDialog } from "./api-keys/CreateApiKeyDialog";
 import { RevealOnceDialog } from "./api-keys/RevealOnceDialog";
 import { RevokeApiKeyDialog } from "./api-keys/RevokeApiKeyDialog";
+import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import {
   type ApiKey,
   createApiKey,
@@ -31,6 +33,10 @@ export function ApiKeysRoute() {
   const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
 
+  const { isAuthenticated } = useConvexAuth();
+  const { sortedOrganizations, isLoading: orgsLoading } =
+    useOrganizationQueries({ isAuthenticated });
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -49,10 +55,16 @@ export function ApiKeysRoute() {
     void refresh();
   }, [refresh]);
 
-  const handleCreate = async ({ name }: { name: string }) => {
+  const handleCreate = async ({
+    name,
+    organizationId,
+  }: {
+    name: string;
+    organizationId: string;
+  }) => {
     setIsCreating(true);
     try {
-      const created = await createApiKey({ name });
+      const created = await createApiKey({ name, organizationId });
       setCreateOpen(false);
       setRevealValue(created.value);
       await refresh();
@@ -148,6 +160,8 @@ export function ApiKeysRoute() {
           open={createOpen}
           onOpenChange={setCreateOpen}
           isCreating={isCreating}
+          organizations={sortedOrganizations}
+          orgsLoading={orgsLoading}
           onCreate={handleCreate}
         />
 

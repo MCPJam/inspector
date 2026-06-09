@@ -3,6 +3,7 @@ import { ErrorCode } from "../routes/web/errors.js";
 import { validateGuestTokenDetailedAsync } from "../services/guest-token.js";
 import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
+import { lookupWorkosKeyBinding } from "../services/workos-key-bindings.js";
 import { getRequestLocal, setRequestLocal } from "./request-local.js";
 import { logger } from "../utils/logger.js";
 
@@ -185,16 +186,57 @@ export async function bearerAuthMiddleware(
       );
     }
 
+    // Resolve which MCPJam org this key acts inside. WorkOS keys are not
+    // org-scoped natively, so the backend persists the binding at mint time
+    // and we look it up here (memoized per request, like the validation
+    // above). A missing binding means the key predates binding support or
+    // its scope was removed — it cannot be safely delegated, so reject it as
+    // orphaned rather than guessing an org.
+    let binding = getRequestLocal(c, "workosApiKeyBinding");
+    if (binding === undefined) {
+      try {
+        binding = await lookupWorkosKeyBinding(workosKeyId);
+      } catch (error) {
+        logger.error("Failed to look up WorkOS API key org binding", {
+          workos_key_id: workosKeyId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return c.json(
+          {
+            code: ErrorCode.INTERNAL_ERROR,
+            message: "Org binding lookup failed",
+          },
+          500,
+        );
+      }
+      setRequestLocal(c, "workosApiKeyBinding", binding);
+    }
+    if (!binding) {
+      logger.warn("Orphaned WorkOS API key (no org binding)", {
+        workos_key_id: workosKeyId,
+      });
+      return c.json(
+        {
+          code: ErrorCode.ORPHANED_KEY,
+          message:
+            "This API key is not bound to an organization. Re-create it from Settings → API keys.",
+        },
+        401,
+      );
+    }
+
     c.set("authMethod", "workos_api_key");
     c.set("workosApiKeyId", workosKeyId);
     c.set("workosUserId", workosUserId);
     c.set("mcpjamUserId", mcpjamUser._id);
+    c.set("mcpjamOrganizationId", binding.mcpjamOrganizationId);
 
     logger.info("WorkOS API key request", {
       event: "auth.workos_api_key",
       auth_method: "workos_api_key",
       workos_key_id: workosKeyId,
       mcpjam_user_id: mcpjamUser._id,
+      mcpjam_organization_id: binding.mcpjamOrganizationId,
     });
 
     return next();

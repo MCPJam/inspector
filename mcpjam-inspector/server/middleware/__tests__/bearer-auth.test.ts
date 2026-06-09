@@ -5,28 +5,42 @@
  * Covers:
  *   - missing / wrong-format bearer → 401
  *   - `sk_` invalid → 401
- *   - `sk_` valid → next() runs with context set
+ *   - `sk_` valid + bound → next() runs with identity AND org context set
+ *   - `sk_` valid but NO org binding → 401 ORPHANED_KEY
+ *   - binding lookup throws → 500
  *   - request-local memoization (validate called once per request)
  *   - per-key rate limit triggers 429 after burst
  *   - cross-key rate limit isolation
  *
- * WorkOS SDK and identity helpers are mocked at module level via `vi.mock`.
+ * WorkOS SDK, identity, and binding helpers are mocked at module level.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Hono } from "hono";
 
-// Mocks must be declared before importing the SUT.
-const validateApiKeyMock = vi.fn();
+// Mocks must be available to the `vi.mock` factories, which vitest hoists
+// above the imports. `vi.hoisted` is the supported way to initialize the mock
+// fns before those factories run (a plain `const fooMock = vi.fn()` lands in
+// the temporal dead zone when the factory executes at import time).
+const { validateApiKeyMock, resolveUserByExternalIdMock, lookupWorkosKeyBindingMock } =
+  vi.hoisted(() => ({
+    validateApiKeyMock: vi.fn(),
+    resolveUserByExternalIdMock: vi.fn(),
+    lookupWorkosKeyBindingMock: vi.fn(),
+  }));
+
 vi.mock("../../services/workos-client.js", () => ({
   getWorkOSClient: () => ({
-    apiKeys: { validateApiKey: validateApiKeyMock },
+    apiKeys: { createValidation: validateApiKeyMock },
   }),
 }));
 
-const resolveUserByExternalIdMock = vi.fn();
 vi.mock("../../services/identity.js", () => ({
   resolveUserByExternalId: resolveUserByExternalIdMock,
+}));
+
+vi.mock("../../services/workos-key-bindings.js", () => ({
+  lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
 }));
 
 // Guest validation must always reject for these tests — only the sk_ branch is
@@ -53,6 +67,7 @@ function createApp(): Hono {
       workosApiKeyId: c.get("workosApiKeyId") ?? null,
       workosUserId: c.get("workosUserId") ?? null,
       mcpjamUserId: c.get("mcpjamUserId") ?? null,
+      mcpjamOrganizationId: c.get("mcpjamOrganizationId") ?? null,
     }),
   );
   return app;
@@ -61,6 +76,11 @@ function createApp(): Hono {
 beforeEach(() => {
   validateApiKeyMock.mockReset();
   resolveUserByExternalIdMock.mockReset();
+  lookupWorkosKeyBindingMock.mockReset();
+  // Default: every valid key is bound to an org. Orphaned-key tests override.
+  lookupWorkosKeyBindingMock.mockResolvedValue({
+    mcpjamOrganizationId: "org_default",
+  });
   resetWorkOSRateLimitForTests();
 });
 
@@ -109,12 +129,15 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     expect(body.message).toMatch(/Unknown user/i);
   });
 
-  it("sets identity context and calls next() on valid sk_ key", async () => {
+  it("sets identity AND org context and calls next() on a valid, bound sk_ key", async () => {
     validateApiKeyMock.mockResolvedValueOnce({
       apiKey: { id: "api_key_42", owner: { id: "user_42" } },
     });
     resolveUserByExternalIdMock.mockResolvedValueOnce({
       _id: "mcpjam_user_42",
+    });
+    lookupWorkosKeyBindingMock.mockResolvedValueOnce({
+      mcpjamOrganizationId: "org_42",
     });
 
     const res = await createApp().request("/test", {
@@ -128,6 +151,44 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     expect(body.workosApiKeyId).toBe("api_key_42");
     expect(body.workosUserId).toBe("user_42");
     expect(body.mcpjamUserId).toBe("mcpjam_user_42");
+    // The org the key is bound to — what gets forwarded as
+    // `x-mcpjam-acting-in-org`.
+    expect(body.mcpjamOrganizationId).toBe("org_42");
+    expect(lookupWorkosKeyBindingMock).toHaveBeenCalledWith("api_key_42");
+  });
+
+  it("returns 401 ORPHANED_KEY when the key has no org binding", async () => {
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_orphan", owner: { id: "user_orphan" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValueOnce({ _id: "mcpjam_user" });
+    // 404 from the backend → null → orphaned.
+    lookupWorkosKeyBindingMock.mockResolvedValueOnce(null);
+
+    const res = await createApp().request("/test", {
+      headers: { authorization: "Bearer sk_orphan" },
+    });
+
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("ORPHANED_KEY");
+    expect(body.message).toMatch(/not bound to an organization/i);
+  });
+
+  it("returns 500 when the org binding lookup throws", async () => {
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_err", owner: { id: "user_err" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValueOnce({ _id: "mcpjam_user" });
+    lookupWorkosKeyBindingMock.mockRejectedValueOnce(new Error("backend down"));
+
+    const res = await createApp().request("/test", {
+      headers: { authorization: "Bearer sk_err" },
+    });
+
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { code?: string };
+    expect(body.code).toBe("INTERNAL_ERROR");
   });
 });
 
@@ -183,11 +244,14 @@ describe("bearerAuthMiddleware — per-key rate limit", () => {
 });
 
 describe("bearerAuthMiddleware — request-local memoization", () => {
-  it("only invokes WorkOS validate once per request even when bearer-auth runs multiple times", async () => {
+  it("only invokes WorkOS validate + binding lookup once per request even when bearer-auth runs multiple times", async () => {
     validateApiKeyMock.mockResolvedValue({
       apiKey: { id: "api_key_memo", owner: { id: "user_memo" } },
     });
     resolveUserByExternalIdMock.mockResolvedValue({ _id: "mcpjam_user_memo" });
+    lookupWorkosKeyBindingMock.mockResolvedValue({
+      mcpjamOrganizationId: "org_memo",
+    });
 
     // Simulate the real wiring: bearer-auth on a parent router AND on a
     // sub-router (as `/api/web/api-keys/*` does explicitly).
@@ -202,5 +266,6 @@ describe("bearerAuthMiddleware — request-local memoization", () => {
 
     expect(res.status).toBe(200);
     expect(validateApiKeyMock).toHaveBeenCalledTimes(1);
+    expect(lookupWorkosKeyBindingMock).toHaveBeenCalledTimes(1);
   });
 });

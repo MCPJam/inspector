@@ -16,6 +16,14 @@ import type { Context } from "hono";
  */
 export interface RequestLocalMap {
   workosApiKeyValidation: unknown;
+  /**
+   * Memoized result of the org-binding lookup for an `sk_…` key. Like the
+   * validation cache, this keeps a single user-visible request to one backend
+   * round-trip even when `bearerAuthMiddleware` runs on both a parent router
+   * and a sub-router. `null` is a real cached value (the lookup ran and the
+   * key is orphaned); `undefined` means "not looked up yet".
+   */
+  workosApiKeyBinding: { mcpjamOrganizationId: string } | null;
 }
 
 export function getRequestLocal<K extends keyof RequestLocalMap>(

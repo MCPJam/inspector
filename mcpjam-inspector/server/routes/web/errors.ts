@@ -3,6 +3,11 @@ import { describeError, type NormalizedError } from "@mcpjam/sdk";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
+  // A valid WorkOS `sk_…` key that has no MCPJam org binding. Returned as 401
+  // so the caller knows the credential itself is unusable and must be
+  // re-created (bindings are written at mint time; pre-binding keys are
+  // orphaned). Distinct from UNAUTHORIZED so clients can message it precisely.
+  ORPHANED_KEY: "ORPHANED_KEY",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",
   VALIDATION_ERROR: "VALIDATION_ERROR",

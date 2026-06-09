@@ -27,5 +27,12 @@ declare module "hono" {
     workosUserId?: string;
     /** Resolved MCPJam user `_id` (Convex). Set with `authMethod`. */
     mcpjamUserId?: string;
+    /**
+     * MCPJam organization id (Convex `Id<'organizations'>`) the WorkOS API
+     * key is bound to. Set with `authMethod` by `bearerAuthMiddleware` after
+     * looking up the key's org binding. Forwarded to Convex as
+     * `x-mcpjam-acting-in-org` by the delegated-identity exchange.
+     */
+    mcpjamOrganizationId?: string;
   }
 }

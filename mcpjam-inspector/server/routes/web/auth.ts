@@ -302,10 +302,13 @@ function stripStdioFieldsFromHostedConfig<
  *   verbatim. Convex sees the same identity it always has.
  * - For WorkOS API keys (`authMethod === "workos_api_key"`): exchange
  *   the bearer for `INSPECTOR_SERVICE_TOKEN` and add
- *   `x-mcpjam-acting-as: <mcpjamUserId>`. Convex never sees the `sk_`
- *   value — Inspector is the trust boundary that validated it once via
- *   WorkOS and now vouches for the resolved user. The companion
- *   backend PR teaches `requestIdentity` to honor this delegated mode.
+ *   `x-mcpjam-acting-as: <workosUserId>` (the user's Convex `externalId`)
+ *   plus `x-mcpjam-acting-in-org: <mcpjamOrganizationId>` (the org the key
+ *   is bound to). Convex never sees the `sk_` value — Inspector is the
+ *   trust boundary that validated it once via WorkOS and now vouches for
+ *   the resolved user, scoped to the key's organization. The backend
+ *   `requestIdentity` resolver requires BOTH headers and re-checks that the
+ *   user is a member of that org.
  *
  * Keeping this in one helper so every `/web/*` callsite picks up the
  * same exchange (currently `authorizeServer` and `authorizeBatch` in
@@ -315,7 +318,7 @@ function stripStdioFieldsFromHostedConfig<
  * and stay on the original-bearer path until they're either reached
  * by an API key request or refactored to receive Context.
  */
-function buildConvexAuthHeaders(
+export function buildConvexAuthHeaders(
   c: Context,
   originalBearer: string
 ): Record<string, string> {
@@ -331,16 +334,28 @@ function buildConvexAuthHeaders(
         "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
       );
     }
-    const actingAs = c.get("mcpjamUserId");
+    // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
+    // NOT the Convex user `_id`: the backend resolves the delegated user by
+    // externalId. Sending the Convex id here would 404 as UNKNOWN_DELEGATED_USER.
+    const actingAs = c.get("workosUserId");
     if (!actingAs) {
       throw new WebRouteError(
         500,
         ErrorCode.INTERNAL_ERROR,
-        "Missing mcpjamUserId for WorkOS API key auth exchange"
+        "Missing workosUserId for WorkOS API key auth exchange"
+      );
+    }
+    const actingInOrg = c.get("mcpjamOrganizationId");
+    if (!actingInOrg) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Missing mcpjamOrganizationId for WorkOS API key auth exchange"
       );
     }
     headers["Authorization"] = `Bearer ${serviceToken}`;
     headers["x-mcpjam-acting-as"] = actingAs;
+    headers["x-mcpjam-acting-in-org"] = actingInOrg;
     return headers;
   }
   headers["Authorization"] = `Bearer ${originalBearer}`;
@@ -840,8 +855,13 @@ export async function createAuthorizedManager(
                       // service token without an acting-as user.
                       workosApiKeyActingAs:
                         c.get("authMethod") === "workos_api_key" &&
-                        c.get("mcpjamUserId")
-                          ? { mcpjamUserId: c.get("mcpjamUserId")! }
+                        c.get("workosUserId") &&
+                        c.get("mcpjamOrganizationId")
+                          ? {
+                              workosUserId: c.get("workosUserId")!,
+                              mcpjamOrganizationId:
+                                c.get("mcpjamOrganizationId")!,
+                            }
                           : undefined,
                     })
                   ).headers ?? {}),

@@ -46,14 +46,16 @@ export async function fetchRuntimeServerSecrets(args: {
   accessVersion?: number;
   /**
    * When the caller authenticated via a WorkOS API key, Inspector exchanges
-   * the user bearer for `INSPECTOR_SERVICE_TOKEN` + `x-mcpjam-acting-as`.
-   * Passed by `createAuthorizedManager` so secret reveals during the
-   * `/api/v1/*` flow follow the same trust model as `authorizeBatch`.
-   * The bearer middleware sets `authMethod="workos_api_key"`; callers
-   * just forward those Context values.
+   * the user bearer for `INSPECTOR_SERVICE_TOKEN` + `x-mcpjam-acting-as`
+   * (the WorkOS user id / Convex `externalId`) + `x-mcpjam-acting-in-org`
+   * (the org the key is bound to). Passed by `createAuthorizedManager` so
+   * secret reveals during the `/api/v1/*` flow follow the same trust model
+   * as `authorizeBatch`. The bearer middleware sets
+   * `authMethod="workos_api_key"`; callers just forward those Context values.
    */
   workosApiKeyActingAs?: {
-    mcpjamUserId: string;
+    workosUserId: string;
+    mcpjamOrganizationId: string;
   };
 }): Promise<ServerSecretsResult> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -86,7 +88,9 @@ export async function fetchRuntimeServerSecrets(args: {
         );
       }
       headers["Authorization"] = `Bearer ${serviceToken}`;
-      headers["x-mcpjam-acting-as"] = args.workosApiKeyActingAs.mcpjamUserId;
+      headers["x-mcpjam-acting-as"] = args.workosApiKeyActingAs.workosUserId;
+      headers["x-mcpjam-acting-in-org"] =
+        args.workosApiKeyActingAs.mcpjamOrganizationId;
     } else {
       headers["Authorization"] = `Bearer ${args.bearerToken}`;
     }

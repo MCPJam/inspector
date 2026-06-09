@@ -50,11 +50,16 @@ export async function listApiKeys(): Promise<ApiKey[]> {
 
 export async function createApiKey(args: {
   name: string;
+  /** MCPJam organization id (Convex) the key acts inside. Required. */
+  organizationId: string;
 }): Promise<CreatedApiKey> {
   const response = await authFetch("/api/web/api-keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: args.name }),
+    body: JSON.stringify({
+      name: args.name,
+      organizationId: args.organizationId,
+    }),
   });
   if (!response.ok) await parseError(response);
   return (await response.json()) as CreatedApiKey;

@@ -11,6 +11,12 @@ import {
   parseWithSchema,
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
+import { resolveUserByExternalId } from "../../services/identity.js";
+import {
+  createWorkosKeyBinding,
+  removeWorkosKeyBinding,
+  WorkosKeyBindingError,
+} from "../../services/workos-key-bindings.js";
 
 /**
  * `/api/web/api-keys/*` — WorkOS API Key management.
@@ -164,13 +170,29 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
 
 const createSchema = z.object({
   name: z.string().min(1).max(120),
+  // MCPJam organization id (Convex `Id<'organizations'>`) the key acts inside.
+  // The dialog requires an explicit selection (auto-selected when the user
+  // has exactly one org). This is NOT the WorkOS org id.
+  organizationId: z.string().min(1),
 });
 
 apiKeys.post("/", async (c) =>
   handleRoute(c, async () => {
     const raw = await readJsonBody<unknown>(c);
-    const { name } = parseWithSchema(createSchema, raw);
+    const { name, organizationId } = parseWithSchema(createSchema, raw);
     const session = resolveSessionContext(c);
+
+    // Resolve the MCPJam (Convex) user id for the binding. The session bearer
+    // carries the WorkOS user id (`sub`); the binding records the Convex user
+    // id so the backend can verify org membership at mint time.
+    const mcpjamUser = await resolveUserByExternalId(session.userId);
+    if (!mcpjamUser) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Could not resolve your MCPJam account",
+      );
+    }
 
     const payload: Record<string, unknown> = { name };
     if (session.organizationId) {
@@ -187,11 +209,87 @@ apiKeys.post("/", async (c) =>
       mapWorkOSError(status, body, "Failed to create API key");
     }
 
+    const workosKeyId = typeof body?.id === "string" ? body.id : null;
+    if (!workosKeyId) {
+      // WorkOS always returns an id on 2xx; without one we can neither bind
+      // nor later revoke the key, so fail loud rather than ship a dead key.
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "WorkOS did not return an API key id",
+      );
+    }
+
+    // Bind the key to the selected MCPJam org. A key with no binding is
+    // orphaned (rejected on /api/v1/* with 401 ORPHANED_KEY), so if the bind
+    // fails we revoke the WorkOS key immediately and report the failure —
+    // never leave an unusable key behind.
+    try {
+      await createWorkosKeyBinding({
+        workosApiKeyId: workosKeyId,
+        mcpjamOrganizationId: organizationId,
+        mintedByUserId: mcpjamUser._id,
+      });
+    } catch (bindingError) {
+      logger.error("API key org binding failed; revoking WorkOS key", {
+        workos_key_id: workosKeyId,
+        error:
+          bindingError instanceof Error
+            ? bindingError.message
+            : String(bindingError),
+      });
+      try {
+        await callWorkOS(
+          "DELETE",
+          `/api_keys/${encodeURIComponent(workosKeyId)}`,
+        );
+      } catch (revokeError) {
+        // Best-effort cleanup. If this also fails the WorkOS key lingers with
+        // no binding — not a security hole (the bearer middleware rejects
+        // orphaned keys) but litter worth flagging.
+        logger.error("Failed to revoke WorkOS key after binding failure", {
+          workos_key_id: workosKeyId,
+          error:
+            revokeError instanceof Error
+              ? revokeError.message
+              : String(revokeError),
+        });
+      }
+
+      const message =
+        bindingError instanceof Error
+          ? bindingError.message
+          : "Failed to bind API key";
+      if (bindingError instanceof WorkosKeyBindingError) {
+        // Surface a client-fault rejection as itself; the key was not created.
+        if (bindingError.status === 400) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            `${message} (API key not created)`,
+          );
+        }
+        if (bindingError.status === 403) {
+          throw new WebRouteError(
+            403,
+            ErrorCode.FORBIDDEN,
+            `${message} (API key not created)`,
+          );
+        }
+      }
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Could not bind the API key to your organization. The key was not created.",
+      );
+    }
+
     logger.info("API key minted", {
       event: "api_key_created",
       auth_method: "session",
-      workos_key_id: body?.id ?? null,
+      workos_key_id: workosKeyId,
       actor_user_id: session.userId,
+      mcpjam_organization_id: organizationId,
     });
 
     return body;
@@ -267,6 +365,18 @@ apiKeys.delete("/:id", async (c) =>
     );
     if (status !== 204 && (status < 200 || status >= 300)) {
       mapWorkOSError(status, body, "Failed to revoke API key");
+    }
+
+    // Remove the org binding. Best-effort: the backend delete is idempotent
+    // and the WorkOS key is already gone, so a cleanup failure (including a
+    // binding that was never written) must not fail the user-facing revoke.
+    try {
+      await removeWorkosKeyBinding(id);
+    } catch (error) {
+      logger.warn("Failed to remove API key org binding during revoke", {
+        workos_key_id: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     logger.info("API key revoked", {
