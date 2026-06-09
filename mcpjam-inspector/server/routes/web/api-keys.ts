@@ -17,6 +17,10 @@ import {
   removeWorkosKeyBinding,
   WorkosKeyBindingError,
 } from "../../services/workos-key-bindings.js";
+import {
+  verifyAuthKitToken,
+  AuthKitConfigError,
+} from "../../services/authkit-jwt.js";
 
 /**
  * `/api/web/api-keys/*` — WorkOS API Key management.
@@ -73,56 +77,45 @@ function getWorkOSRestKey(): string {
   return key;
 }
 
-interface JwtClaims {
-  sub?: string;
-  org_id?: string;
-}
-
-/**
- * Decode the AuthKit JWT payload to read the WorkOS `sub` (user id) and
- * `org_id`. Signature is NOT re-verified here — Convex enforces auth on
- * downstream calls. We use the claims only to scope WorkOS REST requests
- * to the session user.
- */
-function decodeSessionClaims(token: string): JwtClaims {
-  const parts = token.split(".");
-  if (parts.length !== 3) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Session JWT is malformed",
-    );
-  }
-  try {
-    return JSON.parse(
-      Buffer.from(parts[1], "base64url").toString("utf-8"),
-    ) as JwtClaims;
-  } catch {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Session JWT payload is not valid JSON",
-    );
-  }
-}
-
 interface SessionContext {
   userId: string;
   organizationId?: string;
 }
 
-function resolveSessionContext(c: any): SessionContext {
+/**
+ * Authenticate a key-management request by VERIFYING the WorkOS AuthKit access
+ * token (signature, issuer, audience, exp/nbf) and returning only the trusted
+ * `sub` / `org_id`.
+ *
+ * These routes act on the caller's behalf using the server's admin
+ * `WORKOS_API_KEY` and write Convex org bindings, so the token MUST be verified
+ * here — unlike other `/api/web/*` routes, nothing downstream re-checks it.
+ * Verification (and the resulting 401) happens before any WorkOS or
+ * binding-endpoint side effect.
+ */
+async function resolveSessionContext(c: any): Promise<SessionContext> {
   const bearer = assertBearerToken(c);
-  const claims = decodeSessionClaims(bearer);
-  const userId = claims.sub;
-  if (!userId) {
+  let session;
+  try {
+    session = await verifyAuthKitToken(bearer);
+  } catch (error) {
+    if (error instanceof AuthKitConfigError) {
+      logger.error("AuthKit verification is misconfigured", {
+        error: error.message,
+      });
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Server auth verification is not configured",
+      );
+    }
     throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Session JWT is missing `sub` claim",
+      401,
+      ErrorCode.UNAUTHORIZED,
+      "Invalid or expired session token",
     );
   }
-  return { userId, organizationId: claims.org_id };
+  return { userId: session.sub, organizationId: session.orgId };
 }
 
 async function callWorkOS(
@@ -180,7 +173,7 @@ apiKeys.post("/", async (c) =>
   handleRoute(c, async () => {
     const raw = await readJsonBody<unknown>(c);
     const { name, organizationId } = parseWithSchema(createSchema, raw);
-    const session = resolveSessionContext(c);
+    const session = await resolveSessionContext(c);
 
     // Resolve the MCPJam (Convex) user id for the binding. The session bearer
     // carries the WorkOS user id (`sub`); the binding records the Convex user
@@ -298,7 +291,7 @@ apiKeys.post("/", async (c) =>
 
 apiKeys.get("/", async (c) =>
   handleRoute(c, async () => {
-    const session = resolveSessionContext(c);
+    const session = await resolveSessionContext(c);
     const params = new URLSearchParams();
     if (session.organizationId) {
       params.set("organization_id", session.organizationId);
@@ -335,7 +328,7 @@ apiKeys.delete("/:id", async (c) =>
         "Missing API key id",
       );
     }
-    const session = resolveSessionContext(c);
+    const session = await resolveSessionContext(c);
 
     // Cross-user defense in depth: fetch the key first and confirm the
     // owner matches the session user before deleting. WorkOS does not
