@@ -3,8 +3,8 @@ import { useMutation } from "convex/react";
 import { Globe } from "lucide-react";
 import { toast } from "sonner";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
-import { AttachmentEditor } from "@/components/clients/attachment-editor";
-import { buildClientsPath, useAppNavigate } from "@/lib/app-navigation";
+import { AttachmentEditor } from "@/components/hosts/attachment-editor";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -95,7 +95,7 @@ export function ChatboxPublishClientBar({
 
       <button
         type="button"
-        onClick={() => navigate(buildClientsPath(hostId))}
+        onClick={() => navigate(buildHostsPath(hostId))}
         className="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 text-xs font-medium text-foreground transition hover:bg-muted/70"
         title="Edit this host's identity in Connect"
       >

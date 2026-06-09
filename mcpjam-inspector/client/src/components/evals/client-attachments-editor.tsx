@@ -3,8 +3,8 @@ import { Plus, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
-import { ClientPicker } from "@/components/clients/ClientPicker";
-import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
+import { HostPicker } from "@/components/hosts/HostPicker";
+import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 
@@ -88,10 +88,10 @@ export function ClientAttachmentsEditor({
       </div>
 
       <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Attach a client</Label>
+        <Label className="text-xs text-muted-foreground">Attach a host</Label>
         <div className="flex items-center gap-2">
           <div className="flex-1 min-w-0">
-            <ClientPicker
+            <HostPicker
               projectId={projectId}
               value={null}
               onChange={handleAddHost}
@@ -122,7 +122,7 @@ export function ClientAttachmentsEditor({
         </div>
       </div>
 
-      <CreateClientDialog
+      <CreateHostDialog
         isOpen={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         projectId={projectId}

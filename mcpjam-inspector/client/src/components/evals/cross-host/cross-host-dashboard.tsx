@@ -39,7 +39,7 @@ export function CrossHostDashboard({
   // re-renders within the same suite (e.g. when iterations stream in) do
   // not. Wrapped in try/catch because analytics throwing must not block
   // the dashboard from rendering — same convention as
-  // CreateClientDialog's `client_created` capture.
+  // CreateHostDialog's `client_created` capture.
   const lastFiredSuiteId = useRef<string | null>(null);
   useEffect(() => {
     if (lastFiredSuiteId.current === suite._id) return;

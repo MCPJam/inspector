@@ -24,7 +24,7 @@ export const routePaths = {
   root: "/",
   home: "/home",
   servers: "/servers",
-  clients: "/clients",
+  hosts: "/hosts",
   hostCompare: "/host-compare",
   registry: "/registry",
   tools: "/tools",
@@ -54,10 +54,10 @@ export const routePaths = {
 
 export type RoutePath = (typeof routePaths)[keyof typeof routePaths] | string;
 
-/** Build a path that deep-links to a specific client's canvas, or to the clients hub. */
-export function buildClientsPath(hostId?: string | null): string {
-  if (!hostId) return routePaths.clients;
-  return `${routePaths.clients}/${encodeURIComponent(hostId)}`;
+/** Build a path that deep-links to a specific host's canvas, or to the hosts hub. */
+export function buildHostsPath(hostId?: string | null): string {
+  if (!hostId) return routePaths.hosts;
+  return `${routePaths.hosts}/${encodeURIComponent(hostId)}`;
 }
 
 /** Build a path that deep-links into Compare with a pre-selected set of hosts. */

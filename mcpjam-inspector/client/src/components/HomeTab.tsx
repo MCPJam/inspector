@@ -8,7 +8,7 @@ import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
-import { RecommendedClients } from "./home/RecommendedClients";
+import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
@@ -328,7 +328,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
             servers={data?.recommendedServers}
             projectId={projectId}
           />
-          <RecommendedClients projectId={projectId} />
+          <RecommendedHosts projectId={projectId} />
         </div>
       </div>
     </div>
