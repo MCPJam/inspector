@@ -12,7 +12,11 @@ import { StickToBottom } from "use-stick-to-bottom";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
-import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceSpan,
+  EvalTraceWidgetRenderObservationView,
+} from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
@@ -33,6 +37,7 @@ import {
 } from "./recorded-trace-toolbar";
 import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
+import { BrowserArtifactsView } from "./browser-artifacts-view";
 import { ToolCallsDiffView } from "./tool-calls-diff-view";
 import {
   TraceRawView,
@@ -85,7 +90,8 @@ interface TraceViewerProps {
   expectedToolCalls?: TraceViewerEvalToolCall[];
   /** Tool calls observed for this iteration; enables the Tools tab. */
   actualToolCalls?: TraceViewerEvalToolCall[];
-  /** Force a single mode (used when TraceViewer is embedded into a larger shell). */
+  /** Force a single mode (used when TraceViewer is embedded into a larger shell).
+   *  The eval-only "browser" mode is trace-viewer-local, never forced by shells. */
   forcedViewMode?: "timeline" | "chat" | "raw" | "tools";
   /** Hide the internal toolbar when the parent shell provides its own tabs. */
   hideToolbar?: boolean;
@@ -194,6 +200,23 @@ function getRecordedSpans(
   return raw as EvalTraceSpan[];
 }
 
+// PR 7: pull the browser-rendered MCP App artifacts off the trace envelope.
+function getBrowserObservations(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): EvalTraceWidgetRenderObservationView[] {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return [];
+  const raw = (trace as TraceEnvelope).widgetRenderObservations;
+  return Array.isArray(raw) ? raw : [];
+}
+
+function getBrowserSteps(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): EvalTraceBrowserInteractionStepView[] {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return [];
+  const raw = (trace as TraceEnvelope).browserInteractionSteps;
+  return Array.isArray(raw) ? raw : [];
+}
+
 export function TraceViewer({
   trace,
   model,
@@ -255,7 +278,7 @@ export function TraceViewer({
     hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
 
   const [viewMode, setViewMode] = useState<
-    "timeline" | "chat" | "raw" | "tools"
+    "timeline" | "chat" | "raw" | "tools" | "browser"
   >("timeline");
   const [toolsCompareLayout, setToolsCompareLayout] = useState<"diff" | "json">(
     "diff",
@@ -287,6 +310,16 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  // PR 7: browser-rendered MCP App eval artifacts (render observations +
+  // Computer Use steps). Only iterations driven through the headless-Chromium
+  // harness carry these, so the Browser tab is gated on their presence.
+  const browserObservations = useMemo(
+    () => getBrowserObservations(trace),
+    [trace],
+  );
+  const browserSteps = useMemo(() => getBrowserSteps(trace), [trace]);
+  const hasBrowserArtifacts =
+    browserObservations.length > 0 || browserSteps.length > 0;
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
     [recordedSpans],
@@ -361,6 +394,12 @@ export function TraceViewer({
   }, [hasEvalToolCalls]);
 
   useEffect(() => {
+    if (!hasBrowserArtifacts) {
+      setViewMode((mode) => (mode === "browser" ? "timeline" : mode));
+    }
+  }, [hasBrowserArtifacts]);
+
+  useEffect(() => {
     if (effectiveViewMode !== "raw" && effectiveViewMode !== "chat") return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
@@ -430,6 +469,7 @@ export function TraceViewer({
   const flexFillChrome =
     fillContent ||
     effectiveViewMode === "raw" ||
+    effectiveViewMode === "browser" ||
     (effectiveViewMode === "tools" && hasEvalToolCalls);
 
   const toolsCompareLayoutToggle = (
@@ -567,9 +607,16 @@ export function TraceViewer({
               </div>
               {!forcedViewMode ? (
                 <TraceViewModeTabs
-                  mode={effectiveViewMode}
+                  mode={
+                    effectiveViewMode === "browser"
+                      ? "timeline"
+                      : effectiveViewMode
+                  }
                   onModeChange={setViewMode}
                   showToolsTab={hasEvalToolCalls}
+                  showBrowserTab={hasBrowserArtifacts}
+                  browserActive={effectiveViewMode === "browser"}
+                  onSelectBrowser={() => setViewMode("browser")}
                 />
               ) : null}
             </div>
@@ -608,6 +655,24 @@ export function TraceViewer({
               trace={trace}
               requestPayloadHistory={rawRequestPayloadHistory}
               growWithContent={rawGrowWithContent}
+            />
+          </div>
+        )}
+
+        {effectiveViewMode === "browser" && (
+          <div
+            className={cn(
+              "min-w-0 flex flex-col",
+              flexFillChrome
+                ? "min-h-0 flex-1"
+                : "min-h-0 max-h-[min(70vh,36rem)]",
+            )}
+            data-testid="trace-viewer-browser"
+          >
+            <BrowserArtifactsView
+              observations={browserObservations}
+              steps={browserSteps}
+              className={flexFillChrome ? "flex-1" : undefined}
             />
           </div>
         )}

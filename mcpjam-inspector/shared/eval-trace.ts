@@ -230,6 +230,47 @@ export type BrowserInteractionStepPayload = Omit<
   "promptIndex"
 >;
 
+// PR 7: shapes the backend trace envelope returns to the replay UI. The
+// backend (`getEvalTraceFromChatSession` + `addBrowserArtifactUrls`) collects
+// the PR 6b tables, keeps `promptIndex`, and resolves `screenshotBlobId` →
+// `screenshotUrl` (null when no blob). `serverId` arrives as the resolved
+// Convex doc id; the UI keys on `toolName` / `toolCallId` for display.
+
+export type EvalTraceWidgetRenderObservationView = {
+  toolCallId: string;
+  toolName: string;
+  serverId?: string;
+  promptIndex: number;
+  status: EvalTraceWidgetRenderStatus;
+  resourceUri?: string;
+  bridgeInitialized?: boolean;
+  screenshotBlobId?: string;
+  screenshotUrl?: string | null;
+  consoleErrors?: string[];
+  blockedRequests?: string[];
+  elapsedMs: number;
+  ts: number;
+};
+
+export type EvalTraceBrowserInteractionStepView = {
+  toolCallId: string;
+  stepIndex: number;
+  promptIndex: number;
+  action: EvalTraceBrowserAction;
+  coordinateX?: number;
+  coordinateY?: number;
+  text?: string;
+  scrollDirection?: "up" | "down" | "left" | "right";
+  scrollAmount?: number;
+  duration?: number;
+  screenshotBlobId?: string;
+  screenshotUrl?: string | null;
+  widgetToolCalls?: EvalTraceWidgetToolCall[];
+  elapsedMs: number;
+  note?: EvalTraceBrowserStepNote;
+  ts: number;
+};
+
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
 export type EvalTraceBlobV1 = {
   traceVersion: 1;

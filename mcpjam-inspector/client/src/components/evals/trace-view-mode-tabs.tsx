@@ -1,4 +1,4 @@
-import { AlignLeft, Code2, MessageSquare, Wrench } from "lucide-react";
+import { AlignLeft, Code2, MessageSquare, Monitor, Wrench } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/utils";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -8,23 +8,41 @@ export type TraceViewMode = "timeline" | "chat" | "raw" | "tools";
 /**
  * Mode switcher for {@link TraceViewer} — shared with compare playground so Runs / CI / compare
  * use identical controls.
+ *
+ * The eval-only "Browser" tab (PR 7) is intentionally NOT part of `TraceViewMode`:
+ * the chat / playground / compare surfaces that reuse this switcher never show it,
+ * so it rides its own `browserActive` / `onSelectBrowser` props instead of widening
+ * the shared union (which every consumer's narrower state would then have to guard).
  */
 export function TraceViewModeTabs({
   mode,
   onModeChange,
   showToolsTab,
+  showBrowserTab = false,
+  browserActive = false,
+  onSelectBrowser,
   layout = "default",
   className,
 }: {
   mode: TraceViewMode;
   onModeChange: (mode: TraceViewMode) => void;
   showToolsTab: boolean;
+  /** PR 7: show the "Browser" tab when the iteration has browser-rendered
+   *  MCP App artifacts (render observations / Computer Use steps). */
+  showBrowserTab?: boolean;
+  /** PR 7: highlight the Browser tab (the active mode lives outside the shared
+   *  `TraceViewMode` union, in the trace viewer's local state). */
+  browserActive?: boolean;
+  /** PR 7: fired when the Browser tab is selected. */
+  onSelectBrowser?: () => void;
   /** `fullWidth`: equal-width segments across the container (e.g. chat trace header). */
   layout?: "default" | "fullWidth";
   className?: string;
 }) {
   const fullWidth = layout === "fullWidth";
   const posthog = usePostHog();
+  // When the Browser tab is active no standard tab is highlighted.
+  const standardActive = (m: TraceViewMode) => !browserActive && mode === m;
 
   const handleModeChange = (nextMode: TraceViewMode) => {
     posthog.capture("trace_view_mode_changed", {
@@ -55,7 +73,7 @@ export function TraceViewModeTabs({
         <button
           type="button"
           onClick={() => handleModeChange("tools")}
-          className={tabClass(mode === "tools")}
+          className={tabClass(standardActive("tools"))}
           title="Expected vs actual tool calls"
           data-testid="trace-viewer-tools-tab"
         >
@@ -66,7 +84,7 @@ export function TraceViewModeTabs({
       <button
         type="button"
         onClick={() => handleModeChange("timeline")}
-        className={tabClass(mode === "timeline")}
+        className={tabClass(standardActive("timeline"))}
         title="Trace"
       >
         <AlignLeft className="h-3 w-3 shrink-0" />
@@ -75,16 +93,34 @@ export function TraceViewModeTabs({
       <button
         type="button"
         onClick={() => handleModeChange("chat")}
-        className={tabClass(mode === "chat")}
+        className={tabClass(standardActive("chat"))}
         title="Chat view"
       >
         <MessageSquare className="h-3 w-3 shrink-0" />
         <span className="truncate">Chat</span>
       </button>
+      {showBrowserTab ? (
+        <button
+          type="button"
+          onClick={() => {
+            posthog.capture("trace_view_mode_changed", {
+              ...standardEventProps("trace_view_mode_tabs"),
+              mode: "browser",
+            });
+            onSelectBrowser?.();
+          }}
+          className={tabClass(browserActive)}
+          title="Browser-rendered widgets & Computer Use"
+          data-testid="trace-viewer-browser-tab"
+        >
+          <Monitor className="h-3 w-3 shrink-0" />
+          <span className="truncate">Browser</span>
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={() => handleModeChange("raw")}
-        className={tabClass(mode === "raw")}
+        className={tabClass(standardActive("raw"))}
         title="Raw JSON"
       >
         <Code2 className="h-3 w-3 shrink-0" />
