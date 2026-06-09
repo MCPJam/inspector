@@ -135,6 +135,7 @@ export function SettingsTab({
                     window.open(
                       "https://app.mcpjam.com/organizations",
                       "_blank",
+                      "noopener,noreferrer",
                     )
                   }
                 >

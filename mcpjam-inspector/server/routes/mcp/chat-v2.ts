@@ -811,17 +811,21 @@ chatV2.post("/", async (c) => {
     // with a projectId and no client apiKey, and the org BYOK branch
     // above (~line 684) resolves the key from Convex. Reject any inbound
     // request that tries to bypass that on a Convex-attached deployment
-    // by hand-crafting an apiKey-bearing call for a CLOUD provider.
+    // by hand-crafting an apiKey-bearing call for a CLOUD provider while
+    // signed out.
+    //
+    // The gate keys off `authenticatedUserId` — the verified WorkOS
+    // identity resolved server-side from the request context (~line 579),
+    // never anything in the request body. An earlier revision gated on the
+    // presence of a client-supplied `projectId`; a signed-out caller could
+    // forge that value to sail past both this guard and the org branch
+    // above, defeating the sign-in requirement.
     //
     // Ollama (local daemon, "local" placeholder apiKey) and `custom`
     // (self-hosted OpenAI-compatible endpoints) are explicitly skipped:
     // they have no shared cloud account to gate behind sign-in, and the
     // org BYOK surface doesn't model them. Local OSS (no CONVEX_HTTP_URL)
     // also bypasses — the frontend hook is the only enforcement on `npx`.
-    //
-    // projectId is checked with `typeof === "string"` to match the
-    // sibling org branch (~line 686); a non-string truthy projectId
-    // would otherwise sail past both guards.
     const isCloudByokProvider =
       modelDefinition.provider !== "ollama" &&
       modelDefinition.provider !== "custom";
@@ -829,7 +833,7 @@ chatV2.post("/", async (c) => {
       process.env.CONVEX_HTTP_URL &&
       isCloudByokProvider &&
       apiKey &&
-      !(typeof body.projectId === "string" && body.projectId)
+      !authenticatedUserId
     ) {
       return c.json(
         { error: "BYOK requires sign-in", code: "byok_requires_signin" },
