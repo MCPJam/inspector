@@ -1,19 +1,24 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import { useMutation } from "convex/react";
-import { Globe } from "lucide-react";
 import { toast } from "sonner";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
-import { AttachmentEditor } from "@/components/hosts/attachment-editor";
+import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import type { EvalServerAttachment } from "@/components/evals/types";
+import { useProjectServerAttachments } from "@/hooks/useViews";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
-import { cn } from "@/lib/utils";
 
 /**
  * Publish-tab summary row that mirrors the evals suite header:
  * two compact pills standing in for the chatbox's two pieces of
  * configuration —
  *
- *   - server attachment pill → opens the shared {@link AttachmentEditor}
- *     modal (same modal {@link ChatboxServersSection} used to mount)
+ *   - server attachment picker → the same {@link ServerAttachmentPicker}
+ *     the evals suite header uses. Picking a named attachment copies its
+ *     server set onto the chatbox via `setChatboxServers` (the chatbox
+ *     keeps its own chatbox-scoped attachment row; standalone rows are
+ *     frozen snapshots, so copy and reference are equivalent). The
+ *     selected attachment is derived by matching the chatbox's current
+ *     server set against the project's named attachments.
  *   - host pill → navigates to Connect for editing identity (model,
  *     prompt, sandbox). Read-only here per the publish-page contract:
  *     identity edits belong on the Connect tab.
@@ -36,7 +41,10 @@ export function ChatboxPublishClientBar({
   currentServerIds,
 }: ChatboxPublishClientBarProps) {
   const navigate = useAppNavigate();
-  const [open, setOpen] = useState(false);
+  const { serverAttachments } = useProjectServerAttachments({
+    isAuthenticated,
+    projectId,
+  });
 
   const setChatboxServers = useMutation(
     "chatboxes:setChatboxServers" as any,
@@ -45,53 +53,60 @@ export function ChatboxPublishClientBar({
     selectedServerIds: string[];
   }) => Promise<{ attachmentId: string }>;
 
-  const handleSave = async ({
-    selectedServerIds,
-  }: {
-    selectedServerIds: string[];
-  }) => {
+  // The chatbox persists a raw server set (chatbox-scoped attachment row),
+  // not a pointer to a named attachment. Derive the "selected" attachment
+  // by exact set match so the trigger shows the attachment's name when the
+  // chatbox's pick came from one. Standalone attachments are immutable, so
+  // a match stays honest over time.
+  const matchedAttachmentId = useMemo(() => {
+    if (currentServerIds.length === 0) return null;
+    const currentSet = new Set(currentServerIds);
+    const match = serverAttachments.find(
+      (attachment) =>
+        attachment.serverIds.length === currentSet.size &&
+        attachment.serverIds.every((id) => currentSet.has(id)),
+    );
+    return match?._id ?? null;
+  }, [serverAttachments, currentServerIds]);
+
+  const handleAttachmentChange = async (
+    _serverAttachmentId: string,
+    attachment: EvalServerAttachment,
+  ) => {
     try {
-      await setChatboxServers({ chatboxId, selectedServerIds });
+      await setChatboxServers({
+        chatboxId,
+        selectedServerIds: attachment.serverIds,
+      });
       toast.success(
-        selectedServerIds.length === 0
-          ? "Chatbox saved with no servers — chat sessions will have no tools."
-          : `Chatbox now connects to ${selectedServerIds.length} server${selectedServerIds.length === 1 ? "" : "s"}.`,
+        `Chatbox now connects to ${attachment.serverIds.length} server${attachment.serverIds.length === 1 ? "" : "s"} via "${attachment.name}".`,
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       toast.error(`Failed to save servers: ${message}`);
-      throw error;
     }
   };
 
   const serverCount = currentServerIds.length;
   const logoSrc = resolveHostLogoByDisplayName(hostName);
-  const empty = serverCount === 0;
+  // A non-empty pick that matches no named attachment predates the picker
+  // (legacy custom set from the old modal). Label it honestly instead of
+  // pretending nothing is picked.
+  const emptyTriggerLabel =
+    serverCount === 0
+      ? "No servers picked"
+      : `${serverCount} server${serverCount === 1 ? "" : "s"} · custom pick`;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={cn(
-          "flex h-8 items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 text-xs font-medium text-foreground transition hover:bg-muted/70",
-          empty &&
-            "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-        )}
-        title="Pick which of this project's servers the chatbox connects to"
-      >
-        <Globe
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground",
-            empty && "text-amber-600 dark:text-amber-400",
-          )}
-        />
-        <span>
-          {empty
-            ? "No servers picked"
-            : `${serverCount} server${serverCount === 1 ? "" : "s"}`}
-        </span>
-      </button>
+      <ServerAttachmentPicker
+        projectId={projectId}
+        value={matchedAttachmentId}
+        onChange={(id, attachment) => void handleAttachmentChange(id, attachment)}
+        emptyTriggerLabel={emptyTriggerLabel}
+        infoText="A server attachment is a named set of MCP servers this chatbox connects to. Reuse the same attachment across chatboxes and eval suites, or create one per scenario."
+        selectedDeleteHint="In use by this chatbox — pick another first"
+      />
 
       <button
         type="button"
@@ -113,17 +128,6 @@ export function ChatboxPublishClientBar({
         )}
         <span className="min-w-0 flex-1 truncate">{hostName}</span>
       </button>
-
-      <AttachmentEditor
-        open={open}
-        onOpenChange={setOpen}
-        scope="chatbox"
-        hostId={hostId}
-        projectId={projectId}
-        isAuthenticated={isAuthenticated}
-        selectedServerIds={currentServerIds}
-        onSave={handleSave}
-      />
     </div>
   );
 }

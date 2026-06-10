@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ExternalLink,
   Inbox,
+  Link2,
   Loader2,
   Settings2,
 } from "lucide-react";
@@ -229,7 +230,7 @@ export function ChatboxesTab({
             title="Open this host's config in Connect"
           >
             <Settings2 className="mr-1.5 size-4" />
-            Edit host config
+            Edit host
           </Button>
           {publishLink ? (
             <Button
@@ -267,10 +268,6 @@ export function ChatboxesTab({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h2 className="text-lg font-semibold">{chatbox.name}</h2>
-                      <p className="text-xs text-muted-foreground">
-                        Publishing the {host?.name ?? "host"} chatbox — share
-                        link, access mode, members, and welcome surface.
-                      </p>
                     </div>
                     {publishLink ? (
                       <Button
@@ -279,6 +276,7 @@ export function ChatboxesTab({
                         className="rounded-xl"
                         onClick={handleCopyLink}
                       >
+                        <Link2 className="mr-1.5 size-4" />
                         Copy link
                       </Button>
                     ) : null}
