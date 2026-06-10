@@ -114,6 +114,10 @@ import type {
 } from "../utils/mcpjam-stream-handler.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { finalizeEvalIteration } from "./evals/finalize-iteration.js";
+import {
+  createEvalBrowserContext,
+  type EvalBrowserContext,
+} from "./evals/browser-eval-context.js";
 import type {
   EvalStreamEvent,
   EvalStreamToolCall,
@@ -1787,40 +1791,62 @@ const runIterationWithAiSdk = async ({
   }
 };
 
-const runIterationViaBackend = async ({
-  test,
-  runIndex,
-  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
-  // is delegated to prepareChatV2 below.
-  tools: _suiteTools,
-  selectedServers,
-  mcpClientManager,
-  recorder,
-  testCaseId,
-  // `convexHttpUrl` is in the RunIterationBackendParams type because the
-  // streaming variant (`streamIterationViaBackend`) still uses it for
-  // its legacy per-step fetch loop (PR 5 collapses that). The non-stream
-  // path now drives `runAssistantTurn`, which reads
-  // `process.env.CONVEX_HTTP_URL` directly — so the runner-level param
-  // is dead here. Kept in the type signature (no API churn) but no
-  // longer destructured.
-  convexAuthToken,
-  modelId,
-  modelDefinition,
-  orgModelConfig,
-  endpointPath = "/stream",
-  extraBodyFields,
-  convexClient,
-  runId,
-  abortSignal,
-  compareRunId,
-  precreatedIterationId,
-  injectOpenAiCompat,
-  hostPolicy,
-  toolSignals,
-  suiteHostConfig,
-  orgModelConfigTarget,
-}: RunIterationBackendParams) => {
+const runIterationViaBackend = async (params: RunIterationBackendParams) => {
+  // Browser-rendered MCP App eval (PR 14): hosted-path harness context — the
+  // engine-attached equivalent of the local runners' inline harness wiring
+  // (computer tools, advertised-tool gate, render hook, artifact collectors).
+  // The wrapper owns disposal: try/finally guarantees a launched Chromium is
+  // torn down on EVERY exit (cancellation early-returns, setup failures,
+  // finalize throws), which per-exit dispose calls could miss.
+  const browser = createEvalBrowserContext({
+    model: params.test.model,
+    mcpClientManager: params.mcpClientManager,
+    injectOpenAiCompat: params.injectOpenAiCompat,
+  });
+  try {
+    return await runIterationViaBackendWithBrowser(params, browser);
+  } finally {
+    await browser.dispose();
+  }
+};
+
+const runIterationViaBackendWithBrowser = async (
+  {
+    test,
+    runIndex,
+    // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+    // is delegated to prepareChatV2 below.
+    tools: _suiteTools,
+    selectedServers,
+    mcpClientManager,
+    recorder,
+    testCaseId,
+    // `convexHttpUrl` is in the RunIterationBackendParams type because the
+    // streaming variant (`streamIterationViaBackend`) still uses it for
+    // its legacy per-step fetch loop (PR 5 collapses that). The non-stream
+    // path now drives `runAssistantTurn`, which reads
+    // `process.env.CONVEX_HTTP_URL` directly — so the runner-level param
+    // is dead here. Kept in the type signature (no API churn) but no
+    // longer destructured.
+    convexAuthToken,
+    modelId,
+    modelDefinition,
+    orgModelConfig,
+    endpointPath = "/stream",
+    extraBodyFields,
+    convexClient,
+    runId,
+    abortSignal,
+    compareRunId,
+    precreatedIterationId,
+    injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
+    suiteHostConfig,
+    orgModelConfigTarget,
+  }: RunIterationBackendParams,
+  browser: EvalBrowserContext,
+) => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
@@ -2090,12 +2116,23 @@ const runIterationViaBackend = async ({
 
     const promptTurn = promptTurns[promptIndex]!;
 
+    // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
+    // this turn, and start the turn with a clean widget surface — a widget
+    // kept mounted by a previous prompt turn must not bleed into this one
+    // (otherwise Computer Use could be advertised against the prior turn's
+    // widget before this turn's own MCP App tool runs).
+    browser.setActivePromptIndex(promptIndex);
+    await browser.dismissCarriedWidget();
+
     // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
     // each tool's `execute` to push to `traceCtx.recordedSpans`; we drain
     // into `capturedSpans` after the engine finishes.
     const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
+    // PR 14: the Computer Use tools ride the same wrap so `computer` /
+    // `finish_widget` executions land as tool spans in the trace UI like
+    // every other locally-executed tool.
     const tracedTools = wrapToolSetForEvalTrace(
-      prepared.allTools,
+      { ...prepared.allTools, ...browser.computerWidgetTools },
       traceCtx,
       promptIndex,
     );
@@ -2163,6 +2200,16 @@ const runIterationViaBackend = async ({
         maxSteps: MAX_STEPS,
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
+        // Browser-rendered MCP App eval (PR 14): cache tool-call inputs for
+        // the widget shim, render MCP App tool results in the harness (the
+        // engine awaits the hook, so a mounted widget is visible to the next
+        // step's gate), and hide `computer` / `finish_widget` until a widget
+        // has actually rendered.
+        onToolCall: (event) => browser.noteToolCallInput(event),
+        onToolResult: (event) => browser.handleEngineToolResult(event),
+        ...(browser.prepareAdvertisedTools
+          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
+          : {}),
       });
     } catch (error) {
       // Cancellation: bail without recording. AbortError can surface
@@ -2398,6 +2445,16 @@ const runIterationViaBackend = async ({
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+    // Browser-rendered MCP App eval (PR 14): hosted-path browser artifacts.
+    // finalizeEvalIteration serializes them once (screenshot upload +
+    // sanitize) for both the W2 and W1 persistence paths — same machinery
+    // the local AI-SDK runners feed (PR 6b/9).
+    ...(browser.widgetRenderObservations.length
+      ? { widgetRenderObservations: browser.widgetRenderObservations }
+      : {}),
+    ...(browser.browserInteractionSteps.length
+      ? { browserInteractionSteps: browser.browserInteractionSteps }
+      : {}),
     status: "completed" as const,
     startedAt: runStartedAt,
     error: iterationError,
@@ -3953,42 +4010,65 @@ const streamIterationWithAiSdk = async ({
   }
 };
 
-const streamIterationViaBackend = async ({
-  test,
-  runIndex,
-  // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
-  // is delegated to prepareChatV2 below.
-  tools: _suiteTools,
-  selectedServers,
-  mcpClientManager,
-  recorder,
-  testCaseId,
-  // PR 5b: `convexHttpUrl` is in the `RunIterationBackendParams` type
-  // (shared with the non-stream runner + the iterative path) but
-  // unused here — `runAssistantTurn` owns the Convex `/stream` fetch
-  // and reads its base URL from `CONVEX_HTTP_URL` env / the configured
-  // chat-orchestration helpers. Kept on the params type so the caller
-  // shape stays uniform across runners.
-  convexAuthToken,
-  modelId,
-  modelDefinition,
-  orgModelConfig,
-  endpointPath = "/stream",
-  extraBodyFields,
-  convexClient,
-  runId,
-  abortSignal,
-  emit,
-  compareRunId,
-  precreatedIterationId,
-  injectOpenAiCompat,
-  hostPolicy,
-  toolSignals,
-  suiteHostConfig,
-  orgModelConfigTarget,
-}: RunIterationBackendParams & {
-  emit: StreamEmit;
-}): Promise<EvalIterationOutcome> => {
+const streamIterationViaBackend = async (
+  params: RunIterationBackendParams & {
+    emit: StreamEmit;
+  },
+): Promise<EvalIterationOutcome> => {
+  // Browser-rendered MCP App eval (PR 14): hosted-path harness context for
+  // the streaming runner — same wiring as `runIterationViaBackend`; the
+  // wrapper's try/finally guarantees Chromium teardown on every exit.
+  const browser = createEvalBrowserContext({
+    model: params.test.model,
+    mcpClientManager: params.mcpClientManager,
+    injectOpenAiCompat: params.injectOpenAiCompat,
+  });
+  try {
+    return await streamIterationViaBackendWithBrowser(params, browser);
+  } finally {
+    await browser.dispose();
+  }
+};
+
+const streamIterationViaBackendWithBrowser = async (
+  {
+    test,
+    runIndex,
+    // Suite-level raw set retained for `toolSignals`; per-iteration tool prep
+    // is delegated to prepareChatV2 below.
+    tools: _suiteTools,
+    selectedServers,
+    mcpClientManager,
+    recorder,
+    testCaseId,
+    // PR 5b: `convexHttpUrl` is in the `RunIterationBackendParams` type
+    // (shared with the non-stream runner + the iterative path) but
+    // unused here — `runAssistantTurn` owns the Convex `/stream` fetch
+    // and reads its base URL from `CONVEX_HTTP_URL` env / the configured
+    // chat-orchestration helpers. Kept on the params type so the caller
+    // shape stays uniform across runners.
+    convexAuthToken,
+    modelId,
+    modelDefinition,
+    orgModelConfig,
+    endpointPath = "/stream",
+    extraBodyFields,
+    convexClient,
+    runId,
+    abortSignal,
+    emit,
+    compareRunId,
+    precreatedIterationId,
+    injectOpenAiCompat,
+    hostPolicy,
+    toolSignals,
+    suiteHostConfig,
+    orgModelConfigTarget,
+  }: RunIterationBackendParams & {
+    emit: StreamEmit;
+  },
+  browser: EvalBrowserContext,
+): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
@@ -4267,6 +4347,12 @@ const streamIterationViaBackend = async ({
       content: promptTurn.prompt,
     });
 
+    // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
+    // this turn, and start the turn with a clean widget surface (a widget
+    // kept mounted by a previous prompt turn must not bleed into this one).
+    browser.setActivePromptIndex(promptIndex);
+    await browser.dismissCarriedWidget();
+
     emit({
       type: "turn_start",
       turnIndex: promptIndex,
@@ -4278,8 +4364,10 @@ const streamIterationViaBackend = async ({
     // `traceCtx.recordedSpans`; we drain into `capturedSpans` after the
     // engine finishes (same shape as the non-stream backend runner).
     const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
+    // PR 14: Computer Use tools ride the same wrap (see the non-stream
+    // backend runner).
     const tracedTools = wrapToolSetForEvalTrace(
-      prepared.allTools,
+      { ...prepared.allTools, ...browser.computerWidgetTools },
       traceCtx,
       promptIndex,
     );
@@ -4382,6 +4470,9 @@ const streamIterationViaBackend = async ({
     };
     const onToolCall = (event: MCPJamToolCallEvent) => {
       if (!event.toolName) return;
+      // PR 14: cache the input so the widget render hook can feed the
+      // OpenAI-compat shim the real tool-call args.
+      browser.noteToolCallInput(event);
       const args = (event.input ?? {}) as Record<string, unknown>;
       promptToolsCalled.push({
         toolName: event.toolName,
@@ -4400,7 +4491,7 @@ const streamIterationViaBackend = async ({
         args,
       });
     };
-    const onToolResult = (event: MCPJamToolResultEvent) => {
+    const onToolResult = async (event: MCPJamToolResultEvent) => {
       partialToolResultMessages.push({
         role: "tool",
         content: [
@@ -4419,6 +4510,11 @@ const streamIterationViaBackend = async ({
         result: event.output,
         isError: event.isError,
       });
+      // PR 14: render MCP App tool results in the harness AFTER the SSE
+      // emit (live consumers shouldn't wait on Chromium). The engine awaits
+      // this callback, so the widget is mounted before the next step's
+      // advertised-tool gate runs.
+      await browser.handleEngineToolResult(event);
     };
     const onStepFinish = (event: MCPJamStepFinishEvent) => {
       // Marcelo's PR 5b-pre review caveat: only emit `step_finish` for
@@ -4573,6 +4669,11 @@ const streamIterationViaBackend = async ({
         onToolResult,
         onStepFinish,
         onEngineError,
+        // Browser-rendered MCP App eval (PR 14): hide `computer` /
+        // `finish_widget` until a widget has actually rendered.
+        ...(browser.prepareAdvertisedTools
+          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
+          : {}),
       });
     } catch (error) {
       // Cancellation: bail without recording. AbortError can surface
@@ -4916,6 +5017,14 @@ const streamIterationViaBackend = async ({
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+    // Browser-rendered MCP App eval (PR 14): hosted-path browser artifacts
+    // (see the non-stream backend runner).
+    ...(browser.widgetRenderObservations.length
+      ? { widgetRenderObservations: browser.widgetRenderObservations }
+      : {}),
+    ...(browser.browserInteractionSteps.length
+      ? { browserInteractionSteps: browser.browserInteractionSteps }
+      : {}),
     status: "completed" as const,
     startedAt: runStartedAt,
     error: iterationError,

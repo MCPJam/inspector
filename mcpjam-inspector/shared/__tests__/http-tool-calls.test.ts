@@ -989,3 +989,142 @@ describe("executeToolCallsFromMessages", () => {
     });
   });
 });
+
+describe("executeToolCallsFromMessages — toModelOutput (browser-render PR 14)", () => {
+  const callMessage = (toolName: string): ModelMessage[] =>
+    [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-cu-1",
+            toolName,
+            input: { action: "screenshot" },
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+  it("uses the tool's toModelOutput mapping as the model-facing output", async () => {
+    const implResult = {
+      screenshotBase64: "aGVsbG8=",
+      widgetToolCalls: [],
+      elapsedMs: 12,
+    };
+    const tools = {
+      computer: {
+        execute: vi.fn().mockResolvedValue(implResult),
+        toModelOutput: vi.fn(({ output }: { output: unknown }) => ({
+          type: "content",
+          value: [
+            {
+              type: "image-data",
+              data: (output as { screenshotBase64: string }).screenshotBase64,
+              mediaType: "image/png",
+            },
+          ],
+        })),
+      },
+    };
+
+    const messages = callMessage("computer");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    expect(tools.computer.toModelOutput).toHaveBeenCalledWith({
+      output: implResult,
+    });
+    expect(newMessages).toHaveLength(1);
+    const part = (newMessages[0] as any).content[0];
+    expect(part.type).toBe("tool-result");
+    expect(part.toolCallId).toBe("call-cu-1");
+    expect(part.output).toEqual({
+      type: "content",
+      value: [
+        { type: "image-data", data: "aGVsbG8=", mediaType: "image/png" },
+      ],
+    });
+  });
+
+  it("does NOT duplicate the raw implementation result onto the part", async () => {
+    // Content outputs carry the full model-facing payload (screenshots);
+    // duplicating the raw result would double-ship the screenshot in every
+    // subsequent per-step request body on the hosted path.
+    const tools = {
+      computer: {
+        execute: async () => ({ screenshotBase64: "eA==" }),
+        toModelOutput: () => ({ type: "text", value: "ok" }),
+      },
+    };
+
+    const messages = callMessage("computer");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({ type: "text", value: "ok" });
+    expect("result" in part).toBe(false);
+  });
+
+  it("awaits an async toModelOutput", async () => {
+    const tools = {
+      computer: {
+        execute: async () => ({ n: 1 }),
+        toModelOutput: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return { type: "text", value: "async-mapped" };
+        },
+      },
+    };
+
+    const messages = callMessage("computer");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    expect((newMessages[0] as any).content[0].output).toEqual({
+      type: "text",
+      value: "async-mapped",
+    });
+  });
+
+  it("a throwing toModelOutput records an error tool-result (not a crash)", async () => {
+    const tools = {
+      computer: {
+        execute: async () => ({ n: 1 }),
+        toModelOutput: () => {
+          throw new Error("mapping failed");
+        },
+      },
+    };
+
+    const messages = callMessage("computer");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output.type).toBe("error-text");
+    expect(part.output.value).toMatch(/mapping failed/);
+  });
+
+  it("tools without toModelOutput keep the JSON serialization path", async () => {
+    const tools = {
+      regular: {
+        execute: async () => ({ ok: true }),
+      },
+    };
+
+    const messages = callMessage("regular");
+    const newMessages = await executeToolCallsFromMessages(messages, {
+      tools,
+    });
+
+    const part = (newMessages[0] as any).content[0];
+    expect(part.output).toEqual({ type: "json", value: { ok: true } });
+    expect(part.result).toEqual({ ok: true });
+  });
+});
