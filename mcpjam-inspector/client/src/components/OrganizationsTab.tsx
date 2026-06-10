@@ -57,6 +57,7 @@ import {
   useOrganizationBilling,
   type BillingInterval,
   type OrganizationBillingStatus,
+  type OrganizationSeatPaymentIntent,
   type OrganizationPlan,
 } from "@/hooks/useOrganizationBilling";
 import {
@@ -191,6 +192,63 @@ function getScheduledBillingChangeCancellationState(
     dialogDescription: `This cancels the pending ${changeNoun} to ${scheduledDescriptor}${effectiveDateSuffix}. ${currentPlanName} ${currentIntervalLabel} remains active.`,
     successMessage: `Scheduled billing change canceled. ${currentPlanName} ${currentIntervalLabel} remains active.`,
   };
+}
+
+function PendingSeatPaymentNotice({
+  intent,
+  isFinishingSeatPayment,
+  isCancelingSeatPayment,
+  onFinish,
+  onCancel,
+}: {
+  intent: OrganizationSeatPaymentIntent;
+  isFinishingSeatPayment: boolean;
+  isCancelingSeatPayment: boolean;
+  onFinish: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Alert
+      className="border-primary/20 bg-primary/[0.04]"
+      data-testid="pending-seat-payment-notice"
+    >
+      <CreditCard className="size-4 text-primary" />
+      <AlertTitle>Seat payment required</AlertTitle>
+      <AlertDescription className="space-y-3">
+        <p>
+          Finish payment to add {intent.email}. They will not get access or
+          credits until payment succeeds.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={onFinish}
+            disabled={isFinishingSeatPayment || isCancelingSeatPayment}
+          >
+            {isFinishingSeatPayment ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : (
+              <CreditCard className="mr-2 size-4" />
+            )}
+            Finish payment
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onCancel}
+            disabled={isCancelingSeatPayment}
+          >
+            {isCancelingSeatPayment ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : null}
+            Cancel
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
 }
 
 export function OrganizationsTab({
@@ -375,13 +433,22 @@ function OrganizationPage({
     pendingPlanChangeTarget,
     isOpeningPortal,
     isCancelingScheduledBillingChange,
+    activeSeatPaymentIntent,
+    isFinishingSeatPayment,
+    isCancelingSeatPayment,
+    isHandlingSeatPayment,
     error: billingError,
     startPlanChange,
     openPortal,
     openCancellationPortal,
     openIntervalChangePortal,
     cancelScheduledBillingChange,
-  } = useOrganizationBilling(organization._id, { enabled: isAuthenticated });
+    finishSeatPayment,
+    cancelSeatPayment,
+  } = useOrganizationBilling(organization._id, {
+    enabled: isAuthenticated,
+    includeSeatPaymentIntent: true,
+  });
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui"
   );
@@ -545,18 +612,24 @@ function OrganizationPage({
       );
       return;
     }
+    const email = inviteEmail.trim();
     setIsInviting(true);
     try {
       const result = await addMember({
         organizationId: organization._id,
-        email: inviteEmail.trim(),
+        email,
       });
+      if (result.needsSeatPayment) {
+        setInviteEmail("");
+        await handleFinishSeatPayment(result.seatPaymentIntentId, email);
+        return;
+      }
       if (result.isPending) {
         toast.success(
-          `Invitation sent to ${inviteEmail}. They'll get access once they sign up.`
+          `Invitation sent to ${email}. They'll get access once they sign up.`
         );
       } else {
-        toast.success(`${inviteEmail} added to the organization.`);
+        toast.success(`${email} added to the organization.`);
       }
       setInviteEmail("");
     } catch (error) {
@@ -569,6 +642,39 @@ function OrganizationPage({
       );
     } finally {
       setIsInviting(false);
+    }
+  };
+
+  const handleFinishSeatPayment = async (
+    seatPaymentIntentId?: string,
+    email?: string
+  ) => {
+    try {
+      const result = await finishSeatPayment(seatPaymentIntentId);
+      if (result.status === "paid") {
+        toast.success(
+          `${email ?? activeSeatPaymentIntent?.email ?? "Member"} added to the organization.`
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Payment was not completed. The member was not added."
+      );
+    }
+  };
+
+  const handleCancelSeatPayment = async () => {
+    try {
+      await cancelSeatPayment();
+      toast.success("Pending seat payment canceled.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to cancel pending seat payment"
+      );
     }
   };
 
@@ -905,6 +1011,17 @@ function OrganizationPage({
     ]
   );
 
+  const pendingSeatPaymentNotice =
+    activeSeatPaymentIntent && billingStatus?.canManageBilling ? (
+      <PendingSeatPaymentNotice
+        intent={activeSeatPaymentIntent}
+        isFinishingSeatPayment={isFinishingSeatPayment}
+        isCancelingSeatPayment={isCancelingSeatPayment}
+        onFinish={() => void handleFinishSeatPayment()}
+        onCancel={() => void handleCancelSeatPayment()}
+      />
+    ) : null;
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-5">
@@ -1023,6 +1140,7 @@ function OrganizationPage({
           />
         ) : activeSection === "billing" ? (
           <>
+            {pendingSeatPaymentNotice}
             <OrganizationBillingSection
               organizationId={organization._id}
               showPlanBilling={billingUiEnabled}
@@ -1116,6 +1234,7 @@ function OrganizationPage({
               <CardContent className="space-y-4 pt-0">
                 {canInvite ? (
                   <div className="space-y-3">
+                    {pendingSeatPaymentNotice}
                     <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
                       <Input
                         placeholder="Email address"
@@ -1133,12 +1252,15 @@ function OrganizationPage({
                         disabled={
                           !inviteEmail.trim() ||
                           isInviting ||
+                          isHandlingSeatPayment ||
                           memberInviteGate.isLoading ||
                           memberInviteGate.isDenied
                         }
                       >
                         <UserPlus className="mr-2 size-4" />
-                        {isInviting ? "Inviting..." : "Add member"}
+                        {isInviting || isHandlingSeatPayment
+                          ? "Working..."
+                          : "Add member"}
                       </Button>
                     </div>
 

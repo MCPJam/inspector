@@ -172,6 +172,7 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     entitlements: undefined,
     organizationPremiumness: undefined,
     projectPremiumness: undefined,
+    activeSeatPaymentIntent: null,
     planCatalog: createPlanCatalog(),
     isLoadingBilling: false,
     isLoadingEntitlements: false,
@@ -183,6 +184,7 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     isOpeningPortal: false,
     isCancelingScheduledBillingChange: false,
     isSelectingFreeAfterTrial: false,
+    isHandlingSeatPayment: false,
     error: null,
     startPlanChange: vi.fn(),
     openPortal: vi.fn(),
@@ -190,6 +192,8 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     openIntervalChangePortal: vi.fn(),
     cancelScheduledBillingChange: vi.fn(),
     selectFreeAfterTrial: vi.fn(),
+    finishSeatPayment: vi.fn(),
+    cancelSeatPayment: vi.fn(),
     ...overrides,
   };
 }
@@ -366,6 +370,50 @@ describe("OrganizationsTab billing", () => {
     expect(panel.queryByText("Subscription status")).not.toBeInTheDocument();
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
       "No active subscription",
+    );
+  });
+
+  it("shows pending seat payment notice in the billing view", async () => {
+    const finishSeatPayment = vi
+      .fn()
+      .mockResolvedValue({ status: "paid", seatQuantity: 4 });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: {
+          _id: "seat-payment-1",
+          organizationId: "org-1",
+          userId: "user-new",
+          email: "new@example.com",
+          role: "member",
+          source: "workspace",
+          status: "pending",
+          targetSeatQuantity: null,
+          stripeInvoiceId: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        finishSeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByTestId("pending-seat-payment-notice")).toHaveTextContent(
+      "Finish payment to add new@example.com",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
+    await waitFor(() =>
+      expect(finishSeatPayment).toHaveBeenCalledWith(undefined),
     );
   });
 
