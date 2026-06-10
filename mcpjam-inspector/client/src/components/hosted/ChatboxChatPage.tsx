@@ -893,6 +893,10 @@ export function ChatboxChatPage({
               (server) => server.serverId
             ),
             requestRefreshAccessVersion,
+            // Redeemed sessions carry Convex-resolved server ids; only the
+            // web chat engine can connect them. Playground previews keep
+            // the platform default (local engine + builder connections).
+            requiresWebChatApi: !playgroundParams,
           }}
           executionConfig={{
             modelId: session.payload.modelId,
