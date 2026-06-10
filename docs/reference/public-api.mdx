@@ -1,0 +1,325 @@
+---
+title: "MCPJam API"
+description: "Programmatic access to live MCP server diagnostics — validate, inspect, and export servers in your MCPJam projects."
+icon: "braces"
+tag: "Preview"
+---
+
+<Warning>
+**The MCPJam API is in preview.** It works today and we use it ourselves, but
+it has not been generally announced and the surface may change — including in
+breaking ways — while we finish the design. Pin your integration to the
+behaviors documented on this page, build a [tolerant
+reader](#versioning--stability), and expect to revisit it. Feedback is very
+welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
+[GitHub](https://github.com/MCPJam/inspector/issues).
+</Warning>
+
+The MCPJam API lets you run the inspector's live diagnostics against MCP
+servers saved in your [hosted](/hosted/overview) projects — from CI, scripts,
+or your own agents — without opening the UI.
+
+What you can do with it today:
+
+- **Validate a server** — connect, initialize, and capture a capability snapshot
+- **Run the doctor** — the probe → connect → initialize → capabilities workflow
+- **Check OAuth requirements** — does this server need an OAuth grant?
+- **List tools, prompts, and resources** — the server's MCP primitives
+- **Read a resource** by URI
+- **Export a full snapshot** — tools, resources, and prompts as one JSON document
+
+All endpoints operate on servers you have already added to a project in the
+hosted inspector. Executing tools, running evals, and managing keys are **not**
+part of the API yet — see [Not in the API yet](#not-in-the-api-yet).
+
+## Base URL
+
+```text
+https://app.mcpjam.com/api/v1
+```
+
+The API is path-versioned. All routes on this page are relative to the base
+URL above.
+
+## Authentication
+
+Every request needs an MCPJam API key in the `Authorization` header:
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/tools" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### Creating a key
+
+1. Open [app.mcpjam.com](https://app.mcpjam.com) and go to **Settings → API keys**.
+2. Click **Create key**, name it, and pick the **organization** it will act in.
+3. Copy the key (`sk_…`) immediately — **it is shown exactly once** and never
+   stored by MCPJam in retrievable form.
+
+Keys can be revoked from the same page at any time. Revocation takes effect
+immediately.
+
+### Scope
+
+A key is bound to one MCPJam organization at creation and acts **as you,
+inside that organization**. Per-request authorization still applies: a call
+only succeeds if the key's owner can access that project and server. A key
+can never reach projects outside its organization.
+
+<Note>
+Two deliberate restrictions while in preview:
+
+- **API keys cannot manage API keys.** Requests to the key-management surface
+  with an `sk_…` bearer fail with `403 FORBIDDEN`. Create and revoke keys in
+  the UI.
+- **Guest sessions cannot use the API.** Sign in to create keys.
+</Note>
+
+### Keep keys secret
+
+Treat an API key like a password:
+
+- Load it from an environment variable or secret manager — never commit it to
+  source control or ship it in client-side code.
+- Scope keys narrowly: one key per integration, named so you can tell them apart.
+- Rotate by creating a replacement key, switching traffic, then revoking the old one.
+- If a key leaks, revoke it immediately in **Settings → API keys**.
+
+If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
+is no longer bound to an organization and cannot be used — create a new key
+from Settings.
+
+## Conventions
+
+**Requests.** All v1 endpoints are `POST` and accept a JSON body. Most accept
+an empty body (`{}`); list endpoints take an optional `cursor`, and
+`resources/read` requires a `uri`.
+
+**Responses.** Three envelope shapes, used consistently:
+
+| Kind | Shape |
+| --- | --- |
+| Single resource | The resource object directly |
+| Collection | `{ "items": [...], "nextCursor": "..." }` — `nextCursor` omitted on the last page |
+| Error | `{ "code": "...", "message": "...", "details": {...} }` with a matching HTTP status |
+
+**Pagination.** Collections are cursor-based. Pass the previous response's
+`nextCursor` as `cursor` in the next request body. Cursors are opaque — don't
+parse them.
+
+**IDs.** `projectId` and `serverId` are the identifiers the hosted inspector
+itself uses. While the API is in preview there is no listing endpoint for them
+yet: the quickest way to grab them is your browser's dev tools — any inspector
+request to `/api/web/...` carries both — and key-accessible listing endpoints
+are planned.
+
+## Errors
+
+Errors always use the canonical body `{ code, message, details? }`. The `code`
+is stable and machine-readable; `message` is human-readable and may change;
+`details` is an optional, unstructured bag.
+
+| Code | HTTP | Meaning |
+| --- | --- | --- |
+| `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
+| `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
+| `FORBIDDEN` | 403 | Key is valid but not allowed to do this |
+| `VALIDATION_ERROR` | 400 | Malformed body or parameters |
+| `NOT_FOUND` | 404 | Unknown project, server, or resource |
+| `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
+| `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
+| `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
+| `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
+| `INTERNAL_ERROR` | 500 | Something failed on our side |
+
+New error codes may be **added** over time; treat unknown codes as
+non-retryable failures unless the HTTP status says otherwise.
+
+## Rate limits
+
+Each key gets **60 requests per minute** sustained, with bursts up to **10**.
+Exceeding it returns `429 RATE_LIMITED` with a `Retry-After` header (in
+seconds):
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 7
+
+{ "code": "RATE_LIMITED", "message": "API key rate limit exceeded. Slow down and retry." }
+```
+
+Honor `Retry-After`, add jittered exponential backoff, and expect these limits
+to be tuned during the preview.
+
+## Endpoints
+
+All endpoints follow the pattern
+`POST /projects/{projectId}/servers/{serverId}/...`.
+
+### Server diagnostics
+
+<AccordionGroup>
+<Accordion title="POST .../validate — connect and snapshot">
+Connects to the server, initializes the MCP session, and returns a connection
+snapshot (server info, negotiated capabilities). The same check the hosted
+inspector runs when you connect a server.
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/validate" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+</Accordion>
+
+<Accordion title="POST .../doctor — full health workflow">
+Runs the doctor workflow — probe → connect → initialize → capabilities — and
+returns a step-by-step report. The richest signal for "is this server healthy
+and why not."
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/doctor" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+</Accordion>
+
+<Accordion title="POST .../check-oauth — OAuth probe">
+Lightweight, no MCP connection: reports whether the server is configured to
+require OAuth.
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/check-oauth" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+```json
+{ "useOAuth": true, "serverUrl": "https://mcp.example.com/mcp" }
+```
+</Accordion>
+</AccordionGroup>
+
+### Primitives
+
+<AccordionGroup>
+<Accordion title="POST .../tools — list tools">
+Returns the server's tools as a collection page. Each item is the MCP tool
+definition (`name`, `description`, `inputSchema`, ...).
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/tools" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+```json
+{
+  "items": [
+    {
+      "name": "create_issue",
+      "description": "Create a new issue in the tracker",
+      "inputSchema": { "type": "object", "properties": { "title": { "type": "string" } } }
+    }
+  ]
+}
+```
+
+<ParamField body="cursor" type="string">
+Opaque pagination cursor from a previous response's `nextCursor`.
+</ParamField>
+</Accordion>
+
+<Accordion title="POST .../prompts — list prompts">
+Returns the server's prompts as a collection page.
+
+<ParamField body="cursor" type="string">
+Opaque pagination cursor from a previous response's `nextCursor`.
+</ParamField>
+</Accordion>
+
+<Accordion title="POST .../resources — list resources">
+Returns the server's resources as a collection page.
+
+<ParamField body="cursor" type="string">
+Opaque pagination cursor from a previous response's `nextCursor`.
+</ParamField>
+</Accordion>
+
+<Accordion title="POST .../resources/read — read one resource">
+Reads a single resource by URI and returns its contents.
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/resources/read" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"uri": "file:///readme.md"}'
+```
+
+<ParamField body="uri" type="string" required>
+The resource URI, exactly as returned by the resources list.
+</ParamField>
+</Accordion>
+</AccordionGroup>
+
+### Export
+
+<Accordion title="POST .../export — full server snapshot">
+Lists tools, resources, and prompts in one call and returns a single JSON
+snapshot — handy for diffing a server's surface over time in CI.
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/export" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+```json
+{
+  "serverId": "...",
+  "exportedAt": "2026-06-10T18:00:00.000Z",
+  "tools": [ { "name": "...", "description": "...", "inputSchema": {} } ],
+  "resources": [ { "uri": "...", "name": "...", "mimeType": "..." } ],
+  "prompts": [ { "name": "...", "description": "...", "arguments": [] } ]
+}
+```
+</Accordion>
+
+## Not in the API yet
+
+To set expectations while in preview, these are **not** available over the API
+today (most exist in the hosted inspector UI):
+
+- Executing tools or running evals
+- Listing your projects and servers (planned; see [IDs](#conventions))
+- Creating or revoking API keys (UI-only by design — see [Authentication](#authentication))
+- Chat, conformance suites, and OAuth flows
+
+If one of these blocks you, tell us on
+[Discord](https://discord.gg/JEnDtz8X6z) — it directly shapes what we
+stabilize first.
+
+## Versioning & stability
+
+- The API is **path-versioned** (`/api/v1`). When it reaches general
+  availability, breaking changes will require a new version path.
+- **During the preview**, breaking changes to v1 may still happen; we'll note
+  them in the [changelog](/changelog/overview).
+- **Additive changes** — new endpoints, new optional request fields, new
+  response fields, new error codes — are considered non-breaking and can ship
+  at any time. Write clients that ignore unknown fields.
+- Error **codes** are stable identifiers; error **messages** are not.
