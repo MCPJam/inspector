@@ -24,6 +24,7 @@
 
 import { existsSync } from "fs";
 import type { Browser, BrowserContext, Page } from "playwright";
+import { buildCspHeader, buildCspMetaContent } from "./widget-helpers";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
 
 /* ------------------------------------------------------------------ *
@@ -147,10 +148,12 @@ export interface RenderWidgetInput {
   /**
    * Widget-declared CSP (normalized from the UI resource's `_meta.ui.csp` /
    * legacy `_meta["openai/widgetCSP"]`, same shape as the SDK's
-   * `WidgetCspMeta`). The network gate honors these sources for this widget's
-   * mount lifetime — the headless analog of the sandbox proxy's
-   * `widget-declared` CSP mode. Omitted/empty means the widget gets only the
-   * standing allowances (loopback, data:/blob:, configured `allowOrigins`).
+   * `WidgetCspMeta`). Enforced two ways for this widget's mount lifetime: the
+   * harness injects the `widget-declared` policy as an in-iframe `<meta>` CSP
+   * (directive-precise — fetch vs script/font/img vs frame — exactly as the
+   * production sandbox proxy does), and the network route additionally treats
+   * these origins as a coarse "may egress" allowlist. Omitted/empty yields the
+   * SEP restrictive default (self + data:/blob: + loopback).
    */
   cspMeta?: {
     connect_domains?: string[];
@@ -223,11 +226,14 @@ export function cspSourceMatchesUrl(source: string, url: URL): boolean {
     return false;
   }
 
-  if (port && port !== "*") {
-    const urlPort =
-      url.port ||
-      (url.protocol === "https:" || url.protocol === "wss:" ? "443" : "80");
-    if (urlPort !== port) return false;
+  // Port matching (CSP semantics): `*` = any port; an explicit port must equal
+  // the URL's port; an OMITTED source port matches only the scheme's default
+  // port (so `https://api.example.com` matches `:443`/default but not `:8443`).
+  if (port !== "*") {
+    const defaultPort =
+      url.protocol === "https:" || url.protocol === "wss:" ? "443" : "80";
+    const urlPort = url.port || defaultPort;
+    if (urlPort !== (port ?? defaultPort)) return false;
   }
 
   const host = url.hostname.toLowerCase();
@@ -235,6 +241,31 @@ export function cspSourceMatchesUrl(source: string, url: URL): boolean {
   if (pattern === "*") return true;
   if (pattern.startsWith("*.")) return host.endsWith(pattern.slice(1));
   return host === pattern;
+}
+
+/**
+ * Inject a `<meta http-equiv="Content-Security-Policy">` as the FIRST child of
+ * `<head>` so the browser enforces the widget's declared policy at directive
+ * granularity inside the iframe — the headless analog of the sandbox proxy's
+ * CSP injection. First-in-head matters: a meta CSP only governs resources
+ * parsed after it, and `guestDoc.write(html)` parses top-down.
+ *
+ * Falls back to creating a `<head>` (or prepending) when the document omits
+ * one, so even minimal widget HTML is governed rather than running unpoliced.
+ */
+export function injectCspMeta(html: string, cspContent: string): string {
+  const tag = `<meta http-equiv="Content-Security-Policy" content="${cspContent}">`;
+  const headOpen = /<head\b[^>]*>/i.exec(html);
+  if (headOpen) {
+    const at = headOpen.index + headOpen[0].length;
+    return html.slice(0, at) + tag + html.slice(at);
+  }
+  const htmlOpen = /<html\b[^>]*>/i.exec(html);
+  if (htmlOpen) {
+    const at = htmlOpen.index + htmlOpen[0].length;
+    return html.slice(0, at) + `<head>${tag}</head>` + html.slice(at);
+  }
+  return tag + html;
 }
 
 // SEP-1865 host capabilities are declared as OBJECTS (an empty `{}` means
@@ -364,9 +395,12 @@ export class McpAppBrowserHarness {
       permissions: [],
     });
 
-    // Default-deny network with an allowlist: loopback + configured origins
+    // COARSE default-deny egress backstop: loopback + configured origins
     // (static for the harness lifetime) + the mounted widget's declared CSP
-    // sources (per-widget, see `widgetCspSources`). Non-network schemes
+    // origins as one flat union (per-widget, see `widgetCspSources`). This is
+    // intentionally directive-blind — the injected in-iframe `<meta>` CSP does
+    // the connect/resource/frame separation; the route just decides whether a
+    // request may leave the machine, and records the rest. Non-network schemes
     // (data:, blob:, about:) pass through.
     const allowOrigins = new Set(this.opts.allowOrigins ?? []);
     await this.context.route("**/*", (route) => {
@@ -521,15 +555,30 @@ export class McpAppBrowserHarness {
       serverId: input.serverId,
       actionCount: 0,
     });
-    // Arm the network gate with this widget's declared CSP sources BEFORE the
-    // in-page mount, so the iframe's initial subresource fetches (scripts,
-    // fonts, XHR) are judged against the widget's own policy instead of
-    // aborting with net::ERR_FAILED and a blank first paint.
+    // Arm the network route's COARSE egress backstop with this widget's
+    // declared origins (union of all directives) BEFORE the in-page mount. The
+    // route only decides "may a request leave the machine at all"; the injected
+    // in-iframe CSP below does the directive-precise enforcement (connect vs
+    // resource vs frame). Set before mount so first subresource fetches are
+    // judged against the widget's own policy, not aborted into a blank paint.
     this.widgetCspSources = [
       ...(input.cspMeta?.connect_domains ?? []),
       ...(input.cspMeta?.resource_domains ?? []),
       ...(input.cspMeta?.frame_domains ?? []),
     ];
+
+    // Enforce the widget's declared CSP IN the iframe, the same way the sandbox
+    // proxy does in production: build the `widget-declared` policy from the
+    // resource's CSP metadata and inject it as a <meta http-equiv> before mount.
+    // The browser then applies real directive semantics — e.g. a `fetch()` only
+    // succeeds to a `connect_domains` origin, a script/font/img only to a
+    // `resource_domains` origin. With no declared CSP this yields the SEP
+    // restrictive default (self + data:/blob: + loopback), so undeclared widgets
+    // run policed rather than open.
+    const cspContent = buildCspMetaContent(
+      buildCspHeader("widget-declared", input.cspMeta).headerString
+    );
+    const policedHtml = injectCspMeta(input.html, cspContent);
 
     let pageResult: {
       mounted: boolean;
@@ -545,7 +594,7 @@ export class McpAppBrowserHarness {
           ).__mcpjamHarness.renderWidget(opts),
         {
           widgetId: input.toolCallId,
-          html: input.html,
+          html: policedHtml,
           hostCapabilities:
             this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES,
           hostInfo: this.opts.hostInfo ?? {

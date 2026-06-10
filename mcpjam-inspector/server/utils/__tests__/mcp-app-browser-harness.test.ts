@@ -4,6 +4,7 @@ import {
   McpAppBrowserHarness,
   ChromiumNotInstalledError,
   cspSourceMatchesUrl,
+  injectCspMeta,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
 
@@ -396,6 +397,33 @@ describe("cspSourceMatchesUrl — CSP host-source matching", () => {
     ).toBe(true);
   });
 
+  it("treats an omitted source port as the scheme default only (not any port)", () => {
+    // CSP: a source without a port matches only the URL scheme's default port.
+    expect(
+      cspSourceMatchesUrl(
+        "https://api.example.com",
+        u("https://api.example.com/x")
+      )
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl(
+        "https://api.example.com",
+        u("https://api.example.com:443/x")
+      )
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl(
+        "https://api.example.com",
+        u("https://api.example.com:8443/x")
+      )
+    ).toBe(false);
+    // http default is 80.
+    expect(cspSourceMatchesUrl("http://h.io", u("http://h.io/x"))).toBe(true);
+    expect(cspSourceMatchesUrl("http://h.io", u("http://h.io:8080/x"))).toBe(
+      false
+    );
+  });
+
   it("ignores paths in host-sources (origin-granular gate)", () => {
     expect(
       cspSourceMatchesUrl(
@@ -414,70 +442,137 @@ describe("cspSourceMatchesUrl — CSP host-source matching", () => {
   });
 });
 
-describe("McpAppBrowserHarness — widget-declared network policy", () => {
-  // Guest that handshakes, paints, and probes two origins. `.invalid` is a
-  // reserved TLD (RFC 2606): the allowed probe fails DNS (a net error, fine)
-  // while never leaving the machine; only the GATE-aborted probe must land in
-  // blockedRequests.
-  const FETCHING_GUEST_SRC = `
+describe("injectCspMeta", () => {
+  it("inserts the policy as the first child of <head>", () => {
+    const out = injectCspMeta(
+      "<!doctype html><html><head><title>x</title></head><body></body></html>",
+      "default-src 'self'"
+    );
+    expect(out).toContain(
+      `<head><meta http-equiv="Content-Security-Policy" content="default-src 'self'">`
+    );
+    // Must precede any resource-bearing tag it governs.
+    expect(out.indexOf("Content-Security-Policy")).toBeLessThan(
+      out.indexOf("<title>")
+    );
+  });
+
+  it("synthesizes a <head> when the document omits one", () => {
+    expect(
+      injectCspMeta("<html><body>x</body></html>", "default-src 'none'")
+    ).toContain(
+      `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head>`
+    );
+    // No <html> at all: prepend so document.write still parses it first.
+    expect(injectCspMeta("<p>x</p>", "default-src 'none'")).toBe(
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'"><p>x</p>`
+    );
+  });
+});
+
+describe("McpAppBrowserHarness — widget-declared CSP enforcement", () => {
+  // Guest that probes three origins via fetch (a connect-src concern) the
+  // instant it parses — before the bridge — so the injected <meta> CSP (first
+  // in <head>) governs them. `.invalid` is a reserved TLD (RFC 2606): a
+  // CSP-allowed probe leaves the machine and merely fails DNS, while a
+  // CSP-blocked probe never makes a network attempt and logs a violation.
+  const PROBE_GUEST_SRC = `
+fetch("https://conn-ok.invalid/a").catch(() => {});
+fetch("https://res-only.invalid/b").catch(() => {});
+fetch("https://nope.invalid/c").catch(() => {});
 import { App } from "@modelcontextprotocol/ext-apps";
-const app = new App({ name: "fixture-fetch", version: "1.0.0" });
+const app = new App({ name: "fixture-csp", version: "1.0.0" });
 (async () => {
   await app.connect();
   const d = document.createElement("div");
-  d.textContent = "fetch fixture";
+  d.textContent = "csp fixture";
   d.style.cssText = "font-size:32px;padding:40px";
   document.body.appendChild(d);
-  fetch("https://allowed-cdn.invalid/app.js").catch(() => {});
-  fetch("https://blocked-cdn.invalid/app.js").catch(() => {});
 })();
 `;
 
-  let fetchingHtml = "";
+  // Single-origin probe used for the undeclared-default and reset cases.
+  const ONE_PROBE_GUEST_SRC = `
+fetch("https://anywhere.invalid/x").catch(() => {});
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-csp1", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const d = document.createElement("div");
+  d.textContent = "csp1 fixture";
+  d.style.cssText = "font-size:32px;padding:40px";
+  document.body.appendChild(d);
+})();
+`;
+
+  let probeHtml = "";
+  let oneProbeHtml = "";
   beforeAll(async () => {
-    fetchingHtml = guestHtml(await bundleGuest(FETCHING_GUEST_SRC));
+    probeHtml = guestHtml(await bundleGuest(PROBE_GUEST_SRC));
+    oneProbeHtml = guestHtml(await bundleGuest(ONE_PROBE_GUEST_SRC));
   }, 60_000);
 
-  it("lets declared CSP origins through the gate and blocks the rest", async () => {
+  it("enforces directive separation: fetch obeys connect_domains, not resource_domains", async () => {
     const h = makeHarness();
     const obs = await h.renderWidget({
       toolCallId: "csp-1",
       toolName: "show_widget",
       serverId: "srv",
-      html: fetchingHtml,
-      cspMeta: { resource_domains: ["https://allowed-cdn.invalid"] },
+      html: probeHtml,
+      cspMeta: {
+        connect_domains: ["https://conn-ok.invalid"],
+        resource_domains: ["https://res-only.invalid"],
+      },
     });
     expect(obs.status).toBe("rendered");
-    const blocked = obs.blockedRequests ?? [];
-    expect(blocked.some((u) => u.includes("blocked-cdn.invalid"))).toBe(true);
-    expect(blocked.some((u) => u.includes("allowed-cdn.invalid"))).toBe(false);
+    const errs = (obs.consoleErrors ?? []).join("\n");
+    // The "Refused to connect to '<url>'" prefix names the BLOCKED url itself
+    // (so it can't be confused with conn-ok appearing in the echoed directive).
+    expect(errs).toMatch(/Connecting to 'https:\/\/res-only\.invalid/);
+    expect(errs).toMatch(/Connecting to 'https:\/\/nope\.invalid/);
+    // connect_domains origin is permitted by connect-src -> no CSP violation.
+    expect(errs).not.toMatch(/Connecting to 'https:\/\/conn-ok\.invalid/);
   }, 30_000);
 
-  it("resets the allowlist per widget: undeclared next widget is blocked again", async () => {
+  it("policies undeclared widgets with the SEP restrictive default", async () => {
+    const h = makeHarness();
+    const obs = await h.renderWidget({
+      toolCallId: "csp-default",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: oneProbeHtml,
+      // no cspMeta -> widget-declared default: connect-src 'self' + loopback.
+    });
+    expect(obs.status).toBe("rendered");
+    const errs = (obs.consoleErrors ?? []).join("\n");
+    expect(errs).toMatch(/Connecting to 'https:\/\/anywhere\.invalid/);
+  }, 30_000);
+
+  it("re-derives the policy per widget: a later undeclared widget loses the grant", async () => {
     const h = makeHarness();
     const first = await h.renderWidget({
       toolCallId: "csp-2a",
       toolName: "show_widget",
       serverId: "srv",
-      html: fetchingHtml,
-      cspMeta: { connect_domains: ["https://allowed-cdn.invalid"] },
+      html: oneProbeHtml,
+      cspMeta: { connect_domains: ["https://anywhere.invalid"] },
     });
-    expect(
-      (first.blockedRequests ?? []).some((u) =>
-        u.includes("allowed-cdn.invalid")
-      )
-    ).toBe(false);
+    expect(first.status).toBe("rendered");
+    expect((first.consoleErrors ?? []).join("\n")).not.toMatch(
+      /Connecting to 'https:\/\/anywhere\.invalid/
+    );
 
-    // Same harness, same fetches — but THIS widget declares nothing.
+    // Same harness, same probe — but THIS widget declares nothing, so the
+    // injected CSP reverts to the restrictive default and blocks the fetch.
     const second = await h.renderWidget({
       toolCallId: "csp-2b",
       toolName: "show_widget",
       serverId: "srv",
-      html: fetchingHtml,
+      html: oneProbeHtml,
     });
     expect(second.status).toBe("rendered");
-    const blocked = second.blockedRequests ?? [];
-    expect(blocked.some((u) => u.includes("allowed-cdn.invalid"))).toBe(true);
-    expect(blocked.some((u) => u.includes("blocked-cdn.invalid"))).toBe(true);
+    expect((second.consoleErrors ?? []).join("\n")).toMatch(
+      /Connecting to 'https:\/\/anywhere\.invalid/
+    );
   }, 45_000);
 });
