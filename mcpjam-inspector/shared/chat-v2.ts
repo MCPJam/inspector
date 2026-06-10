@@ -37,6 +37,15 @@ export interface ChatV2Request {
   selectedServerIds?: string[];
   requireToolApproval?: boolean;
   /**
+   * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants
+   * advertised this turn. For chatbox-bound requests the server re-resolves
+   * from the host's pinned config (host wins); for playground/direct chat the
+   * body value is used as-is. Billing authorization happens server-side in
+   * Convex (bearer + projectId), so a tampered body can't bill a project the
+   * caller isn't authorized on.
+   */
+  builtInToolIds?: string[];
+  /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
    * every tool definition every turn). Sourced from the project's default

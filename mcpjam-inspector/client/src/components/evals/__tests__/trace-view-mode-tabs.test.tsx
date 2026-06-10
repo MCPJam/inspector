@@ -33,4 +33,49 @@ describe("TraceViewModeTabs", () => {
       "text-sidebar-accent-foreground",
     );
   });
+
+  it("hides the Browser tab by default", () => {
+    render(
+      <TraceViewModeTabs
+        mode="timeline"
+        onModeChange={vi.fn()}
+        showToolsTab={false}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Browser" })).toBeNull();
+  });
+
+  it("shows the Browser tab when showBrowserTab is set", () => {
+    render(
+      <TraceViewModeTabs
+        mode="timeline"
+        onModeChange={vi.fn()}
+        showToolsTab={false}
+        showBrowserTab
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Browser" }),
+    ).toBeInTheDocument();
+  });
+
+  it("applies active styling to the Browser tab when browserActive is set", () => {
+    render(
+      <TraceViewModeTabs
+        mode="timeline"
+        onModeChange={vi.fn()}
+        showToolsTab={false}
+        showBrowserTab
+        browserActive
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Browser" })).toHaveClass(
+      "bg-sidebar-accent",
+      "text-sidebar-accent-foreground",
+    );
+    // With Browser active, no standard tab is highlighted.
+    expect(screen.getByRole("button", { name: "Trace" })).not.toHaveClass(
+      "bg-sidebar-accent",
+    );
+  });
 });

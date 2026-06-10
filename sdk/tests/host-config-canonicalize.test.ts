@@ -62,6 +62,74 @@ describe("canonicalizeHostConfigV2 — hash stability", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — builtInToolIds", () => {
+  it("omits builtInToolIds when absent (pre-feature rows stay byte-identical)", () => {
+    const canonical = JSON.parse(JSON.stringify(canonicalizeHostConfigV2(base())));
+    expect("builtInToolIds" in canonical).toBe(false);
+  });
+
+  it("treats undefined and [] as identical (both omitted, same hash)", async () => {
+    expect(await hash(base())).toBe(await hash(base({ builtInToolIds: [] })));
+    const canonical = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base({ builtInToolIds: [] }))),
+    );
+    expect("builtInToolIds" in canonical).toBe(false);
+  });
+
+  it("a populated set shifts the hash vs absent", async () => {
+    expect(await hash(base())).not.toBe(
+      await hash(base({ builtInToolIds: ["web_search"] })),
+    );
+  });
+
+  it("dedupes and sorts deterministically (order-insensitive)", async () => {
+    const c = canonicalizeHostConfigV2(
+      base({ builtInToolIds: ["web_search", "code_exec", "web_search"] }),
+    );
+    expect(c.builtInToolIds).toEqual(["code_exec", "web_search"]);
+    // Order + dupes do not affect the hash.
+    expect(
+      await hash(base({ builtInToolIds: ["web_search", "code_exec"] })),
+    ).toBe(
+      await hash(
+        base({ builtInToolIds: ["code_exec", "web_search", "code_exec"] }),
+      ),
+    );
+  });
+
+  it("preserves opaque ids verbatim (no trimming — backend rejects malformed)", () => {
+    const c = canonicalizeHostConfigV2(
+      base({ builtInToolIds: ["web_search "] }),
+    );
+    expect(c.builtInToolIds).toEqual(["web_search "]);
+  });
+
+  it("rejects a non-array builtInToolIds", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ builtInToolIds: "web_search" as unknown as string[] }),
+      ),
+    ).toThrow(/builtInToolIds must be a string\[\]/);
+  });
+
+  it("rejects non-string entries", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ builtInToolIds: [123 as unknown as string] }),
+      ),
+    ).toThrow(/builtInToolIds entries must be strings/);
+  });
+
+  it("rejects empty / whitespace-only entries", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(base({ builtInToolIds: [""] })),
+    ).toThrow(/builtInToolIds entries must be non-empty strings/);
+    expect(() =>
+      canonicalizeHostConfigV2(base({ builtInToolIds: ["   "] })),
+    ).toThrow(/builtInToolIds entries must be non-empty strings/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
   it("distinguishes hostCapabilitiesOverride undefined from {}", async () => {
     const omitted = canonicalizeHostConfigV2(base());

@@ -19,7 +19,7 @@ import type { EvalIteration, EvalSuiteRun } from "../types";
 
 // The SuiteRunsList renders an Avatar/Tooltip from the design system; jsdom
 // does not need any mocking for those — they degrade gracefully without
-// portals. ClientChip also renders fine without provider mocks.
+// portals. HostChip also renders fine without provider mocks.
 
 function makeRun(overrides: Partial<EvalSuiteRun>): EvalSuiteRun {
   return {

@@ -26,7 +26,7 @@ import { buildChatboxLink } from "@/lib/chatbox-session";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
-import { buildClientsPath, useAppNavigate } from "@/lib/app-navigation";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
@@ -170,9 +170,9 @@ export function ChatboxesTab({
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="max-w-sm">
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
-          <p className="mt-3 text-sm font-medium">Pick a client</p>
+          <p className="mt-3 text-sm font-medium">Pick a host</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Use the client bar at the top to choose which client's chatbox you
+            Use the host bar at the top to choose which host's chatbox you
             want to manage.
           </p>
         </div>
@@ -224,12 +224,12 @@ export function ChatboxesTab({
             size="sm"
             className="rounded-xl"
             onClick={() => {
-              navigate(buildClientsPath(previewedHostId));
+              navigate(buildHostsPath(previewedHostId));
             }}
-            title="Open this client's config in Connect"
+            title="Open this host's config in Connect"
           >
             <Settings2 className="mr-1.5 size-4" />
-            Edit client config
+            Edit host config
           </Button>
           {publishLink ? (
             <Button

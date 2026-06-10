@@ -120,6 +120,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-opus-4.6",
   "anthropic/claude-opus-4.7",
+  "anthropic/claude-fable-5",
   "openai/gpt-5.1-codex-mini",
   "openai/gpt-5-mini",
   "openai/gpt-5.4",
@@ -174,6 +175,7 @@ const MCPJAM_GUEST_GATED_MODEL_IDS = [
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-opus-4.6",
   "anthropic/claude-opus-4.7",
+  "anthropic/claude-fable-5",
   "google/gemini-3.1-pro-preview",
 ] as const;
 
@@ -270,6 +272,7 @@ export interface ModelDefinition {
 }
 
 export enum Model {
+  CLAUDE_FABLE_5 = "claude-fable-5",
   CLAUDE_OPUS_4_1 = "claude-opus-4-1",
   CLAUDE_OPUS_4_0 = "claude-opus-4-0",
   CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
@@ -337,6 +340,12 @@ const freeModel = (
 });
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
+  {
+    id: Model.CLAUDE_FABLE_5,
+    name: "Claude Fable 5",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
   {
     id: Model.CLAUDE_OPUS_4_1,
     name: "Claude Opus 4.1",
@@ -524,6 +533,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.7", "Claude Opus 4.7", "anthropic"),
+  freeModel("anthropic/claude-fable-5", "Claude Fable 5", "anthropic", 1000000),
   {
     id: "openai/gpt-5.1-codex-mini",
     name: "GPT-5.1 Codex Mini (Free)",

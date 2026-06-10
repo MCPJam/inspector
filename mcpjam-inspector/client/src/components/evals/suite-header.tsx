@@ -43,7 +43,6 @@ import {
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 
-import { isMCPJamProvidedModel } from "@/shared/types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { ValidatorsSection } from "./validators-section";
@@ -54,10 +53,6 @@ import {
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
-import {
-  useAiProviderKeys,
-  type ProviderTokens,
-} from "@/hooks/use-ai-provider-keys";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -287,23 +282,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
-
-  // Check which provider API keys are missing for replay
-  const { hasToken } = useAiProviderKeys();
-  const missingReplayProviderKeys = useMemo(() => {
-    if (!replayableLatestRun || !testCases || testCases.length === 0) return [];
-    const providers = new Set<string>();
-    for (const tc of testCases) {
-      for (const m of tc.models ?? []) {
-        if (!isMCPJamProvidedModel(m.model, m.provider)) {
-          providers.add(m.provider);
-        }
-      }
-    }
-    return [...providers].filter(
-      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens)
-    );
-  }, [replayableLatestRun, testCases, hasToken]);
 
   const isMobile = useIsMobile();
 
@@ -921,8 +899,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                         replayableLatestRun
                           ? isReplayingLatestRun ||
                             !onReplayRun ||
-                            Boolean(evalRunsDisabledReason) ||
-                            missingReplayProviderKeys.length > 0
+                            Boolean(evalRunsDisabledReason)
                           : !canTriggerLiveRun ||
                             isRerunning ||
                             Boolean(evalRunsDisabledReason)
@@ -956,12 +933,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   {replayableLatestRun
                     ? evalRunsDisabledReason
                       ? evalRunsDisabledReason
-                      : missingReplayProviderKeys.length > 0
-                      ? `Add your ${missingReplayProviderKeys.join(
-                          ", "
-                        )} API key${
-                          missingReplayProviderKeys.length > 1 ? "s" : ""
-                        } in Settings to replay`
                       : "Replay the latest CI run"
                     : evalRunsDisabledReason
                     ? evalRunsDisabledReason

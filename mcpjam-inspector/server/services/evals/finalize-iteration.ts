@@ -10,6 +10,7 @@ import type {
 import { logger } from "../../utils/logger.js";
 import type { UsageTotals } from "./types.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
 import {
   serializeBrowserStepsForBackend,
   serializeRenderObservationsForBackend,
@@ -181,6 +182,11 @@ export async function finalizeEvalIteration(
       : isCycleFailure
         ? "eval_failed"
         : "eval_completed";
+
+  // PR 13: emit per-iteration browser-eval observability from the runner-local
+  // arrays (covers both the stream + non-stream paths via this shared choke
+  // point). Best-effort + no-op when the iteration didn't touch the harness.
+  emitBrowserEvalMetrics(widgetRenderObservations, browserInteractionSteps);
 
   // PR 6b: serialize browser artifacts ONCE here (upload screenshots + run
   // through the convex sanitizer) so the W2 fanout and the W1 fallback share a

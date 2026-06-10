@@ -145,6 +145,36 @@ function sortUniqueServerIds(ids: Array<ServerId> | undefined): Array<ServerId> 
   return Array.from(new Set(ids ?? [])).sort() as Array<ServerId>;
 }
 
+// Canonicalize built-in tool ids as a SET: validate wire shape, dedupe, sort.
+// IDs are OPAQUE to the SDK — there is NO enum/catalog check here (the backend
+// validates existence + org scope against the `builtInTools` table). Order is
+// not semantic, so we dedupe + sort like serverIds. Absent (undefined) OR empty
+// ([]) collapses to `undefined` so the key is dropped from the canonical JSON,
+// keeping every pre-feature row's hash byte-identical (precedent: the
+// allowFeatures / serverConnectionOverrides empty-collapse). Entries are stored
+// verbatim (never trimmed) so a malformed id like "web_search " is preserved
+// and rejected downstream by the catalog scope check rather than silently fixed.
+function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("hostConfigV2: builtInToolIds must be a string[]");
+  }
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error("hostConfigV2: builtInToolIds entries must be strings");
+    }
+    if (entry.trim() === "") {
+      throw new Error(
+        "hostConfigV2: builtInToolIds entries must be non-empty strings",
+      );
+    }
+    seen.add(entry);
+  }
+  if (seen.size === 0) return undefined;
+  return Array.from(seen).sort();
+}
+
 // Plain-object guard shared by hostCapabilitiesOverride and mcpProfile.
 // Arrays/null satisfy `typeof === 'object'`; the canonicalizer is the
 // chokepoint.
@@ -1020,6 +1050,9 @@ export function canonicalizeHostConfigV2(
     // is identical for semantically equivalent server lists.
     serverIds,
     optionalServerIds,
+    // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
+    // JSON.stringify drops the key and pre-feature rows hash byte-identically.
+    builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
     connectionDefaults: {
       headers: sortStringKeys(input.connectionDefaults.headers),
       requestTimeout: input.connectionDefaults.requestTimeout,

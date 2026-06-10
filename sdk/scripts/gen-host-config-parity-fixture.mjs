@@ -205,6 +205,17 @@ const inputs = [
     },
   },
   {
+    // Empty builtInToolIds collapses to absent → canonical JSON has no key,
+    // byte-identical to base-minimal for that dimension (hash-neutral default).
+    label: "builtin-tool-ids-empty-omitted",
+    input: { ...base(), builtInToolIds: [] },
+  },
+  {
+    // Unsorted + duplicate opaque ids → deduped + sorted in the canonical shape.
+    label: "builtin-tool-ids-unsorted-dupes",
+    input: { ...base(), builtInToolIds: ["web_search", "code_exec", "web_search"] },
+  },
+  {
     label: "adversarial-stray-deny-must-be-dropped",
     input: {
       ...base(),
