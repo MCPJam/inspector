@@ -179,6 +179,10 @@ import {
   readCliSignInReturnPath,
 } from "./lib/cli-signin-return-path";
 import {
+  clearApiKeysSignInReturnPath,
+  readApiKeysSignInReturnPath,
+} from "./lib/api-keys-signin-return-path";
+import {
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
@@ -1492,13 +1496,19 @@ export default function App() {
         ? readBillingSignInReturnPath()
         : null;
       const cliReturnPath = readCliSignInReturnPath();
+      const apiKeysReturnPath = readApiKeysSignInReturnPath();
       clearChatboxSignInReturnPath();
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
+      clearApiKeysSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ?? billingReturnPath ?? cliReturnPath ?? "/"
+        chatboxReturnPath ??
+          billingReturnPath ??
+          cliReturnPath ??
+          apiKeysReturnPath ??
+          "/"
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
