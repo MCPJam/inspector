@@ -198,6 +198,13 @@ const inputs = [
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },
   },
   {
+    label: "computer-personal-with-untrimmed-workdir",
+    input: {
+      ...base(),
+      computer: { kind: "personal", toolset: "bash", workdir: " /home/u " },
+    },
+  },
+  {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,
     // byte-identical to base-minimal for that dimension (hash-neutral default).
     label: "builtin-tool-ids-empty-omitted",

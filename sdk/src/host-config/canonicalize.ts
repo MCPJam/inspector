@@ -20,6 +20,7 @@ import {
   SEP_1865_PERMISSION_FEATURES,
   type CanonicalHostConfigV2,
   type CspDomainSet,
+  type HostConfigComputer,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
   type McpAppsCapabilities,
@@ -957,6 +958,50 @@ function canonicalizeServerConnectionOverrides(
   ) as CanonicalHostConfigV2["serverConnectionOverrides"];
 }
 
+// Allowed keys on `computer`. Explicit construction below (never a spread of
+// user input) keeps stray keys out of the canonical JSON; this set makes the
+// stray key a loud error instead of a silent drop.
+const COMPUTER_KEYS = new Set(["kind", "toolset", "workdir"]);
+
+/**
+ * Canonicalize the optional `computer` field. `null` collapses to undefined
+ * ("cleared" hashes identically to "never set"); `workdir` is trimmed, with
+ * empty-after-trim collapsing to absent. Output keys are built in sorted
+ * order (kind, toolset, workdir) for hash stability.
+ */
+function canonicalizeComputer(
+  computer: HostConfigInputV2["computer"],
+): HostConfigComputer | undefined {
+  if (computer === undefined || computer === null) return undefined;
+  if (!isPlainObject(computer)) {
+    throw new Error("hostConfigV2: computer must be a plain object or null");
+  }
+  for (const key of Object.keys(computer)) {
+    if (!COMPUTER_KEYS.has(key)) {
+      throw new Error(`hostConfigV2: computer has unknown key "${key}"`);
+    }
+  }
+  if (computer.kind !== "personal") {
+    throw new Error('hostConfigV2: computer.kind must be "personal"');
+  }
+  if (computer.toolset !== "bash") {
+    throw new Error('hostConfigV2: computer.toolset must be "bash"');
+  }
+  let workdir: string | undefined;
+  if (computer.workdir !== undefined) {
+    if (typeof computer.workdir !== "string") {
+      throw new Error("hostConfigV2: computer.workdir must be a string");
+    }
+    const trimmed = computer.workdir.trim();
+    workdir = trimmed === "" ? undefined : trimmed;
+  }
+  return {
+    kind: "personal",
+    toolset: "bash",
+    ...(workdir !== undefined ? { workdir } : {}),
+  };
+}
+
 export function canonicalizeHostConfigV2(
   input: HostConfigInputV2,
 ): CanonicalHostConfigV2 {
@@ -999,6 +1044,8 @@ export function canonicalizeHostConfigV2(
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,
     respectToolVisibility: input.respectToolVisibility,
+    // Absent/null ⇒ key omitted, hashing byte-identically to pre-feature rows.
+    computer: canonicalizeComputer(input.computer),
     // Normalize undefined → [] and dedupe before sort so canonical/hash output
     // is identical for semantically equivalent server lists.
     serverIds,

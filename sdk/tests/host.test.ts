@@ -207,6 +207,24 @@ describe("Host — mutation helpers", () => {
     expect(host.mcp).toEqual({});
     expect(host.toJSON().mcp).toBeUndefined();
   });
+
+  it("setComputer attaches the MVP shape by default; null detaches", () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+    }).setComputer();
+    expect(host.toJSON().computer).toEqual({
+      kind: "personal",
+      toolset: "bash",
+    });
+
+    host.setComputer({ kind: "personal", toolset: "bash", workdir: "/srv" });
+    expect(host.toJSON().computer?.workdir).toBe("/srv");
+
+    host.setComputer(null);
+    expect(host.toJSON().computer).toBeUndefined();
+    expect("computer" in JSON.parse(JSON.stringify(host.toJSON()))).toBe(false);
+  });
 });
 
 describe("Host — toJSON() round-trips", () => {
@@ -221,6 +239,21 @@ describe("Host — toJSON() round-trips", () => {
     const json1 = host.toJSON();
     const rebuilt = new Host(json1);
     expect(rebuilt.toJSON()).toEqual(json1);
+  });
+
+  it("round-trips a computer (workdir normalized at the first toJSON)", () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      computer: { kind: "personal", toolset: "bash", workdir: " /home/u " },
+    });
+    const json1 = host.toJSON();
+    expect(json1.computer).toEqual({
+      kind: "personal",
+      toolset: "bash",
+      workdir: "/home/u",
+    });
+    expect(new Host(json1).toJSON()).toEqual(json1);
   });
 });
 

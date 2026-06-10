@@ -14,6 +14,7 @@
 
 import type {
   CspDomainSet,
+  HostConfigComputer,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   HostStyleId,
@@ -31,6 +32,13 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
 };
+
+/**
+ * Personal cloud workstation attached to a host — one machine per
+ * (project, user), surfaced as the chat `bash` tool and the web terminal.
+ * `{ kind: "personal", toolset: "bash" }` is the only shape in MVP.
+ */
+export type HostComputer = HostConfigComputer;
 
 /** Per-host connection defaults (headers + request timeout in ms). */
 export type HostConnectionDefaults = HostConfigConnectionDefaults;
@@ -68,6 +76,9 @@ export interface HostJson {
   requireToolApproval: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  /** Personal computer attached to this host; absent ⇒ none. Normalized:
+   * `null` input never survives to `HostJson`. */
+  computer?: HostComputer;
   servers: ServerId[];
   optionalServers: ServerId[];
   connectionDefaults: HostConnectionDefaults;
@@ -114,6 +125,12 @@ export interface HostInit {
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
   respectToolVisibility?: boolean;
+  /**
+   * Attach a personal cloud workstation (chat `bash` tool + web terminal).
+   * Absent or `null` ⇒ no computer; `null` is accepted so an editor can
+   * clear the field and is normalized away at `toJSON()`.
+   */
+  computer?: HostComputer | null;
   /** Required servers this host connects to. */
   servers?: ServerId[];
   /** Optional (auto-connect-if-available) servers. */
