@@ -4,7 +4,7 @@ description: "The three different things called 'API key' in MCPJam, and when yo
 icon: "key"
 ---
 
-The word "API key" gets used for three distinct things in MCPJam. This page disambiguates them so you can tell which one a given error message is talking about.
+The word "API key" gets used for four distinct things in MCPJam. This page disambiguates them so you can tell which one a given error message is talking about.
 
 ## 1. LLM provider key
 
@@ -50,6 +50,22 @@ Either form ends up populating the same per-server request header. Pick the UI f
 - `auth/http_401` → the token is missing, expired, or rejected by the server. See [Unauthorized 401](/troubleshooting/error-codes#unauthorized-401).
 - `auth/http_403` → the token is recognized but lacks permission. See [Forbidden 403](/troubleshooting/error-codes#forbidden-403).
 
+## 4. MCPJam API key (`sk_…`)
+
+An organization-scoped secret for the [MCPJam API](/reference/public-api) (preview) — programmatic access to live server diagnostics (`https://app.mcpjam.com/api/v1/...`).
+
+**Where it lives:** Created in **Settings → API keys** in the hosted inspector. The value is shown **exactly once** at creation; store it in your own secret manager or env var (e.g. `MCPJAM_API_KEY` in CI).
+
+**When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots.
+
+**Errors you might see**
+- `401 UNAUTHORIZED` → the key is invalid or revoked.
+- `401` with `details.reason: "ORPHANED_KEY"` → the key lost its organization binding; create a new one from Settings.
+- `403 FORBIDDEN` ("API keys cannot manage other API keys") → you pointed an `sk_…` key at the key-management endpoints; key management is UI-only.
+- `429 RATE_LIMITED` → per-key rate limit (60/min, burst 10); honor `Retry-After`.
+
+**You do NOT need:** an MCPJam API key to use the inspector UI, the Playground, or local `npx @mcpjam/inspector` — it exists purely for headless API access.
+
 ## Quick reference
 
 | Concept | Stored in | Used for | "Invalid key" error path |
@@ -57,5 +73,6 @@ Either form ends up populating the same per-server request header. Pick the UI f
 | LLM provider key | Settings → LLM Providers | Playground chat | `provider/auth_error` |
 | `MCPJAM_API_KEY` | `~/.mcpjam/config.json` or env | CLI / SDK auth to MCPJam backend | `auth/missing_bearer` |
 | Playground BYOK | Per-server card | MCP server requests | `auth/http_401`, `auth/http_403` |
+| MCPJam API key (`sk_…`) | Settings → API keys (shown once) | [MCPJam API](/reference/public-api) `/api/v1/*` | `UNAUTHORIZED` (401 JSON body) |
 
 If you're not sure which one a particular error is referring to, open the ErrorCard's details panel and check the raw `code` / `slug` against the table above.
