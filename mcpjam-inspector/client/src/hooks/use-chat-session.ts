@@ -251,6 +251,14 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  /**
+   * Catalog ids of host-managed built-in tools (e.g. ["web_search"]) the
+   * model should see this turn. Sourced from the caller's resolved host
+   * config; held in a ref so a mid-session toggle flip is reflected on the
+   * next send. Server resolves via `resolveBuiltInTools`. Falls back to
+   * `executionConfig.builtInToolIds` when this top-level option is omitted.
+   */
+  builtInToolIds?: string[];
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -1210,6 +1218,13 @@ export function useChatSession(
     options.respectToolVisibility ??
     options.executionConfig?.respectToolVisibility ??
     respectToolVisibility;
+  // Host-managed built-in tools. Top-level option wins (mirrors the
+  // progressiveToolDiscovery / respectToolVisibility pattern), then
+  // executionConfig as a fallback for surfaces that thread everything
+  // through executionConfig. `undefined` ⇒ no attached built-ins.
+  const builtInToolIdsRef = useRef<string[] | undefined>(undefined);
+  builtInToolIdsRef.current =
+    options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedChatboxId;
@@ -1593,6 +1608,13 @@ export function useChatSession(
             : {}),
           ...(resumedVersionRef.current !== null
             ? { expectedVersion: resumedVersionRef.current }
+            : {}),
+          // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
+          // when non-empty so pre-feature traces stay byte-identical. The
+          // chatbox path overrides this with the persisted host config server-
+          // side; playground trusts this value (same as systemPrompt etc.).
+          ...(builtInToolIdsRef.current && builtInToolIdsRef.current.length > 0
+            ? { builtInToolIds: builtInToolIdsRef.current }
             : {}),
           // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
           // (no memoization) so any iframe that mounted between the previous
