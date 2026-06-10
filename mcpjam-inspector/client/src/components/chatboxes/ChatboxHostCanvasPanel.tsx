@@ -4,13 +4,13 @@ import { Loader2 } from "lucide-react";
 import { useHost } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useProjects";
 import { useSharedAppState } from "@/state/app-state-context";
-import { RedesignedClientCanvas } from "@/components/clients/redesigned/canvas/RedesignedClientCanvas";
-import { buildRedesignedHostCanvas } from "@/components/clients/redesigned/canvas/canvasBuilder";
+import { RedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/RedesignedHostCanvas";
+import { buildRedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/canvasBuilder";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
 } from "@/lib/client-config-v2";
-import { buildClientsPath, useAppNavigate } from "@/lib/app-navigation";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
  * Read-only embedding of the Connect "Host" graph for the chatbox's
@@ -63,14 +63,14 @@ export function ChatboxHostCanvasPanel({
   }, [host, projectServersForCanvas]);
 
   const handleRequestEdit = () => {
-    navigate(buildClientsPath(hostId));
+    navigate(buildHostsPath(hostId));
   };
 
   if (!host) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        <span className="text-sm">Loading client…</span>
+        <span className="text-sm">Loading host…</span>
       </div>
     );
   }
@@ -78,7 +78,7 @@ export function ChatboxHostCanvasPanel({
   return (
     <div className="h-full min-h-0 p-3">
       <ReactFlowProvider>
-        <RedesignedClientCanvas
+        <RedesignedHostCanvas
           viewModel={viewModel}
           selectedNodeId={null}
           onSelectNode={() => {}}

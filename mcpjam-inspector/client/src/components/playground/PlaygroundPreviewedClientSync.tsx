@@ -12,8 +12,8 @@ interface PlaygroundPreviewedHostSyncProps {
 
 /**
  * Subscribe to the project's previewed-host id (the named host picked in
- * `PlaygroundHeader`'s `ClientPicker` dropdown — backed by the same
- * localStorage key Connect's `ClientOverlayBar` uses), resolve that host's
+ * `PlaygroundHeader`'s `HostPicker` dropdown — backed by the same
+ * localStorage key Connect's `HostOverlayBar` uses), resolve that host's
  * persisted config via `useHost`, and snapshot its defaults into the
  * playground top-bar chip state whenever the resolved id changes.
  *

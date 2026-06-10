@@ -21,7 +21,7 @@ import {
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { type HostListItem } from "@/hooks/useClients";
 import {
-  buildClientsPath,
+  buildHostsPath,
   buildHostComparePath,
   navigateApp,
   routePaths,
@@ -126,7 +126,7 @@ export function SuiteOverviewClientBar({
   };
 
   const openClientsPage = () => {
-    navigateApp(routePaths.clients);
+    navigateApp(routePaths.hosts);
   };
 
   const editable = Boolean(onUpdate) && !readOnly;
@@ -281,7 +281,7 @@ export function SuiteOverviewClientBar({
                       onClick={(event) => {
                         event.stopPropagation();
                         setPickerOpen(false);
-                        navigateApp(buildClientsPath(host.hostId));
+                        navigateApp(buildHostsPath(host.hostId));
                       }}
                       className={cn(
                         "absolute right-1 top-1/2 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground outline-none transition-opacity",
