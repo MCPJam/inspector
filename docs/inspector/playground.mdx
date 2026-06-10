@@ -24,7 +24,7 @@ The Playground is the main workspace for developing against your MCP servers. It
 
 ## Key Features
 
-- **Chat with frontier models** — Talk to your server using Claude, GPT, Gemini, DeepSeek, and more at no cost, no API key required. Bring your own key for custom providers.
+- **Chat with frontier models** — Talk to your server using Claude, GPT, Gemini, DeepSeek, and more at no cost, no API key required. Organizations can configure additional model providers in their organization settings.
 - **Manual tool invocation** — Run any tool from the Tools rail with your own inputs to iterate on a widget or response without prompting a model.
 - **Widget emulator** — Render widgets exposed via `openai/outputTemplate` (ChatGPT Apps) or `ui.resourceUri` (MCP Apps) the same way a real host would, with Inline, Picture-in-Picture, and Fullscreen display modes.
 - **Chat / Trace / Raw views** — Switch between the conversation, a timestamped timeline of every step (with per-step latency and tokens), and the exact JSON payload sent to the model.
@@ -94,7 +94,7 @@ When multiple servers are selected at the same time, the Tools rail aggregates e
 The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
 
 - **Free models** — Frontier models (Claude, GPT, Gemini, DeepSeek, and more) available at no cost with no API key required.
-- **Your providers** — Models from providers you've configured in Settings with your own API key.
+- **Your providers** — Models from providers configured in your organization's settings on mcpjam.com.
 
 The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together.
 
