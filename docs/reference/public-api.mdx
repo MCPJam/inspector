@@ -171,146 +171,24 @@ to be tuned during the preview.
 ## Endpoints
 
 All endpoints follow the pattern
-`POST /projects/{projectId}/servers/{serverId}/...`.
+`POST /projects/{projectId}/servers/{serverId}/...`. Each one is fully
+documented — request and response schemas, examples, and an interactive
+playground — under **Endpoints** in the sidebar.
 
-### Server diagnostics
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../validate` | Connect, initialize, and capture a capability snapshot |
+| `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
+| `POST .../check-oauth` | Does this server require an OAuth grant? |
+| `POST .../tools` | List the server's tools |
+| `POST .../prompts` | List the server's prompts |
+| `POST .../resources` | List the server's resources |
+| `POST .../resources/read` | Read one resource by URI |
+| `POST .../export` | One JSON snapshot of tools, resources, and prompts |
 
-<AccordionGroup>
-<Accordion title="POST .../validate — connect and snapshot">
-Connects to the server, initializes the MCP session, and returns a connection
-snapshot (server info, negotiated capabilities). The same check the hosted
-inspector runs when you connect a server.
-
-```bash
-curl -X POST \
-  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/validate" \
-  -H "Authorization: Bearer $MCPJAM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-</Accordion>
-
-<Accordion title="POST .../doctor — full health workflow">
-Runs the doctor workflow — probe → connect → initialize → capabilities — and
-returns a step-by-step report. The richest signal for "is this server healthy
-and why not."
-
-```bash
-curl -X POST \
-  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/doctor" \
-  -H "Authorization: Bearer $MCPJAM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-</Accordion>
-
-<Accordion title="POST .../check-oauth — OAuth probe">
-Lightweight, no MCP connection: reports whether the server is configured to
-require OAuth.
-
-```bash
-curl -X POST \
-  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/check-oauth" \
-  -H "Authorization: Bearer $MCPJAM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-```json
-{ "useOAuth": true, "serverUrl": "https://mcp.example.com/mcp" }
-```
-</Accordion>
-</AccordionGroup>
-
-### Primitives
-
-<AccordionGroup>
-<Accordion title="POST .../tools — list tools">
-Returns the server's tools as a collection page. Each item is the MCP tool
-definition (`name`, `description`, `inputSchema`, ...).
-
-```bash
-curl -X POST \
-  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/tools" \
-  -H "Authorization: Bearer $MCPJAM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-```json
-{
-  "items": [
-    {
-      "name": "create_issue",
-      "description": "Create a new issue in the tracker",
-      "inputSchema": { "type": "object", "properties": { "title": { "type": "string" } } }
-    }
-  ]
-}
-```
-
-<ParamField body="cursor" type="string">
-Opaque pagination cursor from a previous response's `nextCursor`.
-</ParamField>
-</Accordion>
-
-<Accordion title="POST .../prompts — list prompts">
-Returns the server's prompts as a collection page.
-
-<ParamField body="cursor" type="string">
-Opaque pagination cursor from a previous response's `nextCursor`.
-</ParamField>
-</Accordion>
-
-<Accordion title="POST .../resources — list resources">
-Returns the server's resources as a collection page.
-
-<ParamField body="cursor" type="string">
-Opaque pagination cursor from a previous response's `nextCursor`.
-</ParamField>
-</Accordion>
-
-<Accordion title="POST .../resources/read — read one resource">
-Reads a single resource by URI and returns its contents.
-
-```bash
-curl -X POST \
-  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/resources/read" \
-  -H "Authorization: Bearer $MCPJAM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"uri": "file:///readme.md"}'
-```
-
-<ParamField body="uri" type="string" required>
-The resource URI, exactly as returned by the resources list.
-</ParamField>
-</Accordion>
-</AccordionGroup>
-
-### Export
-
-<Accordion title="POST .../export — full server snapshot">
-Lists tools, resources, and prompts in one call and returns a single JSON
-snapshot — handy for diffing a server's surface over time in CI.
-
-```bash
-curl -X POST \
-  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/export" \
-  -H "Authorization: Bearer $MCPJAM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-```json
-{
-  "serverId": "...",
-  "exportedAt": "2026-06-10T18:00:00.000Z",
-  "tools": [ { "name": "...", "description": "...", "inputSchema": {} } ],
-  "resources": [ { "uri": "...", "name": "...", "mimeType": "..." } ],
-  "prompts": [ { "name": "...", "description": "...", "arguments": [] } ]
-}
-```
-</Accordion>
+The same surface is available as an [OpenAPI
+specification](https://github.com/MCPJam/inspector/blob/main/docs/reference/openapi.json)
+for Postman, Swagger UI, or client generation.
 
 ## Not in the API yet
 
