@@ -14,16 +14,22 @@ const {
   validateApiKeyMock,
   resolveUserByExternalIdMock,
   lookupWorkosKeyBindingMock,
-} = vi.hoisted(() => ({
-  validateGuestTokenMock: vi.fn(),
-  prepareEvalRunMock: vi.fn(),
-  createAuthorizedManagerMock: vi.fn(),
-  convexQueryMock: vi.fn(),
-  convexActionMock: vi.fn(),
-  validateApiKeyMock: vi.fn(),
-  resolveUserByExternalIdMock: vi.fn(),
-  lookupWorkosKeyBindingMock: vi.fn(),
-}));
+} = vi.hoisted(() => {
+  // The evals route resolves its concurrency limit at import time; pin the
+  // env BEFORE the hoisted imports run so a V1_MAX_CONCURRENT_EVAL_RUNS in
+  // the local/CI environment can't skew the gate tests.
+  process.env.V1_MAX_CONCURRENT_EVAL_RUNS = "2";
+  return {
+    validateGuestTokenMock: vi.fn(),
+    prepareEvalRunMock: vi.fn(),
+    createAuthorizedManagerMock: vi.fn(),
+    convexQueryMock: vi.fn(),
+    convexActionMock: vi.fn(),
+    validateApiKeyMock: vi.fn(),
+    resolveUserByExternalIdMock: vi.fn(),
+    lookupWorkosKeyBindingMock: vi.fn(),
+  };
+});
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
@@ -224,7 +230,7 @@ describe("v1 write routes", () => {
       );
     });
 
-    it("marks the run failed when detached execution rejects", async () => {
+    it("marks the run failed when detached execution rejects before the runner finalizes", async () => {
       const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
       const finalize = vi.fn().mockResolvedValue(undefined);
       createAuthorizedManagerMock.mockResolvedValue({
@@ -239,6 +245,9 @@ describe("v1 write routes", () => {
         recorder: { finalize },
         execute: vi.fn().mockRejectedValue(new Error("provider exploded")),
       });
+      // The catch's terminal-status probe sees the run still running —
+      // the error escaped before the runner's own finalize.
+      convexQueryMock.mockResolvedValueOnce({ ...RUN_DOC, status: "running" });
 
       const res = await request(
         makeApp(),
@@ -252,6 +261,38 @@ describe("v1 write routes", () => {
         expect.objectContaining({ status: "failed" })
       );
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not re-finalize when the runner already finalized the failed run", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      const finalize = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite_1",
+        runId: "run_1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize },
+        // runEvalSuiteWithAiSdk semantics: finalize as failed, then rethrow.
+        execute: vi.fn().mockRejectedValue(new Error("execution failed")),
+      });
+      convexQueryMock.mockResolvedValueOnce({ ...RUN_DOC, status: "failed" });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        { suiteId: "suite_1", serverIds: ["s1"] }
+      );
+      expect(res.status).toBe(202);
+      // The teardown still runs, but no second terminal write happens.
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+      expect(finalize).not.toHaveBeenCalled();
     });
 
     it("disconnects and rethrows when prepare fails (no orphan manager)", async () => {
@@ -448,7 +489,7 @@ describe("v1 write routes", () => {
           token
         );
 
-      // Default limit is 2 (env unset in tests).
+      // Limit pinned to 2 by the hoisted V1_MAX_CONCURRENT_EVAL_RUNS stub.
       expect((await post("tok")).status).toBe(202);
       expect((await post("tok")).status).toBe(202);
 

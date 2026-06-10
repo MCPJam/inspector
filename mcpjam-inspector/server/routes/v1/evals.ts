@@ -145,6 +145,32 @@ function requireProjectMatch(
   }
 }
 
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * Whether the run record already reached a terminal status. Used by the
+ * detached-execution catch: `runEvalSuiteWithAiSdk` finalizes a failed run
+ * itself before rethrowing, so a rejected `execute()` usually means the
+ * terminal write already happened — re-finalizing would restamp
+ * `completedAt` and overwrite the runner's notes.
+ */
+async function isRunAlreadyTerminal(
+  convexAuthToken: string,
+  runId: string
+): Promise<boolean> {
+  try {
+    const run: RunDoc | null = await createConvexReadClient(
+      convexAuthToken
+    ).query("testSuites:getTestSuiteRun" as any, { runId });
+    return TERMINAL_RUN_STATUSES.has(String(run?.status));
+  } catch {
+    // Can't tell — let the defensive finalize proceed. recorder.finalize
+    // tolerates deleted/unauthorized runs, so the worst case is the
+    // duplicate terminal write we'd have done unconditionally before.
+    return false;
+  }
+}
+
 // ── DTO mapping ──────────────────────────────────────────────────────
 
 type RunDoc = Record<string, any>;
@@ -274,8 +300,11 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       throw error;
     }
 
-    // Detach: the runner owns terminal run status; the catch is defense for
-    // errors thrown outside its own try (provider construction, etc.).
+    // Detach: the runner owns terminal run status (it finalizes a failed
+    // run itself, then rethrows). The catch is defense for errors thrown
+    // outside the runner's own try (provider construction, etc.) — it only
+    // finalizes when the run record is still non-terminal, so the runner's
+    // completedAt/notes are never restamped by a second terminal write.
     void prepared
       .execute()
       .catch(async (error) => {
@@ -284,6 +313,9 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
           suiteId: prepared.suiteId,
           projectId,
         });
+        if (await isRunAlreadyTerminal(convexAuthToken, prepared.runId)) {
+          return;
+        }
         await prepared.recorder
           .finalize({
             status: "failed",
