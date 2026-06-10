@@ -1297,14 +1297,21 @@ export class MCPClientManager {
       // explicit `supportedProtocolVersions` (per-server or default) still
       // wins — pinning at one layer while overriding the other would be
       // ambiguous and the override is the more specific signal.
-      const supportedProtocolVersions =
-        config.supportedProtocolVersions ??
-        this.defaultSupportedProtocolVersions ??
-        // `"auto"` is excluded — it's a detect sentinel, not a wire
-        // literal, and must never reach `initialize.params.protocolVersion`.
-        (!wantsStateless && !wantsAuto && resolvedProtocolVersion !== undefined
-          ? [resolvedProtocolVersion]
-          : undefined);
+      // `"auto"` forces SDK-default negotiation on the legacy fallback.
+      // A carried-over accept list — the canonicalizer's stale stateful
+      // derivation, or a hand-written RC-only list arriving via the
+      // hosted/local config plumbing — would constrain (or outright
+      // fail) the initialize handshake that auto falls back to, which
+      // defeats the "connect to anything" contract. Sanitizing here
+      // covers every entry point, not just the UI dropdown. The sentinel
+      // itself must also never reach `initialize.params.protocolVersion`.
+      const supportedProtocolVersions = wantsAuto
+        ? undefined
+        : config.supportedProtocolVersions ??
+          this.defaultSupportedProtocolVersions ??
+          (!wantsStateless && resolvedProtocolVersion !== undefined
+            ? [resolvedProtocolVersion]
+            : undefined);
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
         ...(supportedProtocolVersions && supportedProtocolVersions.length > 0

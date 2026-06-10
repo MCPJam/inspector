@@ -51,7 +51,7 @@ async function startStatelessFixture(): Promise<{
           Object.entries(req.headers).map(([k, v]) => [
             k,
             Array.isArray(v) ? v.join(",") : v ?? "",
-          ]),
+          ])
         ),
       });
       const respond = (payload: unknown) => {
@@ -96,7 +96,7 @@ async function startStatelessFixture(): Promise<{
         id: body.id,
         error: { code: -32601, message: `unexpected method ${body.method}` },
       });
-    },
+    }
   );
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const port = (server.address() as AddressInfo).port;
@@ -104,7 +104,7 @@ async function startStatelessFixture(): Promise<{
     url: `http://127.0.0.1:${port}/mcp`,
     close: () =>
       new Promise<void>((resolve, reject) =>
-        server.close((err) => (err ? reject(err) : resolve())),
+        server.close((err) => (err ? reject(err) : resolve()))
       ),
     captured,
   };
@@ -140,7 +140,7 @@ describe("MCPClientManager mcpProtocolVersion: auto", () => {
     expect(methods).toContain("server/discover");
     expect(methods).not.toContain("initialize");
     const discover = fixture.captured.find(
-      (r) => r.method === "server/discover",
+      (r) => r.method === "server/discover"
     )!;
     expect(discover.headers["mcp-protocol-version"]).toBe("2026-07-28");
 
@@ -164,6 +164,50 @@ describe("MCPClientManager mcpProtocolVersion: auto", () => {
     expect(tools.tools.length).toBe(MOCK_TOOLS.length);
   }, 15000);
 
+  it("auto ignores a carried-over RC-only supportedProtocolVersions on the legacy fallback", async () => {
+    // Stale-accept-list regression: a persisted host config can carry
+    // `initialize.supportedProtocolVersions` (the canonicalizer's old
+    // stateful derivation, or a hand-written RC-only list) alongside an
+    // "auto" pin via the hosted/local plumbing. If that list reached the
+    // legacy Client, initialize would propose 2026-07-28 and reject the
+    // stateful server's counter-offer — auto must sanitize it and
+    // negotiate with SDK defaults instead.
+    const mock = await startMockStreamableHttpServer();
+    cleanup.push(mock.stop);
+    const manager = new MCPClientManager();
+    cleanup.push(() => manager.disconnectAllServers());
+
+    await manager.connectToServer("auto-stale-accept-list", {
+      url: mock.url,
+      mcpProtocolVersion: "auto",
+      supportedProtocolVersions: ["2026-07-28"],
+    });
+
+    expect(manager.getConnectionStatus("auto-stale-accept-list")).toBe(
+      "connected"
+    );
+    const tools = await manager.listTools("auto-stale-accept-list");
+    expect(tools.tools.length).toBe(MOCK_TOOLS.length);
+  }, 15000);
+
+  it("auto ignores a stale single-version accept list on the legacy fallback", async () => {
+    const mock = await startMockStreamableHttpServer();
+    cleanup.push(mock.stop);
+    const manager = new MCPClientManager();
+    cleanup.push(() => manager.disconnectAllServers());
+
+    await manager.connectToServer("auto-old-accept-list", {
+      url: mock.url,
+      mcpProtocolVersion: "auto",
+      // The canonicalizer's derived shape for an old stateful pin.
+      supportedProtocolVersions: ["2025-03-26"],
+    });
+
+    expect(manager.getConnectionStatus("auto-old-accept-list")).toBe(
+      "connected"
+    );
+  }, 15000);
+
   it("explicit 2026-07-28 pin against a stateful server still fails (no silent fallback)", async () => {
     const mock = await startMockStreamableHttpServer();
     cleanup.push(mock.stop);
@@ -174,7 +218,7 @@ describe("MCPClientManager mcpProtocolVersion: auto", () => {
       manager.connectToServer("pinned-rc", {
         url: mock.url,
         mcpProtocolVersion: "2026-07-28",
-      }),
+      })
     ).rejects.toThrow();
   }, 15000);
 });

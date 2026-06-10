@@ -79,6 +79,7 @@ At connect time the inspector probes each HTTP server with a `server/discover` r
 A few notes:
 
 - STDIO and legacy SSE servers skip the probe entirely and use the legacy handshake — Auto never fails a connection the way an RC pin on the wrong transport does.
+- The legacy fallback always negotiates with SDK defaults: Auto ignores any configured `supportedProtocolVersions` accept list, so a stale or RC-only list left over from an earlier pin can't fail the fallback.
 - OAuth servers work as usual: if the probe gets a 401, the normal auth flow runs on the legacy path, and the reconnect re-probes with the token.
 - `"auto"` is a config value, never a wire literal — the bytes on the wire are always a concrete version.
 

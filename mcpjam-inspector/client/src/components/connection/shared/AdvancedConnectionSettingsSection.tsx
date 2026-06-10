@@ -356,8 +356,9 @@ export function AdvancedConnectionSettingsSection({
               </Select>
               {!isHttp && (
                 <p className="text-xs text-muted-foreground">
-                  MCPJam's current 2026 RC preview requires Streamable HTTP —
-                  only Latest is selectable for this transport.
+                  MCPJam's current 2026 RC preview requires Streamable HTTP, so
+                  the 2026 RC option is hidden for this transport. Auto stays
+                  available and uses the legacy handshake here.
                 </p>
               )}
               {!canEditProtocolVersion && (
