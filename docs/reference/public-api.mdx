@@ -15,6 +15,16 @@ welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
 [GitHub](https://github.com/MCPJam/inspector/issues).
 </Warning>
 
+<Card
+  title="Create an API key"
+  icon="key"
+  href="https://app.mcpjam.com/settings/api-keys"
+  horizontal
+>
+  Go straight to key management in the hosted app. If you're signed out,
+  you'll be asked to sign in and then land right back on this page.
+</Card>
+
 The MCPJam API lets you run the inspector's live diagnostics against MCP
 servers saved in your [hosted](/hosted/overview) projects — from CI, scripts,
 or your own agents — without opening the UI.
@@ -55,18 +65,9 @@ curl -X POST \
 
 ### Creating a key
 
-<Card
-  title="Create an API key"
-  icon="key"
-  href="https://app.mcpjam.com/settings/api-keys"
-  horizontal
->
-  Go straight to key management in the hosted app. If you're signed out,
-  you'll be asked to sign in and then land right back on this page.
-</Card>
-
 1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
-   in the hosted app (the card above takes you there directly).
+   in the hosted app (the card at the top of this page takes you there
+   directly).
 2. Click **Create API key**, name it, and pick the **organization** it will act in.
 3. Copy the key (`sk_…`) immediately — **it is shown exactly once** and never
    stored by MCPJam in retrievable form.
