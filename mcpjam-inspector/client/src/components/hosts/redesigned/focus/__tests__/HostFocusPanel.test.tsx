@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+
+// HostFocusPanel renders BehaviorTab, which subscribes to the built-in
+// tools catalog via Convex. Stub the hook so tests don't need a ConvexProvider.
+vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
+  useBuiltInToolCatalog: () => [],
+}));
+
 import { HostFocusPanel } from "../HostFocusPanel";
 
 describe("HostFocusPanel", () => {

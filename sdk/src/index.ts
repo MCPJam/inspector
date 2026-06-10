@@ -578,6 +578,7 @@ export type {
   HostInit,
   HostJson,
   HostMcp,
+  HostComputer,
   HostServerOverride,
   HostConnectionDefaults,
   HostStyleId,

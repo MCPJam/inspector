@@ -1,5 +1,5 @@
 {
-  "__inputHash": "ce77ad7441fe0c6eb84ddfb0d224e243a5ad192d5db9472b866818bf349f775c",
+  "__inputHash": "468f6899dfe073d7e12f37cd45ac29fcb70c35216f723d31b101eecf99dbd535",
   "rows": [
     {
       "label": "base-minimal",
@@ -373,6 +373,29 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"hostCapabilitiesOverride\":{},\"chatUiOverride\":{\"logo\":\"x\"}}",
       "sha256": "688fa1203c5197fe044ef781fbe5ca459cc963d3cb919310161fbc1179c05785"
+    },
+    {
+      "label": "computer-personal-with-untrimmed-workdir",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "computer": {
+          "kind": "personal",
+          "toolset": "bash",
+          "workdir": " /home/u "
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"computer\":{\"kind\":\"personal\",\"toolset\":\"bash\",\"workdir\":\"/home/u\"},\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "9bac9b335b8ea5832fd89f0026b8ad11db2a7d76ef99446c513ec7e9afd890ab"
     },
     {
       "label": "builtin-tool-ids-empty-omitted",

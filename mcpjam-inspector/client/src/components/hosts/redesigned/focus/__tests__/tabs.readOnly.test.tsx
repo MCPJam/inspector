@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+
+// BehaviorTab subscribes to the built-in tools catalog via Convex; stub the
+// hook so tests don't need a ConvexProvider. Empty list keeps the new
+// Built-in tools FocusBlock hidden, which is the right default here.
+vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
+  useBuiltInToolCatalog: () => [],
+}));
+
 import { BehaviorTab } from "../BehaviorTab";
 import { ProtocolTab } from "../ProtocolTab";
 import { AppsExtensionTab } from "../AppsExtensionTab";
