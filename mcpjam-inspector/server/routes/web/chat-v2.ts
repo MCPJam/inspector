@@ -28,6 +28,10 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
+import {
+  BASH_TOOL_NAME,
+  buildBashTool,
+} from "../../utils/built-in-tools/bash.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
@@ -155,7 +159,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -164,7 +168,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -173,7 +177,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       }
     }
@@ -196,10 +200,11 @@ chatV2.post("/", async (c) => {
         );
         modelDefinition = hostModel;
       } else {
-        logger.warn(
-          "[chat-v2] host model not in catalog; swapping id only",
-          { chatboxId, body: modelDefinition.id, host: hostModelId }
-        );
+        logger.warn("[chat-v2] host model not in catalog; swapping id only", {
+          chatboxId,
+          body: modelDefinition.id,
+          host: hostModelId,
+        });
         modelDefinition = { ...modelDefinition, id: hostModelId };
       }
     }
@@ -212,7 +217,7 @@ chatV2.post("/", async (c) => {
     // Built-in tools (e.g. web_search) bill MCPJam credits via Convex; the
     // bearer is guaranteed by assertBearerToken above and projectId by the
     // hosted schema, so the auth context is always constructible here.
-    const builtInTools = safeResolveBuiltInTools(
+    let builtInTools = safeResolveBuiltInTools(
       resolvedExecution.builtInToolIds,
       {
         authHeader: bearerToken,
@@ -220,6 +225,40 @@ chatV2.post("/", async (c) => {
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
       }
     );
+
+    // Project Computers: advertise the `bash` tool only when the chatbox's
+    // pinned host config carries a personal computer AND the actor is not a
+    // guest. The computer value comes exclusively from the server-resolved
+    // runtime config — never the request body — so a tampered client can't
+    // attach a shell the host didn't authorize. (The backend already omits
+    // `computer` for guest actors; the guestId check here is belt and
+    // suspenders, and Convex re-rejects guests at reserve time anyway.)
+    const hostComputerRaw =
+      isChatboxSession && hostRuntimeConfig
+        ? (hostRuntimeConfig as { computer?: unknown }).computer
+        : undefined;
+    const hostComputer =
+      hostComputerRaw &&
+      typeof hostComputerRaw === "object" &&
+      (hostComputerRaw as { kind?: unknown }).kind === "personal" &&
+      (hostComputerRaw as { toolset?: unknown }).toolset === "bash"
+        ? (hostComputerRaw as {
+            kind: "personal";
+            toolset: "bash";
+            workdir?: string;
+          })
+        : null;
+    if (hostComputer && !c.get("guestId")) {
+      builtInTools = {
+        ...(builtInTools ?? {}),
+        [BASH_TOOL_NAME]: buildBashTool({
+          authHeader: bearerToken,
+          projectId: hostedBody.projectId,
+          workdir: hostComputer.workdir,
+          requireToolApproval,
+        }),
+      };
+    }
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
