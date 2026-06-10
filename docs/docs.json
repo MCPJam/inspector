@@ -154,12 +154,16 @@
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
-              "sdk/reference/apps-conformance",
-              "reference/public-api",
-              "reference/api-keys"
+              "sdk/reference/apps-conformance"
             ]
           }
         ]
+      },
+      {
+        "tab": "API",
+        "icon": "webhook",
+        "tag": "Preview",
+        "pages": ["reference/public-api", "reference/api-keys"]
       }
     ],
     "global": {
