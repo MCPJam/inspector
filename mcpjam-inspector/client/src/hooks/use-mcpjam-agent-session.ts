@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport, generateId } from "ai";
+import { usePostHog } from "posthog-js/react";
 import { authFetch } from "@/lib/session-token";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
@@ -43,6 +44,11 @@ export interface UseMcpjamAgentSessionArgs {
   organizationId?: string | null;
   /** Optional override to override the persisted default model. */
   modelOverride?: ModelDefinition;
+  /**
+   * Telemetry surface — passed into PostHog lifecycle events so we can split
+   * engagement/error/latency by home vs. side-panel vs. future bubble.
+   */
+  surface?: string;
 }
 
 export interface UseMcpjamAgentSessionResult {
@@ -66,6 +72,8 @@ export function useMcpjamAgentSession(
   args: UseMcpjamAgentSessionArgs
 ): UseMcpjamAgentSessionResult {
   const { projectId, organizationId, chatSessionId: providedSessionId } = args;
+  const posthog = usePostHog();
+  const surface = args.surface ?? "unknown";
 
   const [chatSessionId, setChatSessionId] = useState<string>(
     () => providedSessionId ?? generateId()
@@ -179,6 +187,50 @@ export function useMcpjamAgentSession(
     transport,
   });
 
+  // Lifecycle telemetry — track each user message round-trip so we can read
+  // engagement (message_sent), latency (response_finished.duration_ms), tool
+  // usage (response_finished.tool_call_count), and reliability
+  // (response_error). Uses status edge transitions instead of a non-existent
+  // useChat `onFinish` callback in this @ai-sdk/react version.
+  const turnStartedAtRef = useRef<number | null>(null);
+  const turnIndexRef = useRef<number>(0);
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (prev === status) return;
+    if ((prev === "submitted" || prev === "streaming") && status === "ready") {
+      const startedAt = turnStartedAtRef.current;
+      turnStartedAtRef.current = null;
+      const last = messages[messages.length - 1];
+      let toolCallCount = 0;
+      if (last && last.role === "assistant" && Array.isArray(last.parts)) {
+        toolCallCount = last.parts.filter((p) =>
+          typeof (p as { type?: unknown }).type === "string" &&
+          (p as { type: string }).type.startsWith("tool-")
+        ).length;
+      }
+      posthog?.capture("mcpjam_agent_response_finished", {
+        surface,
+        session_id: chatSessionId,
+        message_index: turnIndexRef.current,
+        duration_ms: startedAt != null ? Date.now() - startedAt : null,
+        tool_call_count: toolCallCount,
+        message_count: messages.length,
+      });
+    } else if (status === "error") {
+      const startedAt = turnStartedAtRef.current;
+      turnStartedAtRef.current = null;
+      posthog?.capture("mcpjam_agent_response_error", {
+        surface,
+        session_id: chatSessionId,
+        message_index: turnIndexRef.current,
+        duration_ms: startedAt != null ? Date.now() - startedAt : null,
+        error_message: error?.message ?? null,
+      });
+    }
+  }, [chatSessionId, error, messages, posthog, status, surface]);
+
   // Seed `useChat` with hydrated history once it arrives.
   const seededForRef = useRef<string | null>(null);
   useEffect(() => {
@@ -198,9 +250,19 @@ export function useMcpjamAgentSession(
       if (!providedSessionId && seededForRef.current === null) {
         seededForRef.current = chatSessionId;
       }
+      turnIndexRef.current += 1;
+      turnStartedAtRef.current = Date.now();
+      posthog?.capture("mcpjam_agent_message_sent", {
+        surface,
+        session_id: chatSessionId,
+        message_index: turnIndexRef.current,
+        prompt_length: trimmed.length,
+        model_id: modelRef.current?.id ?? null,
+        provider: modelRef.current?.provider ?? null,
+      });
       void sendMessage({ text: trimmed });
     },
-    [chatSessionId, providedSessionId, sendMessage]
+    [chatSessionId, posthog, providedSessionId, sendMessage, surface]
   );
 
   return {

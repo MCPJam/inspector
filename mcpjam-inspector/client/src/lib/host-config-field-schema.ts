@@ -20,7 +20,7 @@ export type HostConfigSectionId = "agent" | "protocol" | "apps";
 
 export interface HostConfigSection {
   id: HostConfigSectionId;
-  /** Display label — matches `client-focus-tab-defs.tsx`. */
+  /** Display label — matches `host-focus-tab-defs.tsx`. */
   label: string;
   /** Sub-line shown next to the section title in the matrix header band. */
   subtitle: string;

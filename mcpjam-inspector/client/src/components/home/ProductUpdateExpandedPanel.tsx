@@ -34,6 +34,24 @@ function getPanelLayout(viewWidth: number, viewHeight: number) {
 }
 
 function ExpandedVideo({ entry }: { entry: ProductUpdateEntry }) {
+  if (entry.previewVideoUrl) {
+    return (
+      <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
+        <video
+          src={entry.previewVideoUrl}
+          poster={entry.videoPosterUrl}
+          className="h-full w-full"
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          controls
+        />
+      </div>
+    );
+  }
+
   const embed = entry.videoUrl ? parseVideoEmbed(entry.videoUrl) : null;
   const youtubeId =
     embed?.provider === "youtube"
@@ -41,26 +59,7 @@ function ExpandedVideo({ entry }: { entry: ProductUpdateEntry }) {
       : null;
   const isInlineEmbeddable = embed && embed.provider !== "raw";
 
-  // No embeddable full video: show the preview MP4 (if present) or a
-  // placeholder. Clicking through to a raw URL stays an out-of-modal action.
   if (!isInlineEmbeddable) {
-    if (entry.previewVideoUrl) {
-      return (
-        <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
-          <video
-            src={entry.previewVideoUrl}
-            poster={entry.videoPosterUrl}
-            className="h-full w-full"
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
-            controls
-          />
-        </div>
-      );
-    }
     return (
       <div className="aspect-video w-full bg-muted flex items-center justify-center rounded-lg">
         <p className="text-muted-foreground text-sm">No video available</p>

@@ -44,11 +44,6 @@ import type {
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useSharedAppState } from "@/state/app-state-context";
-import { isMCPJamProvidedModel } from "@/shared/types";
-import {
-  useAiProviderKeys,
-  type ProviderTokens,
-} from "@/hooks/use-ai-provider-keys";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -600,10 +595,10 @@ export function SuiteIterationsView({
         hostAttachments: attachments,
       });
       toast.success(
-        attachments.length === 0 ? "Clients cleared" : "Clients updated"
+        attachments.length === 0 ? "Hosts cleared" : "Hosts updated"
       );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update clients"));
+      toast.error(getBillingErrorMessage(error, "Failed to update hosts"));
       console.error("Failed to update host attachments:", error);
       throw error;
     }
@@ -650,22 +645,6 @@ export function SuiteIterationsView({
       cases: [normalizeDraftEvalCaseForExport(draft)],
     });
   }, []);
-
-  const { hasToken } = useAiProviderKeys();
-  const missingReplayProviderKeys = useMemo(() => {
-    if (!cases || cases.length === 0) return [];
-    const providers = new Set<string>();
-    for (const tc of cases) {
-      for (const m of tc.models ?? []) {
-        if (!isMCPJamProvidedModel(m.model, m.provider)) {
-          providers.add(m.provider);
-        }
-      }
-    }
-    return [...providers].filter(
-      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens)
-    );
-  }, [cases, hasToken]);
 
   const isReplayingLatestRun = useMemo(
     () =>
@@ -960,7 +939,6 @@ export function SuiteIterationsView({
                               : undefined
                           }
                           isReplayingLatestRun={isReplayingLatestRun}
-                          missingReplayProviderKeys={missingReplayProviderKeys}
                         />
                         <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
                           <p>

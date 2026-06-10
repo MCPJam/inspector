@@ -116,13 +116,13 @@ import {
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
-import { ClientsConnectAddServerSlotContext } from "./clients/ClientsConnectAddServerSlotContext";
-import { useHostsConnectViewPhase } from "./clients/ClientsConnectViewPhaseContext";
+import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
+import { useHostsConnectViewPhase } from "./hosts/HostsConnectViewPhaseContext";
 import {
   SERVER_CARD_LAYOUT_ID,
   SNAPPY_CAMERA,
   SNAPPY_RAIL,
-} from "./clients/transition-tokens";
+} from "./hosts/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
 
@@ -565,7 +565,7 @@ export function ServersTab({
   onNavigateToRegistry,
 }: ServersTabProps) {
   const posthog = usePostHog();
-  const hostsConnectAddServerSlot = useContext(ClientsConnectAddServerSlotContext);
+  const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
 
@@ -576,7 +576,7 @@ export function ServersTab({
   // surfaces does not re-fire, but switching to a different host (or
   // saving the host's required set) re-attempts for that scope.
   //
-  // Match the global host picker / ClientsTab / useAppState scope: prefer
+  // Match the global host picker / HostsTab / useAppState scope: prefer
   // the shared project id (what writers use in authed cloud flows), falling
   // back to the local id for CLI / no-cloud-sync where there is no shared
   // id. Reading only `activeProjectId` here misses selections made via

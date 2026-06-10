@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from "react-router";
+import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import App, {
   AuthRoute,
   ChatAliasRoute,
@@ -7,7 +7,7 @@ import App, {
   ConformanceRoute,
   EvalsRoute,
   HostCompareRoute,
-  ClientsRoute,
+  HostsRoute,
   HomeRoute,
   LearningRoute,
   OAuthFlowRoute,
@@ -31,6 +31,7 @@ import App, {
 } from "./App";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { getAppRouter, setAppRouter } from "./router-ref";
+import { buildHostsPath } from "./lib/app-navigation";
 
 export { getAppRouter };
 
@@ -51,11 +52,19 @@ export function createAppRouter(): AppRouter {
         { index: true, element: <HomeRoute /> },
         { path: "home", element: <HomeRoute /> },
         { path: "servers", element: <ServersRoute /> },
-        { path: "clients", element: <ClientsRoute /> },
-        { path: "clients/:hostId", element: <ClientsRoute /> },
+        // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
+        // renamed Client → Host). Route through `buildHostsPath` so the
+        // `:hostId` deep-link is re-encoded exactly like canonical links
+        // (router params arrive decoded; ids with reserved chars would
+        // otherwise split into extra path segments and fail to match).
+        { path: "clients", loader: () => redirect(buildHostsPath()) },
+        {
+          path: "clients/:hostId",
+          loader: ({ params }) => redirect(buildHostsPath(params.hostId)),
+        },
         { path: "host-compare", element: <HostCompareRoute /> },
-        { path: "hosts", element: <ClientsRoute /> },
-        { path: "hosts/:hostId", element: <ClientsRoute /> },
+        { path: "hosts", element: <HostsRoute /> },
+        { path: "hosts/:hostId", element: <HostsRoute /> },
         { path: "registry", element: <RegistryRoute /> },
         { path: "tools", element: <ToolsRoute /> },
         { path: "resources", element: <ResourcesRoute /> },

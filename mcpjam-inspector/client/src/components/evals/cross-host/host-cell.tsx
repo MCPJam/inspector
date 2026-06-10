@@ -61,17 +61,17 @@ const METRIC_COPY: Record<
   p50: {
     title: "P50 latency",
     description: "Median completed-run latency for this test case.",
-    missing: "No completed latency sample for this client.",
+    missing: "No completed latency sample for this host.",
   },
   p95: {
     title: "P95 latency",
     description: "Tail latency for the slowest completed runs in this case.",
-    missing: "No completed tail-latency sample for this client.",
+    missing: "No completed tail-latency sample for this host.",
   },
   avgTokens: {
     title: "Average tokens",
     description: "Mean token usage per iteration in the latest run.",
-    missing: "No token usage sample for this client.",
+    missing: "No token usage sample for this host.",
   },
 };
 

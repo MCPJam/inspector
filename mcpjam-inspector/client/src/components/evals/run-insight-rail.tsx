@@ -6,7 +6,7 @@ import {
   computeRunPassFailStats,
   normalizeRunPassRatePercent,
 } from "./ai-triage-helpers";
-import { ClientChip } from "@/components/clients/client-chip";
+import { HostChip } from "@/components/hosts/host-chip";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
@@ -244,7 +244,7 @@ export function RunAccuracyHeroBand({
       {runClient || runServers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {runClient ? (
-            <ClientChip
+            <HostChip
               name={runClient.displayName}
               hostId={runClient.hostId}
             />

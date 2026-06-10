@@ -500,7 +500,7 @@ export function useAppState({
   ) as HostConfigDtoV2 | null | undefined;
 
   // Single active-host state, shared with the Servers/Playground/Hosts
-  // top-bar preview and the Chat tab's ClientPicker. Picking a host anywhere
+  // top-bar preview and the Chat tab's HostPicker. Picking a host anywhere
   // in the product points every MCP `initialize` and widget `ui/initialize`
   // at the same `HostConfigDtoV2`.
   const [activeHostId, setActiveHostId] = usePreviewedHostId(
@@ -822,7 +822,7 @@ export function useAppState({
     // `mcpProfile` powers `ActiveMcpProfileProvider`, its `clientCapabilities`
     // and `connectionDefaults` flow through `withProjectConnectionDefaults`,
     // and `setActiveHostId` is the canonical writer for both the Chat tab's
-    // ClientPicker and the global top-bar preview.
+    // HostPicker and the global top-bar preview.
     activeHost,
     activeHostId,
     setActiveHostId,

@@ -38,6 +38,18 @@ vi.mock("@/hooks/use-custom-providers", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-byok-allowed", () => ({
+  useByokAllowed: () => true,
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signIn: vi.fn(), user: null }),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+}));
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));

@@ -528,7 +528,7 @@ interface UseServerStateParams {
    */
   activeMcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1;
   /**
-   * When a named host is active (e.g. selected in ChatTabV2 or ClientBuilderView
+   * When a named host is active (e.g. selected in ChatTabV2 or HostBuilderView
    * preview), its connectionDefaults replace the project-level connection
    * defaults in `withProjectConnectionDefaults`. Per-server overrides are
    * applied when the call site also supplies the `serverId`.
