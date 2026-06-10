@@ -259,15 +259,24 @@ export function ChatboxChatPage({
     }
   }, []);
 
+  // The embedded Preview iframe is same-origin, so it shares the tab's
+  // sessionStorage with the outer dashboard. Reading or writing the chatbox
+  // session from inside the embed would leak it into (or pick it up from)
+  // the host app — the outer App treats a stored session as "render the
+  // chatbox runtime", hijacking the dashboard on the next reload. The embed
+  // never needs the fallback anyway: its URL keeps the share token (the
+  // post-redeem strip only runs standalone), so a reload re-redeems.
   const readCurrentSession = useCallback(() => {
-    return playgroundParams
-      ? readPlaygroundSession(playgroundParams.playgroundId)
-      : readChatboxSession();
+    if (playgroundParams) {
+      return readPlaygroundSession(playgroundParams.playgroundId);
+    }
+
+    return isEmbeddedPreview() ? null : readChatboxSession();
   }, [playgroundParams]);
 
   const writeCurrentSession = useCallback(
     (nextSession: ChatboxSession) => {
-      if (playgroundParams) {
+      if (playgroundParams || isEmbeddedPreview()) {
         return;
       }
 
@@ -277,7 +286,7 @@ export function ChatboxChatPage({
   );
 
   const clearCurrentSession = useCallback(() => {
-    if (playgroundParams) {
+    if (playgroundParams || isEmbeddedPreview()) {
       return;
     }
 
