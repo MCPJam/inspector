@@ -198,6 +198,13 @@ const inputs = [
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },
   },
   {
+    label: "computer-personal-with-untrimmed-workdir",
+    input: {
+      ...base(),
+      computer: { kind: "personal", toolset: "bash", workdir: " /home/u " },
+    },
+  },
+  {
     label: "adversarial-stray-deny-must-be-dropped",
     input: {
       ...base(),

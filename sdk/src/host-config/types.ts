@@ -206,6 +206,20 @@ export type McpAppsCapabilities = {
   widgetDisplayModeRequests?: "accept" | "user-initiated-only" | "decline";
 };
 
+// Personal cloud workstation attached to a host: one machine per
+// (project, user), surfaced as the chat `bash` tool and the web terminal.
+// `{ kind: "personal", toolset: "bash" }` is the only shape in MVP
+// (docs/project-computers.md in mcpjam-backend). The hash describes intent,
+// not environment: two hosts with the same `computer` value hash identically
+// even though each member resolves their own machine.
+export type HostConfigComputer = {
+  kind: "personal";
+  toolset: "bash";
+  // Optional initial working directory for bash/terminal sessions. Trimmed
+  // during canonicalization; empty-after-trim collapses to absent.
+  workdir?: string;
+};
+
 export type HostConfigInputV2 = {
   hostStyle: HostConfigStyle;
   modelId: string;
@@ -222,6 +236,12 @@ export type HostConfigInputV2 = {
   // `false` → show every tool (faithful to hosts that don't implement
   // SEP-1865). `undefined` → "use the spec default" (filter).
   respectToolVisibility?: boolean;
+  // Personal computer opt-in. Optional + absent ⇒ no computer, hashing
+  // byte-identically to pre-feature rows (the `progressiveToolDiscovery`
+  // policy). `null` is accepted so the host editor can clear the field; the
+  // canonicalizer collapses it to undefined so "cleared" and "never set"
+  // hash identically.
+  computer?: HostConfigComputer | null;
   // Optional during the rollout of project-scoped server config: named hosts
   // pass `undefined` (server set lives on `projects.serverIds`); chatbox/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
@@ -266,6 +286,10 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.respectToolVisibility. Same undefined-vs-set
   // policy.
   respectToolVisibility?: boolean;
+  // Mirrors HostConfigInputV2.computer with input `null` collapsed to
+  // undefined, so the canonical JSON for "no computer" is byte-identical to
+  // pre-feature rows.
+  computer?: HostConfigComputer;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
   connectionDefaults: HostConfigConnectionDefaults;

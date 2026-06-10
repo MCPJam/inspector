@@ -39,6 +39,7 @@ import type {
   HostConfigMcpProfileV1,
 } from "./types.js";
 import type {
+  HostComputer,
   HostConnectionDefaults,
   HostInit,
   HostJson,
@@ -173,6 +174,9 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.respectToolVisibility !== undefined) {
     out.respectToolVisibility = c.respectToolVisibility;
   }
+  if (c.computer !== undefined) {
+    out.computer = c.computer;
+  }
   if (c.hostCapabilitiesOverride !== undefined) {
     out.hostCapabilitiesOverride = c.hostCapabilitiesOverride;
   }
@@ -240,6 +244,14 @@ export class Host {
    * implement visibility).
    */
   respectToolVisibility?: boolean;
+
+  /**
+   * Personal cloud workstation attached to this host (chat `bash` tool +
+   * web terminal; one machine per project+user). `undefined` or `null` ⇒
+   * no computer — both serialize identically, so a cleared field hashes
+   * the same as one never set.
+   */
+  computer?: HostComputer | null;
 
   /** Required servers. Mutable — `requireServer`/`removeRequiredServer` are sugar. */
   servers: ServerId[];
@@ -320,6 +332,7 @@ export class Host {
     this.requireToolApproval = cfg.requireToolApproval ?? false;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
+    this.computer = cfg.computer;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
@@ -372,6 +385,17 @@ export class Host {
 
   setRespectToolVisibility(respect: boolean): this {
     this.respectToolVisibility = respect;
+    return this;
+  }
+
+  /**
+   * Attach a personal computer (defaults to the only MVP shape), or pass
+   * `null` to detach.
+   */
+  setComputer(
+    computer: HostComputer | null = { kind: "personal", toolset: "bash" },
+  ): this {
+    this.computer = computer;
     return this;
   }
 
@@ -468,6 +492,7 @@ export class Host {
       requireToolApproval: this.requireToolApproval,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
+      computer: this.computer,
       servers: this.servers,
       optionalServers: this.optionalServers,
       connectionDefaults: this.connectionDefaults,
@@ -496,6 +521,11 @@ export class Host {
     }
     if (snap.respectToolVisibility !== undefined) {
       input.respectToolVisibility = snap.respectToolVisibility;
+    }
+    // `null` (detached) is forwarded — the canonicalizer collapses it to
+    // undefined so it hashes identically to "never set".
+    if (snap.computer !== undefined) {
+      input.computer = snap.computer;
     }
     if (snap.hostCapabilitiesOverride !== undefined) {
       input.hostCapabilitiesOverride = snap.hostCapabilitiesOverride;

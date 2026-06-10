@@ -80,6 +80,88 @@ describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — computer", () => {
+  const personal = { kind: "personal", toolset: "bash" } as const;
+
+  it("omits the key entirely when absent (pre-feature byte shape)", () => {
+    const c = canonicalizeHostConfigV2(base());
+    expect("computer" in JSON.parse(JSON.stringify(c))).toBe(false);
+  });
+
+  it("collapses null to absent — cleared hashes identically to never-set", async () => {
+    const cleared = canonicalizeHostConfigV2(base({ computer: null }));
+    expect("computer" in JSON.parse(JSON.stringify(cleared))).toBe(false);
+    expect(await hash(base({ computer: null }))).toBe(await hash(base()));
+  });
+
+  it("hashes a personal computer distinctly from absent", async () => {
+    expect(await hash(base({ computer: personal }))).not.toBe(
+      await hash(base()),
+    );
+  });
+
+  it("preserves workdir and hashes it distinctly from no-workdir", async () => {
+    const withDir = base({ computer: { ...personal, workdir: "/srv/app" } });
+    expect(canonicalizeHostConfigV2(withDir).computer).toEqual({
+      kind: "personal",
+      toolset: "bash",
+      workdir: "/srv/app",
+    });
+    expect(await hash(withDir)).not.toBe(
+      await hash(base({ computer: personal })),
+    );
+  });
+
+  it("trims workdir; whitespace-only collapses to absent", async () => {
+    expect(
+      await hash(base({ computer: { ...personal, workdir: "  /srv/app  " } })),
+    ).toBe(
+      await hash(base({ computer: { ...personal, workdir: "/srv/app" } })),
+    );
+    expect(await hash(base({ computer: { ...personal, workdir: "   " } }))).toBe(
+      await hash(base({ computer: personal })),
+    );
+  });
+
+  it("rejects an unknown kind", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { kind: "shared", toolset: "bash" } as never }),
+      ),
+    ).toThrow(/computer\.kind must be "personal"/);
+  });
+
+  it("rejects an unknown toolset", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { kind: "personal", toolset: "zsh" } as never }),
+      ),
+    ).toThrow(/computer\.toolset must be "bash"/);
+  });
+
+  it("rejects an unknown key (typo defense + hash hygiene)", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { ...personal, workDir: "/x" } as never }),
+      ),
+    ).toThrow(/computer has unknown key "workDir"/);
+  });
+
+  it("rejects a non-string workdir", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { ...personal, workdir: 7 } as never }),
+      ),
+    ).toThrow(/computer\.workdir must be a string/);
+  });
+
+  it("rejects a non-object computer", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(base({ computer: "personal" as never })),
+    ).toThrow(/computer must be a plain object or null/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — validation", () => {
   it("throws on non-finite temperature", () => {
     expect(() => canonicalizeHostConfigV2(base({ temperature: NaN }))).toThrow(

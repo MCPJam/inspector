@@ -79,6 +79,41 @@ describe("normalizeSdkEvalHostConfigForWire — stripping", () => {
     // serverIds still on the source object after the call.
     expect(input.serverIds).toEqual(["a", "b"]);
   });
+
+  it("strips computer from a canonical input — evals never carry one", async () => {
+    const input = baseInput({
+      computer: { kind: "personal", toolset: "bash", workdir: "/srv" },
+    });
+
+    const out = normalizeSdkEvalHostConfigForWire(input);
+
+    expect((out as Record<string, unknown>).computer).toBeUndefined();
+    // Source untouched.
+    expect(input.computer).toEqual({
+      kind: "personal",
+      toolset: "bash",
+      workdir: "/srv",
+    });
+    // The wire hash is independent of the computer the host carried.
+    expect(await computeHostConfigHashV2(out)).toBe(
+      await computeHostConfigHashV2(
+        normalizeSdkEvalHostConfigForWire(baseInput()),
+      ),
+    );
+  });
+
+  it("strips computer from a Host.toJSON() snapshot too", () => {
+    const host = new Host({
+      style: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+      computer: { kind: "personal", toolset: "bash" },
+    });
+    const json = host.toJSON();
+    expect(json.computer).toEqual({ kind: "personal", toolset: "bash" });
+
+    const out = normalizeSdkEvalHostConfigForWire(json);
+    expect((out as Record<string, unknown>).computer).toBeUndefined();
+  });
 });
 
 describe("normalizeSdkEvalHostConfigForWire — preservation", () => {

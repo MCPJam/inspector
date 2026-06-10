@@ -30,6 +30,7 @@ export {
 export type {
   HostConfigInputV2,
   CanonicalHostConfigV2,
+  HostConfigComputer,
   HostConfigMcpProfileV1,
   HostConfigConnectionDefaults,
   CspDomainSet,
