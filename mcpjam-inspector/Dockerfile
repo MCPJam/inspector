@@ -87,6 +87,10 @@ COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
 
 COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
+# Workspace-local deps that can't hoist to root (e.g. @workos-inc/node@^10
+# while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
+# mcpjam-inspector/node_modules and must be carried into the runtime image.
+COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
 COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
 COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
