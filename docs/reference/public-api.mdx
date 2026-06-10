@@ -55,8 +55,19 @@ curl -X POST \
 
 ### Creating a key
 
-1. Open [app.mcpjam.com](https://app.mcpjam.com) and go to **Settings → API keys**.
-2. Click **Create key**, name it, and pick the **organization** it will act in.
+<Card
+  title="Create an API key"
+  icon="key"
+  href="https://app.mcpjam.com/settings/api-keys"
+  horizontal
+>
+  Go straight to key management in the hosted app. If you're signed out,
+  you'll be asked to sign in and then land right back on this page.
+</Card>
+
+1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
+   in the hosted app (the card above takes you there directly).
+2. Click **Create API key**, name it, and pick the **organization** it will act in.
 3. Copy the key (`sk_…`) immediately — **it is shown exactly once** and never
    stored by MCPJam in retrievable form.
 
@@ -87,11 +98,12 @@ Treat an API key like a password:
   source control or ship it in client-side code.
 - Scope keys narrowly: one key per integration, named so you can tell them apart.
 - Rotate by creating a replacement key, switching traffic, then revoking the old one.
-- If a key leaks, revoke it immediately in **Settings → API keys**.
+- If a key leaks, revoke it immediately in
+  [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys).
 
 If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
 is no longer bound to an organization and cannot be used — create a new key
-from Settings.
+from [Settings](https://app.mcpjam.com/settings/api-keys).
 
 ## Conventions
 

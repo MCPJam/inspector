@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { Key, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -14,6 +15,7 @@ import {
   listApiKeys,
   revokeApiKey,
 } from "@/lib/apis/web/api-keys";
+import { writeApiKeysSignInReturnPath } from "@/lib/api-keys-signin-return-path";
 
 /**
  * `/settings/api-keys` — manage WorkOS-issued `sk_…` API keys for the
@@ -34,6 +36,10 @@ export function ApiKeysRoute() {
   const [isRevoking, setIsRevoking] = useState(false);
 
   const { isAuthenticated } = useConvexAuth();
+  // Guests authenticate to Convex too, so gate this surface on the WorkOS
+  // user: the key-management API rejects guest sessions outright.
+  const { user, signIn, isLoading: isAuthLoading } = useAuth();
+  const isSignedIn = Boolean(user);
   const { sortedOrganizations, isLoading: orgsLoading } =
     useOrganizationQueries({ isAuthenticated });
 
@@ -52,8 +58,14 @@ export function ApiKeysRoute() {
   }, []);
 
   useEffect(() => {
+    if (!isSignedIn) return;
     void refresh();
-  }, [refresh]);
+  }, [refresh, isSignedIn]);
+
+  const handleSignIn = useCallback(() => {
+    writeApiKeysSignInReturnPath("/settings/api-keys");
+    signIn();
+  }, [signIn]);
 
   const handleCreate = async ({
     name,
@@ -95,6 +107,32 @@ export function ApiKeysRoute() {
       setIsRevoking(false);
     }
   };
+
+  if (isAuthLoading) {
+    return (
+      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!isSignedIn) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8">
+        <div className="text-center space-y-4 max-w-md">
+          <h2 className="text-2xl font-bold">Sign in to manage API keys</h2>
+          <p className="text-sm text-muted-foreground">
+            API keys for the MCPJam API are tied to your account. Sign in (or
+            create a free account) and you'll come right back here to create
+            one.
+          </p>
+          <Button onClick={handleSignIn} size="lg">
+            Sign In
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full overflow-y-auto">
