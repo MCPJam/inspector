@@ -26,7 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useProjectServers } from "@/hooks/useViews";
-import { ServerSelectionList } from "@/components/clients/server-selection-list";
+import { ServerSelectionList } from "@/components/hosts/server-selection-list";
 import type { EvalServerAttachment } from "./types";
 
 type ServerAttachmentPickerProps = {

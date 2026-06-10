@@ -1,37 +1,98 @@
-diff --git a/.changeset/public-api-v1-live-mcp.md b/.changeset/public-api-v1-live-mcp.md
+diff --git a/.changeset/inspector-rollup-pre-soundcheck-deploy.md b/.changeset/inspector-rollup-pre-soundcheck-deploy.md
 deleted file mode 100644
-index 01316d2d9..000000000
---- a/.changeset/public-api-v1-live-mcp.md
+index 608cab17a..000000000
+--- a/.changeset/inspector-rollup-pre-soundcheck-deploy.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Inspector rollup since the last release:
+-
+-- Public API v1: new Inspector Node `/api/v1` routes for live-MCP servers/tools/resources/prompts, with a production fix to mount `/api/v1` in the production server entry.
+-- Evals: persist browser-rendered MCP App observations and steps in eval traces.
+-- Evals: cap eval iterations against the org's billing entitlement and surface a billing-limit-reached signal end-to-end.
+-- Billing: grace period for past-due/canceled orgs before access is gated.
+-- Billing: limit users to 1 self-created organization.
+-- Billing: rework the compare-plans table around credits and eval iterations; remove the team seat-minimum label and finish the Projects row.
+-- Sidebar credit usage: clicking the progress bar now sends the user to billing.
+-- Chatbox OAuth: attach the WorkOS bearer token on `/oauth/callback` to fix the 403 some users hit when finishing the chatbox auth flow.
+-- OAuth: send `client_secret` on token exchange with static preregistered credentials.
+-- Chatbox builder: removed the unused `allowGuestAccess` toggle.
+diff --git a/.changeset/sdk-eval-reporting-billing-limit.md b/.changeset/sdk-eval-reporting-billing-limit.md
+deleted file mode 100644
+index 4b53a7b30..000000000
+--- a/.changeset/sdk-eval-reporting-billing-limit.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
--"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
 ----
 -
--Add Inspector public API v1 (`/api/v1`) with live-MCP routes for servers, tools, resources, and prompts. Includes a stable response envelope, internal-to-v1 error code mapping, contract tests, and a session-auth bypass so external clients can use bearer tokens without colliding with the web session middleware.
+-`EvalReportingError` now exposes an `isBillingLimitReached` boolean, set when the inspector backend rejects an eval iteration because the org has hit its billing entitlement. Lets CLI/harness callers distinguish billing-limit failures from generic reporting errors without parsing error messages.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 768e56b00..9620bb0ea 100644
+index 9620bb0ea..cbfc2438f 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.9.5",
-+  "version": "2.10.0",
+-  "version": "2.10.0",
++  "version": "2.10.1",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
+@@ -118,7 +118,7 @@
+     "@hookform/resolvers": "^3.10.0",
+     "@lezer/highlight": "^1.2.3",
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^1.13.0",
++    "@mcpjam/sdk": "^1.14.0",
+     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+     "@modelcontextprotocol/ext-apps": "^1.7.2",
+     "@ngrok/ngrok": "^1.6.0",
 diff --git a/package-lock.json b/package-lock.json
-index 5b55a93cd..5a3796397 100644
+index 5a3796397..8aef2dd8d 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.9.5",
-+      "version": "2.10.0",
+-      "version": "2.10.0",
++      "version": "2.10.1",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",
+@@ -317,7 +317,7 @@
+         "@hookform/resolvers": "^3.10.0",
+         "@lezer/highlight": "^1.2.3",
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^1.13.0",
++        "@mcpjam/sdk": "^1.14.0",
+         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+         "@modelcontextprotocol/ext-apps": "^1.7.2",
+         "@ngrok/ngrok": "^1.6.0",
+@@ -36112,7 +36112,7 @@
+     },
+     "sdk": {
+       "name": "@mcpjam/sdk",
+-      "version": "1.13.0",
++      "version": "1.14.0",
+       "license": "MIT",
+       "dependencies": {
+         "@ai-sdk/anthropic": "^2.0.17",
+diff --git a/sdk/package.json b/sdk/package.json
+index b4cb0bd79..cb85e359a 100644
+--- a/sdk/package.json
++++ b/sdk/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/sdk",
+-  "version": "1.13.0",
++  "version": "1.14.0",
+   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
+   "type": "module",
+   "main": "dist/index.js",

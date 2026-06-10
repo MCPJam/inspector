@@ -34,12 +34,12 @@ import {
 } from "../utils/direct-chat-turn";
 import { consumeFullStreamAsEvalEvents } from "./evals/stream-adapter";
 import { resolveExecutionContext } from "../utils/host-execution-context";
+import { safeResolveBuiltInTools } from "../utils/built-in-tools/registry.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
   McpAppBrowserHarness,
   DEFAULT_VIEWPORT,
-  type WidgetRenderObservation,
 } from "../utils/mcp-app-browser-harness";
 import {
   buildComputerUseTools,
@@ -86,8 +86,13 @@ import type {
   EvalTraceSpan,
   PromptTraceSummary,
   EvalTraceWidgetSnapshot,
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
-import { appendDedupedModelMessages } from "@/shared/eval-trace";
+import {
+  appendDedupedModelMessages,
+  isEvalTraceBrowserStepNote,
+} from "@/shared/eval-trace";
 import {
   deriveLegacyPromptFields,
   resolvePromptTurns,
@@ -1066,7 +1071,14 @@ const runIterationWithAiSdk = async ({
   const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
     current: null,
   };
-  const widgetRenderObservations: WidgetRenderObservation[] = [];
+  const widgetRenderObservations: RunnerWidgetRenderObservation[] = [];
+  // PR 6b: Computer Use interaction steps, collected via the harness `onAction`
+  // callback wired into buildComputerUseTools below. This local AI-SDK path is
+  // the only place Computer Use runs, so it is the only place the array is
+  // non-empty (hosted + streaming paths land in PR 9/PR 10).
+  // `stepIndexByToolCallId` stamps a monotonic per-widget step ordinal.
+  const browserInteractionSteps: RunnerBrowserInteractionStep[] = [];
+  const stepIndexByToolCallId = new Map<string, number>();
   const ensureWidgetHarness = (): McpAppBrowserHarness => {
     if (!widgetHarnessRef.current) {
       widgetHarnessRef.current = new McpAppBrowserHarness({
@@ -1087,6 +1099,13 @@ const runIterationWithAiSdk = async ({
     // missing skill tools, Anthropic name validation, and skills-prompt
     // assembly. Called inside the try so prep failures become a recorded
     // failed iteration rather than an uncaught setup error.
+    //
+    // `builtInTools` stays absent on this local-AI-SDK BYOK path: built-in
+    // tools (web_search) execute via a Convex HTTP action billed in MCPJam
+    // credits, and BYOK iterations carry no Convex auth — advertising a tool
+    // whose execute can only fail is worse than omitting it. The null-ctx
+    // helper call debug-logs when the suite hostConfig requested ids anyway.
+    safeResolveBuiltInTools(resolvedExecution.builtInToolIds, null);
     const prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -1128,6 +1147,44 @@ const runIterationWithAiSdk = async ({
           getActiveToolCallId: () =>
             widgetHarnessRef.current?.getMountedWidgetId() ?? null,
           viewport: DEFAULT_VIEWPORT,
+          // PR 6b: collect one browserInteractionStep per executeAction. The
+          // screenshot stays base64 here; finalizeEvalIteration uploads it once
+          // for both the W2 and W1 persistence paths.
+          onAction: (result, { toolCallId }) => {
+            const stepIndex = (stepIndexByToolCallId.get(toolCallId) ?? -1) + 1;
+            stepIndexByToolCallId.set(toolCallId, stepIndex);
+            // The harness types `note` as an open string; the backend union is
+            // closed and rejects the whole turn on an unknown literal. Narrow
+            // through the guard — keep the step, drop an unrecognized note.
+            let note: RunnerBrowserInteractionStep["note"];
+            if (result.note !== undefined) {
+              if (isEvalTraceBrowserStepNote(result.note)) {
+                note = result.note;
+              } else {
+                logger.warn("[evals] dropping unknown browser-step note", {
+                  note: result.note,
+                  toolCallId,
+                });
+              }
+            }
+            browserInteractionSteps.push({
+              toolCallId,
+              stepIndex,
+              promptIndex: activePromptIndex,
+              action: result.action.action,
+              coordinateX: result.action.coordinate?.[0],
+              coordinateY: result.action.coordinate?.[1],
+              text: result.action.text,
+              scrollDirection: result.action.scrollDirection,
+              scrollAmount: result.action.scrollAmount,
+              duration: result.action.duration,
+              screenshotBase64: result.screenshotBase64,
+              widgetToolCalls: result.widgetToolCalls,
+              elapsedMs: result.elapsedMs,
+              ...(note ? { note } : {}),
+              ts: Date.now(),
+            });
+          },
         })
       : {};
 
@@ -1317,7 +1374,12 @@ const runIterationWithAiSdk = async ({
                 harness: ensureWidgetHarness(),
                 keepMounted: computerUseVersion !== null,
               });
-              widgetRenderObservations.push(obs);
+              // Stamp promptIndex at push-time — the harness type stays pure;
+              // the runner is the single source of truth for promptIndex.
+              widgetRenderObservations.push({
+                ...obs,
+                promptIndex: activePromptIndex,
+              });
               // No separate active-widget bookkeeping: a `rendered` + kept widget
               // stays in the harness mount (the single source of truth that the
               // gate and getActiveToolCallId both read); every other outcome is
@@ -1549,6 +1611,11 @@ const runIterationWithAiSdk = async ({
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+      // PR 6b: per-iteration browser artifacts, non-empty only on this local
+      // AI-SDK Computer Use path. finalizeEvalIteration serializes them once
+      // (screenshot upload + sanitize) for both the W2 and W1 persistence paths.
+      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
+      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
       ...(iterationError ? { error: iterationError } : {}),
@@ -1675,6 +1742,9 @@ const runIterationWithAiSdk = async ({
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+      // PR 6b: browser artifacts collected before the failure still persist.
+      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
+      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
@@ -1749,6 +1819,7 @@ const runIterationViaBackend = async ({
   hostPolicy,
   toolSignals,
   suiteHostConfig,
+  orgModelConfigTarget,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1877,6 +1948,19 @@ const runIterationViaBackend = async ({
   const backendCustomProviders = orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
     : undefined;
+  // Suite hostConfig `builtInToolIds` (e.g. web_search) resolve to runnable
+  // tools the same way chat does. The tool's execute bills MCPJam credits
+  // via Convex, so the auth context reuses the iteration's bearer plus the
+  // same project target the org-BYOK/jam billing paths derive
+  // (`resolveOrgTargetForEval`). Org-level targets carry no projectId —
+  // the Exa route requires one — so those omit the tools.
+  const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
+  const builtInTools = safeResolveBuiltInTools(
+    resolvedExecution.builtInToolIds,
+    builtInTarget && "projectId" in builtInTarget
+      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
+      : null,
+  );
   // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
   // the `prepareChatV2` try) so the catch path and the assignment
   // inside the try are both in scope. Stays `undefined` if prepareChatV2
@@ -1896,6 +1980,7 @@ const runIterationViaBackend = async ({
         ? { customProviders: backendCustomProviders }
         : {}),
       priorMessages: [],
+      ...(builtInTools ? { builtInTools } : {}),
     });
     // PR 4d review fix (Codex P2 / Cursor Medium): stash the resolved
     // system prompt for the persistence prefix below. The engine
@@ -2491,6 +2576,7 @@ const runTestCase = async (params: {
         convexClient,
         modelApiKeys,
         orgModelConfig,
+        orgModelConfigTarget,
         runId,
         abortSignal,
         compareRunId,
@@ -3039,9 +3125,35 @@ const streamIterationWithAiSdk = async ({
         ]
       : msgs;
 
+  // Browser-rendered MCP App eval (PR 9): mirror runIterationWithAiSdk on the
+  // streamed path — render MCP App tool results in the headless-Chromium harness
+  // and (for Claude drivers) drive them with Computer Use. Declared BEFORE the
+  // try so the finally can dispose even on a mid-stream abort.
+  const computerUseVersion = resolveComputerUseToolVersion(test.model);
+  const widgetHarnessRef: { current: McpAppBrowserHarness | null } = {
+    current: null,
+  };
+  const widgetRenderObservations: RunnerWidgetRenderObservation[] = [];
+  const browserInteractionSteps: RunnerBrowserInteractionStep[] = [];
+  const stepIndexByToolCallId = new Map<string, number>();
+  const ensureWidgetHarness = (): McpAppBrowserHarness => {
+    if (!widgetHarnessRef.current) {
+      widgetHarnessRef.current = new McpAppBrowserHarness({
+        callTool: (sid, name, args) =>
+          mcpClientManager.executeTool(sid, name, args),
+        viewport: DEFAULT_VIEWPORT,
+      });
+    }
+    return widgetHarnessRef.current;
+  };
+  if (computerUseVersion) ensureWidgetHarness();
+
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
-    // so prep failures become a recorded failed iteration.
+    // so prep failures become a recorded failed iteration. Like that runner,
+    // `builtInTools` stays absent on the local BYOK path (no Convex auth to
+    // bill web_search against) — the null-ctx call just debug-logs requests.
+    safeResolveBuiltInTools(resolvedExecution.builtInToolIds, null);
     const prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -3064,6 +3176,54 @@ const streamIterationWithAiSdk = async ({
     // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
     streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
 
+    // Computer Use tools (Claude drivers only). Gated per step by
+    // `prepareAdvertisedTools` below so they only appear once a widget renders.
+    const computerWidgetTools = computerUseVersion
+      ? buildComputerUseTools({
+          version: computerUseVersion,
+          harness: ensureWidgetHarness(),
+          getActiveToolCallId: () =>
+            widgetHarnessRef.current?.getMountedWidgetId() ?? null,
+          viewport: DEFAULT_VIEWPORT,
+          // PR 9: collect one browserInteractionStep per executeAction; the
+          // screenshot stays base64 here (finalizeEvalIteration uploads once).
+          onAction: (result, { toolCallId }) => {
+            const stepIndex = (stepIndexByToolCallId.get(toolCallId) ?? -1) + 1;
+            stepIndexByToolCallId.set(toolCallId, stepIndex);
+            // Narrow the harness's open-string note through the guard (the
+            // backend union is closed) — keep the step, drop an unknown note.
+            let note: RunnerBrowserInteractionStep["note"];
+            if (result.note !== undefined) {
+              if (isEvalTraceBrowserStepNote(result.note)) {
+                note = result.note;
+              } else {
+                logger.warn("[evals] dropping unknown browser-step note", {
+                  note: result.note,
+                  toolCallId,
+                });
+              }
+            }
+            browserInteractionSteps.push({
+              toolCallId,
+              stepIndex,
+              promptIndex: activePromptIndex,
+              action: result.action.action,
+              coordinateX: result.action.coordinate?.[0],
+              coordinateY: result.action.coordinate?.[1],
+              text: result.action.text,
+              scrollDirection: result.action.scrollDirection,
+              scrollAmount: result.action.scrollAmount,
+              duration: result.action.duration,
+              screenshotBase64: result.screenshotBase64,
+              widgetToolCalls: result.widgetToolCalls,
+              elapsedMs: result.elapsedMs,
+              ...(note ? { note } : {}),
+              ts: Date.now(),
+            });
+          },
+        })
+      : {};
+
     const llmModel = createLlmModel(
       modelDefinition,
       modelRuntime.apiKey,
@@ -3074,7 +3234,10 @@ const streamIterationWithAiSdk = async ({
     if (
       toolChoice &&
       typeof toolChoice === "object" &&
-      !Object.hasOwn(prepared.allTools, toolChoice.toolName)
+      !Object.hasOwn(prepared.allTools, toolChoice.toolName) &&
+      // `computer` / `finish_widget` are merged into the tool map below, so a
+      // forced tool choice naming one of them is valid on Claude drivers.
+      !Object.hasOwn(computerWidgetTools, toolChoice.toolName)
     ) {
       throw new Error(
         `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
@@ -3099,6 +3262,14 @@ const streamIterationWithAiSdk = async ({
       if (localIsAborted()) return returnLocalCancelled();
       const promptTurn = promptTurns[promptIndex]!;
       activePromptIndex = promptIndex;
+      // PR 9 (mirror PR 5): start each turn with a clean widget surface so a
+      // widget kept mounted by a previous turn can't be advertised/targeted
+      // before this turn's own MCP App tool runs.
+      const carriedWidgetId =
+        widgetHarnessRef.current?.getMountedWidgetId() ?? null;
+      if (carriedWidgetId) {
+        await widgetHarnessRef.current!.dismissWidget(carriedWidgetId);
+      }
       // PR 5a invariant (mirror PR 4b round 2): push the user prompt to
       // `conversationMessages` BEFORE the driver call so a failed turn
       // still records the prompt in the persisted transcript. Without
@@ -3150,9 +3321,27 @@ const streamIterationWithAiSdk = async ({
         ...(prepared.resolvedTemperature == null
           ? {}
           : { temperature: prepared.resolvedTemperature }),
-        tools: prepared.allTools,
+        tools: { ...prepared.allTools, ...computerWidgetTools },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
+        // PR 9 (mirror PR 5): gate Computer Use tools so the model only sees
+        // `computer` / `finish_widget` once a widget has actually rendered in
+        // the harness (the same live-widget source `getActiveToolCallId` reads).
+        ...(computerUseVersion
+          ? {
+              prepareAdvertisedTools: ({
+                defaultToolNames,
+              }: {
+                stepIndex: number;
+                defaultToolNames: string[];
+              }) =>
+                widgetHarnessRef.current?.getMountedWidgetId()
+                  ? defaultToolNames
+                  : defaultToolNames.filter(
+                      (n) => n !== "computer" && n !== "finish_widget",
+                    ),
+            }
+          : {}),
         ...(abortSignal ? { abortSignal } : {}),
         ...(toolChoice
           ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
@@ -3218,6 +3407,51 @@ const streamIterationWithAiSdk = async ({
                 usage: accumulatedUsage,
               }),
             );
+          },
+          // PR 9 (mirror PR 5): render each MCP App tool result in the harness
+          // and record an observation. `onToolResultChunk` fires on the stream
+          // path too; awaited so a rendered widget is mounted before the next
+          // step's Computer Use gate runs.
+          onToolResultChunk: async ({
+            toolCallId,
+            toolName,
+            input,
+            output,
+            serverId,
+          }) => {
+            if (!serverId) return;
+            const meta = mcpClientManager.getAllToolsMetadata(serverId)?.[
+              toolName
+            ];
+            if (!isRenderableMcpAppTool(meta)) return;
+            try {
+              const obs = await renderMcpAppToolResult({
+                toolCallId,
+                toolName,
+                serverId,
+                toolMetadata: meta,
+                toolInput: input,
+                output,
+                mcpClientManager,
+                injectOpenAiCompat,
+                harness: ensureWidgetHarness(),
+                keepMounted: computerUseVersion !== null,
+              });
+              // Stamp promptIndex at push-time (runner is the source of truth).
+              widgetRenderObservations.push({
+                ...obs,
+                promptIndex: activePromptIndex,
+              });
+              logger.debug("[evals] widget render observation", {
+                toolName,
+                status: obs.status,
+              });
+            } catch (err) {
+              logger.warn("[evals] widget render failed", {
+                toolName,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           },
         },
       });
@@ -3519,6 +3753,9 @@ const streamIterationWithAiSdk = async ({
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+      // PR 9: browser artifacts from the streamed Computer Use path.
+      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
+      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
@@ -3672,6 +3909,9 @@ const streamIterationWithAiSdk = async ({
       ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+      // PR 9: browser artifacts collected before the failure still persist.
+      ...(widgetRenderObservations.length ? { widgetRenderObservations } : {}),
+      ...(browserInteractionSteps.length ? { browserInteractionSteps } : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
@@ -3700,6 +3940,16 @@ const streamIterationWithAiSdk = async ({
       evaluation,
       iterationId: iterationId ?? undefined,
     };
+  } finally {
+    // PR 9: tear down the harness (and its headless Chromium, if launched) on
+    // success, failure, OR mid-stream abort. No-op when never constructed.
+    await widgetHarnessRef.current?.dispose();
+    if (widgetRenderObservations.length > 0) {
+      logger.debug("[evals] widget render observations (stream)", {
+        count: widgetRenderObservations.length,
+        statuses: widgetRenderObservations.map((o) => o.status),
+      });
+    }
   }
 };
 
@@ -3735,6 +3985,7 @@ const streamIterationViaBackend = async ({
   hostPolicy,
   toolSignals,
   suiteHostConfig,
+  orgModelConfigTarget,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3889,6 +4140,16 @@ const streamIterationViaBackend = async ({
           ...msgs,
         ]
       : msgs;
+  // Same shape as the non-stream backend runner: suite hostConfig
+  // `builtInToolIds` resolve via the shared registry, billed against the
+  // project target the org-BYOK/jam billing paths derive.
+  const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
+  const builtInTools = safeResolveBuiltInTools(
+    resolvedExecution.builtInToolIds,
+    builtInTarget && "projectId" in builtInTarget
+      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
+      : null,
+  );
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -3902,6 +4163,7 @@ const streamIterationViaBackend = async ({
         ? { customProviders: backendCustomProviders }
         : {}),
       priorMessages: [],
+      ...(builtInTools ? { builtInTools } : {}),
     });
     // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
     // prefix shape as the non-stream backend runner.
@@ -4842,6 +5104,7 @@ export const streamTestCase = async (params: {
         convexClient,
         modelApiKeys,
         orgModelConfig,
+        orgModelConfigTarget,
         runId,
         abortSignal,
         emit,

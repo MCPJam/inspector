@@ -1,43 +1,51 @@
 /**
- * Built-in tool factory registry.
+ * Built-in tool registry: HostConfig v2 `builtInToolIds` → AI SDK ToolSet.
  *
- * The backend `builtInTools` catalog is the source of truth for *what* built-in
- * tools exist; this registry is the source of truth for *how* to build each one
- * at runtime. Keys are catalog ids (which are also the AI SDK tool names the
- * model invokes). Adding a built-in tool = one catalog row (backend) + one
- * factory entry here.
+ * Built-in tools are server-side tools the inspector defines itself (no MCP
+ * server involved) whose `execute` proxies to a Convex HTTP action that owns
+ * the external API key and the billing. Today that's just `web_search`
+ * (Exa, billed as MCPJam credits against the project's organization — see
+ * `exa-web-search.ts`).
+ *
+ * `resolveExecutionContext` surfaces the resolved id list off a hostConfig
+ * record; this module turns ids into runnable tools. The split keeps the
+ * resolver pure (no auth concerns) and gives every engine — chat-v2 routes,
+ * the eval runners, sessionSimulation — one construction path, so the tool
+ * the model sees is identical across surfaces.
+ *
+ * Auth context is required because every built-in tool bills via Convex:
+ * paths with no Convex auth (local BYOK eval runs) must omit the tools
+ * entirely rather than advertise a tool whose execute can only fail —
+ * that's what `safeResolveBuiltInTools(ids, null)` encodes.
  */
-import { type ToolSet } from "ai";
-import { buildExaWebSearchTool, WEB_SEARCH_TOOL_NAME } from "./exa-web-search.js";
+import type { ToolSet } from "ai";
+import { logger } from "../logger.js";
+import {
+  buildExaWebSearchTool,
+  WEB_SEARCH_TOOL_NAME,
+} from "./exa-web-search.js";
 
-/** Per-request context every factory receives to build its tool. */
 export interface BuiltInToolContext {
-  /** Bearer authorization header forwarded to Convex for billing/authz. */
+  /** Bearer authorization forwarded to Convex. "Bearer " prefix optional. */
   authHeader: string;
-  /** Current project — required by Convex for billing authorization. */
+  /** Project the built-in tool's usage bills against. */
   projectId: string;
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
 }
 
-type BuiltInToolFactory = (ctx: BuiltInToolContext) => ToolSet[string];
+function normalizeAuthHeader(raw: string): string {
+  // Scheme matching is case-insensitive per RFC 7235 — a client may send
+  // "bearer x"; prefixing that again would produce "Bearer bearer x".
+  const value = raw.trim();
+  return /^bearer\s/i.test(value) ? value : `Bearer ${value}`;
+}
 
 /**
- * Registry keyed by catalog id. Each key MUST equal the catalog `id` (and thus
- * the AI SDK tool name) so resolution is a direct lookup.
- */
-export const BUILT_IN_TOOL_FACTORIES: Record<string, BuiltInToolFactory> = {
-  [WEB_SEARCH_TOOL_NAME]: buildExaWebSearchTool,
-};
-
-/**
- * Resolve catalog ids into an AI SDK `ToolSet`.
- *
- * Fails closed on an unknown id: the backend `validateBuiltInToolScope` already
- * proved every persisted id is in the catalog, so an id with no factory here is
- * a real registry gap (a catalog row added without a matching factory) and must
- * surface loudly — otherwise the UI shows a tool as "attached" while the model
- * never sees it.
+ * Build the ToolSet for a resolved `builtInToolIds` list. Unknown ids are
+ * skipped with a warn (a newer backend catalog may advertise ids this
+ * inspector build doesn't implement yet — degrading to "tool absent" is the
+ * same behavior the model would see if the host never enabled it).
  */
 export function resolveBuiltInTools(
   ids: ReadonlyArray<string> | undefined,
@@ -45,14 +53,37 @@ export function resolveBuiltInTools(
 ): ToolSet {
   const out: ToolSet = {};
   for (const id of ids ?? []) {
-    const factory = BUILT_IN_TOOL_FACTORIES[id];
-    if (!factory) {
-      throw new Error(
-        `resolveBuiltInTools: no factory registered for built-in tool "${id}". ` +
-          "Add it to BUILT_IN_TOOL_FACTORIES (server/utils/built-in-tools/registry.ts).",
-      );
+    if (id === WEB_SEARCH_TOOL_NAME) {
+      out[WEB_SEARCH_TOOL_NAME] = buildExaWebSearchTool({
+        authHeader: normalizeAuthHeader(ctx.authHeader),
+        projectId: ctx.projectId,
+        ...(ctx.chatSessionId ? { chatSessionId: ctx.chatSessionId } : {}),
+      });
+    } else {
+      logger.warn("[built-in-tools] unknown builtInToolId; skipping", { id });
     }
-    out[id] = factory(ctx);
   }
   return out;
+}
+
+/**
+ * Null-context-tolerant wrapper for call sites where Convex auth may be
+ * absent (e.g. local BYOK eval iterations). Returns `undefined` — i.e.
+ * "pass nothing to `prepareChatV2`" — when there's nothing to resolve or
+ * no auth to resolve it with.
+ */
+export function safeResolveBuiltInTools(
+  ids: ReadonlyArray<string> | undefined,
+  ctx: BuiltInToolContext | null,
+): ToolSet | undefined {
+  if (!ids || ids.length === 0) return undefined;
+  if (!ctx) {
+    logger.debug(
+      "[built-in-tools] builtInToolIds requested without Convex auth context; omitting",
+      { ids: [...ids] },
+    );
+    return undefined;
+  }
+  const tools = resolveBuiltInTools(ids, ctx);
+  return Object.keys(tools).length > 0 ? tools : undefined;
 }

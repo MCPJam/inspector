@@ -632,7 +632,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for openai. Check your organization's model providers configuration.",
       );
       expect(result.statusCode).toBe(401);
     });
@@ -649,7 +649,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for anthropic. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for anthropic. Check your organization's model providers configuration.",
       );
     });
 
@@ -667,7 +667,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for deepseek. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for deepseek. Check your organization's model providers configuration.",
       );
       expect(result.statusCode).toBe(401);
     });
@@ -686,7 +686,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for xai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for xai. Check your organization's model providers configuration.",
       );
     });
 
@@ -704,7 +704,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for google. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for google. Check your organization's model providers configuration.",
       );
     });
 
@@ -824,8 +824,82 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for openai. Check your organization's model providers configuration.",
       );
+    });
+  });
+
+  describe("Cloud BYOK is org-based (Convex-attached)", () => {
+    // BYOK keys come from the org's Convex config. On a Convex-attached
+    // deployment a client-supplied apiKey for a cloud provider is a personal
+    // BYOK attempt, which isn't supported — rejected regardless of caller.
+    beforeEach(() => {
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+    });
+    afterEach(() => {
+      delete process.env.CONVEX_HTTP_URL;
+    });
+
+    const postWithAuth = (
+      body: Record<string, unknown>,
+      authHeader?: string,
+    ) =>
+      app.request("/api/mcp/chat-v2", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+
+    const cloudByokBody = {
+      messages: [{ role: "user", content: "Hello" }],
+      model: { id: "gpt-4", provider: "openai" },
+      apiKey: "sk-user-supplied-key",
+    };
+
+    it("401s a cloud apiKey with no bearer", async () => {
+      const res = await postWithAuth(cloudByokBody);
+      const { status, data } = await expectJson<{
+        error: string;
+        code: string;
+      }>(res);
+
+      expect(status).toBe(401);
+      expect(data.code).toBe("personal_byok_unsupported");
+    });
+
+    it("401s a cloud apiKey even with a bearer (no personal BYOK)", async () => {
+      // Org-based: identity is irrelevant — a client apiKey for a cloud
+      // provider is never honored on a Convex-attached deployment.
+      const res = await postWithAuth(cloudByokBody, "Bearer any-token");
+      const { status, data } = await expectJson<{ code: string }>(res);
+
+      expect(status).toBe(401);
+      expect(data.code).toBe("personal_byok_unsupported");
+    });
+
+    it("never gates Ollama (local daemon, not a cloud account)", async () => {
+      const res = await postWithAuth(
+        {
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "llama3", provider: "ollama" },
+          apiKey: "local",
+          ollamaBaseUrl: "http://localhost:11434",
+        },
+        "Bearer any-token",
+      );
+
+      expect(res.status).toBe(200);
+    });
+
+    it("does not gate when not Convex-attached (local OSS)", async () => {
+      delete process.env.CONVEX_HTTP_URL;
+
+      const res = await postWithAuth(cloudByokBody, "Bearer any-token");
+
+      expect(res.status).toBe(200);
     });
   });
 
@@ -1152,6 +1226,70 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+
+    it("advertises built-in tools for MCPJam guest requests after resolving guest auth", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Search for current docs" }],
+          model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+          projectId: "project-1",
+          builtInToolIds: ["web_search"],
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+
+        expect(streamCall).toBeDefined();
+        const [, init] = streamCall!;
+        expect(init).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer guest-test-token",
+          }),
+        });
+
+        const streamBody = JSON.parse(
+          String((init as RequestInit).body ?? "{}"),
+        );
+        expect(streamBody.tools).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: "web_search" }),
+          ]),
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
     it("uses a guest token for non-gated MCPJam guest requests", async () => {
       const { getProductionGuestAuthHeader } =
         await import("../../../utils/guest-auth.js");

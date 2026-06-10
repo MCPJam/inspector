@@ -37,6 +37,15 @@ export interface ChatV2Request {
   selectedServerIds?: string[];
   requireToolApproval?: boolean;
   /**
+   * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants
+   * advertised this turn. For chatbox-bound requests the server re-resolves
+   * from the host's pinned config (host wins); for playground/direct chat the
+   * body value is used as-is. Billing authorization happens server-side in
+   * Convex (bearer + projectId), so a tampered body can't bill a project the
+   * caller isn't authorized on.
+   */
+  builtInToolIds?: string[];
+  /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
    * every tool definition every turn). Sourced from the project's default
@@ -78,14 +87,6 @@ export interface ChatV2Request {
    * inclusion gate.
    */
   appTools?: AppToolSnapshotEntry[];
-  /**
-   * Catalog ids of host-managed built-in tools (e.g. ["web_search"]) the
-   * model should see this turn. Same shape + trust model as the host-level
-   * fields above: the chatbox path re-resolves from the persisted host config
-   * (host wins), the playground path passes the override through verbatim.
-   * Resolved server-side via `resolveBuiltInTools` — unknown ids fail closed.
-   */
-  builtInToolIds?: string[];
   /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *

@@ -4,10 +4,19 @@ import type {
   EvalTraceSpan,
   EvalTraceWidgetSnapshot,
   PromptTraceSummary,
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
 import type { UsageTotals } from "./types.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
+import {
+  serializeBrowserStepsForBackend,
+  serializeRenderObservationsForBackend,
+  toBrowserStepPayload,
+  toObservationPayload,
+} from "./finalize-iteration-browser-artifacts.js";
 import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
 import {
   lockEvalSessionAfterUpdate,
@@ -37,6 +46,14 @@ export type FinalizeEvalIterationParams = {
    * fanout failed before any turn wrote.
    */
   systemPrompt?: string;
+  /**
+   * PR 6b: browser-rendered MCP App eval artifacts collected by the runner
+   * (runner-local shape, screenshots still base64). Serialized ONCE here —
+   * screenshots uploaded, records sanitized — then forwarded to the W2 fanout
+   * and reused on the W1 fallback so neither path re-uploads.
+   */
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  browserInteractionSteps?: RunnerBrowserInteractionStep[];
   status?: IterationStatus;
   startedAt?: number;
   error?: string;
@@ -93,6 +110,8 @@ export async function finalizeEvalIteration(
     prompts,
     widgetSnapshots,
     systemPrompt,
+    widgetRenderObservations,
+    browserInteractionSteps,
     status,
     startedAt,
     error,
@@ -164,6 +183,26 @@ export async function finalizeEvalIteration(
         ? "eval_failed"
         : "eval_completed";
 
+  // PR 13: emit per-iteration browser-eval observability from the runner-local
+  // arrays (covers both the stream + non-stream paths via this shared choke
+  // point). Best-effort + no-op when the iteration didn't touch the harness.
+  emitBrowserEvalMetrics(widgetRenderObservations, browserInteractionSteps);
+
+  // PR 6b: serialize browser artifacts ONCE here (upload screenshots + run
+  // through the convex sanitizer) so the W2 fanout and the W1 fallback share a
+  // single upload pass. Owning this in the shared finalize step is what keeps
+  // recorder + direct quick-run callers from double-uploading.
+  const serializedWidgetRenderObservations =
+    await serializeRenderObservationsForBackend(
+      widgetRenderObservations,
+      convexClient,
+    );
+  const serializedBrowserInteractionSteps =
+    await serializeBrowserStepsForBackend(
+      browserInteractionSteps,
+      convexClient,
+    );
+
   const fanout = await persistEvalTraceFanout({
     convexClient,
     iterationId,
@@ -173,6 +212,8 @@ export async function finalizeEvalIteration(
     prompts,
     widgetSnapshots,
     systemPrompt,
+    widgetRenderObservations: serializedWidgetRenderObservations,
+    browserInteractionSteps: serializedBrowserInteractionSteps,
   });
   // Fall back to the W1 single-call path ONLY when the fanout failed
   // before any turn landed. With turns already written, re-sending
@@ -227,6 +268,24 @@ export async function finalizeEvalIteration(
               ? {
                   widgetSnapshots:
                     sanitizeForConvexTransport(widgetSnapshots),
+                }
+              : {}),
+            // PR 6b: browser artifacts already uploaded + sanitized above;
+            // strip `promptIndex` (the backend stamps it from the W1 turn's
+            // promptIndex: 0). All artifacts land under that single fallback
+            // turn — lossy but acceptable, mirroring W1's transcript fallback.
+            ...(serializedWidgetRenderObservations.length
+              ? {
+                  widgetRenderObservations:
+                    serializedWidgetRenderObservations.map(
+                      toObservationPayload,
+                    ),
+                }
+              : {}),
+            ...(serializedBrowserInteractionSteps.length
+              ? {
+                  browserInteractionSteps:
+                    serializedBrowserInteractionSteps.map(toBrowserStepPayload),
                 }
               : {}),
           }

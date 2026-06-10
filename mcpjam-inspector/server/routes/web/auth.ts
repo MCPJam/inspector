@@ -295,6 +295,73 @@ function stripStdioFieldsFromHostedConfig<
   return { ...holder, serverConfig: cleaned };
 }
 
+/**
+ * Build the auth headers used by Inspector → Convex `/web/*` calls.
+ *
+ * - For session/guest JWTs (the default): forward the caller's bearer
+ *   verbatim. Convex sees the same identity it always has.
+ * - For WorkOS API keys (`authMethod === "workos_api_key"`): exchange
+ *   the bearer for `INSPECTOR_SERVICE_TOKEN` and add
+ *   `x-mcpjam-acting-as: <workosUserId>` (the user's Convex `externalId`)
+ *   plus `x-mcpjam-acting-in-org: <mcpjamOrganizationId>` (the org the key
+ *   is bound to). Convex never sees the `sk_` value — Inspector is the
+ *   trust boundary that validated it once via WorkOS and now vouches for
+ *   the resolved user, scoped to the key's organization. The backend
+ *   `requestIdentity` resolver requires BOTH headers and re-checks that the
+ *   user is a member of that org.
+ *
+ * Keeping this in one helper so every `/web/*` callsite picks up the
+ * same exchange (currently `authorizeServer` and `authorizeBatch` in
+ * this file). Other Convex-forwarding helpers under `server/utils/*`
+ * (e.g. `chat-history.ts`, `hosted-oauth-refresh.ts`,
+ * `local-server-resolver.ts`) are NOT on the `/api/v1/*` path today
+ * and stay on the original-bearer path until they're either reached
+ * by an API key request or refactored to receive Context.
+ */
+export function buildConvexAuthHeaders(
+  c: Context,
+  originalBearer: string
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (c.get("authMethod") === "workos_api_key") {
+    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+    if (!serviceToken) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
+      );
+    }
+    // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
+    // NOT the Convex user `_id`: the backend resolves the delegated user by
+    // externalId. Sending the Convex id here would 404 as UNKNOWN_DELEGATED_USER.
+    const actingAs = c.get("workosUserId");
+    if (!actingAs) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Missing workosUserId for WorkOS API key auth exchange"
+      );
+    }
+    const actingInOrg = c.get("mcpjamOrganizationId");
+    if (!actingInOrg) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Missing mcpjamOrganizationId for WorkOS API key auth exchange"
+      );
+    }
+    headers["Authorization"] = `Bearer ${serviceToken}`;
+    headers["x-mcpjam-acting-as"] = actingAs;
+    headers["x-mcpjam-acting-in-org"] = actingInOrg;
+    return headers;
+  }
+  headers["Authorization"] = `Bearer ${originalBearer}`;
+  return headers;
+}
+
 export async function authorizeServer(
   c: Context,
   bearerToken: string,
@@ -319,10 +386,7 @@ export async function authorizeServer(
   try {
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${bearerToken}`,
-      },
+      headers: buildConvexAuthHeaders(c, bearerToken),
       body: JSON.stringify({
         projectId,
         serverId,
@@ -399,10 +463,7 @@ export async function authorizeBatch(
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${bearerToken}`,
-      },
+      headers: buildConvexAuthHeaders(c, bearerToken),
       body: JSON.stringify({
         projectId,
         serverIds,
@@ -788,6 +849,20 @@ export async function createAuthorizedManager(
                       accessScope: options?.accessScope,
                       chatboxId: options?.chatboxId,
                       accessVersion: options?.accessVersion,
+                      // When the caller authed via WorkOS API key, secret
+                      // reveal must use the same delegated-identity exchange
+                      // as `authorizeBatch` — otherwise Convex would see the
+                      // service token without an acting-as user.
+                      workosApiKeyActingAs:
+                        c.get("authMethod") === "workos_api_key" &&
+                        c.get("workosUserId") &&
+                        c.get("mcpjamOrganizationId")
+                          ? {
+                              workosUserId: c.get("workosUserId")!,
+                              mcpjamOrganizationId:
+                                c.get("mcpjamOrganizationId")!,
+                            }
+                          : undefined,
                     })
                   ).headers ?? {}),
                 },

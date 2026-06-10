@@ -68,10 +68,6 @@ export interface ExecutionOverrides {
   progressiveToolDiscovery?: boolean;
   modelId?: string;
   selectedServerIds?: string[];
-  // Opaque catalog ids of host-managed built-in tools (e.g. "web_search").
-  // Merged with the same host-vs-override precedence as selectedServerIds:
-  // chatbox path lets the server-fetched hostConfig win (tamper-resistant),
-  // playground path passes overrides through verbatim (hostConfig is null).
   builtInToolIds?: string[];
 }
 
@@ -112,6 +108,12 @@ export interface ResolvedExecutionContext {
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
   selectedServerIds: string[] | undefined;
+  /**
+   * HostConfig v2 built-in tool ids (e.g. `["web_search"]`). The resolver
+   * only surfaces the resolved id list; turning ids into runnable AI SDK
+   * tools (and deciding whether auth context permits it) is owned by
+   * `built-in-tools/registry.ts` at the call site.
+   */
   builtInToolIds: string[] | undefined;
   hostPolicy: HostExecutionPolicy;
   drift: ExecutionDriftEntry[];
@@ -172,6 +174,18 @@ function readProgressiveToolDiscovery(
 }
 
 /**
+ * Value equality for drift detection. Array fields (`selectedServerIds`,
+ * `builtInToolIds`) arrive as fresh allocations on every request — a
+ * reference compare would report drift for identical contents.
+ */
+function areEqualValues(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  return Object.is(a, b);
+}
+
+/**
  * Pick the winning value for a field given the resolver precedence.
  * Returns the winner AND, if both sides disagreed, a drift entry the
  * caller can log.
@@ -195,7 +209,7 @@ function pickField<T>(
   }
   // Both defined — apply precedence + record drift when they differ.
   const drift =
-    override !== host
+    !areEqualValues(override, host)
       ? {
           field,
           overrideValue: override as unknown,

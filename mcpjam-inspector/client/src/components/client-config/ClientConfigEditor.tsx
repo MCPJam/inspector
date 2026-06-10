@@ -145,7 +145,7 @@ export function ClientConfigEditor({
   // picker entirely (and ignores `availableServers`) so users can't
   // type changes the backend would reject.
   // For owner="host", server selection is managed via the canvas in
-  // ClientBuilderView — hiding it here prevents double-entry confusion.
+  // HostBuilderView — hiding it here prevents double-entry confusion.
   const showServersSection =
     owner !== "connection-only" && owner !== "eval-suite" && owner !== "host";
 

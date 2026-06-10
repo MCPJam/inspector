@@ -17,7 +17,6 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
-import { resolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -65,6 +64,7 @@ import {
 } from "../../utils/direct-chat-turn";
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
+import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -114,7 +114,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 
     return JSON.stringify({
       code: "auth_error",
-      message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
+      message: `Invalid API key for ${providerName}. Check your organization's model providers configuration.`,
       statusCode,
       normalized: providerNormalized,
     });
@@ -461,9 +461,12 @@ chatV2.post("/", async (c) => {
     }
 
     const requestAuthHeader = c.req.header("authorization");
+    const isMcpJamProvidedModel = Boolean(
+      modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)
+    );
     if (
+      isMcpJamProvidedModel &&
       modelDefinition.id &&
-      isMCPJamProvidedModel(modelDefinition.id) &&
       !requestAuthHeader &&
       !isMCPJamGuestAllowedModel(modelDefinition.id)
     ) {
@@ -474,6 +477,27 @@ chatV2.post("/", async (c) => {
         },
         403
       );
+    }
+    let mcpJamAuthHeader = requestAuthHeader;
+    const resolveMcpJamAuthHeader = async () => {
+      if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;
+      try {
+        mcpJamAuthHeader = (await getProductionGuestAuthHeader()) ?? undefined;
+      } catch {
+        mcpJamAuthHeader = undefined;
+      }
+      return mcpJamAuthHeader;
+    };
+
+    // Guest MCPJam-model requests get their bearer lazily server-side. Resolve
+    // it before tool prep too, otherwise host-enabled built-ins are omitted
+    // even though the later MCPJam model path can authenticate the turn.
+    if (
+      isMcpJamProvidedModel &&
+      !mcpJamAuthHeader &&
+      process.env.CONVEX_HTTP_URL
+    ) {
+      await resolveMcpJamAuthHeader();
     }
 
     // Convert the inbound UI messages once so prepareChatV2 can replay
@@ -507,19 +531,26 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // Built-in tools (e.g. web_search) bill MCPJam credits via a Convex
+    // HTTP action, which needs a bearer + projectId to authorize. Local
+    // requests without either (anonymous local mode, no project) omit the
+    // tools — same degradation as a host that never enabled them.
+    const builtInAuthHeader = mcpJamAuthHeader ?? requestAuthHeader;
+    const builtInTools = safeResolveBuiltInTools(
+      resolvedExecution.builtInToolIds,
+      builtInAuthHeader && typeof body.projectId === "string" && body.projectId
+        ? {
+            authHeader: builtInAuthHeader,
+            projectId: body.projectId,
+            ...(body.chatSessionId
+              ? { chatSessionId: body.chatSessionId }
+              : {}),
+          }
+        : null
+    );
+
     let prepared;
     try {
-      // Host-managed built-in tools (e.g. web_search) — same resolution path
-      // as web/chat-v2.ts. resolvedExecution.builtInToolIds carries host-wins
-      // ids on the chatbox path and body overrides on direct chat.
-      const builtInTools = resolveBuiltInTools(
-        resolvedExecution.builtInToolIds,
-        {
-          authHeader: c.req.header("authorization") ?? "",
-          projectId: body.projectId ?? "",
-          chatSessionId: body.chatSessionId,
-        },
-      );
       prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
@@ -530,6 +561,7 @@ chatV2.post("/", async (c) => {
         respectToolVisibility,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
+        ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.
         ...(resolvedProgressiveToolDiscovery !== undefined
@@ -540,7 +572,6 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
-        builtInTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -593,9 +624,7 @@ chatV2.post("/", async (c) => {
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
 
     // MCPJam-provided models: delegate to stream handler
-    if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
-      let authHeader = requestAuthHeader;
-
+    if (isMcpJamProvidedModel && modelDefinition.id) {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
@@ -605,21 +634,15 @@ chatV2.post("/", async (c) => {
 
       // Resolve auth header: use client-provided token (WorkOS) if present,
       // otherwise fetch a production guest token for guest-allowed models.
+      const authHeader = await resolveMcpJamAuthHeader();
       if (!authHeader) {
-        try {
-          authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
-        } catch {
-          authHeader = undefined;
-        }
-        if (!authHeader) {
-          return c.json(
-            {
-              error:
-                "Unable to authenticate with MCPJam servers. Please try again or sign in.",
-            },
-            503
-          );
-        }
+        return c.json(
+          {
+            error:
+              "Unable to authenticate with MCPJam servers. Please try again or sign in.",
+          },
+          503
+        );
       }
 
       const modelMessages = await convertToModelMessages(messages);
@@ -818,6 +841,32 @@ chatV2.post("/", async (c) => {
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
       });
+    }
+
+    // BYOK is organization-based: cloud provider keys come from the org's
+    // Convex config, never from a client-supplied apiKey. On a Convex-attached
+    // deployment the only supported cloud paths are MCPJam-provided models and
+    // org BYOK (projectId, no apiKey) — both handled above. So a request that
+    // still carries a client apiKey for a CLOUD provider is a personal-BYOK
+    // attempt we don't support; reject it regardless of the caller's identity.
+    //
+    // Ollama (local daemon, "local" placeholder apiKey) and `custom`
+    // (self-hosted OpenAI-compatible endpoints) are exempt — they're local /
+    // self-hosted, not a shared cloud account, and the org surface doesn't
+    // model them. Local OSS (no CONVEX_HTTP_URL) is exempt too; the frontend
+    // hook is the only enforcement on `npx`.
+    const isCloudByokProvider =
+      modelDefinition.provider !== "ollama" &&
+      modelDefinition.provider !== "custom";
+    if (process.env.CONVEX_HTTP_URL && isCloudByokProvider && apiKey) {
+      return c.json(
+        {
+          error:
+            "Personal provider keys aren't supported. Configure cloud models in your organization's settings (Organization Models).",
+          code: "personal_byok_unsupported",
+        },
+        401
+      );
     }
 
     // User-provided models: direct streamText

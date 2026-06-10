@@ -54,7 +54,7 @@ export function McpjamAgentThread({
   sessionId,
   projectId,
   organizationId,
-  surface: _surface,
+  surface,
   variant = "card",
   className,
 }: McpjamAgentThreadProps) {
@@ -62,6 +62,7 @@ export function McpjamAgentThread({
     chatSessionId: sessionId,
     projectId,
     organizationId,
+    surface,
   });
 
   const [draft, setDraft] = useState("");

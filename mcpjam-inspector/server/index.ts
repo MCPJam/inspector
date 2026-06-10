@@ -100,6 +100,7 @@ function logBox(content: string, title?: string) {
 import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
+import v1Routes from "./routes/v1/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
@@ -349,6 +350,25 @@ if (!HOSTED_MODE) {
   );
 }
 app.route("/api/web", webRoutes);
+
+// Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same
+// core helpers and emit the canonical v1 envelope. Mirror of the mount in
+// server/app.ts::createHonoApp — both production entries must wire this up.
+app.use(
+  "/api/v1/*",
+  bodyLimit({
+    maxSize: 1024 * 1024,
+    onError: (c) =>
+      c.json(
+        {
+          code: "VALIDATION_ERROR",
+          message: "Request body exceeds 1MB limit",
+        },
+        400,
+      ),
+  }),
+);
+app.route("/api/v1", v1Routes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.

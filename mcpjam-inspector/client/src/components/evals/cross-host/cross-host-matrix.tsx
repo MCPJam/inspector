@@ -1,4 +1,4 @@
-import { ClientChip } from "@/components/clients/client-chip";
+import { HostChip } from "@/components/hosts/host-chip";
 import { cn } from "@/lib/utils";
 import {
   runCaseListHeadClassName,
@@ -39,7 +39,7 @@ function HostColumnHeader({ col }: { col: HostColumn }) {
         col.isHistorical && "opacity-60"
       )}
     >
-      <ClientChip
+      <HostChip
         name={displayName}
         hostId={col.hostId}
         className="max-w-[11rem] border-border/70 bg-background/80 px-2 py-0.5 text-[10px] shadow-none"

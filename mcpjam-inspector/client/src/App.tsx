@@ -31,7 +31,7 @@ import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
-import { ActiveClientServerReconciler } from "./components/ActiveClientServerReconciler";
+import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -47,11 +47,11 @@ import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
-import { ClientsTab } from "./components/ClientsTab";
-import { HostConfigCompareView } from "./components/clients/comparison/HostConfigCompareView";
-import { ConnectViewHeader } from "./components/clients/ConnectViewHeader";
+import { HostsTab } from "./components/HostsTab";
+import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
+import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { motion } from "framer-motion";
-import { SNAPPY_RAIL } from "./components/clients/transition-tokens";
+import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import {
@@ -179,6 +179,10 @@ import {
   readCliSignInReturnPath,
 } from "./lib/cli-signin-return-path";
 import {
+  clearApiKeysSignInReturnPath,
+  readApiKeysSignInReturnPath,
+} from "./lib/api-keys-signin-return-path";
+import {
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
@@ -198,7 +202,7 @@ import {
 import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
-  buildClientsPath,
+  buildHostsPath,
   buildOrganizationPath,
   buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
@@ -447,7 +451,7 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "tracing":
       return <TracingRoute />;
     case "clients":
-      return <ClientsRoute />;
+      return <HostsRoute />;
     case "host-compare":
       return <HostCompareRoute />;
     case "chatboxes":
@@ -513,11 +517,11 @@ export function ServersRoute() {
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
-  // happens in ClientsRoute via the URL → hostsTabSelectedHostId effect, so
+  // happens in HostsRoute via the URL → hostsTabSelectedHostId effect, so
   // here we only need to drive the URL.
   const handleSelectHost = useCallback(
     (next: string | null) => {
-      navigate(next ? buildClientsPath(next) : routePaths.servers);
+      navigate(next ? buildHostsPath(next) : routePaths.servers);
     },
     [navigate],
   );
@@ -527,7 +531,7 @@ export function ServersRoute() {
   }
 
   return (
-    <ClientsTab
+    <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
@@ -586,7 +590,7 @@ function ServersTabBody() {
   );
 }
 
-export function ClientsRoute() {
+export function HostsRoute() {
   const {
     convexProjectId,
     hostsHubFlagEnabled,
@@ -607,7 +611,7 @@ export function ClientsRoute() {
   }, [params.hostId]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
-  // state so `GlobalClientBar`, `onCanvasReplaceHost`, and other surfaces that
+  // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
     if (hostsTabSelectedHostId === urlHostId) return;
@@ -616,7 +620,7 @@ export function ClientsRoute() {
 
   const handleSelectHost = useCallback(
     (next: string | null) => {
-      navigate(next ? buildClientsPath(next) : routePaths.clients);
+      navigate(next ? buildHostsPath(next) : routePaths.hosts);
     },
     [navigate],
   );
@@ -626,7 +630,7 @@ export function ClientsRoute() {
   }
 
   return (
-    <ClientsTab
+    <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={urlHostId ?? previewedHostId}
@@ -649,7 +653,7 @@ export function HostCompareRoute() {
     />
   );
 
-  // Mirror the gating ClientsRoute uses: when the hosts hub is off, Compare
+  // Mirror the gating HostsRoute uses: when the hosts hub is off, Compare
   // has no peer Servers/Client tabs to switch to, so render bare.
   if (!hostsHubFlagEnabled || !isAuthenticated) {
     return compareView;
@@ -670,7 +674,7 @@ export function HostCompareRoute() {
           if (next === "servers") {
             navigate(routePaths.servers);
           } else if (next === "host" && previewedHostId) {
-            navigate(buildClientsPath(previewedHostId));
+            navigate(buildHostsPath(previewedHostId));
           }
         }}
       />
@@ -1492,13 +1496,19 @@ export default function App() {
         ? readBillingSignInReturnPath()
         : null;
       const cliReturnPath = readCliSignInReturnPath();
+      const apiKeysReturnPath = readApiKeysSignInReturnPath();
       clearChatboxSignInReturnPath();
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
+      clearApiKeysSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ?? billingReturnPath ?? cliReturnPath ?? "/"
+        chatboxReturnPath ??
+          billingReturnPath ??
+          cliReturnPath ??
+          apiKeysReturnPath ??
+          "/"
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -2912,7 +2922,7 @@ export default function App() {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
             setHostsTabSelectedHostId(hostId);
-            navigateApp(buildClientsPath(hostId));
+            navigateApp(buildHostsPath(hostId));
           },
           // Active whenever the clients tab is mounted — the URL is the
           // source of truth for which host the canvas renders, so every
@@ -2924,7 +2934,7 @@ export default function App() {
             activeTab === "clients"
               ? (hostId: string) => {
                   setHostsTabSelectedHostId(hostId);
-                  navigateApp(buildClientsPath(hostId), { replace: true });
+                  navigateApp(buildHostsPath(hostId), { replace: true });
                 }
               : undefined,
         }
@@ -3141,7 +3151,7 @@ export default function App() {
           setSelectedServerNames: setSelectedMCPConfigs,
         }}
       >
-        <ActiveClientServerReconciler
+        <ActiveHostServerReconciler
           projectId={convexProjectId}
           isAuthenticated={isAuthenticated}
           activeHost={activeHost}

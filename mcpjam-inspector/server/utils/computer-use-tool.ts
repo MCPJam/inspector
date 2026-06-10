@@ -21,10 +21,12 @@ import { tool, type ToolSet } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import type {
+  BrowserActionResult,
   BrowserActionSpec,
   McpAppBrowserHarness,
   WidgetToolCall,
 } from "./mcp-app-browser-harness";
+import { logger } from "./logger";
 
 export type ComputerUseToolVersion = "20250124" | "20251124";
 
@@ -214,6 +216,19 @@ export interface BuildComputerUseToolsOptions {
   getActiveToolCallId: () => string | null;
   /** Viewport == screenshot pixel space == the model's coordinate space. */
   viewport: { width: number; height: number };
+  /**
+   * PR 6b: fires after every `harness.executeAction()` returns. Receives the
+   * raw `BrowserActionResult` plus the toolCallId of the active widget the
+   * action targeted. The eval runner uses this to collect
+   * `browserInteractionSteps` for persistence. It does NOT fire on the
+   * no-widget short-circuit (that path is already represented in
+   * `widgetRenderObservations` + the model loop), and never touches the
+   * model-side `toModelOutput` path.
+   */
+  onAction?: (
+    result: BrowserActionResult,
+    context: { toolCallId: string },
+  ) => void;
 }
 
 /**
@@ -242,6 +257,15 @@ export function buildComputerUseTools(
       toolCallId,
       action: mapToBrowserAction(input),
     });
+    try {
+      opts.onAction?.(result, { toolCallId });
+    } catch (err) {
+      // Engine-callback contract: a buggy emitter must not crash the agent
+      // loop. Surface and continue (mirrors the stream handler's onToolCall).
+      logger.warn("[computer-use] onAction callback threw", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     return {
       screenshotBase64: result.screenshotBase64,
       widgetToolCalls: result.widgetToolCalls,

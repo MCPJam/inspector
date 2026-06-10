@@ -3,6 +3,10 @@ import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
+import type {
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
+} from "@/shared/eval-trace";
 import type { PromptTurn } from "@/shared/prompt-turns";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
@@ -66,6 +70,13 @@ export type SuiteRunRecorder = {
      * `messages`.
      */
     systemPrompt?: string;
+    /**
+     * PR 6b: browser-rendered MCP App eval artifacts (runner-local shape).
+     * Pure pass-through — `finishIteration` forwards them to
+     * `finalizeEvalIteration`, which owns screenshot upload + serialization.
+     */
+    widgetRenderObservations?: RunnerWidgetRenderObservation[];
+    browserInteractionSteps?: RunnerBrowserInteractionStep[];
     status?: IterationStatus;
     startedAt?: number;
     error?: string;

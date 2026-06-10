@@ -88,7 +88,7 @@ export interface ApplyHostPlaygroundSetters {
  * Two callers today:
  *   1. The brand-pill `onClick` in `ClientContextHeader` —
  *      via {@link applyHostDefaultsToPlayground}, seeded from a static template.
- *   2. The named-host picker in `PlaygroundHeader` (the `ClientPicker`
+ *   2. The named-host picker in `PlaygroundHeader` (the `HostPicker`
  *      dropdown) — via `PlaygroundPreviewedClientSync`, seeded from the
  *      project's persisted host config.
  *

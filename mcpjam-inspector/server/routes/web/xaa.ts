@@ -5,6 +5,7 @@ import { createXaaRouter } from "../mcp/xaa.js";
 const xaaWeb = createXaaRouter({
   issuerBasePath: "/api/web",
   httpsOnlyProxy: true,
+  trustForwardedHeaders: true,
   protectedMiddlewares: [bearerAuthMiddleware, guestRateLimitMiddleware],
 });
 

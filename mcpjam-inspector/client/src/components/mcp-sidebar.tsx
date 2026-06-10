@@ -20,6 +20,7 @@ import {
   UserPlus,
   ShieldCheck,
   Loader2,
+  Key,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { isPostHogBooleanFlagOn, standardEventProps } from "@/lib/PosthogUtils";
@@ -335,6 +336,11 @@ const navigationSections: NavSection[] = [
         title: "Support",
         url: "/support",
         icon: MessageCircleQuestionIcon,
+      },
+      {
+        title: "API Keys",
+        url: "/settings/api-keys",
+        icon: Key,
       },
       {
         title: "Settings",

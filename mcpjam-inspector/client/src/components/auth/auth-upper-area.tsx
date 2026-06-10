@@ -8,7 +8,7 @@ import {
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
 import { AgentSidePanelTrigger } from "@/components/mcpjam-agent/AgentSidePanelTrigger";
-import { GlobalClientBar } from "@/components/clients/GlobalClientBar";
+import { GlobalHostBar } from "@/components/hosts/GlobalHostBar";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { GlobalHostBarProps } from "@/components/Header";
 
@@ -29,7 +29,7 @@ export function AuthUpperArea({
     <div className="ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0">
       {globalHostBarProps ? (
         <div className="flex shrink-0 items-center pr-1">
-          <GlobalClientBar {...globalHostBarProps} />
+          <GlobalHostBar {...globalHostBarProps} />
         </div>
       ) : null}
       {activeServerSelectorProps ? (

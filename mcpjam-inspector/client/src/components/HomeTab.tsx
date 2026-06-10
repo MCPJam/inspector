@@ -2,12 +2,13 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
+import { usePostHog } from "posthog-js/react";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
-import { RecommendedClients } from "./home/RecommendedClients";
+import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
@@ -93,6 +94,7 @@ function clearPendingForSession(sessionId: string | null | undefined) {
 
 export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const navigate = useAppNavigate();
+  const posthog = usePostHog();
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionParam = searchParams.get("session");
   const composeParam = searchParams.get("compose") === "1";
@@ -154,6 +156,10 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
         // otherwise a later resume of the same id replays the prompt and
         // re-renders the optimistic bubble over the hydrated transcript.
         clearPendingForSession(prev.get("session"));
+        posthog?.capture("mcpjam_agent_back", {
+          surface: "home",
+          had_session: Boolean(prev.get("session")),
+        });
         const next = new URLSearchParams(prev);
         next.delete("session");
         next.delete("compose");
@@ -161,7 +167,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
       },
       { replace: false }
     );
-  }, [setSearchParams]);
+  }, [posthog, setSearchParams]);
 
   // "New chat" inside the takeover keeps the user on the agent surface and
   // swaps the thread for an empty composer (Hero). A session id is minted
@@ -173,6 +179,10 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
         // Same rationale as handleBackToHome — drop the leaving session's
         // unconsumed pending payload so a later resume doesn't double-send.
         clearPendingForSession(prev.get("session"));
+        posthog?.capture("mcpjam_agent_new_chat", {
+          surface: "home",
+          had_session: Boolean(prev.get("session")),
+        });
         const next = new URLSearchParams(prev);
         next.delete("session");
         next.set("compose", "1");
@@ -180,7 +190,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
       },
       { replace: false }
     );
-  }, [setSearchParams]);
+  }, [posthog, setSearchParams]);
   const { user } = useAuth();
   const convexUser = useQuery("users:getCurrentUser" as any) as
     | { name?: string }
@@ -318,7 +328,7 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
             servers={data?.recommendedServers}
             projectId={projectId}
           />
-          <RecommendedClients projectId={projectId} />
+          <RecommendedHosts projectId={projectId} />
         </div>
       </div>
     </div>

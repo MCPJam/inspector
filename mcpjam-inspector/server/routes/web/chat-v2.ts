@@ -27,7 +27,7 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
-import { resolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
+import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
@@ -209,6 +209,17 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
+    // Built-in tools (e.g. web_search) bill MCPJam credits via Convex; the
+    // bearer is guaranteed by assertBearerToken above and projectId by the
+    // hosted schema, so the auth context is always constructible here.
+    const builtInTools = safeResolveBuiltInTools(
+      resolvedExecution.builtInToolIds,
+      {
+        authHeader: bearerToken,
+        projectId: hostedBody.projectId,
+        ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+      }
+    );
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
@@ -271,23 +282,6 @@ chatV2.post("/", async (c) => {
       const origin = isChatboxSession ? "chatbox" : "playground";
       const isDirectChat = !isChatboxSession;
 
-      // Resolve host-managed built-in tools (e.g. web_search) into AI SDK
-      // tool entries. Ids come from the shared resolver above: chatbox path
-      // takes them from the server-fetched hostConfig (host-wins, tamper-
-      // resistant), playground takes them from the body override. Unknown
-      // ids throw — write-time `validateBuiltInToolScope` already proved
-      // every persisted id is in the catalog, so a miss here is a real
-      // registry gap, not user input.
-      const bearerHeader = c.req.header("authorization");
-      const builtInTools = resolveBuiltInTools(
-        resolvedExecution.builtInToolIds,
-        {
-          authHeader: bearerHeader ?? "",
-          projectId: hostedBody.projectId,
-          chatSessionId: body.chatSessionId,
-        },
-      );
-
       return await streamWebChatTurn({
         manager,
         prepare: {
@@ -307,8 +301,8 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           appTools: validatedAppTools,
-          builtInTools,
           widgetModelContext: validatedWidgetModelContext,
+          ...(builtInTools ? { builtInTools } : {}),
         },
         persist: {
           chatSessionId: body.chatSessionId,

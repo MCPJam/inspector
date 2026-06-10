@@ -256,34 +256,29 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   string,
   { ariaLabel: string; content: string; contentClassName?: string }
 > = {
-  "Triage Insights": {
-    ariaLabel: "About Triage Insights",
-    content: "Recommendations for how to improve your server.",
-    contentClassName: "max-w-[20rem]",
-  },
-  "Evaluation traces": {
-    ariaLabel: "What are evaluation traces?",
+  "Included credits": {
+    ariaLabel: "About included credits",
     content:
-      "Traces for evaluations: configured user prompts, tool execution, agent reasoning, errors, and latency breakdown for playground and CI/CD runs.",
-    contentClassName: "max-w-[26rem]",
-  },
-  "Insights Data Export": {
-    ariaLabel: "About insights data export",
-    content:
-      "Export triage and evaluation insights for analysis outside MCPJam.",
+      "Model credits for playground, chat, and agent usage. Free resets daily; Team is allocated per seat each month.",
     contentClassName: "max-w-[22rem]",
-  },
-  Projects: {
-    ariaLabel: "What is a project?",
-    content:
-      "Projects are containers for your MCP servers and related objects.",
-    contentClassName: "max-w-[16rem]",
   },
   "Seat limit": {
     ariaLabel: "About seat limits",
     content:
       "You're charged only for active members. Pending invites are free until accepted.",
     contentClassName: "max-w-[18rem]",
+  },
+  "Eval iterations": {
+    ariaLabel: "About eval iterations",
+    content:
+      "Suite and quick eval runs count toward your plan's iteration allowance. Free resets daily; Team resets monthly.",
+    contentClassName: "max-w-[22rem]",
+  },
+  "Evaluation traces": {
+    ariaLabel: "What are evaluation traces?",
+    content:
+      "Traces for evaluations: configured user prompts, tool execution, agent reasoning, errors, and latency breakdown for playground and CI/CD runs.",
+    contentClassName: "max-w-[26rem]",
   },
   "SSO / SAML": {
     ariaLabel: "About SSO",
@@ -294,7 +289,7 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   "Role-based access control (RBAC)": {
     ariaLabel: "About RBAC",
     content:
-      "Basic Admin/Member-style access on Team; customizable roles and fine-grained permissions on Enterprise.",
+      "Basic Admin/Member-style access on Free and Team; customizable roles and fine-grained permissions on Enterprise.",
     contentClassName: "max-w-[22rem]",
   },
   "Data processing agreement (DPA)": {
@@ -347,6 +342,12 @@ function ComparePlanRowLabel({
   );
 }
 
+const COMPARE_PLAN_PERIOD_SUFFIXES = [
+  "/ seat / mo",
+  "/ day",
+  "/ mo",
+] as const;
+
 function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
   if (cell.kind === "check") {
     return (
@@ -364,6 +365,22 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
       </span>
     );
   }
+
+  const periodSuffix = COMPARE_PLAN_PERIOD_SUFFIXES.find((suffix) =>
+    cell.text.endsWith(suffix),
+  );
+  if (periodSuffix) {
+    const amount = cell.text.slice(0, -periodSuffix.length).trimEnd();
+    return (
+      <span className="flex w-full items-baseline justify-center gap-x-1 text-sm">
+        <span className="font-semibold tabular-nums text-foreground">
+          {amount}
+        </span>
+        <span className="font-normal text-muted-foreground">{periodSuffix}</span>
+      </span>
+    );
+  }
+
   return (
     <span
       className={cn(
@@ -982,16 +999,18 @@ export function OrganizationBillingSection({
                       <TableBody>
                         {(compareSections ?? []).map((section) => (
                           <Fragment key={section.title}>
-                            <TableRow className="border-b hover:bg-transparent">
-                              <TableCell
-                                className="bg-muted/40 py-2.5 pl-4"
-                                colSpan={PLAN_ORDER.length + 1}
-                              >
-                                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                  {section.title}
-                                </div>
-                              </TableCell>
-                            </TableRow>
+                            {!section.hideTitle ? (
+                              <TableRow className="border-b hover:bg-transparent">
+                                <TableCell
+                                  className="bg-muted/40 py-2.5 pl-4"
+                                  colSpan={PLAN_ORDER.length + 1}
+                                >
+                                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                    {section.title}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ) : null}
                             {section.rows.map((row, rowIndex) => {
                               const cells: ComparePlanCell[] = [
                                 row.free,

@@ -1,12 +1,20 @@
 import type { ConvexHttpClient } from "convex/browser";
 import type { ModelMessage } from "ai";
 import type {
+  BrowserInteractionStepPayload,
   EvalTraceSpan,
   EvalTraceWidgetSnapshot,
   PromptTraceSummary,
+  SerializedBrowserInteractionStep,
+  SerializedWidgetRenderObservation,
+  WidgetRenderObservationPayload,
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import {
+  toBrowserStepPayload,
+  toObservationPayload,
+} from "./finalize-iteration-browser-artifacts.js";
 import {
   evalTraceSnapshotToPayload,
   sanitizeWidgetForBackend,
@@ -202,12 +210,39 @@ export async function persistEvalTraceFanout(args: {
    * used to splice into `messages` at finalize.
    */
   systemPrompt?: string;
+  /**
+   * PR 6b: browser-rendered MCP App render observations + interaction steps,
+   * ALREADY uploaded + sanitized by `finalizeEvalIteration`. This function
+   * must NOT upload screenshots. Each record keeps `promptIndex` so it buckets
+   * onto its own turn (their natural emission cadence — unlike widgets, which
+   * attach to the last turn only). `promptIndex` is stripped before the backend
+   * turn payload; the backend re-stamps it from `turn.promptIndex`.
+   */
+  widgetRenderObservations?: SerializedWidgetRenderObservation[];
+  browserInteractionSteps?: SerializedBrowserInteractionStep[];
 }): Promise<FanoutResult> {
   const turns = sliceTraceIntoTurns({
     messages: args.messages,
     spans: args.spans ?? [],
     prompts: args.prompts ?? [],
   });
+
+  // Bucket the (already-serialized) browser artifacts by promptIndex so each
+  // turn carries only its own observations/steps. The backend dedups
+  // observations by (sessionId, toolCallId) and steps by
+  // (sessionId, toolCallId, stepIndex), so a same-turn retry is idempotent.
+  const obsByPromptIndex = new Map<number, WidgetRenderObservationPayload[]>();
+  for (const obs of args.widgetRenderObservations ?? []) {
+    const arr = obsByPromptIndex.get(obs.promptIndex) ?? [];
+    arr.push(toObservationPayload(obs));
+    obsByPromptIndex.set(obs.promptIndex, arr);
+  }
+  const stepsByPromptIndex = new Map<number, BrowserInteractionStepPayload[]>();
+  for (const step of args.browserInteractionSteps ?? []) {
+    const arr = stepsByPromptIndex.get(step.promptIndex) ?? [];
+    arr.push(toBrowserStepPayload(step));
+    stepsByPromptIndex.set(step.promptIndex, arr);
+  }
 
   // Convert inspector-shape widgets to the backend `appendEvalTurnTrace`
   // shape. Inspector snapshots optionally carry the HTML blob id;
@@ -240,6 +275,11 @@ export async function persistEvalTraceFanout(args: {
       // finalize, so we attach the full set to the last turn call. Earlier
       // turns send `widgets: []` to keep per-turn payloads light.
       const widgetsForThisTurn = isLastTurn ? lastTurnWidgets : [];
+      // Observations + steps attach PER turn (their natural emission cadence),
+      // unlike last-turn-only widgets. Omitted entirely when empty so the
+      // wire shape of non-Computer-Use evals is unchanged.
+      const obsForThisTurn = obsByPromptIndex.get(turn.promptIndex) ?? [];
+      const stepsForThisTurn = stepsByPromptIndex.get(turn.promptIndex) ?? [];
       const result = (await args.convexClient.action(
         "testSuites:appendEvalTurnTrace" as any,
         {
@@ -265,6 +305,12 @@ export async function persistEvalTraceFanout(args: {
               ? { prompts: sanitizeForConvexTransport(turn.prompts) }
               : {}),
             widgets: widgetsForThisTurn,
+            ...(obsForThisTurn.length
+              ? { widgetRenderObservations: obsForThisTurn }
+              : {}),
+            ...(stepsForThisTurn.length
+              ? { browserInteractionSteps: stepsForThisTurn }
+              : {}),
           },
         },
       )) as { skipped?: boolean } | undefined;
