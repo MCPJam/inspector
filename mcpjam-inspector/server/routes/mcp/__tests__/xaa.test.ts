@@ -73,6 +73,27 @@ describe("mcp xaa routes", () => {
     );
   });
 
+  it("ignores forwarded proxy headers for the local router", async () => {
+    // The local desktop router has no proxy in front of it, so a spoofed
+    // X-Forwarded-Proto must not flip the issuer to https.
+    const response = await app.request(
+      "http://localhost/api/mcp/xaa/.well-known/openid-configuration",
+      {
+        headers: {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "evil.example.com",
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.issuer).toBe("http://localhost/api/mcp/xaa");
+    expect(body.jwks_uri).toBe(
+      "http://localhost/api/mcp/xaa/.well-known/jwks.json",
+    );
+  });
+
   it("requires a session token for protected endpoints", async () => {
     const response = await app.request("/api/mcp/xaa/authenticate", {
       method: "POST",
