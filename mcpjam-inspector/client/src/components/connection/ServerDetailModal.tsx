@@ -191,6 +191,7 @@ export function ServerDetailModal({
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
   const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  const serverHistoryEnabled = useFeatureFlagEnabled("server-history-tab");
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     projectId ? ({ projectId } as never) : "skip"
@@ -208,9 +209,11 @@ export function ServerDetailModal({
   // `sharedProjectServersRecord[name]?._id` and passes it down as
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
-  // The History tab surfaces persisted snapshot revisions, which only exist
-  // for project-scoped (hosted) servers. Hidden entirely in local mode.
-  const showHistory = Boolean(projectId && serverId);
+  // The History tab + drift chip surface persisted snapshot revisions, which
+  // only exist for project-scoped (hosted) servers. Gated behind the
+  // `server-history-tab` PostHog flag (@mcpjam.com only) and hidden in local
+  // mode. Both surfaces key off `showHistory`, so this is the single gate.
+  const showHistory = Boolean(projectId && serverId && serverHistoryEnabled);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
