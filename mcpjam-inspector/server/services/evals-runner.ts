@@ -34,6 +34,7 @@ import {
 } from "../utils/direct-chat-turn";
 import { consumeFullStreamAsEvalEvents } from "./evals/stream-adapter";
 import { resolveExecutionContext } from "../utils/host-execution-context";
+import { safeResolveBuiltInTools } from "../utils/built-in-tools/registry.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
@@ -1102,6 +1103,13 @@ const runIterationWithAiSdk = async ({
     // missing skill tools, Anthropic name validation, and skills-prompt
     // assembly. Called inside the try so prep failures become a recorded
     // failed iteration rather than an uncaught setup error.
+    //
+    // `builtInTools` stays absent on this local-AI-SDK BYOK path: built-in
+    // tools (web_search) execute via a Convex HTTP action billed in MCPJam
+    // credits, and BYOK iterations carry no Convex auth — advertising a tool
+    // whose execute can only fail is worse than omitting it. The null-ctx
+    // helper call debug-logs when the suite hostConfig requested ids anyway.
+    safeResolveBuiltInTools(resolvedExecution.builtInToolIds, null);
     const prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -1835,6 +1843,7 @@ const runIterationViaBackendWithBrowser = async (
     hostPolicy,
     toolSignals,
     suiteHostConfig,
+    orgModelConfigTarget,
   }: RunIterationBackendParams,
   browser: EvalBrowserContext,
 ) => {
@@ -1965,6 +1974,19 @@ const runIterationViaBackendWithBrowser = async (
   const backendCustomProviders = orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
     : undefined;
+  // Suite hostConfig `builtInToolIds` (e.g. web_search) resolve to runnable
+  // tools the same way chat does. The tool's execute bills MCPJam credits
+  // via Convex, so the auth context reuses the iteration's bearer plus the
+  // same project target the org-BYOK/jam billing paths derive
+  // (`resolveOrgTargetForEval`). Org-level targets carry no projectId —
+  // the Exa route requires one — so those omit the tools.
+  const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
+  const builtInTools = safeResolveBuiltInTools(
+    resolvedExecution.builtInToolIds,
+    builtInTarget && "projectId" in builtInTarget
+      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
+      : null,
+  );
   // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
   // the `prepareChatV2` try) so the catch path and the assignment
   // inside the try are both in scope. Stays `undefined` if prepareChatV2
@@ -1984,6 +2006,7 @@ const runIterationViaBackendWithBrowser = async (
         ? { customProviders: backendCustomProviders }
         : {}),
       priorMessages: [],
+      ...(builtInTools ? { builtInTools } : {}),
     });
     // PR 4d review fix (Codex P2 / Cursor Medium): stash the resolved
     // system prompt for the persistence prefix below. The engine
@@ -2610,6 +2633,7 @@ const runTestCase = async (params: {
         convexClient,
         modelApiKeys,
         orgModelConfig,
+        orgModelConfigTarget,
         runId,
         abortSignal,
         compareRunId,
@@ -3183,7 +3207,10 @@ const streamIterationWithAiSdk = async ({
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
-    // so prep failures become a recorded failed iteration.
+    // so prep failures become a recorded failed iteration. Like that runner,
+    // `builtInTools` stays absent on the local BYOK path (no Convex auth to
+    // bill web_search against) — the null-ctx call just debug-logs requests.
+    safeResolveBuiltInTools(resolvedExecution.builtInToolIds, null);
     const prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -4036,6 +4063,7 @@ const streamIterationViaBackendWithBrowser = async (
     hostPolicy,
     toolSignals,
     suiteHostConfig,
+    orgModelConfigTarget,
   }: RunIterationBackendParams & {
     emit: StreamEmit;
   },
@@ -4192,6 +4220,16 @@ const streamIterationViaBackendWithBrowser = async (
           ...msgs,
         ]
       : msgs;
+  // Same shape as the non-stream backend runner: suite hostConfig
+  // `builtInToolIds` resolve via the shared registry, billed against the
+  // project target the org-BYOK/jam billing paths derive.
+  const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
+  const builtInTools = safeResolveBuiltInTools(
+    resolvedExecution.builtInToolIds,
+    builtInTarget && "projectId" in builtInTarget
+      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
+      : null,
+  );
   let prepared: PrepareChatV2Result;
   try {
     prepared = await prepareChatV2({
@@ -4205,6 +4243,7 @@ const streamIterationViaBackendWithBrowser = async (
         ? { customProviders: backendCustomProviders }
         : {}),
       priorMessages: [],
+      ...(builtInTools ? { builtInTools } : {}),
     });
     // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
     // prefix shape as the non-stream backend runner.
@@ -5174,6 +5213,7 @@ export const streamTestCase = async (params: {
         convexClient,
         modelApiKeys,
         orgModelConfig,
+        orgModelConfigTarget,
         runId,
         abortSignal,
         emit,

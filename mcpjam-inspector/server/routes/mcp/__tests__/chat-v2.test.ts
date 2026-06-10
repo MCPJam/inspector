@@ -1226,6 +1226,70 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+
+    it("advertises built-in tools for MCPJam guest requests after resolving guest auth", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Search for current docs" }],
+          model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+          projectId: "project-1",
+          builtInToolIds: ["web_search"],
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+
+        expect(streamCall).toBeDefined();
+        const [, init] = streamCall!;
+        expect(init).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer guest-test-token",
+          }),
+        });
+
+        const streamBody = JSON.parse(
+          String((init as RequestInit).body ?? "{}"),
+        );
+        expect(streamBody.tools).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: "web_search" }),
+          ]),
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
     it("uses a guest token for non-gated MCPJam guest requests", async () => {
       const { getProductionGuestAuthHeader } =
         await import("../../../utils/guest-auth.js");
