@@ -840,6 +840,178 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
+  it("threads suiteHostConfig builtInToolIds into prepareChatV2 on the backend path", async () => {
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      // The web_search execute bills via Convex against a project — the
+      // runner derives it from the same target the jam/org billing paths
+      // use (`resolveOrgTargetForEval`).
+      orgModelConfigTarget: { projectId: "project-1" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { builtInToolIds: ["web_search"] },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    const options = prepareMock.mock.calls[0]?.[0] as {
+      builtInTools?: Record<string, unknown>;
+    };
+    expect(options.builtInTools).toBeDefined();
+    expect(Object.keys(options.builtInTools!)).toEqual(["web_search"]);
+  });
+
+  it("omits builtInTools on the backend path when no project target exists", async () => {
+    // Org-level targets (or no target at all) carry no projectId; the Exa
+    // Convex route requires one, so the runner must omit the tool rather
+    // than advertise an execute that can only fail.
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { builtInToolIds: ["web_search"] },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    const options = prepareMock.mock.calls[0]?.[0] as {
+      builtInTools?: Record<string, unknown>;
+    };
+    expect(options.builtInTools).toBeUndefined();
+  });
+
+  it("omits builtInTools on the local BYOK path even when the suite requests them", async () => {
+    // Local-AI-SDK iterations carry no Convex auth; web_search is billed in
+    // MCPJam credits via Convex, so the BYOK path never advertises it.
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { builtInToolIds: ["web_search"] },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    const options = prepareMock.mock.calls[0]?.[0] as {
+      builtInTools?: Record<string, unknown>;
+    };
+    expect(options.builtInTools).toBeUndefined();
+  });
+
+  it("threads suiteHostConfig builtInToolIds into prepareChatV2 on the streamed backend path", async () => {
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+
+    await streamTestCase({
+      test: {
+        title: "Case",
+        query: "Hello",
+        runs: 1,
+        model: "claude-haiku-4.5",
+        provider: "anthropic",
+        expectedToolCalls: [],
+        promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+        testCaseId: "case-1",
+      },
+      tools: {},
+      selectedServers: [],
+      mcpClientManager: mcpClientManager as any,
+      recorder: null,
+      modelApiKeys: {},
+      orgModelConfigTarget: { projectId: "project-1" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      testCaseId: "case-1",
+      suiteId: "suite-1",
+      runId: null,
+      emit: () => {},
+      suiteHostConfig: { builtInToolIds: ["web_search"] },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    const options = prepareMock.mock.calls[0]?.[0] as {
+      builtInTools?: Record<string, unknown>;
+    };
+    expect(options.builtInTools).toBeDefined();
+    expect(Object.keys(options.builtInTools!)).toEqual(["web_search"]);
+  });
+
   it("runs org BYOK cloud eval models through Convex without raw provider keys", async () => {
     // Same migration as the previous test: assert against the engine's
     // `mode:"stream"` SSE request, not the legacy `mode:"step"` JSON. The

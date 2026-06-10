@@ -68,6 +68,7 @@ export interface ExecutionOverrides {
   progressiveToolDiscovery?: boolean;
   modelId?: string;
   selectedServerIds?: string[];
+  builtInToolIds?: string[];
 }
 
 /**
@@ -107,6 +108,13 @@ export interface ResolvedExecutionContext {
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
   selectedServerIds: string[] | undefined;
+  /**
+   * HostConfig v2 built-in tool ids (e.g. `["web_search"]`). The resolver
+   * only surfaces the resolved id list; turning ids into runnable AI SDK
+   * tools (and deciding whether auth context permits it) is owned by
+   * `built-in-tools/registry.ts` at the call site.
+   */
+  builtInToolIds: string[] | undefined;
   hostPolicy: HostExecutionPolicy;
   drift: ExecutionDriftEntry[];
 }
@@ -221,6 +229,7 @@ export function resolveExecutionContext(args: {
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
       selectedServerIds: overrides.selectedServerIds,
+      builtInToolIds: overrides.builtInToolIds,
       hostPolicy,
       drift,
     };
@@ -234,6 +243,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: readProgressiveToolDiscovery(hostConfig),
     modelId: readString(hostConfig, "modelId"),
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
+    builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
   };
 
   const systemPrompt = pickField(
@@ -292,6 +302,14 @@ export function resolveExecutionContext(args: {
   );
   if (selectedServerIds.drift) drift.push(selectedServerIds.drift);
 
+  const builtInToolIds = pickField(
+    "builtInToolIds",
+    overrides.builtInToolIds,
+    hostFields.builtInToolIds,
+    precedence,
+  );
+  if (builtInToolIds.drift) drift.push(builtInToolIds.drift);
+
   return {
     systemPrompt: systemPrompt.value,
     temperature: temperature.value,
@@ -301,6 +319,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     selectedServerIds: selectedServerIds.value,
+    builtInToolIds: builtInToolIds.value,
     hostPolicy,
     drift,
   };

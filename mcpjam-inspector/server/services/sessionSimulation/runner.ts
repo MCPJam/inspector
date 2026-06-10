@@ -22,6 +22,7 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 import {
   persistChatSessionToConvex,
   type PersistedTurnTrace,
@@ -145,6 +146,12 @@ export interface RunSimulationOptions {
    * visitor would get.
    */
   progressiveToolDiscovery?: boolean;
+  /**
+   * Built-in tool ids from the chatbox's pinned HostConfigV2 (e.g.
+   * `["web_search"]`). Resolved per session via the shared registry so a
+   * synthetic visitor sees the same tool set a real chatbox visitor gets.
+   */
+  builtInToolIds?: string[];
   /**
    * Optional hosted-chat access version. Forwarded into
    * `chatSessions:createWidgetSnapshot` so the optimistic-concurrency check
@@ -276,6 +283,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
+    builtInToolIds,
     accessVersion,
     convexHttpUrl,
     convexAuthToken,
@@ -324,6 +332,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           requireToolApproval,
           respectToolVisibility,
           progressiveToolDiscovery,
+          builtInToolIds,
           accessVersion,
           convexHttpUrl,
           convexAuthToken,
@@ -412,6 +421,7 @@ async function runOneSession(args: {
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  builtInToolIds?: string[];
   accessVersion?: number;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -432,6 +442,7 @@ async function runOneSession(args: {
     requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
+    builtInToolIds,
     accessVersion,
     convexHttpUrl,
     convexAuthToken,
@@ -468,6 +479,15 @@ async function runOneSession(args: {
           : selectedServerIds,
     };
 
+    // Built-in tools from the chatbox host config (e.g. web_search) resolve
+    // the same way a real visitor's chat-v2 turn would: billed via Convex
+    // against this project, namespaced under the synthetic session id.
+    const builtInTools = safeResolveBuiltInTools(builtInToolIds, {
+      authHeader,
+      projectId,
+      chatSessionId,
+    });
+
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
@@ -483,6 +503,7 @@ async function runOneSession(args: {
             },
           }
         : {}),
+      ...(builtInTools ? { builtInTools } : {}),
     });
 
     let messageHistory: ModelMessage[] = [];

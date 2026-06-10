@@ -27,6 +27,7 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
+import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
@@ -142,6 +143,7 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
+        builtInToolIds: body.builtInToolIds,
       },
       precedence: "host-wins",
     });
@@ -207,6 +209,17 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
+    // Built-in tools (e.g. web_search) bill MCPJam credits via Convex; the
+    // bearer is guaranteed by assertBearerToken above and projectId by the
+    // hosted schema, so the auth context is always constructible here.
+    const builtInTools = safeResolveBuiltInTools(
+      resolvedExecution.builtInToolIds,
+      {
+        authHeader: bearerToken,
+        projectId: hostedBody.projectId,
+        ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+      }
+    );
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
@@ -289,6 +302,7 @@ chatV2.post("/", async (c) => {
             : {}),
           appTools: validatedAppTools,
           widgetModelContext: validatedWidgetModelContext,
+          ...(builtInTools ? { builtInTools } : {}),
         },
         persist: {
           chatSessionId: body.chatSessionId,

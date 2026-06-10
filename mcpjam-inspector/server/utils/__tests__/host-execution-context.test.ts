@@ -335,6 +335,67 @@ describe("resolveExecutionContext — type coercion guards", () => {
 
     expect(result.selectedServerIds).toEqual(["fallback"]);
   });
+
+  it("ignores non-string-array builtInToolIds on hostConfig", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: ["web_search", 7] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toBeUndefined();
+  });
+});
+
+describe("resolveExecutionContext — builtInToolIds", () => {
+  it("reads builtInToolIds from the hostConfig record", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual(["web_search"]);
+  });
+
+  it("falls back to the override when the host omits the field", () => {
+    const result = resolveExecutionContext({
+      hostConfig: {},
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual(["web_search"]);
+  });
+
+  it("host wins under host-wins precedence when both define the field", () => {
+    // An explicit empty array on the host record is a real "no built-ins"
+    // opinion — it must beat a body that tries to opt in.
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: [] },
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual([]);
+  });
+
+  it("returns the override on a null hostConfig (direct chat path)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: null,
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual(["web_search"]);
+  });
+
+  it("is undefined when neither side defines it", () => {
+    const result = resolveExecutionContext({
+      hostConfig: {},
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toBeUndefined();
+  });
 });
 
 describe("resolveExecutionContext — hostPolicy passthrough", () => {

@@ -31,6 +31,10 @@ export type ChatboxRuntimeConfig = {
   // mcpjam-backend PR #334 (which adds the field) returns omitted →
   // undefined and the inspector falls back to its auto policy.
   progressiveToolDiscovery?: boolean;
+  // Built-in tool ids from the pinned HostConfigV2 (e.g. ["web_search"]).
+  // Optional so a backend older than mcpjam-backend PR #484 (which adds
+  // the field to runtime-config) returns omitted → no built-in tools.
+  builtInToolIds?: string[];
 };
 
 export type ChatboxRuntimeConfigResult =

@@ -64,6 +64,7 @@ import {
 } from "../../utils/direct-chat-turn";
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
+import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -353,6 +354,7 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
+        builtInToolIds: body.builtInToolIds,
       },
       precedence: "host-wins",
     });
@@ -505,6 +507,23 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // Built-in tools (e.g. web_search) bill MCPJam credits via a Convex
+    // HTTP action, which needs a bearer + projectId to authorize. Local
+    // requests without either (anonymous local mode, no project) omit the
+    // tools — same degradation as a host that never enabled them.
+    const builtInTools = safeResolveBuiltInTools(
+      resolvedExecution.builtInToolIds,
+      requestAuthHeader && typeof body.projectId === "string" && body.projectId
+        ? {
+            authHeader: requestAuthHeader,
+            projectId: body.projectId,
+            ...(body.chatSessionId
+              ? { chatSessionId: body.chatSessionId }
+              : {}),
+          }
+        : null
+    );
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -517,6 +536,7 @@ chatV2.post("/", async (c) => {
         respectToolVisibility,
         customProviders: body.customProviders,
         priorMessages: priorModelMessages,
+        ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.
         ...(resolvedProgressiveToolDiscovery !== undefined
