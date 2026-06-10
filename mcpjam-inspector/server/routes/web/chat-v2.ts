@@ -27,6 +27,7 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
+import { resolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
@@ -142,6 +143,7 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
+        builtInToolIds: body.builtInToolIds,
       },
       precedence: "host-wins",
     });
@@ -269,6 +271,23 @@ chatV2.post("/", async (c) => {
       const origin = isChatboxSession ? "chatbox" : "playground";
       const isDirectChat = !isChatboxSession;
 
+      // Resolve host-managed built-in tools (e.g. web_search) into AI SDK
+      // tool entries. Ids come from the shared resolver above: chatbox path
+      // takes them from the server-fetched hostConfig (host-wins, tamper-
+      // resistant), playground takes them from the body override. Unknown
+      // ids throw — write-time `validateBuiltInToolScope` already proved
+      // every persisted id is in the catalog, so a miss here is a real
+      // registry gap, not user input.
+      const bearerHeader = c.req.header("authorization");
+      const builtInTools = resolveBuiltInTools(
+        resolvedExecution.builtInToolIds,
+        {
+          authHeader: bearerHeader ?? "",
+          projectId: hostedBody.projectId,
+          chatSessionId: body.chatSessionId,
+        },
+      );
+
       return await streamWebChatTurn({
         manager,
         prepare: {
@@ -288,6 +307,7 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           appTools: validatedAppTools,
+          builtInTools,
           widgetModelContext: validatedWidgetModelContext,
         },
         persist: {

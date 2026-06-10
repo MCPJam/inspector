@@ -68,6 +68,11 @@ export interface ExecutionOverrides {
   progressiveToolDiscovery?: boolean;
   modelId?: string;
   selectedServerIds?: string[];
+  // Opaque catalog ids of host-managed built-in tools (e.g. "web_search").
+  // Merged with the same host-vs-override precedence as selectedServerIds:
+  // chatbox path lets the server-fetched hostConfig win (tamper-resistant),
+  // playground path passes overrides through verbatim (hostConfig is null).
+  builtInToolIds?: string[];
 }
 
 /**
@@ -107,6 +112,7 @@ export interface ResolvedExecutionContext {
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
   selectedServerIds: string[] | undefined;
+  builtInToolIds: string[] | undefined;
   hostPolicy: HostExecutionPolicy;
   drift: ExecutionDriftEntry[];
 }
@@ -221,6 +227,7 @@ export function resolveExecutionContext(args: {
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
       selectedServerIds: overrides.selectedServerIds,
+      builtInToolIds: overrides.builtInToolIds,
       hostPolicy,
       drift,
     };
@@ -234,6 +241,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: readProgressiveToolDiscovery(hostConfig),
     modelId: readString(hostConfig, "modelId"),
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
+    builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
   };
 
   const systemPrompt = pickField(
@@ -292,6 +300,14 @@ export function resolveExecutionContext(args: {
   );
   if (selectedServerIds.drift) drift.push(selectedServerIds.drift);
 
+  const builtInToolIds = pickField(
+    "builtInToolIds",
+    overrides.builtInToolIds,
+    hostFields.builtInToolIds,
+    precedence,
+  );
+  if (builtInToolIds.drift) drift.push(builtInToolIds.drift);
+
   return {
     systemPrompt: systemPrompt.value,
     temperature: temperature.value,
@@ -301,6 +317,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     selectedServerIds: selectedServerIds.value,
+    builtInToolIds: builtInToolIds.value,
     hostPolicy,
     drift,
   };

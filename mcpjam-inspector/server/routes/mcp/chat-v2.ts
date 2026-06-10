@@ -17,6 +17,7 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
+import { resolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
@@ -353,6 +354,7 @@ chatV2.post("/", async (c) => {
         requireToolApproval: bodyRequireToolApproval,
         respectToolVisibility: bodyRespectToolVisibility,
         progressiveToolDiscovery: body.progressiveToolDiscovery,
+        builtInToolIds: body.builtInToolIds,
       },
       precedence: "host-wins",
     });
@@ -507,6 +509,17 @@ chatV2.post("/", async (c) => {
 
     let prepared;
     try {
+      // Host-managed built-in tools (e.g. web_search) — same resolution path
+      // as web/chat-v2.ts. resolvedExecution.builtInToolIds carries host-wins
+      // ids on the chatbox path and body overrides on direct chat.
+      const builtInTools = resolveBuiltInTools(
+        resolvedExecution.builtInToolIds,
+        {
+          authHeader: c.req.header("authorization") ?? "",
+          projectId: body.projectId ?? "",
+          chatSessionId: body.chatSessionId,
+        },
+      );
       prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
@@ -527,6 +540,7 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
+        builtInTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.

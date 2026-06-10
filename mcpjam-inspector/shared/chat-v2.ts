@@ -79,6 +79,14 @@ export interface ChatV2Request {
    */
   appTools?: AppToolSnapshotEntry[];
   /**
+   * Catalog ids of host-managed built-in tools (e.g. ["web_search"]) the
+   * model should see this turn. Same shape + trust model as the host-level
+   * fields above: the chatbox path re-resolves from the persisted host config
+   * (host wins), the playground path passes the override through verbatim.
+   * Resolved server-side via `resolveBuiltInTools` — unknown ids fail closed.
+   */
+  builtInToolIds?: string[];
+  /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *
    * These are per-request, ephemeral model context: the server appends them

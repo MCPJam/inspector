@@ -639,6 +639,11 @@ export function PlaygroundMain({
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
+    // Same live-source pattern: built-in tool attachments flow from the
+    // previewed host's hostConfig. The server re-resolves via the shared
+    // execution-context helper, so this also flows through chatbox sessions
+    // (where the persisted host config wins via the runtime-config fetch).
+    builtInToolIds: previewedHost?.config?.builtInToolIds,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -3323,6 +3328,8 @@ export function PlaygroundMain({
                               previewedHost?.config?.progressiveToolDiscovery,
                             respectToolVisibility:
                               previewedHost?.config?.respectToolVisibility,
+                            builtInToolIds:
+                              previewedHost?.config?.builtInToolIds,
                           }}
                           hostedContext={{
                             projectId: convexProjectId,

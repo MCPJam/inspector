@@ -2339,6 +2339,11 @@ export function ChatTabV2({
                               executionConfig?.progressiveToolDiscovery,
                             respectToolVisibility:
                               executionConfig?.respectToolVisibility,
+                            // Same rationale: forward attached built-in
+                            // tools so each per-model card resolves the
+                            // same ToolSet the single-model path would.
+                            builtInToolIds:
+                              executionConfig?.builtInToolIds,
                           }}
                           hostedContext={{
                             ...hostedContext,
