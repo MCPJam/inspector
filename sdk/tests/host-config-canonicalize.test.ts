@@ -64,7 +64,9 @@ describe("canonicalizeHostConfigV2 — hash stability", () => {
 
 describe("canonicalizeHostConfigV2 — builtInToolIds", () => {
   it("omits builtInToolIds when absent (pre-feature rows stay byte-identical)", () => {
-    const canonical = JSON.parse(JSON.stringify(canonicalizeHostConfigV2(base())));
+    const canonical = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base())),
+    );
     expect("builtInToolIds" in canonical).toBe(false);
   });
 
@@ -133,9 +135,9 @@ describe("canonicalizeHostConfigV2 — builtInToolIds", () => {
 describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
   it("distinguishes hostCapabilitiesOverride undefined from {}", async () => {
     const omitted = canonicalizeHostConfigV2(base());
-    expect("hostCapabilitiesOverride" in JSON.parse(JSON.stringify(omitted))).toBe(
-      false,
-    );
+    expect(
+      "hostCapabilitiesOverride" in JSON.parse(JSON.stringify(omitted)),
+    ).toBe(false);
     expect(await hash(base())).not.toBe(
       await hash(base({ hostCapabilitiesOverride: {} })),
     );
@@ -186,9 +188,9 @@ describe("canonicalizeHostConfigV2 — computer", () => {
     ).toBe(
       await hash(base({ computer: { ...personal, workdir: "/srv/app" } })),
     );
-    expect(await hash(base({ computer: { ...personal, workdir: "   " } }))).toBe(
-      await hash(base({ computer: personal })),
-    );
+    expect(
+      await hash(base({ computer: { ...personal, workdir: "   " } })),
+    ).toBe(await hash(base({ computer: personal })));
   });
 
   it("rejects an unknown kind", () => {
@@ -266,7 +268,9 @@ describe("canonicalizeHostConfigV2 — validation", () => {
       canonicalizeHostConfigV2(
         base({
           serverIds: ["a"] as string[],
-          serverConnectionOverrides: { a: { requestTimeoutOverride: Infinity } },
+          serverConnectionOverrides: {
+            a: { requestTimeoutOverride: Infinity },
+          },
         }),
       ),
     ).toThrow(/requestTimeoutOverride must be finite/);
@@ -355,6 +359,48 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
       ),
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
+
+  it('accepts the "auto" pin and does not derive supportedProtocolVersions', () => {
+    // "auto" defers the wire mode to connect time, so the canonicalizer
+    // must neither reject it nor pin an initialize accept-list (which
+    // handshake — if any — runs is unknown until the probe).
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: { profileVersion: 1, mcpProtocolVersion: "auto" },
+      }),
+    );
+    expect(c.mcpProfile?.mcpProtocolVersion).toBe("auto");
+    expect(c.mcpProfile?.initialize).toBeUndefined();
+  });
+
+  it('accepts the "auto" pin on serverConnectionOverrides', () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        serverIds: ["srv_a"],
+        serverConnectionOverrides: {
+          srv_a: { mcpProtocolVersionOverride: "auto" },
+        },
+      }),
+    );
+    expect(c.serverConnectionOverrides?.srv_a?.mcpProtocolVersionOverride).toBe(
+      "auto",
+    );
+  });
+
+  it('rejects casing / typo variants of "auto"', () => {
+    for (const bad of ["Auto", "AUTO", "automatic", " auto"]) {
+      expect(() =>
+        canonicalizeHostConfigV2(
+          base({
+            mcpProfile: {
+              profileVersion: 1,
+              mcpProtocolVersion: bad as never,
+            },
+          }),
+        ),
+      ).toThrow(/mcpProtocolVersion must be one of/);
+    }
+  });
 });
 
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
@@ -366,7 +412,9 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
       canonicalizeHostConfigV2(
         // The Input type marks it required; cast simulates an upstream bug
         // (writer who let v.any() through with undefined).
-        base({ clientCapabilities: undefined as unknown as Record<string, unknown> }),
+        base({
+          clientCapabilities: undefined as unknown as Record<string, unknown>,
+        }),
       ),
     ).toThrow(/clientCapabilities is required/);
   });
@@ -397,7 +445,12 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
       ["Date", new Date(0)],
       ["Map", new Map()],
       ["Set", new Set()],
-      ["class instance", new (class { x = 1 })()],
+      [
+        "class instance",
+        new (class {
+          x = 1;
+        })(),
+      ],
     ];
     for (const [label, value] of samples) {
       expect(
@@ -414,7 +467,9 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
     const nullProto = Object.create(null) as Record<string, unknown>;
     nullProto.foo = 1;
     nullProto.bar = { baz: 2 };
-    expect(() => canonicalizeHostConfigV2(base({ clientCapabilities: nullProto }))).not.toThrow();
+    expect(() =>
+      canonicalizeHostConfigV2(base({ clientCapabilities: nullProto })),
+    ).not.toThrow();
     // And hashes identically to the `{}`-literal form — proto difference
     // doesn't leak into canonical JSON.
     const a = base({ clientCapabilities: nullProto });
@@ -430,7 +485,10 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
       mcpProfile: { profileVersion: 1, apps: { sandbox: {} } },
     });
     const explicitEmpty = base({
-      mcpProfile: { profileVersion: 1, apps: { sandbox: { allowFeatures: {} } } },
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { sandbox: { allowFeatures: {} } },
+      },
     });
     expect(await hash(omitted)).toBe(await hash(explicitEmpty));
   });

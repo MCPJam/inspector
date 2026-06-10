@@ -9,17 +9,20 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { JsonEditor } from "@/components/ui/json-editor";
-import type { McpProtocolVersion } from "@/lib/client-config-v2";
+import type { McpProtocolVersionPin } from "@/lib/client-config-v2";
 
 /**
- * Per-server protocol-version pin. Three-state picker:
+ * Per-server protocol-version pin. Picker states:
  *   - "inherit" → `undefined`, defers to the host default (or SDK default if
  *     no host default is set).
+ *   - "auto"    → `"auto"`, detect at connect time — stateless servers get
+ *     the RC preview, everything else the legacy handshake. Safe on every
+ *     transport (non-HTTP simply takes the legacy path).
  *   - "latest"  → `"2025-11-25"`, explicit stable pin — overrides a
  *     host-level RC default.
  *   - "rc"      → `"2026-07-28"`, the stateless RC preview client.
  */
-type DropdownValue = "inherit" | "latest" | "rc";
+type DropdownValue = "inherit" | "auto" | "latest" | "rc";
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
@@ -28,6 +31,7 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   flagGated?: boolean;
 }> = [
   { value: "inherit", label: "Host default" },
+  { value: "auto", label: "Auto (detect)" },
   { value: "latest", label: "Latest (2025-11-25)" },
   { value: "rc", label: "2026 RC (2026-07-28)", flagGated: true },
 ];
@@ -79,9 +83,9 @@ interface AdvancedConnectionSettingsSectionProps {
    * config blob — host-default vs per-server override is a control-plane
    * edit fanned out to host configs.
    */
-  mcpProtocolVersionOverride?: McpProtocolVersion;
+  mcpProtocolVersionOverride?: McpProtocolVersionPin;
   onMcpProtocolVersionOverrideChange?: (
-    version: McpProtocolVersion | undefined
+    version: McpProtocolVersionPin | undefined
   ) => void;
   /**
    * Transport kind of this server. MCPJam's current stateless preview
@@ -143,6 +147,8 @@ export function AdvancedConnectionSettingsSection({
       ? "rc"
       : mcpProtocolVersionOverride === "2025-11-25"
       ? "latest"
+      : mcpProtocolVersionOverride === "auto"
+      ? "auto"
       : "inherit";
 
   return (
@@ -304,18 +310,20 @@ export function AdvancedConnectionSettingsSection({
             </div>
           )}
 
-          {/* Per-server MCP protocol-version pin. Tri-state picker:
+          {/* Per-server MCP protocol-version pin. "Auto" → `"auto"`
+              (detect at connect time — safe on every transport);
               "Latest" → `"2025-11-25"` (legacy adapter + initialize
               handshake); "2026 RC" → `"2026-07-28"` (stateless RC
               preview client). Gated by `stateless-mcp-enabled` at the
               caller. The RC option is hidden on non-HTTP transports
               because MCPJam's current stateless client requires
-              Streamable HTTP. */}
+              Streamable HTTP; Auto stays visible there because it
+              degrades to the legacy path instead of throwing. */}
           {showProtocolVersionControl && (
             <div className="space-y-1.5">
               <label
                 className="text-xs font-medium text-foreground"
-                title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+                title="Auto: detect at connect time — stateless servers get the 2026 RC preview, everything else the legacy handshake. Latest: the current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
               >
                 Protocol version
               </label>
@@ -329,6 +337,8 @@ export function AdvancedConnectionSettingsSection({
                       ? "2026-07-28"
                       : next === "latest"
                       ? "2025-11-25"
+                      : next === "auto"
+                      ? "auto"
                       : undefined
                   );
                 }}
@@ -346,8 +356,9 @@ export function AdvancedConnectionSettingsSection({
               </Select>
               {!isHttp && (
                 <p className="text-xs text-muted-foreground">
-                  MCPJam's current 2026 RC preview requires Streamable HTTP —
-                  only Latest is selectable for this transport.
+                  MCPJam's current 2026 RC preview requires Streamable HTTP, so
+                  the 2026 RC option is hidden for this transport. Auto stays
+                  available and uses the legacy handshake here.
                 </p>
               )}
               {!canEditProtocolVersion && (

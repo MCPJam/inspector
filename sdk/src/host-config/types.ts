@@ -15,9 +15,12 @@
  * Pure + browser-safe: no `convex/values`, no `ctx.db`, no Node-only APIs.
  */
 
-import type { McpProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
+import type {
+  McpProtocolVersion,
+  McpProtocolVersionPin,
+} from "../mcp-client-manager/mcp-protocol-version.js";
 
-export type { McpProtocolVersion };
+export type { McpProtocolVersion, McpProtocolVersionPin };
 
 /**
  * Identifier of a host-config host style. Storage is a free-form string —
@@ -89,8 +92,9 @@ export type CspDomainSet = {
 export type HostConfigMcpProfileV1 = {
   profileVersion: 1;
   // Host-default pinned MCP protocol version. Absent → SDK chooses at
-  // request time. Per-server pins live on serverConnectionOverrides.
-  mcpProtocolVersion?: McpProtocolVersion;
+  // request time; "auto" → detect stateless-vs-stateful per server at
+  // connect time. Per-server pins live on serverConnectionOverrides.
+  mcpProtocolVersion?: McpProtocolVersionPin;
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -276,7 +280,7 @@ export type HostConfigInputV2 = {
     {
       headersOverride?: Record<string, string>;
       requestTimeoutOverride?: number;
-      mcpProtocolVersionOverride?: McpProtocolVersion;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
     }
   >;
 };
@@ -316,7 +320,7 @@ export type CanonicalHostConfigV2 = {
     {
       headersOverride?: Record<string, string>;
       requestTimeoutOverride?: number;
-      mcpProtocolVersionOverride?: McpProtocolVersion;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
     }
   >;
 };

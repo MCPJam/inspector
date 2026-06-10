@@ -203,9 +203,13 @@ export type {
 // construction (pure data + pure functions, no Node deps).
 export {
   MCP_PROTOCOL_VERSIONS,
+  MCP_PROTOCOL_VERSION_AUTO,
+  isAutoProtocolVersion,
   isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
   type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "./mcp-client-manager/mcp-protocol-version.js";
 
 // HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).

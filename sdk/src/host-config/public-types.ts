@@ -20,12 +20,14 @@ import type {
   HostStyleId,
   McpAppsCapabilities,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   OpenAiAppsCapabilities,
   ServerId,
 } from "./types.js";
 
 export type {
   McpProtocolVersion,
+  McpProtocolVersionPin,
   ServerId,
   HostStyleId,
   CspDomainSet,
@@ -54,8 +56,11 @@ export type HostMcp = Omit<
   HostConfigMcpProfileV1,
   "profileVersion" | "mcpProtocolVersion"
 > & {
-  /** Host-default pinned MCP protocol version (e.g. "2025-11-25"). */
-  protocolVersion?: McpProtocolVersion;
+  /**
+   * Host-default pinned MCP protocol version (e.g. "2025-11-25"), or
+   * "auto" to detect stateless-vs-stateful per server at connect time.
+   */
+  protocolVersion?: McpProtocolVersionPin;
 };
 
 /**
@@ -94,7 +99,7 @@ export interface HostJson {
 export interface HostServerOverride {
   headers?: Record<string, string>;
   requestTimeout?: number;
-  protocolVersion?: McpProtocolVersion;
+  protocolVersion?: McpProtocolVersionPin;
 }
 
 /**

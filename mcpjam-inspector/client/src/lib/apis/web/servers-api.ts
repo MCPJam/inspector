@@ -39,7 +39,7 @@ export type HostedServerValidateContext = {
    * this, hosted connects always ran the legacy `initialize` handshake
    * regardless of the client toggle.
    */
-  mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
+  mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersionPin;
 };
 
 export interface HostedServerValidateResponse {

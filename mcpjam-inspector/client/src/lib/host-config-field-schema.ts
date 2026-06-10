@@ -13,7 +13,7 @@
 import type {
   HostConfigDtoV2,
   HostStyleId,
-  McpProtocolVersion,
+  McpProtocolVersionPin,
 } from "@/lib/client-config-v2";
 
 export type HostConfigSectionId = "agent" | "protocol" | "apps";
@@ -175,15 +175,16 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Protocol version",
     path: "mcpProfile.mcpProtocolVersion",
     description:
-      "Host default pin. Per-server overrides win. Undefined = SDK chooses at request time.",
+      "Host default pin. Per-server overrides win. Undefined = SDK chooses at request time; auto = detect per server at connect time.",
     kind: {
       kind: "enum",
       options: [
+        "auto",
         "2025-03-26",
         "2025-06-18",
         "2025-11-25",
         "2026-07-28",
-      ] as ReadonlyArray<McpProtocolVersion>,
+      ] as ReadonlyArray<McpProtocolVersionPin>,
     },
     read: (cfg) => mcpProfile(cfg)?.mcpProtocolVersion,
   },
@@ -345,7 +346,8 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "MCP Apps spec bridge",
     label: "Spec-bridge overrides",
     path: "mcpProfile.apps.mcpAppsOverrides",
-    description: "Sparse per-dimension overrides on the SEP-1865 capability matrix.",
+    description:
+      "Sparse per-dimension overrides on the SEP-1865 capability matrix.",
     kind: { kind: "object", itemNoun: "dimension" },
     read: (cfg) => mcpProfile(cfg)?.apps?.mcpAppsOverrides,
   },

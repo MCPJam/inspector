@@ -56,6 +56,7 @@ import type {
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   McpProtocolVersion,
+  McpProtocolVersionPin,
 } from "@mcpjam/sdk/host-config/internal";
 
 export {
@@ -68,6 +69,7 @@ export type {
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   McpProtocolVersion,
+  McpProtocolVersionPin,
 };
 
 export type HostStyleId = ChatboxHostStyle;
@@ -164,7 +166,7 @@ export type HostConfigInputV2 = {
      * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
      * `fanOutProjectServerConfigToHosts`.
      */
-    mcpProtocolVersionOverride?: McpProtocolVersion;
+    mcpProtocolVersionOverride?: McpProtocolVersionPin;
   }>;
 };
 
@@ -213,7 +215,7 @@ export type HostConfigDtoV2 = {
   serverConnectionOverrides?: Record<string, {
     headersOverride?: Record<string, string>;
     requestTimeoutOverride?: number;
-    mcpProtocolVersionOverride?: McpProtocolVersion;
+    mcpProtocolVersionOverride?: McpProtocolVersionPin;
   }>;
 };
 
@@ -805,9 +807,9 @@ export function serverConnectionOverridesEqual(
 ): boolean {
   const normalize = (
     overrides: HostConfigInputV2["serverConnectionOverrides"],
-  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> => {
+  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersionPin }> => {
     if (!overrides) return {};
-    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> = {};
+    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersionPin }> = {};
     for (const [key, entry] of Object.entries(overrides)) {
       if (!entry) continue;
       const hasHeaders =

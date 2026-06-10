@@ -35,6 +35,7 @@ export type {
   HostConfigConnectionDefaults,
   CspDomainSet,
   McpProtocolVersion,
+  McpProtocolVersionPin,
 } from "./types.js";
 
 // Stage 3: host-execution policy + visibility filter + OpenAI compat.
