@@ -3,6 +3,7 @@ import { build } from "esbuild";
 import {
   McpAppBrowserHarness,
   ChromiumNotInstalledError,
+  cspSourceMatchesUrl,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
 
@@ -67,14 +68,14 @@ beforeAll(async () => {
 
 const harnesses: McpAppBrowserHarness[] = [];
 function makeHarness(
-  overrides: Partial<McpAppBrowserHarnessOptions> = {},
+  overrides: Partial<McpAppBrowserHarnessOptions> = {}
 ): McpAppBrowserHarness & { calls: Array<{ name: string }> } {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const callTool = vi.fn(
     async (_serverId: string, name: string, args: Record<string, unknown>) => {
       calls.push({ name, args });
       return { content: [{ type: "text", text: "ok" }] };
-    },
+    }
   );
   const h = new McpAppBrowserHarness({
     callTool,
@@ -133,7 +134,7 @@ describe("McpAppBrowserHarness — render classification", () => {
     expect(obs.status).toBe("rendered");
     expect(obs.bridgeInitialized).toBe(true);
     expect(obs.screenshotBase64 && obs.screenshotBase64.length).toBeGreaterThan(
-      0,
+      0
     );
     // screenshot within the byte budget (256 KiB default).
     const bytes = Buffer.from(obs.screenshotBase64!, "base64").byteLength;
@@ -233,10 +234,13 @@ describe("McpAppBrowserHarness — interaction", () => {
     });
 
     expect(result.widgetToolCalls.length).toBe(1);
-    expect(result.widgetToolCalls[0]).toMatchObject({ name: "reserve", ok: true });
-    expect(result.screenshotBase64 && result.screenshotBase64.length).toBeGreaterThan(
-      0,
-    );
+    expect(result.widgetToolCalls[0]).toMatchObject({
+      name: "reserve",
+      ok: true,
+    });
+    expect(
+      result.screenshotBase64 && result.screenshotBase64.length
+    ).toBeGreaterThan(0);
     // dispatched through the injected callTool with the widget's serverId.
     expect(h.calls).toEqual([{ name: "reserve", args: { seat: 12 } }]);
   }, 30_000);
@@ -329,4 +333,151 @@ describe("McpAppBrowserHarness — interaction", () => {
     });
     expect(third.note).toBe("no_rendered_widget");
   }, 30_000);
+});
+
+describe("cspSourceMatchesUrl — CSP host-source matching", () => {
+  const u = (s: string) => new URL(s);
+
+  it("matches exact origins and rejects scheme/host mismatches", () => {
+    expect(
+      cspSourceMatchesUrl("https://esm.sh", u("https://esm.sh/react"))
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl("https://esm.sh", u("http://esm.sh/react"))
+    ).toBe(false);
+    expect(
+      cspSourceMatchesUrl("https://esm.sh", u("https://evil.sh/react"))
+    ).toBe(false);
+  });
+
+  it("matches wildcard subdomains but not the bare apex", () => {
+    const src = "https://*.excalidraw.com";
+    expect(
+      cspSourceMatchesUrl(src, u("https://cdn.excalidraw.com/a.woff2"))
+    ).toBe(true);
+    expect(cspSourceMatchesUrl(src, u("https://a.b.excalidraw.com/x"))).toBe(
+      true
+    );
+    expect(cspSourceMatchesUrl(src, u("https://excalidraw.com/x"))).toBe(false);
+    expect(cspSourceMatchesUrl(src, u("https://notexcalidraw.com/x"))).toBe(
+      false
+    );
+  });
+
+  it("scheme-less host-sources match http(s)/ws(s) on that host only", () => {
+    expect(cspSourceMatchesUrl("esm.sh", u("https://esm.sh/x"))).toBe(true);
+    expect(cspSourceMatchesUrl("esm.sh", u("http://esm.sh/x"))).toBe(true);
+    expect(cspSourceMatchesUrl("esm.sh", u("wss://esm.sh/socket"))).toBe(true);
+    expect(cspSourceMatchesUrl("esm.sh", u("ftp://esm.sh/x"))).toBe(false);
+    expect(cspSourceMatchesUrl("esm.sh", u("https://other.sh/x"))).toBe(false);
+  });
+
+  it("scheme-only sources allow any host on that scheme", () => {
+    expect(cspSourceMatchesUrl("https:", u("https://anything.example/x"))).toBe(
+      true
+    );
+    expect(cspSourceMatchesUrl("https:", u("http://anything.example/x"))).toBe(
+      false
+    );
+  });
+
+  it("honors ports (explicit, wildcard, and scheme defaults)", () => {
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:8443", u("https://cdn.x.io:8443/a"))
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:8443", u("https://cdn.x.io/a"))
+    ).toBe(false);
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:443", u("https://cdn.x.io/a"))
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:*", u("https://cdn.x.io:9999/a"))
+    ).toBe(true);
+  });
+
+  it("ignores paths in host-sources (origin-granular gate)", () => {
+    expect(
+      cspSourceMatchesUrl(
+        "https://cdn.x.io/assets/",
+        u("https://cdn.x.io/other/file.js")
+      )
+    ).toBe(true);
+  });
+
+  it("never matches quoted keywords or empty sources", () => {
+    expect(cspSourceMatchesUrl("'self'", u("https://esm.sh/x"))).toBe(false);
+    expect(cspSourceMatchesUrl("'unsafe-inline'", u("https://esm.sh/x"))).toBe(
+      false
+    );
+    expect(cspSourceMatchesUrl("", u("https://esm.sh/x"))).toBe(false);
+  });
+});
+
+describe("McpAppBrowserHarness — widget-declared network policy", () => {
+  // Guest that handshakes, paints, and probes two origins. `.invalid` is a
+  // reserved TLD (RFC 2606): the allowed probe fails DNS (a net error, fine)
+  // while never leaving the machine; only the GATE-aborted probe must land in
+  // blockedRequests.
+  const FETCHING_GUEST_SRC = `
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-fetch", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const d = document.createElement("div");
+  d.textContent = "fetch fixture";
+  d.style.cssText = "font-size:32px;padding:40px";
+  document.body.appendChild(d);
+  fetch("https://allowed-cdn.invalid/app.js").catch(() => {});
+  fetch("https://blocked-cdn.invalid/app.js").catch(() => {});
+})();
+`;
+
+  let fetchingHtml = "";
+  beforeAll(async () => {
+    fetchingHtml = guestHtml(await bundleGuest(FETCHING_GUEST_SRC));
+  }, 60_000);
+
+  it("lets declared CSP origins through the gate and blocks the rest", async () => {
+    const h = makeHarness();
+    const obs = await h.renderWidget({
+      toolCallId: "csp-1",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: fetchingHtml,
+      cspMeta: { resource_domains: ["https://allowed-cdn.invalid"] },
+    });
+    expect(obs.status).toBe("rendered");
+    const blocked = obs.blockedRequests ?? [];
+    expect(blocked.some((u) => u.includes("blocked-cdn.invalid"))).toBe(true);
+    expect(blocked.some((u) => u.includes("allowed-cdn.invalid"))).toBe(false);
+  }, 30_000);
+
+  it("resets the allowlist per widget: undeclared next widget is blocked again", async () => {
+    const h = makeHarness();
+    const first = await h.renderWidget({
+      toolCallId: "csp-2a",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: fetchingHtml,
+      cspMeta: { connect_domains: ["https://allowed-cdn.invalid"] },
+    });
+    expect(
+      (first.blockedRequests ?? []).some((u) =>
+        u.includes("allowed-cdn.invalid")
+      )
+    ).toBe(false);
+
+    // Same harness, same fetches — but THIS widget declares nothing.
+    const second = await h.renderWidget({
+      toolCallId: "csp-2b",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: fetchingHtml,
+    });
+    expect(second.status).toBe("rendered");
+    const blocked = second.blockedRequests ?? [];
+    expect(blocked.some((u) => u.includes("allowed-cdn.invalid"))).toBe(true);
+    expect(blocked.some((u) => u.includes("blocked-cdn.invalid"))).toBe(true);
+  }, 45_000);
 });
