@@ -396,6 +396,40 @@ describe("resolveExecutionContext — builtInToolIds", () => {
 
     expect(result.builtInToolIds).toBeUndefined();
   });
+
+  it("does NOT report drift for array fields with equal contents", () => {
+    // Arrays arrive as fresh allocations on every request — drift must
+    // compare values, not references.
+    const result = resolveExecutionContext({
+      hostConfig: {
+        builtInToolIds: ["web_search"],
+        selectedServerIds: ["srv-1"],
+      },
+      overrides: {
+        builtInToolIds: ["web_search"],
+        selectedServerIds: ["srv-1"],
+      },
+      precedence: "host-wins",
+    });
+
+    expect(result.drift).toEqual([]);
+  });
+
+  it("reports drift for array fields with differing contents", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: [] },
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.drift).toEqual([
+      {
+        field: "builtInToolIds",
+        overrideValue: ["web_search"],
+        hostValue: [],
+      },
+    ]);
+  });
 });
 
 describe("resolveExecutionContext — hostPolicy passthrough", () => {

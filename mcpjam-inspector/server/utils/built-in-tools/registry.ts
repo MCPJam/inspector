@@ -35,7 +35,10 @@ export interface BuiltInToolContext {
 }
 
 function normalizeAuthHeader(raw: string): string {
-  return raw.startsWith("Bearer ") ? raw : `Bearer ${raw}`;
+  // Scheme matching is case-insensitive per RFC 7235 — a client may send
+  // "bearer x"; prefixing that again would produce "Bearer bearer x".
+  const value = raw.trim();
+  return /^bearer\s/i.test(value) ? value : `Bearer ${value}`;
 }
 
 /**

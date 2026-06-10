@@ -50,6 +50,17 @@ describe("safeResolveBuiltInTools", () => {
     expect(safeResolveBuiltInTools(["not_a_tool"], ctx)).toBeUndefined();
   });
 
+  it("does not double-prefix a lowercase bearer scheme", () => {
+    // RFC 7235 schemes are case-insensitive; "bearer x" must pass through
+    // instead of becoming "Bearer bearer x".
+    const tools = resolveBuiltInTools([WEB_SEARCH_TOOL_NAME], {
+      authHeader: "bearer token-123",
+      projectId: "project-1",
+    });
+
+    expect(Object.keys(tools)).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
   it("resolves with auth context, raw bearer accepted", () => {
     // Eval threads `convexAuthToken` without the "Bearer " prefix; the
     // registry normalizes, so the same call shape works for both.
