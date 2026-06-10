@@ -47,7 +47,12 @@ export function ServerHistoryDriftChip({
 }: {
   projectId: string;
   serverId: string;
-  /** True while the History tab is the active tab — advances the baseline. */
+  /**
+   * True only while the modal is open AND History is the active tab —
+   * advances the "seen" baseline. Caller must gate on `isOpen` so a closed
+   * modal that lingers mounted (e.g. exit animation, or a future
+   * `forceMount`) can't silently advance the baseline.
+   */
   isViewing: boolean;
   onClick: () => void;
 }) {

@@ -620,7 +620,7 @@ export function ServerDetailModal({
                 <ServerHistoryDriftChip
                   projectId={projectId}
                   serverId={serverId}
-                  isViewing={activeTab === "history"}
+                  isViewing={isOpen && activeTab === "history"}
                   onClick={() => setActiveTab("history")}
                 />
               )}
