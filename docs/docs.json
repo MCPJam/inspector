@@ -163,7 +163,18 @@
         "tab": "API",
         "icon": "webhook",
         "tag": "Preview",
-        "pages": ["reference/public-api", "reference/api-keys"]
+        "groups": [
+          {
+            "group": "API Guides",
+            "icon": "map",
+            "pages": ["reference/public-api", "reference/api-keys"]
+          },
+          {
+            "group": "Endpoints",
+            "icon": "braces",
+            "openapi": "reference/openapi.json"
+          }
+        ]
       }
     ],
     "global": {

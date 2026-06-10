@@ -165,6 +165,17 @@ export interface MCPJamToolResultEvent {
   /** May be undefined when the chunk lacks toolName (older Convex versions). */
   toolName: string | undefined;
   output: unknown;
+  /**
+   * Browser-rendered MCP App eval PR 14: the raw, unscrubbed implementation
+   * result the tool's `execute` returned (the `result:` extra
+   * `executeToolCallsFromMessages` stamps on the part for UI hydration).
+   * `output` above is the LLM-facing view — for MCP App tools that view is
+   * scrubbed of `_meta` / `structuredContent`, which the eval runner's widget
+   * render hook needs to feed the OpenAI-compat shim with full fidelity.
+   * Undefined for tools that don't carry the raw extra (e.g. `toModelOutput`
+   * tools, denial results).
+   */
+  rawResult?: unknown;
   /** `true` when the tool execution returned an error result (vs. an OK output). */
   isError: boolean;
   stepIndex: number;
@@ -314,8 +325,15 @@ export interface MCPJamHandlerOptions {
    * UI chunk and the `tool_result` trace event. Eval's backend stream
    * runner uses this to emit the `tool_result` SSE event. Chat /
    * synthetic omit.
+   *
+   * Browser-rendered MCP App eval PR 14: a returned promise is AWAITED
+   * before the engine proceeds to the next step. The eval runner's widget
+   * render hook relies on this ordering — the harness must have the widget
+   * mounted before the next step's `prepareAdvertisedTools` gate decides
+   * whether to advertise `computer` / `finish_widget`. Sync callbacks
+   * (chat / eval SSE emitters) are unaffected.
    */
-  onToolResult?: (event: MCPJamToolResultEvent) => void;
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>;
   /**
    * Engine consolidation PR 5b-pre — fires from `runChatEngineLoop`
    * after each `processOneStep` returns and the step counter
@@ -447,7 +465,7 @@ interface StepContext {
   // chunk-processing switch (onToolCall / onToolResult) and to the
   // step loop (onStepFinish). All optional.
   onToolCall?: (event: MCPJamToolCallEvent) => void;
-  onToolResult?: (event: MCPJamToolResultEvent) => void;
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>;
   onStepFinish?: (event: MCPJamStepFinishEvent) => void;
   // PR 5b-followup-2: structured-error callback. Fires at every site
   // that emits a writer `error` UI chunk (non-OK Convex response in
@@ -1193,7 +1211,7 @@ async function processStream(
  * Emit tool results to the client stream.
  * Called after tools have been executed locally.
  */
-function emitToolResults(
+async function emitToolResults(
   writer: StepContext["writer"],
   mcpClientManager: MCPClientManager,
   newMessages: ModelMessage[],
@@ -1202,9 +1220,10 @@ function emitToolResults(
   // PR 5b-pre: optional chunk-level callback so eval's backend stream
   // runner (PR 5b) can emit the `tool_result` SSE event. Chat /
   // synthetic don't supply this callback — the UI writer + trace event
-  // still fire unchanged.
-  onToolResult?: (event: MCPJamToolResultEvent) => void
-) {
+  // still fire unchanged. PR 14: a returned promise is awaited so the
+  // eval render hook completes before the engine's next step.
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>
+): Promise<void> {
   for (const msg of newMessages) {
     if (msg?.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
@@ -1275,10 +1294,14 @@ function emitToolResults(
             // PR 5a's adapter uses for its `tool_result` SSE event).
             if (onToolResult) {
               try {
-                onToolResult({
+                await onToolResult({
                   toolCallId: part.toolCallId,
                   toolName: toolName ?? part.toolName,
                   output: outputForUi,
+                  // PR 14: raw implementation result (unscrubbed) for the
+                  // eval widget render hook; absent on parts without the
+                  // `result:` UI-hydration extra.
+                  rawResult: (part as { result?: unknown }).result,
                   isError: part.output?.type === "error-text",
                   stepIndex,
                   promptIndex: traceTurn.promptIndex,
@@ -1398,7 +1421,7 @@ async function handlePendingApprovals(
   abortSignal?: AbortSignal,
   // PR 5b-pre: propagate the chunk-level callbacks so denial /
   // resumed-approval / approved-tool-result emissions all fire them.
-  onToolResult?: (event: MCPJamToolResultEvent) => void,
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>,
   // PR 5b-pre review fix (Cursor Medium): resumed-approval branch
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
@@ -1510,7 +1533,7 @@ async function handlePendingApprovals(
         // denied tools on resumed approval turns.
         if (onToolResult) {
           try {
-            onToolResult({
+            await onToolResult({
               toolCallId,
               toolName,
               output: {
@@ -1629,7 +1652,7 @@ async function handlePendingApprovals(
       ...(abortSignal ? { abortSignal } : {}),
     });
 
-    emitToolResults(
+    await emitToolResults(
       writer,
       mcpClientManager,
       newMessages,
@@ -1685,12 +1708,33 @@ async function processOneStep(
   // Pick the active tool subset for this step. In non-progressive mode
   // (`progressivePlan` undefined or plan.enabled === false) this collapses
   // to the full list and matches prior behavior. In progressive mode the
-  // model only sees meta-tools + loaded + pending-approval + newly-loaded.
+  // model only sees meta-tools + loaded + pending-approval + newly-loaded —
+  // PLUS tools injected into the map after the catalog was built (e.g. the
+  // eval Computer Use tools, PR 14): they have no catalog toolId, so
+  // `load_mcp_tools` can never activate them and dropping them here would
+  // make them permanently invisible. Their per-step visibility stays
+  // governed by `prepareAdvertisedTools` below (parity with
+  // direct-chat-turn's `withInjectedTools`).
   let activeToolDefs: ToolDefinition[] =
     progressivePlan && progressivePlan.enabled && discoveryState
-      ? resolveActiveToolNames(progressivePlan, discoveryState)
-          .map((name) => toolDefsByName.get(name))
-          .filter((def): def is ToolDefinition => def !== undefined)
+      ? (() => {
+          const activeNames = resolveActiveToolNames(
+            progressivePlan,
+            discoveryState
+          );
+          const cataloged = new Set(
+            progressivePlan.catalog.map((entry) => entry.modelName)
+          );
+          const seen = new Set(activeNames);
+          for (const def of toolDefs) {
+            if (!cataloged.has(def.name) && !seen.has(def.name)) {
+              activeNames.push(def.name);
+            }
+          }
+          return activeNames
+            .map((name) => toolDefsByName.get(name))
+            .filter((def): def is ToolDefinition => def !== undefined);
+        })()
       : toolDefs;
 
   // Browser-rendered MCP App eval PR 2: runtime-conditional advertised-tool
@@ -2026,7 +2070,7 @@ async function processOneStep(
           messageHistory.splice(idx + 1, 0, denialMsg);
           denialMessages.push(denialMsg);
         }
-        emitToolResults(
+        await emitToolResults(
           writer,
           mcpClientManager,
           denialMessages,
@@ -2068,7 +2112,7 @@ async function processOneStep(
         ...(abortSignal ? { abortSignal } : {}),
       });
       if (metaMessages.length > 0) {
-        emitToolResults(
+        await emitToolResults(
           writer,
           mcpClientManager,
           metaMessages,
@@ -2235,7 +2279,7 @@ async function processOneStep(
       );
 
       // Emit results for newly executed tools
-      emitToolResults(
+      await emitToolResults(
         writer,
         mcpClientManager,
         newMessages,

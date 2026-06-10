@@ -1,0 +1,793 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MCPJam API",
+    "version": "1.0.0-preview",
+    "description": "Programmatic access to live MCP server diagnostics — validate, inspect, and export servers saved in your MCPJam projects.\n\n**The API is in preview**: the surface may change while we finish the design. Error `code` values are stable; error `message` strings are not. Write clients that ignore unknown response fields.",
+    "contact": {
+      "name": "MCPJam",
+      "url": "https://github.com/MCPJam/inspector/issues"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://app.mcpjam.com/api/v1",
+      "description": "Hosted MCPJam"
+    }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "tags": [
+    {
+      "name": "Server diagnostics",
+      "description": "Connect-level health checks against a saved MCP server."
+    },
+    {
+      "name": "Primitives",
+      "description": "The server's MCP primitives: tools, prompts, and resources."
+    },
+    {
+      "name": "Export",
+      "description": "Full-server snapshots for diffing and CI."
+    }
+  ],
+  "paths": {
+    "/projects/{projectId}/servers/{serverId}/validate": {
+      "post": {
+        "operationId": "validateServer",
+        "tags": ["Server diagnostics"],
+        "summary": "Validate a server",
+        "description": "Connects to the server, initializes the MCP session, and returns a connection snapshot (server info, negotiated capabilities). The same check the hosted inspector runs when you connect a server.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "Server connected and initialized.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ValidateResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/doctor": {
+      "post": {
+        "operationId": "runDoctor",
+        "tags": ["Server diagnostics"],
+        "summary": "Run the doctor",
+        "description": "Runs the full doctor workflow — probe → connect → initialize → capabilities → primitives — and returns a step-by-step report. The richest signal for \"is this server healthy, and why not.\"",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "Doctor report. `status` summarizes the outcome; per-step detail is in `checks`.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DoctorReport" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/check-oauth": {
+      "post": {
+        "operationId": "checkOAuth",
+        "tags": ["Server diagnostics"],
+        "summary": "Check OAuth requirement",
+        "description": "Lightweight, no MCP connection: reports whether the server is configured to require an OAuth grant.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "OAuth requirement for the server.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CheckOAuthResult" },
+                "example": {
+                  "useOAuth": true,
+                  "serverUrl": "https://mcp.example.com/mcp"
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/tools": {
+      "post": {
+        "operationId": "listTools",
+        "tags": ["Primitives"],
+        "summary": "List tools",
+        "description": "Returns the server's tools as a collection page. Each item is the MCP tool definition (`name`, `description`, `inputSchema`, ...).",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/cursorBody" },
+        "responses": {
+          "200": {
+            "description": "One page of tools.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ToolPage" },
+                "example": {
+                  "items": [
+                    {
+                      "name": "create_issue",
+                      "description": "Create a new issue in the tracker",
+                      "inputSchema": {
+                        "type": "object",
+                        "properties": { "title": { "type": "string" } }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/FeatureNotSupported" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/prompts": {
+      "post": {
+        "operationId": "listPrompts",
+        "tags": ["Primitives"],
+        "summary": "List prompts",
+        "description": "Returns the server's prompts as a collection page.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/cursorBody" },
+        "responses": {
+          "200": {
+            "description": "One page of prompts.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PromptPage" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/FeatureNotSupported" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/resources": {
+      "post": {
+        "operationId": "listResources",
+        "tags": ["Primitives"],
+        "summary": "List resources",
+        "description": "Returns the server's resources as a collection page.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/cursorBody" },
+        "responses": {
+          "200": {
+            "description": "One page of resources.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ResourcePage" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/FeatureNotSupported" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/resources/read": {
+      "post": {
+        "operationId": "readResource",
+        "tags": ["Primitives"],
+        "summary": "Read a resource",
+        "description": "Reads a single resource by URI and returns its contents.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["uri"],
+                "properties": {
+                  "uri": {
+                    "type": "string",
+                    "description": "The resource URI, exactly as returned by the resources list.",
+                    "example": "file:///readme.md"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The resource contents.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ResourceContents" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/FeatureNotSupported" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/export": {
+      "post": {
+        "operationId": "exportServer",
+        "tags": ["Export"],
+        "summary": "Export a server snapshot",
+        "description": "Lists tools, resources, and prompts in one call and returns a single JSON snapshot — handy for diffing a server's surface over time in CI.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          { "$ref": "#/components/parameters/serverId" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
+        "responses": {
+          "200": {
+            "description": "Full server snapshot.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportSnapshot" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/ServerUnreachable" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "MCPJam API key (`sk_…`). Create one at [Settings → API keys](https://app.mcpjam.com/settings/api-keys). Guest sessions cannot use the API, and API keys cannot manage other API keys."
+      }
+    },
+    "parameters": {
+      "projectId": {
+        "name": "projectId",
+        "in": "path",
+        "required": true,
+        "description": "ID of the hosted project that contains the server.",
+        "schema": { "type": "string" }
+      },
+      "serverId": {
+        "name": "serverId",
+        "in": "path",
+        "required": true,
+        "description": "ID of the server inside the project.",
+        "schema": { "type": "string" }
+      }
+    },
+    "requestBodies": {
+      "emptyBody": {
+        "required": false,
+        "description": "Accepts an empty JSON object.",
+        "content": {
+          "application/json": {
+            "schema": { "type": "object", "properties": {} },
+            "example": {}
+          }
+        }
+      },
+      "cursorBody": {
+        "required": false,
+        "description": "Optional pagination cursor.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "cursor": {
+                  "type": "string",
+                  "description": "Opaque pagination cursor from a previous response's `nextCursor`. Don't parse it."
+                }
+              }
+            },
+            "example": {}
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable, machine-readable error code. New codes may be added over time; treat unknown codes as non-retryable failures unless the HTTP status says otherwise.",
+            "enum": [
+              "UNAUTHORIZED",
+              "FORBIDDEN",
+              "NOT_FOUND",
+              "VALIDATION_ERROR",
+              "RATE_LIMITED",
+              "FEATURE_NOT_SUPPORTED",
+              "SERVER_UNREACHABLE",
+              "TIMEOUT",
+              "OAUTH_REQUIRED",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable description. May change between releases — don't match on it."
+          },
+          "details": {
+            "type": "object",
+            "description": "Optional, unstructured context bag.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ValidateResult": {
+        "type": "object",
+        "required": ["success", "status"],
+        "properties": {
+          "success": { "type": "boolean", "const": true },
+          "status": { "type": "string", "const": "connected" },
+          "initInfo": {
+            "type": ["object", "null"],
+            "description": "MCP initialization snapshot: server info, negotiated protocol version, and capabilities. `null` if the server connected but initialization data was unavailable.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "DoctorReport": {
+        "type": "object",
+        "description": "Step-by-step health report from the probe → connect → initialize → capabilities workflow.",
+        "required": ["generatedAt", "status", "connection", "checks"],
+        "properties": {
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the report was generated."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ready", "oauth_required", "partial", "error"],
+            "description": "Overall outcome. `partial` means the server connected but some primitive listings failed."
+          },
+          "probe": {
+            "type": ["object", "null"],
+            "description": "Transport-level probe result (HTTP reachability, protocol hints), or `null` when skipped.",
+            "additionalProperties": true
+          },
+          "connection": {
+            "type": "object",
+            "required": ["status", "detail"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["connected", "error", "skipped"]
+              },
+              "detail": { "type": "string" }
+            }
+          },
+          "initInfo": {
+            "type": ["object", "null"],
+            "additionalProperties": true
+          },
+          "capabilities": {
+            "type": ["object", "null"],
+            "description": "The server's negotiated MCP capabilities.",
+            "additionalProperties": true
+          },
+          "tools": { "type": "array", "items": { "$ref": "#/components/schemas/Tool" } },
+          "resources": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Resource" }
+          },
+          "resourceTemplates": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "prompts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Prompt" }
+          },
+          "checks": {
+            "type": "object",
+            "description": "Per-step status. Each check is `{ status: ok | error | skipped, detail }`.",
+            "properties": {
+              "probe": { "$ref": "#/components/schemas/DoctorCheck" },
+              "connection": { "$ref": "#/components/schemas/DoctorCheck" },
+              "initialization": { "$ref": "#/components/schemas/DoctorCheck" },
+              "capabilities": { "$ref": "#/components/schemas/DoctorCheck" },
+              "tools": { "$ref": "#/components/schemas/DoctorCheck" },
+              "resources": { "$ref": "#/components/schemas/DoctorCheck" },
+              "resourceTemplates": { "$ref": "#/components/schemas/DoctorCheck" },
+              "prompts": { "$ref": "#/components/schemas/DoctorCheck" }
+            }
+          },
+          "error": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "required": ["code", "message"],
+                "properties": {
+                  "code": { "type": "string" },
+                  "message": { "type": "string" },
+                  "details": {}
+                }
+              }
+            ],
+            "description": "Terminal error, or `null` when the workflow completed."
+          }
+        },
+        "additionalProperties": true
+      },
+      "DoctorCheck": {
+        "type": "object",
+        "required": ["status", "detail"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "error", "skipped"] },
+          "detail": { "type": "string" }
+        }
+      },
+      "CheckOAuthResult": {
+        "type": "object",
+        "required": ["useOAuth", "serverUrl"],
+        "properties": {
+          "useOAuth": {
+            "type": "boolean",
+            "description": "Whether the server is configured to require an OAuth grant."
+          },
+          "serverUrl": {
+            "type": ["string", "null"],
+            "description": "The server's URL, or `null` for non-HTTP transports."
+          }
+        }
+      },
+      "Tool": {
+        "type": "object",
+        "description": "MCP tool definition, as returned by the server.",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "inputSchema": {
+            "type": "object",
+            "description": "JSON Schema for the tool's arguments.",
+            "additionalProperties": true
+          },
+          "outputSchema": {
+            "type": "object",
+            "description": "JSON Schema for the tool's structured output, when declared.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "Prompt": {
+        "type": "object",
+        "description": "MCP prompt definition, as returned by the server.",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "required": { "type": "boolean" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "Resource": {
+        "type": "object",
+        "description": "MCP resource descriptor, as returned by the server.",
+        "required": ["uri"],
+        "properties": {
+          "uri": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "mimeType": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "ResourceContents": {
+        "type": "object",
+        "description": "MCP read-resource result.",
+        "required": ["contents"],
+        "properties": {
+          "contents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["uri"],
+              "properties": {
+                "uri": { "type": "string" },
+                "mimeType": { "type": "string" },
+                "text": {
+                  "type": "string",
+                  "description": "Present for text resources."
+                },
+                "blob": {
+                  "type": "string",
+                  "description": "Base64-encoded payload, present for binary resources."
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "ToolPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Tool" }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque cursor for the next page. Omitted on the last page."
+          }
+        }
+      },
+      "PromptPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Prompt" }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque cursor for the next page. Omitted on the last page."
+          }
+        }
+      },
+      "ResourcePage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Resource" }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque cursor for the next page. Omitted on the last page."
+          }
+        }
+      },
+      "ExportSnapshot": {
+        "type": "object",
+        "required": ["serverId", "exportedAt", "tools", "resources", "prompts"],
+        "properties": {
+          "serverId": { "type": "string" },
+          "exportedAt": { "type": "string", "format": "date-time" },
+          "tools": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Tool" }
+          },
+          "resources": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Resource" }
+          },
+          "prompts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Prompt" }
+          }
+        }
+      }
+    },
+    "responses": {
+      "InternalError": {
+        "description": "Something failed on MCPJam's side.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "INTERNAL_ERROR",
+              "message": "Unexpected internal error"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Malformed body or parameters.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "VALIDATION_ERROR",
+              "message": "Invalid JSON body"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing, invalid, revoked, or orphaned key (`UNAUTHORIZED`) — or the **target MCP server** needs an OAuth grant (`OAUTH_REQUIRED`), which is a property of the server, not your key.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "examples": {
+              "badKey": {
+                "summary": "Invalid or revoked key",
+                "value": {
+                  "code": "UNAUTHORIZED",
+                  "message": "Invalid API key"
+                }
+              },
+              "oauthRequired": {
+                "summary": "Target server needs an OAuth grant",
+                "value": {
+                  "code": "OAUTH_REQUIRED",
+                  "message": "Server requires OAuth authorization"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Key is valid but not allowed to do this.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "FORBIDDEN",
+              "message": "You do not have access to this project"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Unknown project, server, or resource.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": { "code": "NOT_FOUND", "message": "Server not found" }
+          }
+        }
+      },
+      "FeatureNotSupported": {
+        "description": "The target server doesn't support this MCP capability.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "FEATURE_NOT_SUPPORTED",
+              "message": "Server does not support resources"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Per-key rate limit exceeded (60 requests/minute sustained, bursts up to 10). Honor `Retry-After` and back off with jitter.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": { "type": "integer" }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "RATE_LIMITED",
+              "message": "API key rate limit exceeded. Slow down and retry."
+            }
+          }
+        }
+      },
+      "ServerUnreachable": {
+        "description": "Could not connect to the target MCP server.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "SERVER_UNREACHABLE",
+              "message": "Failed to connect to server"
+            }
+          }
+        }
+      },
+      "Timeout": {
+        "description": "The target MCP server connected but didn't respond in time.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "TIMEOUT",
+              "message": "Request to server timed out"
+            }
+          }
+        }
+      }
+    }
+  }
+}

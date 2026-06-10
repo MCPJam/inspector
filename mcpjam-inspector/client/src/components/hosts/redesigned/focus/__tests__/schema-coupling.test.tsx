@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
+
+// BehaviorTab subscribes to the built-in tools catalog via Convex; stub it.
+vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
+  useBuiltInToolCatalog: () => [],
+}));
+
 import { BehaviorTab } from "../BehaviorTab";
 
 /**

@@ -3,12 +3,12 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Inspector rollup since the last release:\n\n- Public API v1: new Inspector Node `/api/v1` routes for live-MCP servers/tools/resources/prompts, with a production fix to mount `/api/v1` in the production server entry.\n- Evals: persist browser-rendered MCP App observations and steps in eval traces.\n- Evals: cap eval iterations against the org's billing entitlement and surface a billing-limit-reached signal end-to-end.\n- Billing: grace period for past-due/canceled orgs before access is gated.\n- Billing: limit users to 1 self-created organization.\n- Billing: rework the compare-plans table around credits and eval iterations; remove the team seat-minimum label and finish the Projects row.\n- Sidebar credit usage: clicking the progress bar now sends the user to billing.\n- Chatbox OAuth: attach the WorkOS bearer token on `/oauth/callback` to fix the 403 some users hit when finishing the chatbox auth flow.\n- OAuth: send `client_secret` on token exchange with static preregistered credentials.\n- Chatbox builder: removed the unused `allowGuestAccess` toggle.",
-      "id": "inspector-rollup-pre-soundcheck-deploy"
+      "summary": "Add `builtInToolIds` as a HostConfig v2 dimension. Host configs can now carry an opaque list of built-in tool catalog ids (a peer dimension to `serverIds`). The canonicalizer validates wire shape (array of non-empty strings), then dedupes and sorts; an absent or empty list is omitted from the canonical JSON, so every existing host config keeps a byte-identical `configHash`. IDs remain opaque to the SDK — existence and org-scope are enforced by the backend catalog, not an SDK enum.",
+      "id": "built-in-tool-ids-host-config"
     },
     {
       "releases": [
@@ -17,28 +17,20 @@
           "type": "minor"
         }
       ],
-      "summary": "`EvalReportingError` now exposes an `isBillingLimitReached` boolean, set when the inspector backend rejects an eval iteration because the org has hit its billing entitlement. Lets CLI/harness callers distinguish billing-limit failures from generic reporting errors without parsing error messages.",
-      "id": "sdk-eval-reporting-billing-limit"
+      "summary": "Add `computer` as a HostConfig v2 dimension. A host config can now declare a personal cloud workstation (the chat `bash` tool + a web terminal) via `computer?: null | { kind: \"personal\"; toolset: \"bash\"; workdir?: string }`. The canonicalizer collapses `null` and an absent value to the same \"no computer\" shape (key omitted), so every existing host config keeps a byte-identical `configHash`; it validates the `kind`/`toolset` literals, rejects unknown keys, and trims `workdir`. The field is stripped from the SDK→backend eval wire config, because a personal computer is mutable per-user state that an eval can't reproduce. Part of Project Computers (plan: mcpjam-backend `docs/project-computers.md`).",
+      "id": "project-computers-host-config"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.10.0",
-      "changesets": [
-        "inspector-rollup-pre-soundcheck-deploy"
-      ],
-      "newVersion": "2.10.1"
-    },
-    {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.13.0",
+      "oldVersion": "1.14.0",
       "changesets": [
-        "sdk-eval-reporting-billing-limit"
+        "built-in-tool-ids-host-config",
+        "project-computers-host-config"
       ],
-      "newVersion": "1.14.0"
+      "newVersion": "1.15.0"
     },
     {
       "name": "@mcpjam/mcp",

@@ -1050,6 +1050,124 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  // Browser-rendered MCP App eval PR 14: the hosted eval runner's widget
+  // render hook rides `onToolResult` and must complete BEFORE the next
+  // step's `prepareAdvertisedTools` gate reads the harness mount state.
+  it("awaits an async onToolResult before the next step's prepareAdvertisedTools, and exposes rawResult", async () => {
+    let fetchCall = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      fetchCall += 1;
+      if (fetchCall === 1) {
+        return createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-w1",
+            toolName: "show_widget",
+            input: { city: "lisbon" },
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]);
+      }
+      return createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    const rawWidgetResult = {
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: { seats: [1, 2, 3] },
+      _meta: { "mcpjam/widget": true },
+    };
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-w1",
+              toolName: "show_widget",
+              // LLM-facing output is the SCRUBBED view…
+              output: {
+                type: "json",
+                value: { content: [{ type: "text", text: "ok" }] },
+              },
+              // …while `result` carries the raw, unscrubbed payload the
+              // render hook needs.
+              result: rawWidgetResult,
+              serverId: "widget-server",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    // Simulates the eval runner's harness state: the render hook "mounts"
+    // the widget only after an async delay; the next step's gate must
+    // observe the mounted state (i.e. the engine awaited the callback).
+    let widgetMounted = false;
+    const seenRawResults: unknown[] = [];
+    const mountStateAtGateCall: Array<{
+      stepIndex: number;
+      mounted: boolean;
+    }> = [];
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Show me the widget" }] as any,
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "You are helpful",
+      tools: {
+        show_widget: {
+          _serverId: "widget-server",
+        },
+      } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({
+          show_widget: {},
+        }),
+      } as any,
+      prepareAdvertisedTools: ({ stepIndex, defaultToolNames }) => {
+        mountStateAtGateCall.push({ stepIndex, mounted: widgetMounted });
+        return defaultToolNames;
+      },
+      onToolResult: async (event) => {
+        seenRawResults.push(event.rawResult);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        widgetMounted = true;
+      },
+    });
+
+    await lastExecution;
+
+    // The raw (unscrubbed) result reached the callback.
+    expect(seenRawResults).toEqual([rawWidgetResult]);
+    // Step 0's gate ran before any render; step 1's gate ran AFTER the
+    // awaited async callback completed — ordering would break (mounted:
+    // false) if the engine fired the callback without awaiting it.
+    expect(mountStateAtGateCall).toEqual([
+      { stepIndex: 0, mounted: false },
+      { stepIndex: 1, mounted: true },
+    ]);
+  });
+
   describe("progressive discovery approval semantics", () => {
     // Minimal "plan enabled" — only the `enabled` flag is read on the
     // post-stream unresolved-tool detection + drain paths exercised here.

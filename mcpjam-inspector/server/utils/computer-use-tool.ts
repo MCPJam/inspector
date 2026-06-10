@@ -229,6 +229,84 @@ export interface BuildComputerUseToolsOptions {
     result: BrowserActionResult,
     context: { toolCallId: string },
   ) => void;
+  /**
+   * PR 14 (hosted-path Computer Use): emit the `computer` tool as a REGULAR
+   * AI SDK tool with an explicit JSON-serializable input schema instead of
+   * the Anthropic provider-native factory. The hosted backend paths
+   * serialize the tool map to flat `{name, description, inputSchema}` defs
+   * for the Convex `/stream` request (`serializeToolsForConvex`), and the
+   * provider-native tool's lazy schema serializes to an EMPTY object there —
+   * the model would see a `computer` tool it can't call. Wire format trades
+   * the provider beta header (OpenRouter exposes function tools only) for a
+   * faithful hand-rolled schema covering exactly the harness-supported
+   * action set. Local AI-SDK paths keep the default (provider-native).
+   */
+  wireFormat?: boolean;
+}
+
+/**
+ * Actions the wire-format `computer` tool advertises. Mirrors the Anthropic
+ * native action vocabulary restricted to what the harness implements (plus
+ * `triple_click`, which maps to the closest analogue) — advertising actions
+ * that silently degrade to screenshots (drag, hold_key, …) would mislead the
+ * model on a function-tool surface that lacks the native harness prompt.
+ */
+const WIRE_FORMAT_ACTIONS = [
+  "screenshot",
+  "left_click",
+  "double_click",
+  "triple_click",
+  "right_click",
+  "mouse_move",
+  "type",
+  "key",
+  "scroll",
+  "wait",
+] as const;
+
+function buildWireFormatComputerInputSchema(viewport: {
+  width: number;
+  height: number;
+}) {
+  return z.object({
+    action: z
+      .enum(WIRE_FORMAT_ACTIONS)
+      .describe(
+        "The action to perform on the rendered widget. Take a screenshot " +
+          "first to see the current state before clicking or typing.",
+      ),
+    coordinate: z
+      .array(z.number().int().min(0))
+      .min(2)
+      .max(2)
+      .optional()
+      .describe(
+        `[x, y] pixel coordinate for click / mouse_move / scroll actions. ` +
+          `x is in [0, ${viewport.width}), y is in [0, ${viewport.height}).`,
+      ),
+    text: z
+      .string()
+      .optional()
+      .describe(
+        "Text to type (for `type`), or the key / key-combination to press " +
+          "(for `key`, e.g. 'Return', 'Tab', 'ctrl+a').",
+      ),
+    duration: z
+      .number()
+      .min(0)
+      .optional()
+      .describe("Seconds to pause (for `wait`)."),
+    scroll_amount: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Number of scroll wheel clicks (for `scroll`)."),
+    scroll_direction: z
+      .enum(["up", "down", "left", "right"])
+      .optional()
+      .describe("Direction to scroll (for `scroll`)."),
+  });
 }
 
 /**
@@ -285,8 +363,33 @@ export function buildComputerUseTools(
     toModelOutput,
   };
 
-  const computer =
-    opts.version === "20251124"
+  // Wire format (hosted backend paths): a regular function tool with an
+  // explicit, JSON-serializable schema. Same execute / toModelOutput
+  // implementation — only the model-facing surface differs (function tool
+  // vs. provider-native tool type + beta header). Built as an object literal
+  // rather than via `tool()`: the helper is a pure inference identity, and
+  // its overloads can't unify the zod-v4 schema with `toModelOutput`'s
+  // output type. The consumers are duck-typed (`serializeToolsForConvex`
+  // reads `inputSchema`, `executeToolCallsFromMessages` reads `execute` /
+  // `toModelOutput`), so the literal is a first-class tool.
+  const computer = opts.wireFormat
+    ? ({
+        description:
+          `A virtual ${viewport.width}x${viewport.height} browser viewport ` +
+          "showing the currently rendered MCP App widget. Use it to look at " +
+          "the widget (screenshot) and interact with it (click, type, " +
+          "scroll). Coordinates are pixels with (0, 0) at the top-left. " +
+          "Always take a screenshot first to see the widget before " +
+          "interacting, and after each action to verify its effect. When " +
+          "you are done interacting with the widget, call `finish_widget`.",
+        inputSchema: buildWireFormatComputerInputSchema(viewport),
+        // The wire schema types `coordinate` as number[] (tuple constraints
+        // ride as minItems/maxItems so the JSON round-trips through the
+        // backend's schema reconstruction); the impl type narrows it.
+        execute: (input: ComputerActionInput) => execute(input),
+        toModelOutput,
+      } as unknown as ToolSet[string])
+    : opts.version === "20251124"
       ? anthropic.tools.computer_20251124(factoryArgs)
       : anthropic.tools.computer_20250124(factoryArgs);
 
