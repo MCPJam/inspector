@@ -102,7 +102,9 @@ describe("Host — public surface", () => {
       .requireServer("srv_a")
       .setServerOverride("srv_a", { requestTimeout: Infinity });
 
-    expect(() => host.toJSON()).toThrow(/requestTimeoutOverride must be finite/);
+    expect(() => host.toJSON()).toThrow(
+      /requestTimeoutOverride must be finite/
+    );
   });
 
   it("throws if `style` is not set (no silent SDK default)", () => {
@@ -208,18 +210,20 @@ describe("Host — mutation helpers", () => {
     expect(host.toJSON().mcp).toBeUndefined();
   });
 
-  it("setComputer attaches the MVP shape by default; null detaches", () => {
+  it("setComputer attaches the resource shape by default; null detaches", () => {
     const host = new Host({
       style: "mcpjam",
       model: "test-model",
     }).setComputer();
-    expect(host.toJSON().computer).toEqual({
-      kind: "personal",
-      toolset: "bash",
-    });
+    expect(host.toJSON().computer).toEqual({ kind: "personal" });
 
-    host.setComputer({ kind: "personal", toolset: "bash", workdir: "/srv" });
+    host.setComputer({ kind: "personal", workdir: "/srv" });
     expect(host.toJSON().computer?.workdir).toBe("/srv");
+
+    // Legacy input (original MVP shape) still accepted; toolset is dropped
+    // at projection — capabilities ride builtInToolIds now.
+    host.setComputer({ kind: "personal", toolset: "bash" });
+    expect(host.toJSON().computer).toEqual({ kind: "personal" });
 
     host.setComputer(null);
     expect(host.toJSON().computer).toBeUndefined();
@@ -241,7 +245,7 @@ describe("Host — toJSON() round-trips", () => {
     expect(rebuilt.toJSON()).toEqual(json1);
   });
 
-  it("round-trips a computer (workdir normalized at the first toJSON)", () => {
+  it("round-trips a computer (workdir normalized, legacy toolset dropped at the first toJSON)", () => {
     const host = new Host({
       style: "mcpjam",
       model: "test-model",
@@ -250,7 +254,6 @@ describe("Host — toJSON() round-trips", () => {
     const json1 = host.toJSON();
     expect(json1.computer).toEqual({
       kind: "personal",
-      toolset: "bash",
       workdir: "/home/u",
     });
     expect(new Host(json1).toJSON()).toEqual(json1);

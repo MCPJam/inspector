@@ -1,12 +1,12 @@
 /**
  * `bash` built-in tool — Project Computers data plane (chat surface).
  *
- * Advertised for a turn only when the chatbox's pinned host config carries
- * `computer: { kind: "personal", toolset: "bash" }` AND the acting user is a
- * signed-in member (guests never see it; the runtime-config payload already
- * omits `computer` for guest actors). Same construction pattern as
- * `exa-web-search.ts`: the inspector defines the tool shape; authorization
- * and durable state live in Convex.
+ * `bash` is a computer-backed CATALOG id: it's advertised for a turn only
+ * when the host's `builtInToolIds` carries `"bash"` AND the host attaches a
+ * `computer` resource AND the acting user is a signed-in member — all three
+ * gates live in `registry.ts`'s `resolveHostTools`, the single construction
+ * path for host tools. Same shape pattern as `exa-web-search.ts`: the
+ * inspector defines the tool; authorization and durable state live in Convex.
  *
  * Execute flow (see mcpjam-backend docs/project-computers.md):
  *   1. `ensureComputerReady` — POST /computers/reserve with the user's bearer
