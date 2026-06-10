@@ -139,7 +139,7 @@ export function ServerHistoryContent({
                   projectId={projectId}
                   serverId={serverId}
                   revisionNumber={rev.revisionNumber}
-                  hasPrev={!!prev}
+                  hasPrev={rev.revisionNumber > 1}
                 />
               </div>
             )}
