@@ -24,7 +24,7 @@
 
 import { existsSync } from "fs";
 import type { Browser, BrowserContext, Page } from "playwright";
-import { buildCspHeader, buildCspMetaContent } from "./widget-helpers";
+import { buildSandboxProxyWidgetCsp } from "./sandbox-proxy-csp";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
 
 /* ------------------------------------------------------------------ *
@@ -149,11 +149,11 @@ export interface RenderWidgetInput {
    * Widget-declared CSP (normalized from the UI resource's `_meta.ui.csp` /
    * legacy `_meta["openai/widgetCSP"]`, same shape as the SDK's
    * `WidgetCspMeta`). Enforced two ways for this widget's mount lifetime: the
-   * harness injects the `widget-declared` policy as an in-iframe `<meta>` CSP
-   * (directive-precise — fetch vs script/font/img vs frame — exactly as the
-   * production sandbox proxy does), and the network route additionally treats
-   * these origins as a coarse "may egress" allowlist. Omitted/empty yields the
-   * SEP restrictive default (self + data:/blob: + loopback).
+   * harness injects the production sandbox proxy's exact widget-declared policy
+   * as an in-iframe `<meta>` CSP (directive-precise — fetch vs script/font/img
+   * vs frame; see {@link buildSandboxProxyWidgetCsp}), and the network route
+   * additionally treats these origins as a coarse "may egress" allowlist.
+   * Omitted/empty yields the SEP restrictive default (`default-src 'none'`).
    */
   cspMeta?: {
     connect_domains?: string[];
@@ -578,17 +578,16 @@ export class McpAppBrowserHarness {
       ...(input.cspMeta?.frame_domains ?? []),
     ];
 
-    // Enforce the widget's declared CSP IN the iframe, the same way the sandbox
-    // proxy does in production: build the `widget-declared` policy from the
-    // resource's CSP metadata and inject it as a <meta http-equiv> before mount.
-    // The browser then applies real directive semantics — e.g. a `fetch()` only
-    // succeeds to a `connect_domains` origin, a script/font/img only to a
-    // `resource_domains` origin. With no declared CSP this yields the SEP
-    // restrictive default (self + data:/blob: + loopback), so undeclared widgets
-    // run policed rather than open.
-    const cspContent = buildCspMetaContent(
-      buildCspHeader("widget-declared", input.cspMeta).headerString
-    );
+    // Enforce the widget's declared CSP IN the iframe with the SAME policy the
+    // production sandbox proxy injects (see sandbox-proxy-csp.ts, pinned to
+    // sandbox-proxy.html by a parity test). A more permissive policy would make
+    // render observations false positives — a widget needing eval()/<object>/
+    // base-uri or 'self' egress could "render" here yet be blocked by the real
+    // sandbox. The browser then applies real directive semantics: a `fetch()`
+    // only reaches a `connect_domains` origin, a script/font/img only a
+    // `resource_domains` origin; an undeclared widget gets the SEP restrictive
+    // default (`default-src 'none'`) instead of running open.
+    const cspContent = buildSandboxProxyWidgetCsp(input.cspMeta);
     const policedHtml = injectCspMeta(input.html, cspContent);
 
     let pageResult: {
