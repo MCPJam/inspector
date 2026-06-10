@@ -24,7 +24,10 @@
 
 import { existsSync } from "fs";
 import type { Browser, BrowserContext, Page } from "playwright";
-import { buildSandboxProxyWidgetCsp } from "./sandbox-proxy-csp";
+import {
+  buildSandboxProxyWidgetCsp,
+  sanitizeProxyDomain,
+} from "./sandbox-proxy-csp";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
 
 /* ------------------------------------------------------------------ *
@@ -576,7 +579,9 @@ export class McpAppBrowserHarness {
       ...(input.cspMeta?.connect_domains ?? []),
       ...(input.cspMeta?.resource_domains ?? []),
       ...(input.cspMeta?.frame_domains ?? []),
-    ];
+    ]
+      .map(sanitizeProxyDomain)
+      .filter(Boolean);
 
     // Enforce the widget's declared CSP IN the iframe with the SAME policy the
     // production sandbox proxy injects (see sandbox-proxy-csp.ts, pinned to
@@ -876,9 +881,15 @@ export class McpAppBrowserHarness {
         .catch(() => {});
     }
     this.mounted.delete(toolCallId);
-    // The widget is gone; its network allowances go with it (fail closed for
-    // any straggling in-flight or leaked requests).
-    this.widgetCspSources = [];
+    // Only drop network allowances once NO widget remains mounted. Clearing
+    // them whenever unmount runs — even for a stale tool-call id that was never
+    // (or is no longer) the live mount — would strip the CURRENT widget's
+    // declared origins out from under it, so its in-flight/subsequent
+    // subresource fetches abort at the route gate (net::ERR_FAILED) until
+    // teardown. Fail closed only when the page truly has no live widget.
+    if (this.mounted.size === 0) {
+      this.widgetCspSources = [];
+    }
   }
 
   async dispose(): Promise<void> {

@@ -41,17 +41,36 @@ function directive(name: string, tokens: string[]): string {
 }
 
 /**
+ * Strip characters that could break out of a CSP directive or the HTML
+ * attribute it is injected into — an exact mirror of `sanitizeDomain` in
+ * `sandbox-proxy.html`. Crucially this removes `;`: an unsanitized declared
+ * origin like `https://x; connect-src *` would otherwise inject a second,
+ * more-permissive directive (the upstream `normalizeWidgetCspMeta` does NOT
+ * strip these). Applied to every domain so the harness can never end up more
+ * permissive than production for malformed metadata.
+ */
+export function sanitizeProxyDomain(domain: string): string {
+  if (typeof domain !== "string") return "";
+  return domain.replace(/['"<>;]/g, "").trim();
+}
+
+/**
  * Build the widget-declared CSP string the production sandbox proxy injects for
- * a widget with this declared CSP metadata. Domains are assumed already
- * normalized (the harness receives them via `normalizeWidgetCspMeta`), matching
- * the proxy's `sanitizeDomain` for well-formed origins.
+ * a widget with this declared CSP metadata. Each domain is run through
+ * {@link sanitizeProxyDomain} exactly as the proxy does at build time.
  */
 export function buildSandboxProxyWidgetCsp(
   cspMeta?: WidgetCspMeta | null
 ): string {
-  const connect = cspMeta?.connect_domains ?? [];
-  const resource = cspMeta?.resource_domains ?? [];
-  const frame = cspMeta?.frame_domains ?? [];
+  const connect = (cspMeta?.connect_domains ?? [])
+    .map(sanitizeProxyDomain)
+    .filter(Boolean);
+  const resource = (cspMeta?.resource_domains ?? [])
+    .map(sanitizeProxyDomain)
+    .filter(Boolean);
+  const frame = (cspMeta?.frame_domains ?? [])
+    .map(sanitizeProxyDomain)
+    .filter(Boolean);
 
   // data:/blob: are always allowed for inline content; declared resource
   // domains add to them. No forced CDNs and no 'self' (SEP-1865).

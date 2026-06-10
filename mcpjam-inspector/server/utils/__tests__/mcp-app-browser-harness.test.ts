@@ -336,6 +336,37 @@ describe("McpAppBrowserHarness — interaction", () => {
   }, 30_000);
 });
 
+describe("McpAppBrowserHarness — unmount network-allowance lifecycle", () => {
+  const sourcesOf = (h: McpAppBrowserHarness) =>
+    (h as unknown as { widgetCspSources: string[] }).widgetCspSources;
+
+  it("keeps the live widget's declared origins when a STALE tool-call is dismissed", async () => {
+    const h = makeHarness();
+    await h.renderWidget({
+      toolCallId: "live-1",
+      toolName: "show",
+      serverId: "srv",
+      html: buttonHtml,
+      cspMeta: { connect_domains: ["https://api.allowed.invalid"] },
+      keepMounted: true,
+    });
+    expect(h.getMountedWidgetId()).toBe("live-1");
+    expect(sourcesOf(h)).toContain("https://api.allowed.invalid");
+
+    // Dismissing a tool-call that is NOT the live mount (e.g. a carried id that
+    // was already replaced) must not strip the current widget's allowances —
+    // otherwise its subsequent subresource fetches abort at the route gate.
+    await h.dismissWidget("stale-never-mounted");
+    expect(h.getMountedWidgetId()).toBe("live-1");
+    expect(sourcesOf(h)).toContain("https://api.allowed.invalid");
+
+    // Dismissing the actual live widget DOES clear them (fail closed).
+    await h.dismissWidget("live-1");
+    expect(h.getMountedWidgetId()).toBeNull();
+    expect(sourcesOf(h)).toEqual([]);
+  }, 30_000);
+});
+
 describe("cspSourceMatchesUrl — CSP host-source matching", () => {
   const u = (s: string) => new URL(s);
 

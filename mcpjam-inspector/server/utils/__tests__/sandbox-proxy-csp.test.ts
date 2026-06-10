@@ -84,6 +84,20 @@ describe("buildSandboxProxyWidgetCsp — parity with sandbox-proxy.html", () => 
         frame_domains: ["https://embed.example.com"],
       },
     ],
+    // Malformed/adversarial metadata must sanitize identically to the proxy.
+    [
+      "domain attempting CSP directive injection",
+      { connect_domains: ["https://x; script-src 'unsafe-eval'"] },
+    ],
+    [
+      "domain with attribute-breaking chars",
+      {
+        resource_domains: [
+          'https://cdn.example.com"><s',
+          "https://ok.example.com",
+        ],
+      },
+    ],
   ];
 
   it.each(cases)(
@@ -111,6 +125,19 @@ describe("buildSandboxProxyWidgetCsp — parity with sandbox-proxy.html", () => 
     );
     // connect is scoped to declared origins only.
     expect(csp).toContain("connect-src https://api.example.com");
+  });
+
+  it("strips CSP-breaking chars from domains so they can't inject a directive", () => {
+    // Without sanitization, the ';' would start a real `script-src 'unsafe-eval'`
+    // directive — re-enabling eval and producing a false-positive render.
+    const csp = buildSandboxProxyWidgetCsp({
+      connect_domains: ["https://x; script-src 'unsafe-eval'"],
+    });
+    expect(csp).not.toContain("'unsafe-eval'"); // quotes stripped → not the keyword
+    // Exactly the 10-directive set: no extra ';' leaked from the domain.
+    expect(csp.split(";")).toHaveLength(10);
+    // The sanitized remnants stay INSIDE connect-src, not as their own directive.
+    expect(csp).toContain("connect-src https://x script-src unsafe-eval");
   });
 
   it("falls back to 'none' for every undeclared directive (but keeps inline + data/blob)", () => {
