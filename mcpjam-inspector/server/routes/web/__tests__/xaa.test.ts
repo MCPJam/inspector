@@ -51,6 +51,67 @@ describe("web xaa routes", () => {
     expect(discoveryBody.issuer).toBe("https://www.mcpjam.com/api/web/xaa");
   });
 
+  it("reconstructs an https issuer from X-Forwarded-Proto, ignoring X-Forwarded-Host", async () => {
+    // Behind a TLS-terminating proxy the internal request is http://; only the
+    // scheme is taken from X-Forwarded-Proto. The host comes from the request's
+    // Host header (here app.mcpjam.com), NOT from X-Forwarded-Host, which an
+    // attacker could spoof to forge the issuer/jwks_uri.
+    const discoveryResponse = await app.request(
+      "http://app.mcpjam.com/api/web/xaa/.well-known/openid-configuration",
+      {
+        headers: {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "evil.example.com",
+        },
+      },
+    );
+
+    expect(discoveryResponse.status).toBe(200);
+    const discoveryBody = await discoveryResponse.json();
+    expect(discoveryBody.issuer).toBe("https://app.mcpjam.com/api/web/xaa");
+    expect(discoveryBody.jwks_uri).toBe(
+      "https://app.mcpjam.com/api/web/xaa/.well-known/jwks.json",
+    );
+  });
+
+  it("signs the ID-JAG iss with the forwarded https scheme and validated host", async () => {
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: "Bearer workos-token",
+      "x-forwarded-proto": "https",
+      "x-forwarded-host": "evil.example.com",
+    };
+
+    const authenticateResponse = await app.request(
+      "http://app.mcpjam.com/api/web/xaa/authenticate",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ userId: "user-12345" }),
+      },
+    );
+    const authenticateBody = await authenticateResponse.json();
+
+    const tokenExchangeResponse = await app.request(
+      "http://app.mcpjam.com/api/web/xaa/token-exchange",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          identityAssertion: authenticateBody.id_token,
+          audience: "https://auth.example.com",
+          resource: "https://mcp.example.com",
+          clientId: "mcpjam-debugger",
+        }),
+      },
+    );
+
+    expect(tokenExchangeResponse.status).toBe(200);
+    const tokenExchangeBody = await tokenExchangeResponse.json();
+    const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
+    expect(payload.iss).toBe("https://app.mcpjam.com/api/web/xaa");
+  });
+
   it("requires a bearer token for protected endpoints", async () => {
     const response = await app.request("/api/web/xaa/authenticate", {
       method: "POST",
