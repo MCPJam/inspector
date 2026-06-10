@@ -113,7 +113,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 
     return JSON.stringify({
       code: "auth_error",
-      message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
+      message: `Invalid API key for ${providerName}. Check your organization's model providers configuration.`,
       statusCode,
       normalized: providerNormalized,
     });
@@ -804,6 +804,32 @@ chatV2.post("/", async (c) => {
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
       });
+    }
+
+    // BYOK is organization-based: cloud provider keys come from the org's
+    // Convex config, never from a client-supplied apiKey. On a Convex-attached
+    // deployment the only supported cloud paths are MCPJam-provided models and
+    // org BYOK (projectId, no apiKey) — both handled above. So a request that
+    // still carries a client apiKey for a CLOUD provider is a personal-BYOK
+    // attempt we don't support; reject it regardless of the caller's identity.
+    //
+    // Ollama (local daemon, "local" placeholder apiKey) and `custom`
+    // (self-hosted OpenAI-compatible endpoints) are exempt — they're local /
+    // self-hosted, not a shared cloud account, and the org surface doesn't
+    // model them. Local OSS (no CONVEX_HTTP_URL) is exempt too; the frontend
+    // hook is the only enforcement on `npx`.
+    const isCloudByokProvider =
+      modelDefinition.provider !== "ollama" &&
+      modelDefinition.provider !== "custom";
+    if (process.env.CONVEX_HTTP_URL && isCloudByokProvider && apiKey) {
+      return c.json(
+        {
+          error:
+            "Personal provider keys aren't supported. Configure cloud models in your organization's settings (Organization Models).",
+          code: "personal_byok_unsupported",
+        },
+        401
+      );
     }
 
     // User-provided models: direct streamText
