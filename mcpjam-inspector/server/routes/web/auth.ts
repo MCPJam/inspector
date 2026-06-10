@@ -34,6 +34,7 @@ import {
 } from "./errors.js";
 import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
 import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -1103,7 +1104,15 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     );
   }
 
-  const bearerToken = assertBearerToken(c);
+  // Under WorkOS API-key auth the raw `sk_` bearer is useless against
+  // Convex's JWT-only surfaces (`/web/oauth/force-refresh` inside the
+  // 401-refresh closure, reveal-secrets fallback). Swap in the short-lived
+  // delegated JWT so every bearer-forwarding path downstream of
+  // `createAuthorizedManager` works for API-key callers. JWT callers get
+  // their original bearer back unchanged. `authorizeBatch` is unaffected
+  // either way — `buildConvexAuthHeaders` branches on `authMethod`, not on
+  // this value.
+  const bearerToken = await getConvexBearerForRequest(c);
   const body = parseWithSchema(schema, rawBody);
   // Cast for internal plumbing — all web schemas include projectId + serverId(s).
   // The strongly-typed `body` is passed through to `fn` unchanged.
