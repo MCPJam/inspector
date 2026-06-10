@@ -31,14 +31,16 @@ a verdict.**
 
 | Ingredient | Where it lives | State |
 |---|---|---|
-| Connect-time server snapshot | `serverInspections` / `serverInspectionRevision` (Convex), `ServerToolSnapshot` v3: discovery (protocol versions, capabilities, serverInfo), tools (+annotations, `_meta` incl. `ui`), resources, prompts | Shipped; captured with `source: 'connect'`, hashed + revisioned for drift |
+| Connect-time server snapshot | `serverInspections` / `serverInspectionRevision` (Convex), `ServerToolSnapshot` v3 envelope: discovery/initialize (protocol version, capabilities, serverInfo), tools (+annotations, `_meta` incl. `ui`), prompts/resources arrays | Shipped for tools + initialize info (`source: 'connect'`, hashed + revisioned for drift). The v3 envelope already *types* prompts/resources arrays, but the connect capture path doesn't populate them yet — see the v1 capture gaps below |
 | Per-host capability profiles | `HostStyleDefinition` registry: `mcpAppsCapabilities`, `compatRuntime.openaiAppsCapabilities`, protocol bucket (`MCP_APPS` vs `OPENAI_SDK`) | Shipped for apps dimensions; missing transport/auth/protocol/server-capability dimensions |
 | Pure portable host-config module pattern | `sdk/src/host-config/` (browser-safe, hand-mirrored to Convex where needed, golden-vector parity tests) | Established pattern to follow |
 | Host emulation to act on findings | Playground host-style picker, eval runner per-host execution | Shipped |
 
-The feature is mostly a **join**: `requirements(snapshot) × profile(host) →
-report`. The new work is the rule catalog, the requirements extractor, the
-host-profile extension beyond apps dimensions, and the UX.
+The feature is mostly a **join**: `requirements(snapshot, connection
+facts) × profile(host) → report`. The new work is the rule catalog, the
+requirements extractor, the host-profile extension beyond apps dimensions,
+two small connect-capture extensions (detailed in the rule-catalog
+section), and the UX.
 
 ## Product shape
 
@@ -124,9 +126,28 @@ verified 6 months ago").
   already use to register (the client-side host-style registry), and its
   long-term home follows open question 1 below.
 
-## The rule catalog (v1, fully static from the existing snapshot)
+## The rule catalog (v1, fully static — no live calls beyond connect)
 
-All deterministic, computed from `ServerToolSnapshotServer` × host profile.
+All deterministic, computed from two inputs the developer's connect already
+produces: the inspection snapshot **plus the server's connection facts**
+(transport type, OAuth config, URL — these live on the `servers` row /
+connection config, not in the snapshot, and feed the transport and auth
+rules).
+
+Two small capture gaps to close as part of v1 — the connect-time exporter
+(`exportSingleServerForInspection`) currently snapshots tools + initialize
+info only:
+
+1. **Populate the prompts/resources arrays** the v3 envelope already types.
+   Trivial: the manager already exposes `listResources` / `listPrompts`
+   (the `exportServer` helper beside the inspection exporter calls both
+   today). Needed for the server-capability rules and for resource-level
+   `_meta.ui` (CSP, permissions, `prefersBorder`).
+2. **Capture the version accept-list, not just the negotiated version.**
+   The snapshot records the single negotiated `protocolVersion`; the
+   protocol-version rule wants the server's supported set where available.
+   Until then the rule runs on the negotiated version alone, with the
+   finding worded accordingly.
 
 | Category | Example findings | Severity |
 |---|---|---|
@@ -147,8 +168,10 @@ persisted report is invalidated when rules or profiles change.
 
 ## Levels of verification (the phasing)
 
-- **L0 — Static (v1, instant, free).** Snapshot × profile, pure function,
-  computed on read. Ships the strip, the tab, deep links.
+- **L0 — Static (v1, instant, free).** Snapshot + connection facts ×
+  profile, pure function, computed on read. Ships the strip, the tab, deep
+  links, and the two connect-capture extensions from the rule-catalog
+  section.
 - **L1 — Widget scan.** For each `ui://` resource, read the widget HTML the
   same way the existing widget-content routes already do — `resources/read`
   through the MCP client manager, extracting `content.text` / base64
@@ -174,7 +197,10 @@ persisted report is invalidated when rules or profiles change.
 
 - **`sdk/src/host-config/compat-report.ts`** (new, pure, browser-safe — same
   contract as `canonicalize.ts`):
-  - `deriveServerRequirements(snapshot: ServerToolSnapshotServer): ServerRequirements`
+  - `deriveServerRequirements(snapshot: ServerToolSnapshotServer, connection: ServerConnectionFacts): ServerRequirements`
+    — `ServerConnectionFacts` is the small transport/auth slice of the
+    server config (transport type, OAuth flags), passed alongside the
+    snapshot because those facts never enter the snapshot envelope.
   - `evaluateHostCompat(requirements, profile: HostCompatProfile): HostCompatReport`
   - Exhaustive fixture tests per rule; one golden-report test per built-in
     host against a reference snapshot.
