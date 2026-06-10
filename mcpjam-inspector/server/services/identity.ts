@@ -1,18 +1,28 @@
-import { ConvexHttpClient } from "convex/browser";
-import { getInspectorClientRuntimeConfig } from "../env.js";
-
 /**
  * Resolve an MCPJam user from a WorkOS user id (the user's `externalId`
  * in Convex).
  *
- * Used by the bearer middleware when an `sk_` WorkOS API key is presented:
- * after `WorkOS.apiKeys.createValidation` returns the owning WorkOS user,
- * we map it to an MCPJam user id so Inspector can call Convex as that user
- * via the service-token + acting-as exchange.
+ * Used by the bearer middleware when an `sk_` WorkOS API key is presented,
+ * and by the API-key mint route to record the minting user's Convex id on
+ * the new `workosApiKeyBindings` row.
  *
- * Returns `null` when no matching user is found — the caller is
- * responsible for translating that into a 401.
+ * Calls the backend's service-token-gated resolver
+ * (`GET /internal/v1/users/lookup-by-external-id`; see mcpjam-backend
+ * `convex/http.ts`). Authenticated with `INSPECTOR_SERVICE_TOKEN` via the
+ * `x-inspector-service-token` header — the same channel `workos-key-bindings.ts`
+ * uses for its sibling routes. Returns `null` only on the route's own
+ * "User not found" 404 so the caller can translate to a 401; throws on
+ * transport errors, unexpected statuses, and routing-level 404s (route not
+ * deployed / wrong `CONVEX_HTTP_URL`).
  */
+
+import {
+  getInternalBackendConfig,
+  isEntityNotFound,
+} from "./internal-backend.js";
+
+const USERS_LOOKUP_PATH = "/internal/v1/users/lookup-by-external-id";
+
 export interface ResolvedMcpjamUser {
   /** MCPJam user document id (Convex). */
   _id: string;
@@ -21,34 +31,28 @@ export interface ResolvedMcpjamUser {
 export async function resolveUserByExternalId(
   externalId: string
 ): Promise<ResolvedMcpjamUser | null> {
-  // ConvexHttpClient needs the deployment (`.convex.cloud`) URL. Inspector
-  // boot only *requires* CONVEX_HTTP_URL (the `.convex.site` HTTP-actions
-  // origin), and `getInspectorClientRuntimeConfig()` derives the `.convex.cloud`
-  // query URL from it — so a deployment that sets only CONVEX_HTTP_URL still
-  // resolves identity here (previously this threw "CONVEX_URL is not set",
-  // 500-ing all sk_ auth and API-key minting). Fall back to an explicit
-  // CONVEX_URL if the derivation can't produce one.
-  const convexUrl =
-    getInspectorClientRuntimeConfig().convexUrl ?? process.env.CONVEX_URL;
-  if (!convexUrl) {
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
+  const url = `${convexUrl}${USERS_LOOKUP_PATH}?externalId=${encodeURIComponent(
+    externalId
+  )}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { "x-inspector-service-token": serviceToken },
+  });
+  if (response.status === 404) {
+    if (await isEntityNotFound(response, "User not found")) {
+      return null;
+    }
     throw new Error(
-      "Convex deployment URL is not configured (set CONVEX_HTTP_URL or CONVEX_URL)",
+      `User lookup route not found at ${convexUrl}${USERS_LOOKUP_PATH} — is the backend lookup route deployed?`
     );
   }
-
-  const client = new ConvexHttpClient(convexUrl);
-
-  // TODO: remove `as any` cast after the backend PR `claude/workos-api-keys-backend`
-  // adds `api.users.getByExternalId`. Inspector calls Convex via string
-  // function paths (matches `local-server-resolver.ts:935` and
-  // `servers.ts:80`) — no codegen step pins the API surface here, so the
-  // cast is the documented escape hatch until the reader query lands.
-  const result = (await client.query(
-    "users:getByExternalId" as any,
-    { externalId }
-  )) as { _id: string } | null | undefined;
-
-  if (!result || typeof result !== "object" || typeof result._id !== "string")
-    return null;
-  return { _id: result._id };
+  if (!response.ok) {
+    throw new Error(`User lookup failed (${response.status})`);
+  }
+  const body = (await response.json()) as { userId?: unknown };
+  if (typeof body?.userId !== "string") {
+    throw new Error("User lookup returned an invalid body");
+  }
+  return { _id: body.userId };
 }
