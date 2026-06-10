@@ -306,6 +306,34 @@ await test.run(runtime, { iterations: 10 });
 
 `HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction — pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
 
+**Personal computer.** A `Host` can declare a personal cloud workstation via the `computer` property (type `HostComputer`, exported from `@mcpjam/sdk`). When set, the chatbox surfaces a `bash` tool and a web terminal for signed-in members. Use `setComputer()` to attach or detach it fluently:
+
+```typescript
+import { Host, type HostComputer } from "@mcpjam/sdk";
+
+// Attach with the default shape
+const host = new Host({ style: "mcpjam", model: "openai/gpt-4o" })
+  .setComputer();
+
+// Attach with an initial working directory
+host.setComputer({ kind: "personal", toolset: "bash", workdir: "/srv/app" });
+
+// Detach
+host.setComputer(null);
+```
+
+Or pass it directly in the constructor:
+
+```typescript
+const host = new Host({
+  style: "mcpjam",
+  model: "openai/gpt-4o",
+  computer: { kind: "personal", toolset: "bash" },
+});
+```
+
+`null` and an absent `computer` field hash identically, so existing host configs are unaffected. The `computer` field is automatically stripped from eval wire configs — evals never target personal computers.
+
 **Statelessness.** `HostRuntime.run()` does NOT auto-replay history across turns. Use `PromptOptions.context` to thread context explicitly:
 
 ```typescript
