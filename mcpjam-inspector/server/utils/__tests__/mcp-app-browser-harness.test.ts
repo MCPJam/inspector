@@ -468,6 +468,21 @@ describe("injectCspMeta", () => {
       `<meta http-equiv="Content-Security-Policy" content="default-src 'none'"><p>x</p>`
     );
   });
+
+  it("escapes attribute-breaking chars so widget metadata can't corrupt the policy", () => {
+    // A `"` in widget-derived CSP content must not break out of content="…"
+    // and truncate/disable the injected policy (or inject sibling markup).
+    const out = injectCspMeta(
+      "<!doctype html><html><head></head><body></body></html>",
+      `connect-src 'self' https://x"></head><script>alert(1)</script>`
+    );
+    expect(out).not.toContain(`x"></head>`); // no real breakout
+    expect(out).not.toContain("<script>alert(1)</script>"); // not injected as markup
+    expect(out).toContain("&quot;");
+    expect(out).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    // Single quotes are valid inside a double-quoted attribute -> left as-is.
+    expect(out).toContain("connect-src 'self'");
+  });
 });
 
 describe("McpAppBrowserHarness — widget-declared CSP enforcement", () => {

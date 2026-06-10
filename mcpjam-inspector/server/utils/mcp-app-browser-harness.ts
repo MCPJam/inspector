@@ -252,9 +252,20 @@ export function cspSourceMatchesUrl(source: string, url: URL): boolean {
  *
  * Falls back to creating a `<head>` (or prepending) when the document omits
  * one, so even minimal widget HTML is governed rather than running unpoliced.
+ *
+ * `cspContent` is derived from widget-controlled metadata (the declared domain
+ * arrays are joined verbatim into the policy), so it is HTML-attribute-escaped
+ * before interpolation: a stray `"` must not be able to break out of
+ * `content="…"` and truncate or disable the policy we are injecting. A
+ * well-formed CSP never contains `&"<>`, so this is a no-op for real policies.
  */
 export function injectCspMeta(html: string, cspContent: string): string {
-  const tag = `<meta http-equiv="Content-Security-Policy" content="${cspContent}">`;
+  const escaped = cspContent
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const tag = `<meta http-equiv="Content-Security-Policy" content="${escaped}">`;
   const headOpen = /<head\b[^>]*>/i.exec(html);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
