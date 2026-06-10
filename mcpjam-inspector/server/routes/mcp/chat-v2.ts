@@ -461,9 +461,12 @@ chatV2.post("/", async (c) => {
     }
 
     const requestAuthHeader = c.req.header("authorization");
+    const isMcpJamProvidedModel = Boolean(
+      modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)
+    );
     if (
+      isMcpJamProvidedModel &&
       modelDefinition.id &&
-      isMCPJamProvidedModel(modelDefinition.id) &&
       !requestAuthHeader &&
       !isMCPJamGuestAllowedModel(modelDefinition.id)
     ) {
@@ -474,6 +477,27 @@ chatV2.post("/", async (c) => {
         },
         403
       );
+    }
+    let mcpJamAuthHeader = requestAuthHeader;
+    const resolveMcpJamAuthHeader = async () => {
+      if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;
+      try {
+        mcpJamAuthHeader = (await getProductionGuestAuthHeader()) ?? undefined;
+      } catch {
+        mcpJamAuthHeader = undefined;
+      }
+      return mcpJamAuthHeader;
+    };
+
+    // Guest MCPJam-model requests get their bearer lazily server-side. Resolve
+    // it before tool prep too, otherwise host-enabled built-ins are omitted
+    // even though the later MCPJam model path can authenticate the turn.
+    if (
+      isMcpJamProvidedModel &&
+      !mcpJamAuthHeader &&
+      process.env.CONVEX_HTTP_URL
+    ) {
+      await resolveMcpJamAuthHeader();
     }
 
     // Convert the inbound UI messages once so prepareChatV2 can replay
@@ -511,11 +535,12 @@ chatV2.post("/", async (c) => {
     // HTTP action, which needs a bearer + projectId to authorize. Local
     // requests without either (anonymous local mode, no project) omit the
     // tools — same degradation as a host that never enabled them.
+    const builtInAuthHeader = mcpJamAuthHeader ?? requestAuthHeader;
     const builtInTools = safeResolveBuiltInTools(
       resolvedExecution.builtInToolIds,
-      requestAuthHeader && typeof body.projectId === "string" && body.projectId
+      builtInAuthHeader && typeof body.projectId === "string" && body.projectId
         ? {
-            authHeader: requestAuthHeader,
+            authHeader: builtInAuthHeader,
             projectId: body.projectId,
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -599,9 +624,7 @@ chatV2.post("/", async (c) => {
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
 
     // MCPJam-provided models: delegate to stream handler
-    if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
-      let authHeader = requestAuthHeader;
-
+    if (isMcpJamProvidedModel && modelDefinition.id) {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
@@ -611,21 +634,15 @@ chatV2.post("/", async (c) => {
 
       // Resolve auth header: use client-provided token (WorkOS) if present,
       // otherwise fetch a production guest token for guest-allowed models.
+      const authHeader = await resolveMcpJamAuthHeader();
       if (!authHeader) {
-        try {
-          authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
-        } catch {
-          authHeader = undefined;
-        }
-        if (!authHeader) {
-          return c.json(
-            {
-              error:
-                "Unable to authenticate with MCPJam servers. Please try again or sign in.",
-            },
-            503
-          );
-        }
+        return c.json(
+          {
+            error:
+              "Unable to authenticate with MCPJam servers. Please try again or sign in.",
+          },
+          503
+        );
       }
 
       const modelMessages = await convertToModelMessages(messages);
