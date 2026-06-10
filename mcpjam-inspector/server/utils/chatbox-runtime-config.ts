@@ -35,6 +35,15 @@ export type ChatboxRuntimeConfig = {
   // Optional so a backend older than mcpjam-backend PR #484 (which adds
   // the field to runtime-config) returns omitted → no built-in tools.
   builtInToolIds?: string[];
+  // Personal-computer attachment from the pinned HostConfigV2 (Project
+  // Computers, mcpjam-backend PR #494). The backend OMITS the field for
+  // guest actors, so its presence implies a signed-in member session.
+  // Optional so older backends return omitted → no computer.
+  computer?: {
+    kind: "personal";
+    toolset: "bash";
+    workdir?: string;
+  };
 };
 
 export type ChatboxRuntimeConfigResult =
