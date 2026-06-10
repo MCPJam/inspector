@@ -5,12 +5,17 @@ icon: "git-branch"
 tag: "Preview"
 ---
 
-The inspector can speak more than one version of the MCP protocol. By default it negotiates whatever the SDK considers current, but you can pin a different version when you want to test how your server behaves against a specific draft — including the new **2026-07-28 stateless RC**.
+The inspector can speak more than one version of the MCP protocol. By default it negotiates whatever the SDK considers current, but you can pin a different version when you want to test how your server behaves against a specific draft — including the new **2026-07-28 stateless RC**. Or pick **Auto** and let the inspector detect each server's flavor at connect time, so one Client can talk to stateless and stateful servers without per-server overrides.
 
-This page covers how to pick a version. Automatic per-server version detection is on the roadmap; for now you tell the inspector which version to use.
+This page covers how to pick a version.
 
 <Warning>
-  **Migration required if you used the old Draft version.** The previous `DRAFT-2026-v1` placeholder has been retired and replaced with the upstream RC literal `2026-07-28`. If you had any servers pinned to `DRAFT-2026-v1`, you must re-select the protocol version in the inspector UI. Stored `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004 UnsupportedProtocolVersionError`.
+  **Migration required if you used the old Draft version.** The previous
+  `DRAFT-2026-v1` placeholder has been retired and replaced with the upstream RC
+  literal `2026-07-28`. If you had any servers pinned to `DRAFT-2026-v1`, you
+  must re-select the protocol version in the inspector UI. Stored
+  `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004
+  UnsupportedProtocolVersionError`.
 </Warning>
 
 ## Where the setting lives
@@ -24,11 +29,12 @@ Use the host default when you want every server in a Client to speak the same ve
 
 ## Available versions
 
-| Option                               | Protocol version | Transport                                       | Use it when                                                                                                                                 |
-| ------------------------------------ | ---------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Latest**                           | `2025-11-25`     | HTTP, STDIO, SSE                                | The current stable MCP. Default for everything not opted in to the RC.                                                                      |
-| **2026 RC**                          | `2026-07-28`     | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
-| **Host default** _(per-server only)_ | —                | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+| Option                               | Protocol version    | Transport                                       | Use it when                                                                                                                                  |
+| ------------------------------------ | ------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Auto**                             | detected per server | HTTP, STDIO, SSE                                | You want one Client to connect to any mix of servers without overrides — the inspector probes each HTTP server and picks the right protocol. |
+| **Latest**                           | `2025-11-25`        | HTTP, STDIO, SSE                                | The current stable MCP. Default for everything not opted in to the RC.                                                                       |
+| **2026 RC**                          | `2026-07-28`        | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`.  |
+| **Host default** _(per-server only)_ | —                   | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                    |
 
 The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
 
@@ -60,6 +66,21 @@ Every server attached to this Client now connects with that version unless it ha
 5. Save and reconnect the server.
 
 The per-server override is the more specific signal — it wins over whatever the Client's MCP Protocol tab says.
+
+## How Auto works
+
+Pick **Auto** when your Client talks to a mix of servers and you don't want to maintain per-server overrides — for example an OAuth-protected stateless server next to a stable 2025-11-25 one.
+
+At connect time the inspector probes each HTTP server with a `server/discover` request carrying `MCP-Protocol-Version: 2026-07-28`:
+
+- **The probe succeeds** → the server speaks the stateless RC; the connection uses the stateless preview client, and the discover result populates the server card.
+- **The probe fails** (unknown method, `-32004`, session-required 400, anything else) → the inspector falls back to the legacy `initialize` handshake, exactly as if you'd picked Latest. The failed probe stays visible in the Activity log.
+
+A few notes:
+
+- STDIO and legacy SSE servers skip the probe entirely and use the legacy handshake — Auto never fails a connection the way an RC pin on the wrong transport does.
+- OAuth servers work as usual: if the probe gets a 401, the normal auth flow runs on the legacy path, and the reconnect re-probes with the token.
+- `"auto"` is a config value, never a wire literal — the bytes on the wire are always a concrete version.
 
 ## What changes when you pick the 2026 RC
 

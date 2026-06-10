@@ -14,7 +14,7 @@
  * both backend and client can agree on.
  */
 
-import type { McpProtocolVersion } from "./types.js";
+import type { McpProtocolVersionPin } from "./types.js";
 
 /**
  * Default sampling temperature when an editor mints a fresh host config.
@@ -40,8 +40,8 @@ export const DEFAULT_TEMPERATURE_V2 = 0.7;
  * host-config row without normalizing first.
  */
 export function resolveEffectiveMcpProtocolVersion(
-  serverOverride: McpProtocolVersion | undefined,
-  hostDefault: McpProtocolVersion | undefined,
-): McpProtocolVersion | undefined {
+  serverOverride: McpProtocolVersionPin | undefined,
+  hostDefault: McpProtocolVersionPin | undefined
+): McpProtocolVersionPin | undefined {
   return serverOverride ?? hostDefault;
 }

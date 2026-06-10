@@ -39,6 +39,7 @@ export type {
   HostConnectionDefaults,
   HostStyleId,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

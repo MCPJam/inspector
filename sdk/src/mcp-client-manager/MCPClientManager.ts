@@ -100,18 +100,18 @@ import {
   mergeClientCapabilities,
   normalizeClientCapabilities,
 } from "./capabilities.js";
-import {
-  assertCallToolResult,
-  isCreateTaskResult,
-} from "./result-guards.js";
+import { assertCallToolResult, isCreateTaskResult } from "./result-guards.js";
 import {
   createManagedMcpClient,
   wrapLegacyClient,
 } from "./managed-mcp-client-factory.js";
 import {
+  isAutoProtocolVersion,
   isStatelessProtocolVersion,
   type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "./mcp-protocol-version.js";
+import { LATEST_STATELESS_PROTOCOL_VERSION } from "./stateless-mcp-http-preview-client.js";
 import {
   StatelessRequiresHttpTransport,
   type ManagedMcpClient,
@@ -144,7 +144,7 @@ function createPendingStatelessClientStub(): ManagedMcpClient {
   };
   const fail = (method: string) => {
     throw new Error(
-      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessMcpHttpPreviewClient should have replaced the stub inside connectViaHttp before any RPC.`,
+      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessMcpHttpPreviewClient should have replaced the stub inside connectViaHttp before any RPC.`
     );
   };
   return {
@@ -212,7 +212,10 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
-  private readonly retryAbortControllers = new Map<string, Set<AbortController>>();
+  private readonly retryAbortControllers = new Map<
+    string,
+    Set<AbortController>
+  >();
   private readonly unauthorizedRefreshInFlight = new Map<
     string,
     Promise<string>
@@ -383,7 +386,7 @@ export class MCPClientManager {
    * code instead of `getClient()`.
    */
   getManagedClient(
-    serverId: string,
+    serverId: string
   ): import("./managed-mcp-client.js").ManagedMcpClient | undefined {
     return this.liveClientStates.get(serverId)?.client;
   }
@@ -646,8 +649,8 @@ export class MCPClientManager {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-        ? [serverIds]
-        : this.listServers();
+      ? [serverIds]
+      : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -668,10 +671,7 @@ export class MCPClientManager {
                 (args ?? {}) as ExecuteToolArguments,
                 requestOptions
               );
-              return assertCallToolResult(
-                result,
-                `Tool "${name}" result`
-              );
+              return assertCallToolResult(result, `Tool "${name}" result`);
             },
           });
 
@@ -1248,10 +1248,7 @@ export class MCPClientManager {
       const resolvedClientInfo: Record<string, unknown> = {
         ...this.defaultClientInfoExtras,
         ...(config.clientInfo ?? {}),
-        name:
-          config.clientInfo?.name ??
-          this.defaultClientName ??
-          serverId,
+        name: config.clientInfo?.name ?? this.defaultClientName ?? serverId,
         version:
           config.clientInfo?.version ??
           config.version ??
@@ -1277,10 +1274,21 @@ export class MCPClientManager {
       // re-validating. Predicate-based routing — stateful pins (or no
       // pin) route through the legacy upstream Client path; stateless
       // pins route through the preview client.
-      const resolvedProtocolVersion =
-        !this.isStdioConfig(config) ? config.mcpProtocolVersion : undefined;
+      // `"auto"` is the detect-at-connect sentinel: build the legacy
+      // client up front (so handler wiring works for the fallback) and
+      // let `connectViaHttp` probe `server/discover` to decide whether
+      // the stateless preview takes over. Stdio strips the pin entirely
+      // — there is no stateless stdio, so auto degrades to legacy there
+      // by construction.
+      const resolvedProtocolVersion = !this.isStdioConfig(config)
+        ? config.mcpProtocolVersion
+        : undefined;
+      const wantsAuto =
+        resolvedProtocolVersion !== undefined &&
+        isAutoProtocolVersion(resolvedProtocolVersion);
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
+        !wantsAuto &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
       // into the legacy `Client`'s `supportedProtocolVersions` accept-list
@@ -1292,7 +1300,9 @@ export class MCPClientManager {
       const supportedProtocolVersions =
         config.supportedProtocolVersions ??
         this.defaultSupportedProtocolVersions ??
-        (!wantsStateless && resolvedProtocolVersion !== undefined
+        // `"auto"` is excluded — it's a detect sentinel, not a wire
+        // literal, and must never reach `initialize.params.protocolVersion`.
+        (!wantsStateless && !wantsAuto && resolvedProtocolVersion !== undefined
           ? [resolvedProtocolVersion]
           : undefined);
       const clientOptions: ClientOptions = {
@@ -1458,11 +1468,7 @@ export class MCPClientManager {
     } catch (error) {
       const stderrOutput = stderrDrain.getCapturedOutput();
       stderrDrain.cleanup();
-      throw this.annotateStdioConnectError(
-        serverId,
-        error,
-        stderrOutput
-      );
+      throw this.annotateStdioConnectError(serverId, error, stderrOutput);
     }
 
     state.stdioStderrCleanup = stderrDrain.cleanup;
@@ -1478,11 +1484,13 @@ export class MCPClientManager {
     wireOpts?: {
       /**
        * Resolved per-server `mcpProtocolVersion` pin (already validated
-       * by `isKnownProtocolVersion` at the trust boundary). Absent OR
+       * by `isKnownProtocolVersionPin` at the trust boundary). Absent OR
        * stateful → legacy path; stateless (per
-       * `isStatelessProtocolVersion`) → preview path.
+       * `isStatelessProtocolVersion`) → preview path; `"auto"` → probe
+       * `server/discover` and take the preview path when it succeeds,
+       * the legacy path otherwise.
        */
-      protocolVersion?: McpProtocolVersion;
+      protocolVersion?: McpProtocolVersionPin;
       clientInfo: { name: string; version: string };
       assignClient: (next: ManagedMcpClient) => void;
     }
@@ -1551,12 +1559,25 @@ export class MCPClientManager {
     // `upstream_v2alpha_extension_points`), so it must be built HERE —
     // after auth / requestInit / 401 wiring is resolved. Streamable
     // HTTP POST only; legacy SSE / preferSSE is rejected up-front.
+    //
+    // `"auto"` rides the same branch as a probe: the preview's connect
+    // fires `server/discover`, and a failure falls through to the legacy
+    // transports below instead of throwing. SSE-preferring configs skip
+    // the probe entirely — auto means "connect to anything", so they go
+    // straight to the legacy path rather than rejecting like an explicit
+    // stateless pin does.
+    const resolvedPin = wireOpts?.protocolVersion;
+    const wantsAutoDetect =
+      resolvedPin !== undefined && isAutoProtocolVersion(resolvedPin);
+    const wantsStatelessPin =
+      resolvedPin !== undefined &&
+      !wantsAutoDetect &&
+      isStatelessProtocolVersion(resolvedPin);
     if (
-      wireOpts?.protocolVersion !== undefined &&
-      isStatelessProtocolVersion(wireOpts.protocolVersion) &&
-      wireOpts.assignClient
+      (wantsStatelessPin || (wantsAutoDetect && !preferSSE)) &&
+      wireOpts?.assignClient
     ) {
-      if (preferSSE) {
+      if (wantsStatelessPin && preferSSE) {
         throw new StatelessRequiresHttpTransport("sse");
       }
       // Build a header bag from the resolved `requestInit.headers` so
@@ -1620,13 +1641,13 @@ export class MCPClientManager {
         fetchFn: typeof fetch;
       };
       const isAuthProvider = (
-        p: unknown,
+        p: unknown
       ): p is {
         token: () => Promise<string | undefined>;
         onUnauthorized?: (ctx: UnauthorizedContextShape) => Promise<void>;
       } => !!p && typeof (p as { token?: unknown }).token === "function";
       const isOAuthClientProvider = (
-        p: unknown,
+        p: unknown
       ): p is {
         tokens: () =>
           | { access_token?: string }
@@ -1673,9 +1694,7 @@ export class MCPClientManager {
         }
         return tokenHolder.current;
       };
-      const on401 = async (
-        response: Response,
-      ): Promise<string | undefined> => {
+      const on401 = async (response: Response): Promise<string | undefined> => {
         if (config.onUnauthorized) {
           const refreshed = await config.onUnauthorized({
             serverId,
@@ -1708,8 +1727,15 @@ export class MCPClientManager {
         return undefined;
       };
       const rpcLogger = this.resolveRpcLogger(config);
+      // Auto-detect never forwards the `"auto"` sentinel — the probe
+      // speaks the current stateless RC literal. An explicit stateless
+      // pin passes through verbatim (the `wantsStatelessPin` guard above
+      // proves it's a concrete wire version, not `"auto"`).
+      const statelessWireVersion: McpProtocolVersion = wantsAutoDetect
+        ? LATEST_STATELESS_PROTOCOL_VERSION
+        : (resolvedPin as McpProtocolVersion);
       const previewClient = createManagedMcpClient({
-        mcpProtocolVersion: wireOpts.protocolVersion,
+        mcpProtocolVersion: statelessWireVersion,
         clientInfo: wireOpts.clientInfo,
         transportKind: "http",
         preview: {
@@ -1721,33 +1747,63 @@ export class MCPClientManager {
           serverId,
         },
       });
-      await previewClient.connect(undefined as never, { timeout });
-      // Swap the active client in the manager's state. Notification /
-      // elicitation handlers re-applied on the new client so they
-      // route to the preview adapter.
-      wireOpts.assignClient(previewClient);
-      this.notificationManager.applyToClient(serverId, previewClient);
-      if (this.defaultProgressHandler) {
-        applyProgressHandler(serverId, previewClient, this.defaultProgressHandler);
-      }
-      const elicitationCaps = (
-        this.buildCapabilities(serverId, config) as Record<string, unknown>
-      ).elicitation;
-      if (elicitationCaps != null) {
-        this.elicitationManager.applyToClient(serverId, previewClient);
-      }
-      if (config.onError) {
-        previewClient.onerror = (error) => config.onError?.(error);
-      }
-      previewClient.onclose = () => {
-        if (this.liveClientStates.get(serverId) === state) {
-          this.clearClosedPendingConnectionState(serverId, state);
+      let previewConnected = false;
+      try {
+        await previewClient.connect(undefined as never, {
+          // Bound the auto-detect probe like the legacy streamable
+          // attempt so a hung `server/discover` doesn't burn the whole
+          // connect budget before the fallback gets its turn.
+          timeout: wantsAutoDetect
+            ? Math.min(timeout, HTTP_CONNECT_TIMEOUT)
+            : timeout,
+        });
+        previewConnected = true;
+      } catch (error) {
+        if (!wantsAutoDetect) {
+          throw error;
         }
-      };
-      // Stateless has no Transport object; return undefined to signal
-      // that. Caller already widened the return type to
-      // `Transport | undefined`.
-      return undefined;
+        // Auto-detect: the server didn't answer `server/discover` as a
+        // stateless RC server would (-32601 unknown method, -32004
+        // unsupported version, session-required 400s, plain transport
+        // errors, unrecovered 401s, …). Fall through to the legacy
+        // initialize path below — that's the contract of "auto". The
+        // failed probe is already in the wire log for diagnosis, and a
+        // genuinely unreachable server fails the legacy attempt with
+        // the usual connect error.
+        await previewClient.close().catch(() => undefined);
+      }
+      if (previewConnected) {
+        // Swap the active client in the manager's state. Notification /
+        // elicitation handlers re-applied on the new client so they
+        // route to the preview adapter.
+        wireOpts.assignClient(previewClient);
+        this.notificationManager.applyToClient(serverId, previewClient);
+        if (this.defaultProgressHandler) {
+          applyProgressHandler(
+            serverId,
+            previewClient,
+            this.defaultProgressHandler
+          );
+        }
+        const elicitationCaps = (
+          this.buildCapabilities(serverId, config) as Record<string, unknown>
+        ).elicitation;
+        if (elicitationCaps != null) {
+          this.elicitationManager.applyToClient(serverId, previewClient);
+        }
+        if (config.onError) {
+          previewClient.onerror = (error) => config.onError?.(error);
+        }
+        previewClient.onclose = () => {
+          if (this.liveClientStates.get(serverId) === state) {
+            this.clearClosedPendingConnectionState(serverId, state);
+          }
+        };
+        // Stateless has no Transport object; return undefined to signal
+        // that. Caller already widened the return type to
+        // `Transport | undefined`.
+        return undefined;
+      }
     }
 
     let streamableError: unknown;
@@ -1836,9 +1892,10 @@ export class MCPClientManager {
     );
   }
 
-  private createStdioStderrDrain(
-    transport: StdioClientTransport
-  ): { cleanup: () => void; getCapturedOutput: () => string } {
+  private createStdioStderrDrain(transport: StdioClientTransport): {
+    cleanup: () => void;
+    getCapturedOutput: () => string;
+  } {
     const stderrStream = transport.stderr as NodeJS.ReadableStream | null;
     if (!stderrStream) {
       return {
@@ -1876,8 +1933,7 @@ export class MCPClientManager {
     error: unknown,
     stderrOutput: string
   ): Error {
-    const baseMessage =
-      error instanceof Error ? error.message : String(error);
+    const baseMessage = error instanceof Error ? error.message : String(error);
     const stderrSection = stderrOutput
       ? `\n\nChild process stderr:\n${stderrOutput}`
       : "";
@@ -2055,8 +2111,8 @@ export class MCPClientManager {
       const currentAccessToken =
         liveState?.authProvider?.tokens()?.access_token;
       const currentRefreshToken = liveState?.authProvider
-          ?.prepareTokenRequest()
-          .get("refresh_token");
+        ?.prepareTokenRequest()
+        .get("refresh_token");
       const clientId = config.clientId?.trim();
       const clientSecret = config.clientSecret?.trim();
 
@@ -2172,7 +2228,8 @@ export class MCPClientManager {
     const mergedOptions = this.withTimeout(serverId, options);
 
     if (!mergedOptions.onprogress && this.defaultProgressHandler) {
-      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
+      const progressToken = `${serverId}-request-${Date.now()}-${++this
+        .progressTokenCounter}`;
       mergedOptions.onprogress = (progress) => {
         this.defaultProgressHandler!({
           serverId,
@@ -2204,8 +2261,10 @@ export class MCPClientManager {
       return exactCapabilities as ClientCapabilityOptions;
     }
 
-    const configuredCapabilities =
-      mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
+    const configuredCapabilities = mergeClientCapabilities(
+      this.defaultCapabilities,
+      config.capabilities
+    );
 
     return applyRuntimeClientCapabilities(configuredCapabilities, {
       elicitation: hasElicitationHandler,
@@ -2249,8 +2308,8 @@ export class MCPClientManager {
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-      typeof value === "object" &&
-      ("request" in value || "retry" in value)
+        typeof value === "object" &&
+        ("request" in value || "retry" in value)
     );
   }
 
@@ -2294,7 +2353,10 @@ export class MCPClientManager {
       resetConnectionOnRetry?: boolean;
     } = {}
   ): Promise<T> {
-    const { signal, cleanup } = this.createRetrySignal(serverId, options?.signal);
+    const { signal, cleanup } = this.createRetrySignal(
+      serverId,
+      options?.signal
+    );
 
     const runWithTransientRetry = () =>
       retryWithPolicy({
@@ -2364,12 +2426,11 @@ export class MCPClientManager {
           );
         }
         return accessToken;
-      })()
-        .finally(() => {
-          if (this.unauthorizedRefreshInFlight.get(serverId) === refreshPromise) {
-            this.unauthorizedRefreshInFlight.delete(serverId);
-          }
-        });
+      })().finally(() => {
+        if (this.unauthorizedRefreshInFlight.get(serverId) === refreshPromise) {
+          this.unauthorizedRefreshInFlight.delete(serverId);
+        }
+      });
       this.unauthorizedRefreshInFlight.set(serverId, refreshPromise);
     }
 

@@ -14,7 +14,7 @@ import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
-import type { McpProtocolVersion } from "@/lib/client-config-v2";
+import type { McpProtocolVersionPin } from "@/lib/client-config-v2";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 
 interface EditServerFormContentProps {
@@ -29,9 +29,9 @@ interface EditServerFormContentProps {
    * goes back through `projectServerConfig:setConfig`, NOT through the
    * server's own config blob — wire mode is a project-server-refs field.
    */
-  mcpProtocolVersionOverride?: McpProtocolVersion;
+  mcpProtocolVersionOverride?: McpProtocolVersionPin;
   onMcpProtocolVersionOverrideChange?: (
-    mode: McpProtocolVersion | undefined
+    mode: McpProtocolVersionPin | undefined
   ) => void;
 }
 

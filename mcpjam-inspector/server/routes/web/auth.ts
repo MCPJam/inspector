@@ -2,9 +2,9 @@ import { z } from "zod";
 import type { Context } from "hono";
 import {
   MCPClientManager,
-  isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
-  type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "@mcpjam/sdk";
 import type {
   HttpServerConfig,
@@ -53,6 +53,9 @@ const mcpProtocolVersionEnum = z.enum([
   "2025-06-18",
   "2025-11-25",
   "2026-07-28",
+  // Detect-at-connect sentinel — the SDK probes `server/discover` and
+  // falls back to the legacy handshake. Never emitted on the wire.
+  "auto",
 ]);
 
 function hasNonEmptyStringRecord(value: unknown): boolean {
@@ -69,7 +72,7 @@ function hasNonEmptyStringRecord(value: unknown): boolean {
 // Per-server `mcpProtocolVersion` map. Map entries are validated against
 // the wire-mode enum so a typo in one server's pin doesn't tank the whole
 // batch — Zod returns the typed enum union, and the route handler can
-// still defensively re-check via `isKnownProtocolVersion` before passing
+// still defensively re-check via `isKnownProtocolVersionPin` before passing
 // to the SDK factory.
 export const mcpProtocolVersionsByServerIdSchema = z
   .record(z.string().min(1), mcpProtocolVersionEnum)
@@ -592,7 +595,7 @@ export function toHttpConfig(
      * hosted connects always ran the legacy `initialize` handshake
      * regardless of the client-level toggle.
      */
-    mcpProtocolVersion?: McpProtocolVersion;
+    mcpProtocolVersion?: McpProtocolVersionPin;
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
@@ -659,9 +662,9 @@ function resolveEffectiveInitializePinsForServer(
   initializePins?: {
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
-    mcpProtocolVersion?: McpProtocolVersion;
+    mcpProtocolVersion?: McpProtocolVersionPin;
   },
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>
 ):
   | {
       clientInfo?: { name?: string; version?: string } & Record<
@@ -669,12 +672,12 @@ function resolveEffectiveInitializePinsForServer(
         unknown
       >;
       supportedProtocolVersions?: string[];
-      mcpProtocolVersion?: McpProtocolVersion;
+      mcpProtocolVersion?: McpProtocolVersionPin;
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
   const mcpProtocolVersion =
-    typeof perServerPin === "string" && isKnownProtocolVersion(perServerPin)
+    typeof perServerPin === "string" && isKnownProtocolVersionPin(perServerPin)
       ? perServerPin
       : initializePins?.mcpProtocolVersion;
   const supportedProtocolVersions =
@@ -727,11 +730,11 @@ export async function createAuthorizedManager(
         unknown
       >;
       supportedProtocolVersions?: string[];
-      mcpProtocolVersion?: McpProtocolVersion;
+      mcpProtocolVersion?: McpProtocolVersionPin;
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
-     * Values already passed `isKnownProtocolVersion` at the route
+     * Values already passed `isKnownProtocolVersionPin` at the route
      * boundary (the schema validates each entry against the wire-mode
      * enum); we re-check here as a defense-in-depth so a future
      * caller bypassing the schema can't slip a typo to the SDK.
@@ -740,7 +743,7 @@ export async function createAuthorizedManager(
      * → `initializePins.mcpProtocolVersion` (batch-uniform) →
      * undefined (SDK chooses at request time).
      */
-    mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+    mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -859,8 +862,9 @@ export async function createAuthorizedManager(
                         c.get("mcpjamOrganizationId")
                           ? {
                               workosUserId: c.get("workosUserId")!,
-                              mcpjamOrganizationId:
-                                c.get("mcpjamOrganizationId")!,
+                              mcpjamOrganizationId: c.get(
+                                "mcpjamOrganizationId"
+                              )!,
                             }
                           : undefined,
                     })
@@ -970,9 +974,9 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   initializePins?: {
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
-    mcpProtocolVersion?: McpProtocolVersion;
+    mcpProtocolVersion?: McpProtocolVersionPin;
   };
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
 } {
   // Extract mcpProfile.initialize.* pins so they flow into every
   // HttpServerConfig created by createAuthorizedManager. Defensive shape
@@ -995,9 +999,9 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
       ? (rawSupportedVersions as string[])
       : undefined;
   const rawProtocolVersion = raw.mcpProtocolVersion;
-  const initializeWireMode: McpProtocolVersion | undefined =
+  const initializeWireMode: McpProtocolVersionPin | undefined =
     typeof rawProtocolVersion === "string" &&
-    isKnownProtocolVersion(rawProtocolVersion)
+    isKnownProtocolVersionPin(rawProtocolVersion)
       ? rawProtocolVersion
       : undefined;
   const initializePins =
@@ -1015,13 +1019,13 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
 
   const rawProtocolVersionsByServerId = raw.mcpProtocolVersionsByServerId;
   const mcpProtocolVersionsByServerId:
-    | Record<string, McpProtocolVersion>
+    | Record<string, McpProtocolVersionPin>
     | undefined =
     rawProtocolVersionsByServerId &&
     typeof rawProtocolVersionsByServerId === "object" &&
     !Array.isArray(rawProtocolVersionsByServerId)
       ? (() => {
-          const filtered: Record<string, McpProtocolVersion> = {};
+          const filtered: Record<string, McpProtocolVersionPin> = {};
           for (const [serverId, value] of Object.entries(
             rawProtocolVersionsByServerId as Record<string, unknown>
           )) {
@@ -1029,7 +1033,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
               typeof serverId === "string" &&
               serverId.length > 0 &&
               typeof value === "string" &&
-              isKnownProtocolVersion(value)
+              isKnownProtocolVersionPin(value)
             ) {
               filtered[serverId] = value;
             }

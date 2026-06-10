@@ -39,7 +39,7 @@ import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent
 import { EditServerFormContent } from "./EditServerFormContent";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
-import type { McpProtocolVersion } from "@/lib/client-config-v2";
+import type { McpProtocolVersionPin } from "@/lib/client-config-v2";
 import type {
   ProjectServerConfigDto,
   ProjectServerConfigInput,
@@ -87,7 +87,7 @@ interface ServerDetailModalProps {
    * the user toggled on the client. Undefined = no host-level pin =
    * "Legacy · default" attribution on the chip.
    */
-  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersionPin;
 }
 
 type ProtocolOverrideAutoEnrollRecord = {
@@ -215,12 +215,12 @@ export function ServerDetailModal({
   // mode. Both surfaces key off `showHistory`, so this is the single gate.
   const showHistory = Boolean(projectId && serverId && serverHistoryEnabled);
   const currentMcpProtocolVersionOverride = useMemo<
-    McpProtocolVersion | undefined
+    McpProtocolVersionPin | undefined
   >(
     () =>
       serverId
         ? (projectServerConfigDto?.overrides?.[serverId]
-            ?.mcpProtocolVersionOverride as McpProtocolVersion | undefined)
+            ?.mcpProtocolVersionOverride as McpProtocolVersionPin | undefined)
         : undefined,
     [projectServerConfigDto, serverId]
   );
@@ -232,7 +232,9 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+  const resolvedHostDefaultMcpProtocolVersion:
+    | McpProtocolVersionPin
+    | undefined =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
     projectId && serverId && projectServerConfigDto !== undefined
@@ -249,7 +251,7 @@ export function ServerDetailModal({
   // fires, even if the Convex value hasn't changed (e.g. a hung
   // refetch).
   const pendingReconnectRef = useRef<{
-    target: McpProtocolVersion | undefined;
+    target: McpProtocolVersionPin | undefined;
   } | null>(null);
   const [pendingReconnectTick, setPendingReconnectTick] = useState(0);
   useEffect(() => {
@@ -270,7 +272,7 @@ export function ServerDetailModal({
   ]);
 
   const handleMcpProtocolVersionOverrideChange = async (
-    next: McpProtocolVersion | undefined
+    next: McpProtocolVersionPin | undefined
   ): Promise<void> => {
     if (!projectId) {
       toast.error(

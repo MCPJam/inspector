@@ -196,8 +196,8 @@ import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
-  isKnownProtocolVersion,
-  type McpProtocolVersion,
+  isKnownProtocolVersionPin,
+  type McpProtocolVersionPin,
 } from "@mcpjam/sdk/browser";
 import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
@@ -2041,13 +2041,15 @@ export default function App() {
         : undefined;
 
     const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
-    const hostPin: McpProtocolVersion | undefined =
-      typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+    const hostPin: McpProtocolVersionPin | undefined =
+      typeof rawHostPin === "string" && isKnownProtocolVersionPin(rawHostPin)
         ? rawHostPin
         : undefined;
 
-    const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
-      {};
+    const mcpProtocolVersionsByServerId: Record<
+      string,
+      McpProtocolVersionPin
+    > = {};
     for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
       // Project-server config is the control-plane source for per-server
       // protocol overrides. Host config mirrors it through Convex fan-out,
@@ -2058,9 +2060,9 @@ export default function App() {
           ?.mcpProtocolVersionOverride ??
         activeHost?.serverConnectionOverrides?.[serverId]
           ?.mcpProtocolVersionOverride;
-      const serverOverride: McpProtocolVersion | undefined =
+      const serverOverride: McpProtocolVersionPin | undefined =
         typeof rawServerOverride === "string" &&
-        isKnownProtocolVersion(rawServerOverride)
+        isKnownProtocolVersionPin(rawServerOverride)
           ? rawServerOverride
           : undefined;
       const effective = resolveEffectiveMcpProtocolVersion(

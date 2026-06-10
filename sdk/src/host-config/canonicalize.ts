@@ -10,10 +10,12 @@
  */
 
 import {
-  isKnownProtocolVersion,
+  isAutoProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
-  type McpProtocolVersion,
+  MCP_PROTOCOL_VERSION_AUTO,
+  type McpProtocolVersionPin,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
   HOST_CONFIG_SCHEMA_VERSION_V2,
@@ -109,7 +111,10 @@ function sortStringKeys<T extends Record<string, unknown>>(input: T): T {
 // Plain-object check defends against arrays/primitives slipping past
 // upstream `v.any()` validators. Returns a deep-sorted copy so nested key
 // order doesn't leak into the hash.
-function requireRecord(value: unknown, fieldName: string): Record<string, unknown> {
+function requireRecord(
+  value: unknown,
+  fieldName: string,
+): Record<string, unknown> {
   if (value === undefined) {
     throw new Error(`hostConfigV2: ${fieldName} is required`);
   }
@@ -141,7 +146,9 @@ function deepSortStringKeys<T>(input: T): T {
   return input;
 }
 
-function sortUniqueServerIds(ids: Array<ServerId> | undefined): Array<ServerId> {
+function sortUniqueServerIds(
+  ids: Array<ServerId> | undefined,
+): Array<ServerId> {
   return Array.from(new Set(ids ?? [])).sort() as Array<ServerId>;
 }
 
@@ -367,9 +374,13 @@ function canonicalizeMcpProfile(
   // Host-default pinned MCP protocol version. Absent → SDK chooses at resolve
   // time; we drop the field when absent so pre-feature rows hash identically.
   if (input.mcpProtocolVersion !== undefined) {
-    if (!isKnownProtocolVersion(input.mcpProtocolVersion)) {
+    if (!isKnownProtocolVersionPin(input.mcpProtocolVersion)) {
       throw new Error(
-        `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(", ")} (got "${String(input.mcpProtocolVersion)}")`,
+        `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(
+          ", ",
+        )}, ${MCP_PROTOCOL_VERSION_AUTO} (got "${String(
+          input.mcpProtocolVersion,
+        )}")`,
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
@@ -451,19 +462,24 @@ function canonicalizeMcpProfile(
   // advertise that exact version. Derive when caller didn't set one; throw if
   // they set both AND the pin isn't in the list. Stateless versions skip
   // initialize entirely, so leave `supportedProtocolVersions` alone there.
+  // "auto" also skips the derivation — which handshake (if any) runs is
+  // unknown until connect time, so pinning an advertise list here would
+  // be wrong for the stateless outcome. (The open `isStatelessProtocolVersion`
+  // predicate happens to return true for "auto" too, but the guard is
+  // explicit so the sentinel never rides on that accident.)
   if (
     out.mcpProtocolVersion !== undefined &&
+    !isAutoProtocolVersion(out.mcpProtocolVersion) &&
     !isStatelessProtocolVersion(out.mcpProtocolVersion)
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
     if (advertised === undefined) {
       const initBase = out.initialize ?? {};
-      const initWithDerived: NonNullable<
-        HostConfigMcpProfileV1["initialize"]
-      > = {
-        ...initBase,
-        supportedProtocolVersions: [out.mcpProtocolVersion],
-      };
+      const initWithDerived: NonNullable<HostConfigMcpProfileV1["initialize"]> =
+        {
+          ...initBase,
+          supportedProtocolVersions: [out.mcpProtocolVersion],
+        };
       const sortedInit: NonNullable<HostConfigMcpProfileV1["initialize"]> = {};
       for (const k of Object.keys(initWithDerived).sort()) {
         (sortedInit as Record<string, unknown>)[k] = (
@@ -473,7 +489,11 @@ function canonicalizeMcpProfile(
       out.initialize = sortedInit;
     } else if (!advertised.includes(out.mcpProtocolVersion)) {
       throw new Error(
-        `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${out.mcpProtocolVersion}" is not in initialize.supportedProtocolVersions [${advertised.join(", ")}]. Either omit one or align them.`,
+        `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${
+          out.mcpProtocolVersion
+        }" is not in initialize.supportedProtocolVersions [${advertised.join(
+          ", ",
+        )}]. Either omit one or align them.`,
       );
     }
   }
@@ -896,7 +916,7 @@ function canonicalizeServerConnectionOverrides(
     {
       headersOverride?: Record<string, string>;
       requestTimeoutOverride?: number;
-      mcpProtocolVersionOverride?: McpProtocolVersion;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
     }
   > = {};
   for (const [serverId, entry] of Object.entries(overrides)) {
@@ -910,11 +930,15 @@ function canonicalizeServerConnectionOverrides(
       entry.headersOverride && Object.keys(entry.headersOverride).length > 0
         ? sortStringKeys(entry.headersOverride)
         : undefined;
-    let mcpProtocolVersionOverride: McpProtocolVersion | undefined;
+    let mcpProtocolVersionOverride: McpProtocolVersionPin | undefined;
     if (entry.mcpProtocolVersionOverride !== undefined) {
-      if (!isKnownProtocolVersion(entry.mcpProtocolVersionOverride)) {
+      if (!isKnownProtocolVersionPin(entry.mcpProtocolVersionOverride)) {
         throw new Error(
-          `hostConfigV2: serverConnectionOverrides["${serverId}"].mcpProtocolVersionOverride must be one of ${MCP_PROTOCOL_VERSIONS.join(", ")} (got "${String(entry.mcpProtocolVersionOverride)}")`,
+          `hostConfigV2: serverConnectionOverrides["${serverId}"].mcpProtocolVersionOverride must be one of ${MCP_PROTOCOL_VERSIONS.join(
+            ", ",
+          )}, ${MCP_PROTOCOL_VERSION_AUTO} (got "${String(
+            entry.mcpProtocolVersionOverride,
+          )}")`,
         );
       }
       mcpProtocolVersionOverride = entry.mcpProtocolVersionOverride;
@@ -935,7 +959,7 @@ function canonicalizeServerConnectionOverrides(
       const entryOut: {
         headersOverride?: Record<string, string>;
         requestTimeoutOverride?: number;
-        mcpProtocolVersionOverride?: McpProtocolVersion;
+        mcpProtocolVersionOverride?: McpProtocolVersionPin;
       } = {
         ...(normalizedHeaders !== undefined
           ? { headersOverride: normalizedHeaders }
@@ -1063,7 +1087,10 @@ export function canonicalizeHostConfigV2(
     // Fail-fast on missing: HostConfigInputV2 requires both fields; a
     // `?? {}` fallback hides write-path bugs that would silently dedupe
     // distinct callers' configs into a stray empty-capability row.
-    clientCapabilities: requireRecord(input.clientCapabilities, "clientCapabilities"),
+    clientCapabilities: requireRecord(
+      input.clientCapabilities,
+      "clientCapabilities",
+    ),
     hostContext: requireRecord(input.hostContext, "hostContext"),
     // Preserve undefined (omitted → dedupes with preset) vs {} (explicit empty
     // → hashes distinctly).

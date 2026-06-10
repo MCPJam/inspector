@@ -1,16 +1,16 @@
-import type { McpProtocolVersion } from "@/lib/client-config-v2";
+import type { McpProtocolVersionPin } from "@/lib/client-config-v2";
 
 interface EffectiveProtocolVersionChipProps {
   /**
    * Host-level default from `mcpProfile.mcpProtocolVersion`. `undefined` =
    * SDK chooses at request time.
    */
-  hostDefault?: McpProtocolVersion;
+  hostDefault?: McpProtocolVersionPin;
   /**
    * Per-server override from `projectServerRefs.mcpProtocolVersionOverride`.
    * `undefined` = no override, inherit host default.
    */
-  serverOverride?: McpProtocolVersion;
+  serverOverride?: McpProtocolVersionPin;
   /**
    * When the feature flag is off, the chip surfaces nothing — the
    * config field may still carry a stored pin but it has no runtime
@@ -27,12 +27,12 @@ export function EffectiveProtocolVersionChip({
 }: EffectiveProtocolVersionChipProps) {
   if (!flagEnabled) return null;
 
-  const effective: McpProtocolVersion | undefined =
+  const effective: McpProtocolVersionPin | undefined =
     serverOverride ?? hostDefault;
 
   return (
     <span className="inline-flex items-center px-1 text-[11px] text-muted-foreground">
-      {effective ?? "Latest"}
+      {effective === "auto" ? "Auto" : effective ?? "Latest"}
     </span>
   );
 }

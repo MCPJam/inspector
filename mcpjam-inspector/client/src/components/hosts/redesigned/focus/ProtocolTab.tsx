@@ -9,21 +9,22 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import { isKnownProtocolVersionPin } from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
-  type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "@/lib/client-config-v2";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
-type HostProtocolDropdownValue = "latest" | "rc";
+type HostProtocolDropdownValue = "auto" | "latest" | "rc";
 
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
 }> = [
+  { value: "auto", label: "Auto (detect per server)" },
   { value: "latest", label: "Latest (2025-11-25)" },
   { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
@@ -59,9 +60,11 @@ type ProtocolDoc = {
    * skip initialize — nesting it under either of those would be
    * misleading. Maps onto `mcpProfile.mcpProtocolVersion` on
    * persistence; per-server pins live on the server card's Connection
-   * overrides section.
+   * overrides section. `"auto"` defers the choice to connect time —
+   * the SDK probes `server/discover` and falls back to the legacy
+   * handshake when the server isn't stateless.
    */
-  mcpProtocolVersion?: McpProtocolVersion;
+  mcpProtocolVersion?: McpProtocolVersionPin;
   capabilities?: Record<string, unknown>;
   connectionDefaults: {
     requestTimeout: number;
@@ -170,16 +173,17 @@ function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
-  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
-  // so typo strings fall back to `undefined` (= "SDK default") rather
-  // than slipping through to the SDK's open-routing predicate. Absent
-  // / wrong type also collapses to undefined for the same canonical-
-  // hash-stability reason documented in the type.
-  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersionPin`
+  // ("auto" + the wire literals) so typo strings fall back to
+  // `undefined` (= "SDK default") rather than slipping through to the
+  // SDK's open-routing predicate. Absent / wrong type also collapses to
+  // undefined for the same canonical-hash-stability reason documented
+  // in the type.
+  let mcpProtocolVersion: McpProtocolVersionPin | undefined;
   const rawProtocolVersion = parsed.mcpProtocolVersion;
   if (
     typeof rawProtocolVersion === "string" &&
-    isKnownProtocolVersion(rawProtocolVersion)
+    isKnownProtocolVersionPin(rawProtocolVersion)
   ) {
     mcpProtocolVersion = rawProtocolVersion;
   }
@@ -277,14 +281,18 @@ export function ProtocolTab({
   // since they route to the same code path; saving normalizes back to
   // undefined.
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28" ? "rc" : "latest";
+    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28"
+      ? "rc"
+      : draft.mcpProfile?.mcpProtocolVersion === "auto"
+      ? "auto"
+      : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
   // JSON view round-trips immediately. Maps the UI-only "default" sentinel
   // to `undefined` — preserves canonical-hash stability so the SDK can
   // upgrade its default version without churning every stored host config.
-  const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
+  const setProtocolVersion = (next: McpProtocolVersionPin | undefined) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
         profileVersion: 1,
@@ -315,14 +323,20 @@ export function ProtocolTab({
           <div className="flex items-center gap-3">
             <span
               className="text-[12px] font-medium"
-              title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+              title="Auto: detect per server at connect time — stateless servers get the 2026 RC preview, everything else the legacy handshake. Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
             >
               {fProtocolVersion.label}
             </span>
             <Select
               value={selectedDropdownValue}
               onValueChange={(next) => {
-                setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
+                setProtocolVersion(
+                  next === "rc"
+                    ? "2026-07-28"
+                    : next === "auto"
+                    ? "auto"
+                    : undefined
+                );
               }}
               disabled={readOnly}
             >

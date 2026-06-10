@@ -466,13 +466,13 @@ export class Host {
   private requireConfigured(): void {
     if (!this.style) {
       throw new Error(
-        "Host requires a `style` (e.g. \"mcpjam\", \"claude\", \"chatgpt\"). " +
+        'Host requires a `style` (e.g. "mcpjam", "claude", "chatgpt"). ' +
           'Pass it to the constructor (`new Host({ style: "..." })`) or assign `host.style = "..."`.',
       );
     }
     if (!this.model) {
       throw new Error(
-        "Host requires a `model` (e.g. \"anthropic/claude-sonnet-4-6\"). " +
+        'Host requires a `model` (e.g. "anthropic/claude-sonnet-4-6"). ' +
           'Pass it to the constructor (`new Host({ model: "..." })`) or assign `host.model = "..."`.',
       );
     }
@@ -722,5 +722,6 @@ export type {
   HostConnectionDefaults,
   HostStyleId,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   ServerId,
 } from "./public-types.js";

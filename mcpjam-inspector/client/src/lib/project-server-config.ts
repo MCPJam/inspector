@@ -21,7 +21,7 @@
  * iterative-vs-fork split.
  */
 
-import type { McpProtocolVersion } from "./client-config-v2";
+import type { McpProtocolVersionPin } from "./client-config-v2";
 
 /** Per-server connection override entry. Same shape as
  * `HostConfigInputV2.serverConnectionOverrides[serverId]` so a chatbox
@@ -37,7 +37,7 @@ export type ProjectServerOverrideEntry = {
    * at write time so the wire-client factory never reads the project
    * layer.
    */
-  mcpProtocolVersionOverride?: McpProtocolVersion;
+  mcpProtocolVersionOverride?: McpProtocolVersionPin;
 };
 
 /** Write payload for `ensureProjectServerConfig`. `overrides` is keyed

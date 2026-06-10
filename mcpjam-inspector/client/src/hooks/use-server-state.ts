@@ -6,7 +6,7 @@ import type {
   MCPServerConfig,
   NormalizedError,
 } from "@mcpjam/sdk/browser";
-import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import { isKnownProtocolVersionPin } from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -71,7 +71,7 @@ import { readOnboardingState } from "@/lib/onboarding-state";
 import {
   resolveEffectiveMcpProtocolVersion,
   type HostConfigDtoV2,
-  type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "@/lib/client-config-v2";
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
@@ -987,7 +987,7 @@ export function useServerState({
           unknown
         >;
         supportedProtocolVersions?: string[];
-        mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
+        mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersionPin;
       } = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
@@ -1025,21 +1025,21 @@ export function useServerState({
       // .mcpProtocolVersionOverride`) wins, otherwise the host default
       // from `mcpProfile.mcpProtocolVersion`, otherwise undefined
       // (preserves "SDK chooses" semantics). Membership-gate each
-      // candidate via `isKnownProtocolVersion` so a typo on either
+      // candidate via `isKnownProtocolVersionPin` so a typo on either
       // layer doesn't slip past to the SDK's open-routing predicate.
       const rawServerOverride =
         serverId && activeHostConfig
           ? activeHostConfig.serverConnectionOverrides?.[serverId]
               ?.mcpProtocolVersionOverride
           : undefined;
-      const serverOverride: McpProtocolVersion | undefined =
+      const serverOverride: McpProtocolVersionPin | undefined =
         typeof rawServerOverride === "string" &&
-        isKnownProtocolVersion(rawServerOverride)
+        isKnownProtocolVersionPin(rawServerOverride)
           ? rawServerOverride
           : undefined;
       const rawHostPin = mcpProfile?.mcpProtocolVersion;
-      const hostPin: McpProtocolVersion | undefined =
-        typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+      const hostPin: McpProtocolVersionPin | undefined =
+        typeof rawHostPin === "string" && isKnownProtocolVersionPin(rawHostPin)
           ? rawHostPin
           : undefined;
       const effective = resolveEffectiveMcpProtocolVersion(
@@ -1729,12 +1729,12 @@ export function useServerState({
   //   reconnect re-seeds against the live pin rather than against whatever
   //   was last seen.
   const lastAppliedProtocolVersionRef = useRef<
-    Map<string, McpProtocolVersion | undefined>
+    Map<string, McpProtocolVersionPin | undefined>
   >(new Map());
   useEffect(() => {
     const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
-    const hostPin: McpProtocolVersion | undefined =
-      typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+    const hostPin: McpProtocolVersionPin | undefined =
+      typeof rawHostPin === "string" && isKnownProtocolVersionPin(rawHostPin)
         ? rawHostPin
         : undefined;
 
@@ -1750,8 +1750,9 @@ export function useServerState({
           ? activeHostConfig.serverConnectionOverrides?.[serverId]
               ?.mcpProtocolVersionOverride
           : undefined;
-      const serverOverride: McpProtocolVersion | undefined =
-        typeof rawOverride === "string" && isKnownProtocolVersion(rawOverride)
+      const serverOverride: McpProtocolVersionPin | undefined =
+        typeof rawOverride === "string" &&
+        isKnownProtocolVersionPin(rawOverride)
           ? rawOverride
           : undefined;
       const resolvedPin = resolveEffectiveMcpProtocolVersion(
@@ -1759,7 +1760,7 @@ export function useServerState({
         hostPin
       );
       // Gate removed — stateless-mcp-enabled goes permanent 2026-05-27.
-      const effective: McpProtocolVersion | undefined = resolvedPin;
+      const effective: McpProtocolVersionPin | undefined = resolvedPin;
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);

@@ -84,9 +84,13 @@ export {
 } from "./mcp-client-manager/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
+  MCP_PROTOCOL_VERSION_AUTO,
+  isAutoProtocolVersion,
   isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
   type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "./mcp-client-manager/index.js";
 
 // Error classes
@@ -544,9 +548,7 @@ export type {
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
-export {
-  evaluateToolCalls,
-} from "./matchers.js";
+export { evaluateToolCalls } from "./matchers.js";
 export type {
   EvalArgumentMismatch,
   EvalMatchOptions,

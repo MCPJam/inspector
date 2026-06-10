@@ -4,7 +4,7 @@ import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import {
   getDefaultClientCapabilities,
-  type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
@@ -19,7 +19,7 @@ export interface ApiContext {
    */
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
@@ -403,7 +403,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   clientCapabilities?: Record<string, unknown>;
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -447,10 +447,10 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
  */
 function buildBatchProtocolVersionMap(
   serverIds: string[]
-): Record<string, McpProtocolVersion> | undefined {
+): Record<string, McpProtocolVersionPin> | undefined {
   const source = apiContext.mcpProtocolVersionsByServerId;
   if (!source) return undefined;
-  const filtered: Record<string, McpProtocolVersion> = {};
+  const filtered: Record<string, McpProtocolVersionPin> = {};
   for (const id of serverIds) {
     const pin = source[id];
     if (pin) filtered[id] = pin;
@@ -473,7 +473,7 @@ export function buildResolvedServerBatchRequest(input: {
   clientCapabilities?: Record<string, unknown>;
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -511,7 +511,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   clientCapabilities?: Record<string, unknown>;
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
