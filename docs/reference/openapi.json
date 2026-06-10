@@ -56,6 +56,7 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" },
           "504": { "$ref": "#/components/responses/Timeout" }
         }
@@ -86,6 +87,7 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" },
           "504": { "$ref": "#/components/responses/Timeout" }
         }
@@ -119,7 +121,8 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
     },
@@ -161,6 +164,7 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "422": { "$ref": "#/components/responses/FeatureNotSupported" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" },
           "504": { "$ref": "#/components/responses/Timeout" }
         }
@@ -192,6 +196,7 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "422": { "$ref": "#/components/responses/FeatureNotSupported" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" },
           "504": { "$ref": "#/components/responses/Timeout" }
         }
@@ -223,6 +228,7 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "422": { "$ref": "#/components/responses/FeatureNotSupported" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" },
           "504": { "$ref": "#/components/responses/Timeout" }
         }
@@ -271,6 +277,7 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "422": { "$ref": "#/components/responses/FeatureNotSupported" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" },
           "504": { "$ref": "#/components/responses/Timeout" }
         }
@@ -301,6 +308,7 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
           "502": { "$ref": "#/components/responses/ServerUnreachable" },
           "504": { "$ref": "#/components/responses/Timeout" }
         }
@@ -657,6 +665,18 @@
       }
     },
     "responses": {
+      "InternalError": {
+        "description": "Something failed on MCPJam's side.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": {
+              "code": "INTERNAL_ERROR",
+              "message": "Unexpected internal error"
+            }
+          }
+        }
+      },
       "ValidationError": {
         "description": "Malformed body or parameters.",
         "content": {
