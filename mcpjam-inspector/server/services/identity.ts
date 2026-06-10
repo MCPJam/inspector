@@ -10,9 +10,16 @@
  * (`GET /internal/v1/users/lookup-by-external-id`; see mcpjam-backend
  * `convex/http.ts`). Authenticated with `INSPECTOR_SERVICE_TOKEN` via the
  * `x-inspector-service-token` header — the same channel `workos-key-bindings.ts`
- * uses for its sibling routes. Returns `null` on 404 (no matching user) so
- * the caller can translate to a 401; throws on transport / unexpected status.
+ * uses for its sibling routes. Returns `null` only on the route's own
+ * "User not found" 404 so the caller can translate to a 401; throws on
+ * transport errors, unexpected statuses, and routing-level 404s (route not
+ * deployed / wrong `CONVEX_HTTP_URL`).
  */
+
+import {
+  getInternalBackendConfig,
+  isEntityNotFound,
+} from "./internal-backend.js";
 
 const USERS_LOOKUP_PATH = "/internal/v1/users/lookup-by-external-id";
 
@@ -21,22 +28,10 @@ export interface ResolvedMcpjamUser {
   _id: string;
 }
 
-function getConfig(): { convexUrl: string; serviceToken: string } {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new Error("CONVEX_HTTP_URL is not set");
-  }
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!serviceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
-  return { convexUrl, serviceToken };
-}
-
 export async function resolveUserByExternalId(
   externalId: string
 ): Promise<ResolvedMcpjamUser | null> {
-  const { convexUrl, serviceToken } = getConfig();
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
   const url = `${convexUrl}${USERS_LOOKUP_PATH}?externalId=${encodeURIComponent(
     externalId
   )}`;
@@ -45,7 +40,12 @@ export async function resolveUserByExternalId(
     headers: { "x-inspector-service-token": serviceToken },
   });
   if (response.status === 404) {
-    return null;
+    if (await isEntityNotFound(response, "User not found")) {
+      return null;
+    }
+    throw new Error(
+      `User lookup route not found at ${convexUrl}${USERS_LOOKUP_PATH} — is the backend lookup route deployed?`
+    );
   }
   if (!response.ok) {
     throw new Error(`User lookup failed (${response.status})`);
