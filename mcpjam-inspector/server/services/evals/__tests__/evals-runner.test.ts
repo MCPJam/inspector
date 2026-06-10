@@ -784,6 +784,142 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(createLlmModelMock).not.toHaveBeenCalled();
   });
 
+  // Browser-rendered MCP App eval PR 14: the hosted (jam / org-BYOK) runners
+  // attach the harness via the engine's extension points.
+  it("PR 14: threads Computer Use tools + browser hooks into runAssistantTurn for Claude jam models", async () => {
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts: any) => ({
+        messages: [
+          ...opts.messages,
+          { role: "assistant", content: [{ type: "text", text: "Done" }] },
+        ],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        turnTrace: { spans: [] } as any,
+      }));
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Widget case",
+              query: "Show the widget",
+              runs: 1,
+              model: "claude-haiku-4.5",
+              provider: "anthropic",
+              expectedToolCalls: [],
+              promptTurns: [
+                {
+                  id: "turn-1",
+                  prompt: "Show the widget",
+                  expectedToolCalls: [],
+                },
+              ],
+              testCaseId: "case-pr14",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-pr14",
+      });
+
+      expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+      const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
+      // Wire-format Computer Use tools merged into the engine tool map
+      // (trace-wrapped, so identity differs — names + executability matter).
+      expect(Object.keys(opts.tools)).toEqual(
+        expect.arrayContaining(["computer", "finish_widget"]),
+      );
+      expect(typeof opts.tools.computer.execute).toBe("function");
+      expect(typeof opts.tools.computer.toModelOutput).toBe("function");
+      // The advertised-tool gate + both browser hooks are attached.
+      expect(typeof opts.prepareAdvertisedTools).toBe("function");
+      expect(typeof opts.onToolCall).toBe("function");
+      expect(typeof opts.onToolResult).toBe("function");
+      // No widget mounted yet → the gate hides the computer tools.
+      expect(
+        opts.prepareAdvertisedTools({
+          stepIndex: 0,
+          defaultToolNames: ["search", "computer", "finish_widget"],
+        }),
+      ).toEqual(["search"]);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
+
+  it("PR 14: non-Claude jam models get no Computer Use tools or gate (render hook still attached)", async () => {
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts: any) => ({
+        messages: [
+          ...opts.messages,
+          { role: "assistant", content: [{ type: "text", text: "Done" }] },
+        ],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        turnTrace: { spans: [] } as any,
+      }));
+
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Non-Claude widget case",
+              query: "Show the widget",
+              runs: 1,
+              model: "gpt-5-mini",
+              provider: "openai",
+              expectedToolCalls: [],
+              promptTurns: [
+                {
+                  id: "turn-1",
+                  prompt: "Show the widget",
+                  expectedToolCalls: [],
+                },
+              ],
+              testCaseId: "case-pr14-openai",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: {},
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-pr14-openai",
+      });
+
+      expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
+      const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
+      expect(Object.keys(opts.tools)).not.toEqual(
+        expect.arrayContaining(["computer"]),
+      );
+      expect(opts.prepareAdvertisedTools).toBeUndefined();
+      // Render observations are model-agnostic — the hook stays attached.
+      expect(typeof opts.onToolResult).toBe("function");
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
+
   it("streams bare MCPJam Anthropic test cases through the backend without a BYOK key", async () => {
     const emitted: Array<Record<string, unknown>> = [];
     fetchMock.mockResolvedValue(createBackendStreamResponse());
