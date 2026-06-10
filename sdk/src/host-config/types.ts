@@ -229,6 +229,14 @@ export type HostConfigInputV2 = {
   // array" case.
   serverIds?: Array<ServerId>;
   optionalServerIds?: Array<ServerId>;
+  // Catalog ids of host-managed built-in tools (e.g. "web_search") attached to
+  // this host config — a peer dimension to serverIds. The SDK treats these as
+  // OPAQUE strings: it validates wire shape (array of non-empty strings, then
+  // dedupe + sort) but does NOT check them against any enum or catalog.
+  // Existence / org-scope is enforced by the backend against the `builtInTools`
+  // table. undefined OR [] → omitted from the canonical hash so pre-feature
+  // rows stay byte-identical; a populated set dedupes + sorts before hashing.
+  builtInToolIds?: ReadonlyArray<string>;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -268,6 +276,9 @@ export type CanonicalHostConfigV2 = {
   respectToolVisibility?: boolean;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
+  // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or
+  // empty so pre-feature rows hash byte-identically; deduped + sorted when set.
+  builtInToolIds?: Array<string>;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
