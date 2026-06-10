@@ -909,9 +909,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
       expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
       const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
-      expect(Object.keys(opts.tools)).not.toEqual(
-        expect.arrayContaining(["computer"]),
-      );
+      expect(opts.tools).not.toHaveProperty("computer");
+      expect(opts.tools).not.toHaveProperty("finish_widget");
       expect(opts.prepareAdvertisedTools).toBeUndefined();
       // Render observations are model-agnostic — the hook stays attached.
       expect(typeof opts.onToolResult).toBe("function");
