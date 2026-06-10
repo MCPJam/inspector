@@ -9,7 +9,11 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { isKnownProtocolVersionPin } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -297,8 +301,32 @@ export function ProtocolTab({
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
         profileVersion: 1,
       };
+      // Undo the canonicalizer's stateful-pin derivation when the pin
+      // changes. `canonicalizeMcpProfile` materializes
+      // `initialize.supportedProtocolVersions: [pin]` into the stored row
+      // for stateful pins; if that list survived a dropdown change it
+      // would keep constraining the legacy initialize accept-list under
+      // the new pin — e.g. an Auto fallback proposing the stale version
+      // and failing against anything newer. Only the exact derived shape
+      // (single entry equal to the old stateful pin) is dropped;
+      // hand-written multi-version lists pass through untouched.
+      const prevPin = base.mcpProtocolVersion;
+      const prevList = base.initialize?.supportedProtocolVersions;
+      const prevListWasDerived =
+        prevPin !== undefined &&
+        prevPin !== next &&
+        isKnownProtocolVersion(prevPin) &&
+        !isStatelessProtocolVersion(prevPin) &&
+        prevList?.length === 1 &&
+        prevList[0] === prevPin;
+      let nextInitialize = base.initialize;
+      if (prevListWasDerived && nextInitialize !== undefined) {
+        const { supportedProtocolVersions: _dropped, ...rest } = nextInitialize;
+        nextInitialize = Object.keys(rest).length > 0 ? rest : undefined;
+      }
       const updated: HostConfigMcpProfileV1 = {
         ...base,
+        initialize: nextInitialize,
         mcpProtocolVersion: next,
       };
       const allEmpty =
