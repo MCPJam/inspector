@@ -68,6 +68,7 @@ export interface ExecutionOverrides {
   progressiveToolDiscovery?: boolean;
   modelId?: string;
   selectedServerIds?: string[];
+  builtInToolIds?: string[];
 }
 
 /**
@@ -107,6 +108,13 @@ export interface ResolvedExecutionContext {
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
   selectedServerIds: string[] | undefined;
+  /**
+   * HostConfig v2 built-in tool ids (e.g. `["web_search"]`). The resolver
+   * only surfaces the resolved id list; turning ids into runnable AI SDK
+   * tools (and deciding whether auth context permits it) is owned by
+   * `built-in-tools/registry.ts` at the call site.
+   */
+  builtInToolIds: string[] | undefined;
   hostPolicy: HostExecutionPolicy;
   drift: ExecutionDriftEntry[];
 }
@@ -166,6 +174,18 @@ function readProgressiveToolDiscovery(
 }
 
 /**
+ * Value equality for drift detection. Array fields (`selectedServerIds`,
+ * `builtInToolIds`) arrive as fresh allocations on every request — a
+ * reference compare would report drift for identical contents.
+ */
+function areEqualValues(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  return Object.is(a, b);
+}
+
+/**
  * Pick the winning value for a field given the resolver precedence.
  * Returns the winner AND, if both sides disagreed, a drift entry the
  * caller can log.
@@ -189,7 +209,7 @@ function pickField<T>(
   }
   // Both defined — apply precedence + record drift when they differ.
   const drift =
-    override !== host
+    !areEqualValues(override, host)
       ? {
           field,
           overrideValue: override as unknown,
@@ -221,6 +241,7 @@ export function resolveExecutionContext(args: {
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
       selectedServerIds: overrides.selectedServerIds,
+      builtInToolIds: overrides.builtInToolIds,
       hostPolicy,
       drift,
     };
@@ -234,6 +255,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: readProgressiveToolDiscovery(hostConfig),
     modelId: readString(hostConfig, "modelId"),
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
+    builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
   };
 
   const systemPrompt = pickField(
@@ -292,6 +314,14 @@ export function resolveExecutionContext(args: {
   );
   if (selectedServerIds.drift) drift.push(selectedServerIds.drift);
 
+  const builtInToolIds = pickField(
+    "builtInToolIds",
+    overrides.builtInToolIds,
+    hostFields.builtInToolIds,
+    precedence,
+  );
+  if (builtInToolIds.drift) drift.push(builtInToolIds.drift);
+
   return {
     systemPrompt: systemPrompt.value,
     temperature: temperature.value,
@@ -301,6 +331,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     selectedServerIds: selectedServerIds.value,
+    builtInToolIds: builtInToolIds.value,
     hostPolicy,
     drift,
   };

@@ -27,10 +27,8 @@ import {
 } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
-import {
-  buildExaWebSearchTool,
-  WEB_SEARCH_TOOL_NAME,
-} from "../../utils/built-in-tools/exa-web-search.js";
+import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
+import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
 import {
   assertBearerToken,
   readJsonBody,
@@ -105,15 +103,15 @@ mcpjamAgent.post("/", async (c) => {
       // Bearer is guaranteed by assertBearerToken above; thread it (plus the
       // project + session) into the web_search built-in tool, whose execute
       // proxies to the Convex Exa route for billing + the external call.
+      // The agent always advertises web_search — it isn't hostConfig-gated
+      // like chat-v2 / eval surfaces, so the id list is fixed here.
       const authHeader = c.req.header("authorization");
       const builtInTools = authHeader
-        ? {
-            [WEB_SEARCH_TOOL_NAME]: buildExaWebSearchTool({
-              authHeader,
-              projectId: body.projectId,
-              chatSessionId: body.chatSessionId,
-            }),
-          }
+        ? safeResolveBuiltInTools([WEB_SEARCH_TOOL_NAME], {
+            authHeader,
+            projectId: body.projectId,
+            chatSessionId: body.chatSessionId,
+          })
         : undefined;
 
       return await streamWebChatTurn({
