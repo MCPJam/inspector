@@ -11,16 +11,39 @@ const {
   createAuthorizedManagerMock,
   convexQueryMock,
   convexActionMock,
+  validateApiKeyMock,
+  resolveUserByExternalIdMock,
+  lookupWorkosKeyBindingMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   prepareEvalRunMock: vi.fn(),
   createAuthorizedManagerMock: vi.fn(),
   convexQueryMock: vi.fn(),
   convexActionMock: vi.fn(),
+  validateApiKeyMock: vi.fn(),
+  resolveUserByExternalIdMock: vi.fn(),
+  lookupWorkosKeyBindingMock: vi.fn(),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
+}));
+
+// WorkOS API-key middleware seams — same pattern as bearer-auth.test.ts.
+// Only exercised by tests that send an `sk_` bearer; JWT-bearer tests never
+// reach these.
+vi.mock("../../../services/workos-client.js", () => ({
+  getWorkOSClient: () => ({
+    apiKeys: { createValidation: validateApiKeyMock },
+  }),
+}));
+
+vi.mock("../../../services/identity.js", () => ({
+  resolveUserByExternalId: resolveUserByExternalIdMock,
+}));
+
+vi.mock("../../../services/workos-key-bindings.js", () => ({
+  lookupWorkosKeyBinding: lookupWorkosKeyBindingMock,
 }));
 
 vi.mock("../../shared/evals.js", async () => {
@@ -46,6 +69,7 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
+import { parseMaxConcurrentRuns } from "../evals.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -57,14 +81,15 @@ function request(
   app: Hono,
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
+  token = "tok"
 ): Promise<Response> {
   return Promise.resolve(
     app.request(path, {
       method,
       headers: {
         "Content-Type": "application/json",
-        Authorization: "Bearer tok",
+        Authorization: `Bearer ${token}`,
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })
@@ -88,6 +113,7 @@ describe("v1 write routes", () => {
   const originalEnv = {
     CONVEX_URL: process.env.CONVEX_URL,
     CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
+    INSPECTOR_SERVICE_TOKEN: process.env.INSPECTOR_SERVICE_TOKEN,
   };
   const originalFetch = global.fetch;
 
@@ -245,6 +271,210 @@ describe("v1 write routes", () => {
       );
       expect(res.status).toBe(500);
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes the delegated Convex JWT — not the sk_ key — to the manager for API-key callers", async () => {
+      process.env.INSPECTOR_SERVICE_TOKEN = "svc_token";
+      validateApiKeyMock.mockResolvedValue({
+        apiKey: { id: "key_1", owner: { id: "workos_user_1" } },
+      });
+      resolveUserByExternalIdMock.mockResolvedValue({ _id: "convex_user_1" });
+      lookupWorkosKeyBindingMock.mockResolvedValue({
+        mcpjamOrganizationId: "org_1",
+      });
+      // The only fetch on this path is the delegated-token mint.
+      global.fetch = vi.fn(async (input: any, init: any) => {
+        expect(String(input)).toBe(
+          "https://convex-http.example.com/web/delegated-token"
+        );
+        expect(init?.headers?.["x-mcpjam-acting-as"]).toBe("workos_user_1");
+        expect(init?.headers?.["x-mcpjam-acting-in-org"]).toBe("org_1");
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            token: "delegated-jwt",
+            expiresAt: Date.now() + 2 * 60 * 60 * 1000,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }) as typeof fetch;
+
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite_1",
+        runId: "run_1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        { suiteId: "suite_1", serverIds: ["s1"] },
+        "sk_live_secret"
+      );
+      expect(res.status).toBe(202);
+
+      // The manager bearer feeds the hosted OAuth force-refresh closure and
+      // secret reveal — both JWT-only Convex surfaces where the raw API key
+      // would 401. Both seams must see the minted JWT.
+      expect(createAuthorizedManagerMock.mock.calls[0][1]).toBe(
+        "delegated-jwt"
+      );
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        convexAuthToken: "delegated-jwt",
+        source: "api",
+      });
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+    });
+
+    it("forces suiteRerun on a bare suiteId rerun even when the caller sends false", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite_1",
+        runId: "run_1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        { suiteId: "suite_1", serverIds: ["s1"], suiteRerun: false }
+      );
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        suiteRerun: true,
+      });
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+    });
+
+    it("keeps suiteRerun false when inline tests are supplied", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite_1",
+        runId: "run_1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        {
+          suiteId: "suite_1",
+          serverIds: ["s1"],
+          tests: [
+            {
+              title: "case",
+              query: "do it",
+              runs: 1,
+              model: "m",
+              provider: "anthropic",
+              expectedToolCalls: [],
+            },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        suiteRerun: false,
+      });
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+    });
+  });
+
+  describe("eval-run concurrency gate", () => {
+    it("parses V1_MAX_CONCURRENT_EVAL_RUNS defensively", () => {
+      expect(parseMaxConcurrentRuns(undefined)).toBe(2);
+      expect(parseMaxConcurrentRuns("bad")).toBe(2); // NaN must not disable the gate
+      expect(parseMaxConcurrentRuns("0")).toBe(2);
+      expect(parseMaxConcurrentRuns("-3")).toBe(2);
+      expect(parseMaxConcurrentRuns("2.5")).toBe(2);
+      expect(parseMaxConcurrentRuns("5")).toBe(5);
+    });
+
+    it("gates a caller at the limit, isolates other bearers, and frees slots on completion", async () => {
+      const app = makeApp();
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      const releaseGates: Array<() => void> = [];
+      prepareEvalRunMock.mockImplementation(async () => ({
+        suiteId: "suite_1",
+        runId: "run_1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn(
+          () => new Promise<void>((resolve) => releaseGates.push(resolve))
+        ),
+      }));
+      const post = (token: string) =>
+        request(
+          app,
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", serverIds: ["s1"] },
+          token
+        );
+
+      // Default limit is 2 (env unset in tests).
+      expect((await post("tok")).status).toBe(202);
+      expect((await post("tok")).status).toBe(202);
+
+      const gated = await post("tok");
+      expect(gated.status).toBe(429);
+      expect(await gated.json()).toMatchObject({
+        code: "RATE_LIMITED",
+        details: { reason: "CONCURRENT_RUN_LIMIT" },
+      });
+
+      // A different JWT bearer is a different caller — it must not share
+      // the saturated bucket (regression: all JWT callers keyed "anonymous").
+      expect((await post("other-tok")).status).toBe(202);
+
+      // Finishing runs releases slots for the gated caller.
+      for (const release of releaseGates.splice(0)) release();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(3)
+      );
+      expect((await post("tok")).status).toBe(202);
+
+      // Drain so later tests start with empty buckets.
+      for (const release of releaseGates.splice(0)) release();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(4)
+      );
     });
   });
 

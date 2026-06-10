@@ -26,6 +26,11 @@ const MINT_TIMEOUT_MS = 10_000;
 // because background eval runs capture the token at POST time and keep using
 // it for the duration of the run.
 const EXPIRY_SLACK_MS = 10 * 60 * 1000;
+// Assumed TTL when the mint response omits `expiresAt`. Must comfortably
+// exceed EXPIRY_SLACK_MS — a fallback of exactly the slack window would put
+// the token inside the re-mint window the moment it's cached, turning the
+// cache into a per-request mint. Tokens live ~2h server-side; 1h is safe.
+const FALLBACK_TTL_MS = 60 * 60 * 1000;
 
 type CachedToken = { token: string; expiresAt: number };
 
@@ -123,7 +128,7 @@ async function mintDelegatedToken(
     expiresAt:
       typeof body.expiresAt === "number"
         ? body.expiresAt
-        : Date.now() + EXPIRY_SLACK_MS,
+        : Date.now() + FALLBACK_TTL_MS,
   };
 }
 

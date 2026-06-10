@@ -15,10 +15,10 @@
  * the resource's projectId against the path so a valid id from another
  * project reads as NOT_FOUND.
  */
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
 import {
-  assertBearerToken,
   parseWithSchema,
   ErrorCode,
   WebRouteError,
@@ -64,13 +64,31 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
 // Per-org cap on detached runs in THIS process. Railway runs a single
 // Inspector instance today; if that changes this becomes per-instance,
 // which is acceptable (the backend run/iteration quotas remain global).
-const MAX_CONCURRENT_RUNS = Number(
-  process.env.V1_MAX_CONCURRENT_EVAL_RUNS ?? 2
+//
+// Exported for tests. A malformed env value (`Number("bad")` → NaN) must
+// fall back to the default rather than disabling the gate: every `>=`
+// comparison against NaN is false, which would admit unlimited runs.
+export function parseMaxConcurrentRuns(raw: string | undefined): number {
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : 2;
+}
+const MAX_CONCURRENT_RUNS = parseMaxConcurrentRuns(
+  process.env.V1_MAX_CONCURRENT_EVAL_RUNS
 );
 const activeRunsByOrg = new Map<string, number>();
 
 function orgConcurrencyKey(c: any): string {
-  return c.get("mcpjamOrganizationId") ?? c.get("workosUserId") ?? "anonymous";
+  const orgOrUser = c.get("mcpjamOrganizationId") ?? c.get("workosUserId");
+  if (orgOrUser) {
+    return orgOrUser;
+  }
+  // Only the API-key middleware sets WorkOS/org context; JWT callers would
+  // otherwise all share one "anonymous" bucket. Key them by a digest of the
+  // bearer instead — per-caller, without holding the raw token in the map.
+  const authHeader = c.req.header("authorization");
+  return authHeader
+    ? createHash("sha256").update(authHeader).digest("hex")
+    : "anonymous";
 }
 
 function tryAcquireRunSlot(key: string): boolean {
@@ -187,16 +205,19 @@ function toIterationDto(iteration: IterationDoc) {
 evals.post("/projects/:projectId/eval-runs", async (c) => {
   const projectId = c.req.param("projectId");
   const rawBody = await synthesizeServerBody(c);
-  const bearerToken = assertBearerToken(c);
   const body = parseWithSchema(createEvalRunSchema, {
     ...rawBody,
     projectId,
   });
 
-  // `suiteRerun` semantics from the web surface: don't re-upsert per-case
-  // fields when rerunning a configured suite without inline tests.
+  // `suiteRerun` semantics from the web surface: a bare `suiteId` rerun has
+  // no inline tests to upsert, so it is ALWAYS a rerun — forcing true here
+  // (even over an explicit `suiteRerun: false`) keeps a caller from baking
+  // suite defaults into per-case overrides on a plain rerun.
   const suiteRerun =
-    body.suiteRerun ?? (Boolean(body.suiteId) && body.tests.length === 0);
+    Boolean(body.suiteId) && body.tests.length === 0
+      ? true
+      : (body.suiteRerun ?? false);
 
   const slotKey = orgConcurrencyKey(c);
   if (!tryAcquireRunSlot(slotKey)) {
@@ -222,11 +243,15 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   try {
     // Resolved once, synchronously: the background task captures this token
     // in its closure (its TTL covers a capped run; see v1-convex-token.ts).
+    // It is ALSO the bearer handed to the manager: the manager's
+    // bearer-forwarding paths (hosted OAuth force-refresh, secret reveal)
+    // hit Convex's JWT-only surfaces, where an `sk_` API key is useless —
+    // same swap `runEphemeralConnection` does for the synchronous routes.
     const convexAuthToken = await getConvexBearerForRequest(c);
 
     const { manager } = await createAuthorizedManager(
       c,
-      bearerToken,
+      convexAuthToken,
       projectId,
       body.serverIds,
       WEB_CALL_TIMEOUT_MS,

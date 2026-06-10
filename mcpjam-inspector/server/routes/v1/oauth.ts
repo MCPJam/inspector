@@ -28,6 +28,8 @@ import { v1Resource } from "./envelope.js";
 
 const oauth = new Hono();
 
+const IMPORT_TIMEOUT_MS = 15_000;
+
 const importTokensSchema = z.object({
   projectId: z.string().min(1),
   serverId: z.string().min(1),
@@ -68,6 +70,8 @@ oauth.post(
       );
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), IMPORT_TIMEOUT_MS);
     let response: Response;
     try {
       response = await fetch(`${convexUrl}/web/oauth/import-tokens`, {
@@ -76,13 +80,22 @@ oauth.post(
         // `kind: "generic"` — the registry OAuth-proxy variant is a hosted
         // client concern, not part of the public surface.
         body: JSON.stringify({ ...body, kind: "generic" }),
+        signal: controller.signal,
       });
-    } catch {
+    } catch (error) {
+      const isAbort =
+        error instanceof Error &&
+        (error.name === "AbortError" ||
+          (error as { code?: string }).code === "ABORT_ERR");
       throw new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        "Failed to reach the token import service"
+        isAbort ? 504 : 502,
+        isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
+        isAbort
+          ? `Token import timed out after ${IMPORT_TIMEOUT_MS}ms`
+          : "Failed to reach the token import service"
       );
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     type ImportTokensPayload = {
