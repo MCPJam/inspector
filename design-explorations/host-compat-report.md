@@ -9,8 +9,10 @@ Related: `sdk/src/host-config/`, `client/src/lib/client-styles/`, `convex/server
 Developers building MCP servers target many hosts — Claude, ChatGPT, Cursor,
 M365 Copilot, Codex — and the hosts genuinely differ: transport and auth
 requirements, protocol versions, which server capabilities they surface
-(prompts, resources, logging), and most sharply the MCP Apps (SEP-1865) and
-OpenAI Apps SDK widget surfaces.
+(prompts, resources, logging), and most sharply the widget surfaces: MCP
+Apps (SEP-1865, the [MCP Apps extension
+spec](https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/draft/apps.mdx))
+and the OpenAI Apps SDK.
 
 MCPJam already encodes this knowledge. The host-style registry
 (`client/src/lib/client-styles/built-ins.ts`) carries a per-host MCP Apps
@@ -117,8 +119,10 @@ verified 6 months ago").
   hostConfigs may carry overrides (tool approval, visibility filtering,
   capability overrides). Shown inside the Compatibility tab beneath the
   market view. BYO host styles appear here with Unknown for dimensions their
-  profile doesn't declare — and the empty state is an invitation to fill in
-  their profile.
+  profile doesn't declare. In v1 those Unknowns are read-only; letting users
+  fill in BYO compat profiles rides the same mechanism BYO host styles
+  already use to register (the client-side host-style registry), and its
+  long-term home follows open question 1 below.
 
 ## The rule catalog (v1, fully static from the existing snapshot)
 
@@ -145,9 +149,11 @@ persisted report is invalidated when rules or profiles change.
 
 - **L0 — Static (v1, instant, free).** Snapshot × profile, pure function,
   computed on read. Ships the strip, the tab, deep links.
-- **L1 — Widget scan.** For each `ui://` resource, fetch the HTML we already
-  have access to and statically scan for `window.openai.*` / `app.*` API
-  usage and external URLs. This unlocks the killer per-method findings: "your
+- **L1 — Widget scan.** For each `ui://` resource, read the widget HTML the
+  same way the existing widget-content routes already do — `resources/read`
+  through the MCP client manager, extracting `content.text` / base64
+  `content.blob` — and statically scan it for `window.openai.*` / `app.*`
+  API usage and external URLs. This unlocks the killer per-method findings: "your
   widget calls `window.openai.requestModal` — Copilot doesn't expose it" and
   "widget fetches `api.example.com` but `csp.connectDomains` doesn't declare
   it." Pure string/AST scanning; no execution.
@@ -178,9 +184,11 @@ persisted report is invalidated when rules or profiles change.
   fact tagged `{ value, provenance, verifiedAt }`. Apps dimensions are
   already there — they get provenance tags, not new values.
 - **Compute on read, client-side, no new tables for v1.** Consistent with
-  the existing "diffs are recomputed on read" stance. Persistence comes only
-  with drift alerts (a small per-revision verdict summary so the notifier
-  can compare without recomputing history) and registry badges.
+  the existing "diffs are recomputed on read" stance. Persistence arrives
+  only with drift alerts (a later phase), and as an optional per-host verdict
+  summary field on existing `serverInspectionRevision` rows — not a new
+  table — so the notifier can compare adjacent revisions without recomputing
+  history. Registry badges bring their own storage when they land.
 - **Where host facts live long-term** is an open question (below): the
   client registry means updating Copilot's matrix requires a release; a
   backend-managed "host facts feed" would let facts update independently and
@@ -203,10 +211,18 @@ persisted report is invalidated when rules or profiles change.
    releases) or move to backend-managed data (updates without deploys,
    shared with CLI/registry)? Recommendation: registry for v1, design the
    provenance schema to migrate.
-2. **Strip contents:** all six built-ins, or hide MCPJam/Codex (house chrome
-   and a CLI stand-in) from the market view by default?
+2. **Strip contents:** should the default connect-strip show all six
+   built-ins, or only the four real shipping targets? MCPJam (the
+   inspector's own surface — trivially compatible by construction) and
+   Codex (a CLI stand-in with no widget surface) add little signal to a
+   "where can I ship this?" strip. Either way they stay in the My-hosts
+   view and the host picker — this is only about the strip's default, not
+   about removing them from the product.
 3. **Registry badges:** do compat verdicts become public listing metadata,
    and if so, only L2-verified ones?
 4. **Probe program:** the Cursor 3.4.17 probe shows the path — do we invest
    in a first-party probe server developers run inside real hosts to keep
-   facts fresh (and crowdsource coverage)?
+   facts fresh (and crowdsource coverage)? If so, it needs a security story
+   up front: explicit opt-in, minimal permissions, data minimization
+   (capability booleans only — never host config contents), and signed
+   releases.
