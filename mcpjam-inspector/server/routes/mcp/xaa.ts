@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
@@ -50,6 +50,11 @@ const proxyTokenSchema = z.object({
 interface CreateXaaRouterOptions {
   issuerBasePath: "/api/mcp" | "/api/web";
   httpsOnlyProxy: boolean;
+  // When behind a TLS-terminating proxy (hosted mode), the issuer scheme must
+  // be reconstructed from X-Forwarded-Proto because c.req.url is http://
+  // internally. Leave false for local (no proxy) so the header can't be
+  // spoofed into advertising https for a plain-http localhost run.
+  trustForwardedHeaders?: boolean;
   protectedMiddlewares?: MiddlewareHandler[];
 }
 
@@ -88,9 +93,27 @@ function parseRequest<T>(schema: z.ZodSchema<T>, data: unknown): T {
   return parsed.data;
 }
 
-function getIssuerForRequest(requestUrl: string, issuerBasePath: string): string {
-  const origin = new URL(requestUrl).origin;
-  return getXAAIssuerUrl(`${origin}${issuerBasePath}`);
+function getIssuerForRequest(
+  c: Context,
+  issuerBasePath: string,
+  trustForwardedHeaders: boolean,
+): string {
+  const parsed = new URL(c.req.url);
+
+  if (trustForwardedHeaders) {
+    // Only the scheme is reconstructed from a forwarded header: the edge
+    // terminates TLS so c.req.url is http:// internally. The host already
+    // comes from the validated Host header in c.req.url, so we do NOT trust
+    // X-Forwarded-Host — honoring it would let a client inject an arbitrary
+    // issuer/jwks_uri (and a forged `iss` on the signed ID-JAG). Restrict to
+    // a known scheme so a forwarded value can't switch to another protocol.
+    const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
+    if (proto === "https" || proto === "http") {
+      parsed.protocol = proto;
+    }
+  }
+
+  return getXAAIssuerUrl(`${parsed.origin}${issuerBasePath}`);
 }
 
 function decodeJwtPayloadUnsafe(token: string): ParsedJwtPayload {
@@ -126,6 +149,7 @@ function resolveNegativeTestMode(value?: string): NegativeTestMode {
 export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const router = new Hono();
   const protectedMiddlewares = options.protectedMiddlewares ?? [];
+  const trustForwardedHeaders = options.trustForwardedHeaders ?? false;
 
   if (protectedMiddlewares.length > 0) {
     router.use("/authenticate", ...protectedMiddlewares);
@@ -142,7 +166,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   router.get("/.well-known/openid-configuration", (c) => {
     initXAAIdpKeyPair();
-    const issuer = getIssuerForRequest(c.req.url, options.issuerBasePath);
+    const issuer = getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
 
     return c.json(
       {
@@ -172,7 +196,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     try {
       const body = await c.req.json();
       const { userId, email, audience } = parseRequest(authenticateSchema, body);
-      const issuer = getIssuerForRequest(c.req.url, options.issuerBasePath);
+      const issuer = getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
       const subject = userId || "user-12345";
       const resolvedEmail = email || "demo.user@example.com";
       const issued = issueMockIdToken({
@@ -207,7 +231,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       const body = await c.req.json();
       const parsed = parseRequest(tokenExchangeSchema, body);
       const negativeTestMode = resolveNegativeTestMode(parsed.negativeTestMode);
-      const issuer = getIssuerForRequest(c.req.url, options.issuerBasePath);
+      const issuer = getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
       const identityPayload = decodeJwtPayloadUnsafe(parsed.identityAssertion);
       const subject = identityPayload.sub || "user-12345";
 
