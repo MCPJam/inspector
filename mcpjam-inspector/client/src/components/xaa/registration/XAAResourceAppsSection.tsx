@@ -20,6 +20,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { cn } from "@/lib/utils";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import type { XaaResourceApp } from "@/lib/xaa/types";
@@ -29,6 +30,10 @@ const LOCKED_REASON = "Only organization admins can manage registrations.";
 
 interface XAAResourceAppsSectionProps {
   organizationId: string | null;
+  /** Registration currently selected as the flow runner's target. */
+  selectedId?: string | null;
+  /** Row click — toggles the runner target. */
+  onSelect?: (app: XaaResourceApp) => void;
 }
 
 /**
@@ -54,7 +59,8 @@ function LockedIconButton({
           aria-disabled={true}
           aria-label={label}
           tabIndex={0}
-          onClick={undefined}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
           className="opacity-50"
         >
           {children}
@@ -69,6 +75,8 @@ function LockedIconButton({
 
 export function XAAResourceAppsSection({
   organizationId,
+  selectedId,
+  onSelect,
 }: XAAResourceAppsSectionProps) {
   // Hooks run unconditionally; the flag/auth gates return null below.
   const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
@@ -160,67 +168,106 @@ export function XAAResourceAppsSection({
           </div>
         ) : (
           <ul className="space-y-1.5">
-            {resourceApps.map((app) => (
-              <li
-                key={app.id}
-                data-testid={`xaa-reg-row-${app.id}`}
-                className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-xs font-medium">
-                      {app.name}
-                    </span>
-                    <Badge variant="secondary" className="text-[10px]">
-                      {app.resourceType === "mcp" ? "MCP" : "REST"}
-                    </Badge>
-                    <Badge variant="outline" className="text-[10px]">
-                      {app.authServerMode === "mcpjam" ? "MCPJam AS" : "Own AS"}
-                    </Badge>
-                    {app.hasSecret && (
-                      <KeyRound
-                        aria-label="Client secret stored"
-                        className="h-3 w-3 text-muted-foreground"
-                      />
+            {resourceApps.map((app) => {
+              const isSelected = selectedId === app.id;
+              return (
+                <li key={app.id}>
+                  {/* Row-as-button (it contains real buttons, so the outer
+                      can't be a <button>). Click toggles the runner target. */}
+                  <div
+                    data-testid={`xaa-reg-row-${app.id}`}
+                    role={onSelect ? "button" : undefined}
+                    tabIndex={onSelect ? 0 : undefined}
+                    aria-pressed={onSelect ? isSelected : undefined}
+                    onClick={onSelect ? () => onSelect(app) : undefined}
+                    onKeyDown={
+                      onSelect
+                        ? (event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              onSelect(app);
+                            }
+                          }
+                        : undefined
+                    }
+                    className={cn(
+                      "flex items-center gap-2 rounded-md border px-3 py-2",
+                      isSelected
+                        ? "border-primary/60 bg-primary/5"
+                        : "border-border",
+                      onSelect && "cursor-pointer",
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-xs font-medium">
+                          {app.name}
+                        </span>
+                        <Badge variant="secondary" className="text-[10px]">
+                          {app.resourceType === "mcp" ? "MCP" : "REST"}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          {app.authServerMode === "mcpjam"
+                            ? "MCPJam AS"
+                            : "Own AS"}
+                        </Badge>
+                        {app.hasSecret && (
+                          <KeyRound
+                            aria-label="Client secret stored"
+                            className="h-3 w-3 text-muted-foreground"
+                          />
+                        )}
+                        {isSelected && (
+                          <Badge className="text-[10px]">Run target</Badge>
+                        )}
+                      </div>
+                      <div className="truncate font-mono text-[11px] text-muted-foreground">
+                        {app.resourceUrl}
+                      </div>
+                    </div>
+                    {canManage ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Edit ${app.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEdit(app);
+                          }}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Delete ${app.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPendingDelete(app);
+                          }}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <LockedIconButton label={`Edit ${app.name}`}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </LockedIconButton>
+                        <LockedIconButton label={`Delete ${app.name}`}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </LockedIconButton>
+                      </>
                     )}
                   </div>
-                  <div className="truncate font-mono text-[11px] text-muted-foreground">
-                    {app.resourceUrl}
-                  </div>
-                </div>
-                {canManage ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Edit ${app.name}`}
-                      onClick={() => openEdit(app)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Delete ${app.name}`}
-                      onClick={() => setPendingDelete(app)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <LockedIconButton label={`Edit ${app.name}`}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </LockedIconButton>
-                    <LockedIconButton label={`Delete ${app.name}`}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </LockedIconButton>
-                  </>
-                )}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

@@ -262,4 +262,205 @@ describe("createXAAStateMachine", () => {
       ]),
     );
   });
+
+  describe("runner mode (runAll)", () => {
+    function buildRunnerHarness(options: {
+      registrationId?: string;
+      failTokenProxy?: boolean;
+    }) {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: "https://mcp.example.com",
+        clientId: "mcpjam-debugger",
+        userId: "user-12345",
+        email: "demo.user@example.com",
+        scope: "read:tools",
+      });
+
+      const idToken = makeJwt(
+        {
+          iss: "https://issuer.example/api/web/xaa",
+          sub: "user-12345",
+          email: "demo.user@example.com",
+        },
+        { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" },
+      );
+      const idJag = makeJwt({
+        iss: "https://issuer.example/api/web/xaa",
+        sub: "user-12345",
+        aud: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        client_id: "mcpjam-debugger",
+        exp: Math.floor(Date.now() / 1000) + 300,
+        scope: "read:tools",
+      });
+
+      const tokenProxyBodies: any[] = [];
+
+      const executor = {
+        externalRequest: vi.fn(async (url: string) => {
+          if (url.includes(".well-known/oauth-protected-resource")) {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                resource: "https://mcp.example.com",
+                authorization_servers: ["https://auth.example.com"],
+              },
+              ok: true,
+            };
+          }
+
+          if (url.includes(".well-known/oauth-authorization-server")) {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                issuer: "https://auth.example.com",
+                token_endpoint: "https://auth.example.com/oauth/token",
+              },
+              ok: true,
+            };
+          }
+
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: { result: { serverInfo: { name: "demo" } } },
+            ok: true,
+          };
+        }),
+        internalRequest: vi.fn(async (path: string, init?: RequestInit) => {
+          if (path === "/authenticate") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { id_token: idToken },
+              ok: true,
+            };
+          }
+
+          if (path === "/token-exchange") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { id_jag: idJag },
+              ok: true,
+            };
+          }
+
+          // /proxy/token
+          tokenProxyBodies.push(JSON.parse(String(init?.body)));
+          if (options.failTokenProxy) {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                status: 400,
+                statusText: "Bad Request",
+                headers: {},
+                body: { error: "invalid_grant" },
+              },
+              ok: true,
+            };
+          }
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                access_token: "access-token",
+                token_type: "Bearer",
+                expires_in: 300,
+              },
+            },
+            ok: true,
+          };
+        }),
+      };
+
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: "https://mcp.example.com",
+        issuerBaseUrl: "https://issuer.example/api/web/xaa",
+        requestExecutor: executor,
+        clientId: "mcpjam-debugger",
+        userId: "user-12345",
+        email: "demo.user@example.com",
+        scope: "read:tools",
+        registrationId: options.registrationId,
+      });
+
+      return {
+        machine,
+        getStateSnapshot: () => state,
+        tokenProxyBodies,
+      };
+    }
+
+    it("drives a registration-backed run to completion sending only the registration id", async () => {
+      const { machine, getStateSnapshot, tokenProxyBodies } =
+        buildRunnerHarness({ registrationId: "app_1" });
+
+      await machine.runAll();
+
+      expect(getStateSnapshot().currentStep).toBe("complete");
+      expect(getStateSnapshot().accessToken).toBe("access-token");
+      expect(tokenProxyBodies).toHaveLength(1);
+      expect(tokenProxyBodies[0]).toMatchObject({ registrationId: "app_1" });
+      // The secret and endpoint live server-side; the browser never sends
+      // either on a registration-backed run.
+      expect(tokenProxyBodies[0]).not.toHaveProperty("clientSecret");
+      expect(tokenProxyBodies[0]).not.toHaveProperty("tokenEndpoint");
+      expect(tokenProxyBodies[0]).not.toHaveProperty("clientId");
+    });
+
+    it("drives an inline-profile run to completion sending the token endpoint", async () => {
+      const { machine, getStateSnapshot, tokenProxyBodies } =
+        buildRunnerHarness({});
+
+      await machine.runAll();
+
+      expect(getStateSnapshot().currentStep).toBe("complete");
+      expect(tokenProxyBodies[0]).toMatchObject({
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "mcpjam-debugger",
+      });
+      expect(tokenProxyBodies[0]).not.toHaveProperty("registrationId");
+    });
+
+    it("stops at the failing step and preserves the partial run", async () => {
+      const { machine, getStateSnapshot } = buildRunnerHarness({
+        registrationId: "app_1",
+        failTokenProxy: true,
+      });
+
+      await machine.runAll();
+
+      const final = getStateSnapshot();
+      expect(final.currentStep).toBe("jwt_bearer_request");
+      expect(final.error).toBeTruthy();
+      expect(final.accessToken).toBeUndefined();
+      // Earlier steps completed and stay recorded — the run is partial,
+      // not all-or-nothing.
+      expect(final.idJag).toBeTruthy();
+      expect(
+        (final.httpHistory ?? []).some(
+          (entry) => entry.step === "token_exchange_request",
+        ),
+      ).toBe(true);
+    });
+  });
 });

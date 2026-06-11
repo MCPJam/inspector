@@ -136,7 +136,9 @@ export interface XAARequestExecutor {
 }
 
 export interface BaseXAAStateMachineConfig {
-  state: XAAFlowState;
+  /** Initial state. Optional — prefer `getState` so the machine never holds a
+   * stale snapshot read during render. */
+  state?: XAAFlowState;
   getState?: () => XAAFlowState;
   updateState: (updates: Partial<XAAFlowState>) => void;
   serverUrl: string;
@@ -149,12 +151,18 @@ export interface BaseXAAStateMachineConfig {
   clientId?: string;
   scope?: string;
   authzServerIssuer?: string;
+  /** Hosted registration-backed runs: sent to the token proxy instead of an
+   * inline client secret; the server resolves the stored secret and forces
+   * the outbound URL to the registration's stored token endpoint. */
+  registrationId?: string;
 }
 
 export interface XAAStateMachine {
   state: XAAFlowState;
   updateState: (updates: Partial<XAAFlowState>) => void;
   proceedToNextStep: () => Promise<void>;
+  /** Drive every remaining step until the flow completes or a step fails. */
+  runAll: () => Promise<void>;
   resetFlow: () => void;
 }
 

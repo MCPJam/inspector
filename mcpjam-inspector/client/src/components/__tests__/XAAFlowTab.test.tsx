@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -18,6 +19,18 @@ vi.mock("@/lib/PosthogUtils", () => ({
 
 vi.mock("../xaa/XAAIdpCard", () => ({
   XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
+}));
+
+let resourceApps: unknown[] = [];
+vi.mock("@/hooks/useXaaResourceApps", () => ({
+  useXaaResourceApps: () => ({
+    resourceApps,
+    isLoading: false,
+    isAuthenticated: true,
+    error: null,
+    upsert: vi.fn(),
+    remove: vi.fn(),
+  }),
 }));
 
 vi.mock("../ui/resizable", () => ({
@@ -58,9 +71,11 @@ vi.mock("../xaa/XAABootstrapDialog", () => ({
   XAABootstrapDialog: () => null,
 }));
 
+const runAllMock = vi.fn(async () => undefined);
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
   createInspectorXAAStateMachine: () => ({
     proceedToNextStep: vi.fn(),
+    runAll: runAllMock,
   }),
 }));
 
@@ -92,6 +107,12 @@ vi.mock("@/lib/xaa/profile", () => {
 });
 
 describe("XAAFlowTab", () => {
+  beforeEach(() => {
+    captureMock.mockClear();
+    runAllMock.mockClear();
+    resourceApps = [];
+  });
+
   const createServer = (
     overrides: Partial<ServerWithName> = {},
   ): ServerWithName =>
@@ -144,5 +165,42 @@ describe("XAAFlowTab", () => {
     );
     expect(viewedCalls).toHaveLength(1);
     expect(viewedCalls[0][1]).toMatchObject({ location: "xaa_flow_tab" });
+  });
+
+  it("disables Run all without a target", () => {
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
+
+    expect(screen.getByRole("button", { name: /run all/i })).toBeDisabled();
+  });
+
+  it("Run all drives the machine and fires start + terminal telemetry", async () => {
+    const user = userEvent.setup();
+    const serverConfigs = {
+      "http-server": createServer({
+        name: "http-server",
+        config: { url: "https://mcp.example.com" },
+      }),
+    };
+
+    render(
+      <XAAFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="http-server"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
+    expect(captureMock).toHaveBeenCalledWith(
+      "xaa_flow_started",
+      expect.objectContaining({ mode: "local-profile" }),
+    );
+    // The mocked machine never reaches `complete`, so the terminal event
+    // reports the failure with the stalled step as its category.
+    expect(captureMock).toHaveBeenCalledWith(
+      "xaa_flow_completed",
+      expect.objectContaining({ success: false, error_category: "idle" }),
+    );
   });
 });
