@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import {
   AlertTriangle,
   ExternalLink,
   Inbox,
   Link2,
   Loader2,
-  Settings2,
 } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { toast } from "sonner";
@@ -28,7 +28,6 @@ import { buildChatboxLink } from "@/lib/chatbox-session";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
-import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -74,10 +73,40 @@ export function ChatboxesTab({
   projectId,
   isAuthenticated,
 }: ChatboxesTabProps) {
-  const navigate = useAppNavigate();
-  const [tab, setTab] = useState<ChatboxTab>("publish");
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Deep link: `/chatboxes?host=<id>&session=<threadId>` (the Sessions tab's
+  // "Copy session link"). The params stay in the URL until the user navigates
+  // — App's auth/loading gates unmount and remount the route several times
+  // during a cold boot, so state captured from the params on first mount
+  // doesn't survive to the final mount. The URL itself is the stash: every
+  // remount re-seeds tab and thread selection from it.
+  const sessionDeepLinkThreadId = searchParams.get("session");
+  const [tab, setTab] = useState<ChatboxTab>(() =>
+    sessionDeepLinkThreadId ? "sessions" : "publish",
+  );
   const [panelView, setPanelView] = useState<PublishPanelView>("preview");
-  const [previewedHostId] = usePreviewedHostId(projectId);
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
+  // Apply the host half of the deep link once the project is known —
+  // `setPreviewedHostId` silently no-ops while projectId is null. The host
+  // param is dropped immediately after so the host bar can switch hosts
+  // without this effect snapping back to the linked one.
+  useEffect(() => {
+    if (!projectId) return;
+    const hostParam = searchParams.get("host");
+    if (!hostParam) return;
+    if (hostParam !== previewedHostId) {
+      setPreviewedHostId(hostParam);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("host");
+    setSearchParams(next, { replace: true });
+  }, [
+    projectId,
+    searchParams,
+    setSearchParams,
+    previewedHostId,
+    setPreviewedHostId,
+  ]);
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
   const { host } = useHost({
@@ -237,7 +266,14 @@ export function ChatboxesTab({
           <ViewModeSelector
             value={tab}
             ariaLabel="Chatbox view"
-            onChange={(next) => setTab(next as ChatboxTab)}
+            onChange={(next) => {
+              setTab(next as ChatboxTab);
+              // Manual navigation supersedes the deep link — drop the params
+              // so returning to Sessions doesn't re-seed the linked thread.
+              if (searchParams.size > 0) {
+                setSearchParams({}, { replace: true });
+              }
+            }}
             options={TAB_OPTIONS}
           />
         </div>
@@ -251,20 +287,34 @@ export function ChatboxesTab({
             <ResizablePanel defaultSize={50} minSize={32}>
               <div className="h-full overflow-y-auto px-6 py-6">
                 <div className="mx-auto flex max-w-3xl flex-col gap-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 className="text-lg font-semibold">{chatbox.name}</h2>
-                    </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2 className="min-w-0 truncate text-lg font-semibold">
+                      {chatbox.name}
+                    </h2>
                     {publishLink ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="rounded-xl"
-                        onClick={handleCopyLink}
-                      >
-                        <Link2 className="mr-1.5 size-4" />
-                        Copy link
-                      </Button>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl"
+                          onClick={() =>
+                            window.open(publishLink, "_blank", "noopener")
+                          }
+                          title="Open the published chatbox in a new tab"
+                        >
+                          <ExternalLink className="mr-1.5 size-4" />
+                          Open preview
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl"
+                          onClick={handleCopyLink}
+                        >
+                          <Link2 className="mr-1.5 size-4" />
+                          Copy link
+                        </Button>
+                      </div>
                     ) : null}
                   </div>
                   <ChatboxPublishClientBar
@@ -282,35 +332,7 @@ export function ChatboxesTab({
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={30}>
               <div className="flex h-full min-h-0 flex-col">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-1.5">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-xl"
-                      onClick={() => {
-                        navigate(buildHostsPath(previewedHostId));
-                      }}
-                      title="Open this host's config in Connect"
-                    >
-                      <Settings2 className="mr-1.5 size-4" />
-                      Edit host
-                    </Button>
-                    {publishLink ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="rounded-xl"
-                        onClick={() =>
-                          window.open(publishLink, "_blank", "noopener")
-                        }
-                        title="Open the published chatbox in a new tab"
-                      >
-                        <ExternalLink className="mr-1.5 size-4" />
-                        Open preview
-                      </Button>
-                    ) : null}
-                  </div>
+                <div className="flex shrink-0 items-center justify-end border-b border-border/40 px-3 py-1.5">
                   <SegmentedControl
                     size="sm"
                     value={panelView}
@@ -348,9 +370,26 @@ export function ChatboxesTab({
             </ResizablePanel>
           </ResizablePanelGroup>
         ) : tab === "sessions" ? (
-          <ChatboxUsagePanel chatbox={chatbox} section="sessions" />
+          <ChatboxUsagePanel
+            chatbox={chatbox}
+            section="sessions"
+            initialThreadId={sessionDeepLinkThreadId}
+          />
         ) : (
-          <ChatboxUsagePanel chatbox={chatbox} section="insights" />
+          <ChatboxUsagePanel
+            chatbox={chatbox}
+            section="insights"
+            onOpenSession={(threadId) => {
+              // Stash the target in the URL — same shape as the Sessions deep
+              // link — so auth-gate remounts re-seed the selection, then flip
+              // the tab. The panel instance itself survives the flip and has
+              // already updated its own thread selection.
+              const next = new URLSearchParams(searchParams);
+              next.set("session", threadId);
+              setSearchParams(next, { replace: true });
+              setTab("sessions");
+            }}
+          />
         )}
       </div>
     </div>

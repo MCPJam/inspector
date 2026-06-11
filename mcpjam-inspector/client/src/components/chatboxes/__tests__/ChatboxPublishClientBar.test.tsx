@@ -117,8 +117,9 @@ describe("ChatboxPublishClientBar", () => {
     );
   });
 
-  it("still renders the host pill that links to Connect", () => {
+  it("still renders the labeled host pill that links to Connect", () => {
     renderBar([]);
+    expect(screen.getByText("Host")).toBeInTheDocument();
     expect(screen.getByText("MCPJam")).toBeInTheDocument();
   });
 });

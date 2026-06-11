@@ -29,10 +29,6 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatTurnTraces: () => ({
     traces: [],
   }),
-  // SessionClientConfigChip destructures `.config` from this hook; return
-  // `{ config: null }` so it short-circuits to the "no audit-pin
-  // available" branch and renders nothing (chip is noisy when empty).
-  useSessionHistoricalHostConfig: () => ({ config: null }),
 }));
 
 vi.mock("@/components/evals/trace-viewer-adapter", () => ({

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Settings2 } from "lucide-react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
@@ -111,9 +112,10 @@ export function ChatboxPublishClientBar({
       <button
         type="button"
         onClick={() => navigate(buildHostsPath(hostId))}
-        className="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 text-xs font-medium text-foreground transition hover:bg-muted/70"
+        className="flex h-8 max-w-[280px] items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 text-xs font-medium text-foreground transition hover:bg-muted/70"
         title="Edit this host's identity in Connect"
       >
+        <span className="shrink-0 text-muted-foreground">Host</span>
         {logoSrc ? (
           <img
             src={logoSrc}
@@ -127,6 +129,9 @@ export function ChatboxPublishClientBar({
           />
         )}
         <span className="min-w-0 flex-1 truncate">{hostName}</span>
+        {/* The pill is the only "edit host" entry point on this page —
+            surface the affordance instead of relying on hover/title. */}
+        <Settings2 className="size-3.5 shrink-0 text-muted-foreground" />
       </button>
     </div>
   );
