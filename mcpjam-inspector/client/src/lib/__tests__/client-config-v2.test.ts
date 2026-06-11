@@ -11,7 +11,9 @@ import {
   type HostConfigInputV2,
 } from "../client-config-v2";
 
-function makeInput(overrides: Partial<HostConfigInputV2> = {}): HostConfigInputV2 {
+function makeInput(
+  overrides: Partial<HostConfigInputV2> = {}
+): HostConfigInputV2 {
   return emptyHostConfigInputV2({
     hostStyle: "claude",
     modelId: "claude-sonnet-4-5",
@@ -36,8 +38,8 @@ describe("hostConfigInputsEqual", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ modelId: "a" }),
-        makeInput({ modelId: "b" }),
-      ),
+        makeInput({ modelId: "b" })
+      )
     ).toBe(false);
   });
 
@@ -97,8 +99,8 @@ describe("hostConfigInputsEqual", () => {
     expect(
       hostConfigInputsEqual(
         makeInput({ hostCapabilitiesOverride: undefined }),
-        makeInput({ hostCapabilitiesOverride: undefined }),
-      ),
+        makeInput({ hostCapabilitiesOverride: undefined })
+      )
     ).toBe(true);
   });
 
@@ -145,6 +147,58 @@ describe("emptyHostConfigInputV2", () => {
     expect(seedHeaders).toEqual({ Foo: "bar" });
     expect(seedCaps).toEqual({ x: 1 });
     expect(seedCtx).toEqual({ y: 2 });
+  });
+});
+
+function makeDto(overrides: Partial<HostConfigDtoV2> = {}): HostConfigDtoV2 {
+  return {
+    id: "host-c",
+    schemaVersion: 2,
+    hostStyle: "claude",
+    modelId: "x",
+    systemPrompt: "",
+    temperature: 0.7,
+    requireToolApproval: false,
+    serverIds: [],
+    optionalServerIds: [],
+    connectionDefaults: { headers: {}, requestTimeout: 10000 },
+    clientCapabilities: {},
+    hostContext: {},
+    ...overrides,
+  };
+}
+
+describe("computer (personal cloud workstation)", () => {
+  it("marks the draft dirty on attach/detach and workdir change", () => {
+    const none = makeInput();
+    const attached = makeInput({ computer: { kind: "personal" } });
+    const withDir = makeInput({
+      computer: { kind: "personal", workdir: "/srv" },
+    });
+
+    expect(hostConfigInputsEqual(none, attached)).toBe(false);
+    expect(hostConfigInputsEqual(attached, withDir)).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ computer: { kind: "personal" } }),
+        makeInput({ computer: { kind: "personal" } })
+      )
+    ).toBe(true);
+    expect(hostConfigInputsEqual(none, makeInput())).toBe(true);
+  });
+
+  it("hostConfigDtoToInput reads the resource shape and drops a vestigial toolset", () => {
+    const dto: HostConfigDtoV2 = makeDto({
+      // Backend may carry the legacy `toolset` key on the wire while pinned
+      // to the published SDK; the client model omits it.
+      computer: { kind: "personal", toolset: "bash", workdir: "/home/u" },
+    });
+    const input = hostConfigDtoToInput(dto);
+    expect(input.computer).toEqual({ kind: "personal", workdir: "/home/u" });
+  });
+
+  it("hostConfigDtoToInput yields undefined when no computer is attached", () => {
+    expect(hostConfigDtoToInput(makeDto({})).computer).toBeUndefined();
   });
 });
 
@@ -207,24 +261,20 @@ describe("hostConfigDtoToInput", () => {
         .mimeTypes as string[]
     ).push("c");
     (
-      (
-        (input.hostContext.nested as Record<string, unknown>).deep as Record<
-          string,
-          unknown
-        >
-      ) as { value: number }
+      (input.hostContext.nested as Record<string, unknown>).deep as Record<
+        string,
+        unknown
+      > as { value: number }
     ).value = 999;
 
     expect(
-      (dto.clientCapabilities.extensions as Record<string, unknown>).mimeTypes,
+      (dto.clientCapabilities.extensions as Record<string, unknown>).mimeTypes
     ).toEqual(["a", "b"]);
     expect(
-      (
-        (dto.hostContext.nested as Record<string, unknown>).deep as Record<
-          string,
-          unknown
-        >
-      ),
+      (dto.hostContext.nested as Record<string, unknown>).deep as Record<
+        string,
+        unknown
+      >
     ).toEqual({ value: 1 });
   });
 
@@ -247,12 +297,13 @@ describe("hostConfigDtoToInput", () => {
       } as Record<string, unknown>,
     };
     const input = hostConfigDtoToInput(dto);
-    (input.hostCapabilitiesOverride!.serverTools as Record<string, unknown>)
-      .listChanged = false;
+    (
+      input.hostCapabilitiesOverride!.serverTools as Record<string, unknown>
+    ).listChanged = false;
 
     expect(
       (dto.hostCapabilitiesOverride!.serverTools as Record<string, unknown>)
-        .listChanged,
+        .listChanged
     ).toBe(true);
   });
 
@@ -434,7 +485,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("replaces availableDisplayModes (not unioned)", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { availableDisplayModes: ["fullscreen"] },
+      { availableDisplayModes: ["fullscreen"] }
     );
     expect(merged.availableDisplayModes).toEqual(["fullscreen"]);
   });
@@ -442,7 +493,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("coerces empty availableDisplayModes to ['inline'] (spec default)", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { availableDisplayModes: [] },
+      { availableDisplayModes: [] }
     );
     expect(merged.availableDisplayModes).toEqual(["inline"]);
   });
@@ -451,7 +502,7 @@ describe("mergeMcpAppsCapabilities", () => {
     // `?? base.x` semantics: false replaces, undefined falls through.
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { serverResources: false, logging: false },
+      { serverResources: false, logging: false }
     );
     expect(merged.serverResources).toBe(false);
     expect(merged.logging).toBe(false);
@@ -461,7 +512,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("replaces widgetDisplayModeRequests tri-state when override is set", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { widgetDisplayModeRequests: "decline" },
+      { widgetDisplayModeRequests: "decline" }
     );
     expect(merged.widgetDisplayModeRequests).toBe("decline");
   });
@@ -469,7 +520,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("falls through to base widgetDisplayModeRequests when override absent", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { serverResources: false },
+      { serverResources: false }
     );
     expect(merged.widgetDisplayModeRequests).toBe("accept");
   });
@@ -477,7 +528,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("applies downloadFile and requestTeardown overrides when set", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { downloadFile: false, requestTeardown: false },
+      { downloadFile: false, requestTeardown: false }
     );
     expect(merged.downloadFile).toBe(false);
     expect(merged.requestTeardown).toBe(false);
@@ -486,7 +537,7 @@ describe("mergeMcpAppsCapabilities", () => {
   it("falls through to base downloadFile and requestTeardown when override absent", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
-      { serverResources: false },
+      { serverResources: false }
     );
     expect(merged.downloadFile).toBe(true);
     expect(merged.requestTeardown).toBe(true);
