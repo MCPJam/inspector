@@ -25,9 +25,9 @@ welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
   you'll be asked to sign in and then land right back on the API keys page.
 </Card>
 
-The MCPJam API lets you run the inspector's live diagnostics against MCP
-servers saved in your [hosted](/hosted/overview) projects — from CI, scripts,
-or your own agents — without opening the UI.
+The MCPJam API lets you run the inspector's live diagnostics and write
+operations against MCP servers saved in your [hosted](/hosted/overview)
+projects — from CI, scripts, or your own agents — without opening the UI.
 
 What you can do with it today:
 
@@ -37,10 +37,13 @@ What you can do with it today:
 - **List tools, prompts, and resources** — the server's MCP primitives
 - **Read a resource** by URI
 - **Export a full snapshot** — tools, resources, and prompts as one JSON document
+- **Call a tool** — execute a tool and get the MCP result back directly
+- **Render a prompt** — call `prompts/get` with arguments and receive the messages
+- **Run eval suites** — start an async eval run and poll for status, per-iteration results, token usage, and traces
+- **Import OAuth tokens** — push tokens your agent obtained to close the `OAUTH_REQUIRED` loop
 
 All endpoints operate on servers you have already added to a project in the
-hosted inspector. Executing tools, running evals, and managing keys are **not**
-part of the API yet — see [Not in the API yet](#not-in-the-api-yet).
+hosted inspector. Managing keys is **not** part of the API — see [Not in the API yet](#not-in-the-api-yet).
 
 ## Base URL
 
@@ -108,9 +111,10 @@ from [Settings](https://app.mcpjam.com/settings/api-keys).
 
 ## Conventions
 
-**Requests.** All v1 endpoints are `POST` and accept a JSON body. Most accept
-an empty body (`{}`); list endpoints take an optional `cursor`, and
-`resources/read` requires a `uri`.
+**Requests.** Most v1 endpoints are `POST` and accept a JSON body. Read
+endpoints for eval runs and iterations use `GET` with query parameters. List
+endpoints take an optional `cursor`; `resources/read` requires a `uri`; write
+endpoints require their specific fields (see [Endpoints](#endpoints)).
 
 **Responses.** Three envelope shapes, used consistently:
 
@@ -142,9 +146,9 @@ is stable and machine-readable; `message` is human-readable and may change;
 | `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
 | `FORBIDDEN` | 403 | Key is valid but not allowed to do this |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
-| `NOT_FOUND` | 404 | Unknown project, server, or resource |
+| `NOT_FOUND` | 404 | Unknown project, server, resource, eval run, or suite — also returned with `details.reason: "TRACE_NOT_AVAILABLE"` when a trace hasn't been stored for an iteration |
 | `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
-| `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
+| `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits); also returned with `details.reason: "CONCURRENT_RUN_LIMIT"` when the per-caller eval concurrency cap is reached |
 | `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
 | `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
 | `INTERNAL_ERROR` | 500 | Something failed on our side |
@@ -170,21 +174,49 @@ to be tuned during the preview.
 
 ## Endpoints
 
-All endpoints follow the pattern
-`POST /projects/{projectId}/servers/{serverId}/...`. Each one is fully
-documented — request and response schemas, examples, and an interactive
-playground — under **Endpoints** in the sidebar.
+Server operation endpoints follow the pattern
+`POST /projects/{projectId}/servers/{serverId}/...`. Eval endpoints are under
+`/projects/{projectId}/eval-runs/...` and `/projects/{projectId}/eval-suites/...`.
+Each endpoint is fully documented — request and response schemas, examples, and
+an interactive playground — under **Endpoints** in the sidebar.
+
+**Server diagnostics**
 
 | Endpoint | What it does |
 | --- | --- |
 | `POST .../validate` | Connect, initialize, and capture a capability snapshot |
 | `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
 | `POST .../check-oauth` | Does this server require an OAuth grant? |
+
+**Primitives**
+
+| Endpoint | What it does |
+| --- | --- |
 | `POST .../tools` | List the server's tools |
+| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` directly |
 | `POST .../prompts` | List the server's prompts |
+| `POST .../prompts/get` | Render a prompt with arguments; returns `GetPromptResult` |
 | `POST .../resources` | List the server's resources |
 | `POST .../resources/read` | Read one resource by URI |
 | `POST .../export` | One JSON snapshot of tools, resources, and prompts |
+
+**Eval runs**
+
+Eval runs are async: `POST` creates the run and responds **202** immediately with a `runId`. Poll `GET .../eval-runs/:runId` until `status` is terminal (`completed`, `failed`, or `cancelled`).
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /projects/:projectId/eval-runs` | Start an eval run (rerun an existing suite and/or supply inline tests) |
+| `GET /projects/:projectId/eval-runs/:runId` | Run status, result, and summary |
+| `GET /projects/:projectId/eval-runs/:runId/iterations` | Paginated per-iteration results: tool calls, token usage, latency |
+| `GET /projects/:projectId/eval-runs/:runId/iterations/:iterationId/trace` | Full trace (messages + spans) for one iteration |
+| `GET /projects/:projectId/eval-suites/:suiteId/runs` | Recent runs for a suite |
+
+**OAuth**
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../oauth/import-tokens` | Push externally-obtained OAuth tokens so subsequent calls to that server succeed automatically |
 
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
@@ -195,10 +227,9 @@ for Postman, Swagger UI, or client generation.
 To set expectations while in preview, these are **not** available over the API
 today (most exist in the hosted inspector UI):
 
-- Executing tools or running evals
 - Listing your projects and servers (planned; see [IDs](#conventions))
 - Creating or revoking API keys (UI-only by design — see [Authentication](#authentication))
-- Chat, conformance suites, and OAuth flows
+- Chat, conformance suites, and browser-completed OAuth flows (the `import-tokens` endpoint covers SDK/CLI agents that complete OAuth themselves)
 
 If one of these blocks you, tell us on
 [Discord](https://discord.gg/JEnDtz8X6z) — it directly shapes what we
