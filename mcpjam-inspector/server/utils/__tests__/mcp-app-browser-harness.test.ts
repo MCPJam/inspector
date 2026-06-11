@@ -190,6 +190,28 @@ describe("McpAppBrowserHarness — render classification", () => {
     expect(obs.bridgeInitialized).toBe(true);
   }, 30_000);
 
+  it("still classifies blank when the settle wait can outlast the paint budget", async () => {
+    // paintTimeoutMs <= settleTimeoutMs: the upfront networkidle wait could
+    // consume the whole budget. The paint poll must still run at least once and
+    // decide on a real frame — otherwise a blank widget falls through to
+    // "rendered". (Pins the Bugbot "paint deadline before polling" fix.)
+    const h = makeHarness({
+      budgets: {
+        renderTimeoutMs: 1200,
+        settleTimeoutMs: 1200,
+        paintTimeoutMs: 1,
+      },
+    });
+    const obs = await h.renderWidget({
+      toolCallId: "tc-3b",
+      toolName: "blank",
+      serverId: "s1",
+      html: blankHtml,
+    });
+    expect(obs.status).toBe("blank_screenshot");
+    expect(obs.bridgeInitialized).toBe(true);
+  }, 30_000);
+
   it("waits for a late paint instead of snapshotting a blank first frame", async () => {
     // The widget handshakes immediately but only paints ~600ms later. Sampling
     // blankness the instant the bridge handshakes (the old behavior) would

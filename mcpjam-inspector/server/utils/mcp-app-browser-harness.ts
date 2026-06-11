@@ -697,13 +697,19 @@ export class McpAppBrowserHarness {
     // budget) BEFORE snapshotting, so the screenshot shows the rendered widget
     // and classification doesn't hinge on CDN cache warmth or DOM timing.
     let blank = pageResult.blank;
+    let paintedFrame: Buffer | null = null;
     if (pageResult.bridgeInitialized) {
-      blank = await this.waitForWidgetPaint();
+      ({ blank, frame: paintedFrame } = await this.waitForWidgetPaint());
     }
 
     let screenshotBase64: string | undefined;
     try {
-      screenshotBase64 = await this.captureScreenshot();
+      // Store the exact frame the blank verdict was made on (encoding it to fit
+      // the byte budget); only re-shoot when the paint wait produced no frame
+      // (no bridge, or its screenshots failed).
+      screenshotBase64 = paintedFrame
+        ? await this.encodeScreenshot(paintedFrame)
+        : await this.captureScreenshot();
     } catch {
       // A widget we can't screenshot is useless for screenshot-driven Computer
       // Use, so unmount it even when keepMounted was requested — keeping
@@ -768,24 +774,39 @@ export class McpAppBrowserHarness {
    *   through to the budget → reported blank.
    * - A perpetually-animating widget never stabilizes → hits the budget, and we
    *   snapshot the latest (painted) frame → reported rendered.
+   *
+   * Returns the final blank verdict AND the frame it was decided on, so the
+   * caller stores the SAME image it classified (status can't disagree with the
+   * screenshot).
    */
-  private async waitForWidgetPaint(): Promise<boolean> {
+  private async waitForWidgetPaint(): Promise<{
+    blank: boolean;
+    frame: Buffer | null;
+  }> {
     const page = this.page;
-    if (!page) return true;
+    if (!page) return { blank: true, frame: null };
     const baseline = this.blankReference;
     const deadline = Date.now() + this.budgets.paintTimeoutMs;
     // Let code/CDN fetches finish first, so a network-driven widget is sampled
     // after its load rather than during it (avoids fixating on a pre-paint
-    // intermediate state). Best-effort — falls through on timeout.
+    // intermediate state). Capped to the paint budget so this can't consume it
+    // whole and starve the poll below — the poll does the actual classification
+    // and MUST run at least once. Best-effort: falls through on timeout.
     await page
       .waitForLoadState("networkidle", {
-        timeout: this.budgets.settleTimeoutMs,
+        timeout: Math.min(
+          this.budgets.settleTimeoutMs,
+          this.budgets.paintTimeoutMs
+        ),
       })
       .catch(() => {});
 
     let prev: Buffer | null = null;
     let frame: Buffer | null = null;
-    while (Date.now() < deadline) {
+    // do/while: always sample at least once, even if the wait above already
+    // exhausted the budget — otherwise `frame` stays null and we'd fail toward
+    // "rendered", mislabeling a blank widget.
+    do {
       frame = await page.screenshot({ type: "png" }).catch(() => prev);
       if (!frame) break;
       const painted = !baseline || !framesEqual(frame, baseline);
@@ -793,12 +814,13 @@ export class McpAppBrowserHarness {
       if (painted && settled) break;
       prev = frame;
       await page.waitForTimeout(150);
-    }
+    } while (Date.now() < deadline);
+
     // Blank iff the settled frame is still indistinguishable from the empty
     // baseline. With no baseline (capture failed), fail toward "rendered" rather
     // than mislabel a real widget blank.
-    if (!frame || !baseline) return false;
-    return framesEqual(frame, baseline);
+    const blank = !frame || !baseline ? false : framesEqual(frame, baseline);
+    return { blank, frame };
   }
 
   /* ---- interact ---- */
@@ -935,8 +957,20 @@ export class McpAppBrowserHarness {
   }
 
   private async captureScreenshot(): Promise<string> {
-    const page = this.page!;
-    const png = await page.screenshot({ type: "png" });
+    const png = await this.page!.screenshot({ type: "png" });
+    return this.encodeScreenshot(png);
+  }
+
+  /**
+   * Encode an already-captured PNG frame to a base64 image within the byte
+   * budget, re-shooting as progressively lower-quality JPEG only if the PNG is
+   * over budget (there's no in-process re-encoder — sharp is intentionally not a
+   * dependency — and the page still shows the same settled frame). Throws if it
+   * can't fit even at the lowest quality, which callers treat as
+   * `screenshot_failed`. Reused by `renderWidget` to store the very frame it
+   * classified, and by `captureScreenshot` for action screenshots.
+   */
+  private async encodeScreenshot(png: Buffer): Promise<string> {
     // Count only successful captures so a transient screenshot failure (caller
     // catches -> screenshot_failed) doesn't burn the per-iteration budget.
     this.screenshotCount += 1;
@@ -945,7 +979,7 @@ export class McpAppBrowserHarness {
     }
     // Re-encode as progressively lower-quality JPEG to fit the byte budget.
     for (const quality of [70, 50, 35, 20]) {
-      const jpeg = await page.screenshot({ type: "jpeg", quality });
+      const jpeg = await this.page!.screenshot({ type: "jpeg", quality });
       if (jpeg.byteLength <= this.budgets.screenshotMaxBytes) {
         return jpeg.toString("base64");
       }
@@ -953,7 +987,7 @@ export class McpAppBrowserHarness {
     // Still over the byte budget even at the lowest quality: fail closed rather
     // than hand back an oversized image (callers treat a screenshot throw as
     // `screenshot_failed` on render, or leave the action screenshot unset).
-    const jpeg = await page.screenshot({ type: "jpeg", quality: 20 });
+    const jpeg = await this.page!.screenshot({ type: "jpeg", quality: 20 });
     throw new Error(
       `screenshot exceeds byte budget after re-encoding ` +
         `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`
