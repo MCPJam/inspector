@@ -155,6 +155,16 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
       : typeof body?.error_description === "string"
         ? body.error_description
         : fallback;
+  // WorkOS 422s carry the actual cause in `errors` (e.g.
+  // `[{field: "organization_id", code: "organization_id should not be empty"}]`)
+  // while `message` is just "Validation failed" — keep the field errors or the
+  // failure is undiagnosable from our logs.
+  const fieldErrors = Array.isArray(body?.errors) ? body.errors : undefined;
+  logger.error("WorkOS API call failed", {
+    workos_status: status,
+    message: safeMessage,
+    ...(fieldErrors ? { workos_errors: fieldErrors } : {}),
+  });
   if (status === 401) {
     throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, safeMessage);
   }
@@ -164,7 +174,46 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
   if (status === 429) {
     throw new WebRouteError(429, ErrorCode.RATE_LIMITED, safeMessage);
   }
-  throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, safeMessage);
+  throw new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    safeMessage,
+    fieldErrors ? { workosErrors: fieldErrors } : undefined,
+  );
+}
+
+/**
+ * WorkOS REQUIRES `organization_id` when minting a user API key (422
+ * "Validation failed" without it). Org-scoped sessions carry the org in the
+ * JWT's `org_id` claim; sessions signed in outside an organization context
+ * don't, so fall back to the user's active WorkOS memberships. Which WorkOS
+ * org hosts the key doesn't affect authorization — that's enforced by the
+ * MCPJam org binding — so the first active membership is fine.
+ */
+async function resolveWorkosOrgId(session: SessionContext): Promise<string> {
+  if (session.organizationId) {
+    return session.organizationId;
+  }
+  const { status, body } = await callWorkOS(
+    "GET",
+    `/user_management/organization_memberships?user_id=${encodeURIComponent(
+      session.userId,
+    )}&statuses=active`,
+  );
+  if (status < 200 || status >= 300) {
+    mapWorkOSError(status, body, "Failed to resolve your organization");
+  }
+  const first = Array.isArray(body?.data) ? body.data[0] : undefined;
+  const orgId =
+    typeof first?.organization_id === "string" ? first.organization_id : null;
+  if (!orgId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Your account does not belong to a WorkOS organization, which is required to create API keys",
+    );
+  }
+  return orgId;
 }
 
 const createSchema = z.object({
@@ -193,10 +242,10 @@ apiKeys.post("/", async (c) =>
       );
     }
 
-    const payload: Record<string, unknown> = { name };
-    if (session.organizationId) {
-      payload.organization_id = session.organizationId;
-    }
+    const payload: Record<string, unknown> = {
+      name,
+      organization_id: await resolveWorkosOrgId(session),
+    };
 
     const { status, body } = await callWorkOS(
       "POST",
