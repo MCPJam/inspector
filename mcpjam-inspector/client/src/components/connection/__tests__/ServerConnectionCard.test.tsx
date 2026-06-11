@@ -711,14 +711,25 @@ describe("ServerConnectionCard", () => {
         />
       );
 
-      fireEvent.click(
-        screen.getByRole("button", { name: "Recent tunnel requests" })
-      );
+      const panelToggle = screen.getByRole("button", {
+        name: "Recent tunnel requests",
+      });
 
-      // First poll renders; a later rejected poll must not clear it or crash.
+      // First fetch renders the snapshot.
+      fireEvent.click(panelToggle);
       expect(await screen.findByText("initialize")).toBeInTheDocument();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(screen.getByText("initialize")).toBeInTheDocument();
+
+      // Re-opening the panel re-runs the polling effect immediately, which
+      // deterministically fires the rejecting second fetch (no need to wait
+      // out the 4s interval).
+      fireEvent.click(panelToggle);
+      fireEvent.click(panelToggle);
+      await waitFor(() => {
+        expect(getTunnelRequests).toHaveBeenCalledTimes(2);
+      });
+
+      // The rejected poll must not clear the retained snapshot or crash.
+      expect(await screen.findByText("initialize")).toBeInTheDocument();
     });
   });
 });
