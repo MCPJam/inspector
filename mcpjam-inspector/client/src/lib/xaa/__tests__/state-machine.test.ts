@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createXAAStateMachine } from "../state-machine";
+import { CLIENT_SECRET_MASK, createXAAStateMachine } from "../state-machine";
 import { createInitialXAAFlowState, type XAAFlowState } from "../types";
 
 function encodePart(value: Record<string, any>): string {
@@ -12,7 +12,7 @@ function makeJwt(
     alg: "RS256",
     typ: "oauth-id-jag+jwt",
     kid: "xaa-idp-1",
-  },
+  }
 ): string {
   return `${encodePart(header)}.${encodePart(payload)}.signature`;
 }
@@ -33,7 +33,7 @@ describe("createXAAStateMachine", () => {
         sub: "user-12345",
         email: "demo.user@example.com",
       },
-      { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" },
+      { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" }
     );
     const idJag = makeJwt({
       iss: "https://issuer.example/api/web/xaa",
@@ -147,8 +147,77 @@ describe("createXAAStateMachine", () => {
       "/proxy/token",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
+  });
+
+  it("sends a configured client secret to /proxy/token but masks it in the logged request", async () => {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "mcpjam-debugger",
+      clientSecret: "test-secret-123",
+      userId: "user-12345",
+      email: "demo.user@example.com",
+      currentStep: "inspect_id_jag",
+      idJag: makeJwt({
+        iss: "https://issuer.example/api/web/xaa",
+        sub: "user-12345",
+        aud: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        client_id: "mcpjam-debugger",
+        exp: Math.floor(Date.now() / 1000) + 300,
+      }),
+    });
+
+    const executor = {
+      externalRequest: vi.fn(),
+      internalRequest: vi.fn(async () => ({
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            expires_in: 300,
+          },
+        },
+        ok: true,
+      })),
+    };
+
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: executor,
+    });
+
+    // Advance once: inspect_id_jag -> jwt_bearer_request.
+    await machine.proceedToNextStep();
+
+    // The wire request carries the real secret...
+    const [, init] = executor.internalRequest.mock.calls[0];
+    const sentBody = JSON.parse((init as RequestInit).body as string);
+    expect(sentBody.clientSecret).toBe("test-secret-123");
+
+    // ...but no logged copy of the flow state contains it.
+    const jwtBearerEntry = (state.httpHistory || []).find(
+      (entry) => entry.step === "jwt_bearer_request"
+    );
+    expect(jwtBearerEntry?.request.body.clientSecret).toBe(CLIENT_SECRET_MASK);
+    expect(JSON.stringify(state.httpHistory)).not.toContain("test-secret-123");
+    expect(JSON.stringify(state.infoLogs)).not.toContain("test-secret-123");
+    expect(JSON.stringify(state.lastRequest)).not.toContain("test-secret-123");
   });
 
   it("passes the configured negative test mode to token exchange and flags the issue during inspection", async () => {
@@ -166,7 +235,7 @@ describe("createXAAStateMachine", () => {
         iss: "https://issuer.example/api/web/xaa",
         sub: "user-12345",
       },
-      { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" },
+      { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" }
     );
     const idJag = makeJwt(
       {
@@ -177,7 +246,7 @@ describe("createXAAStateMachine", () => {
         client_id: "mcpjam-debugger",
         exp: Math.floor(Date.now() / 1000) + 300,
       },
-      { alg: "RS256", typ: "oauth-id-jag+jwt", kid: "nonexistent-key-id" },
+      { alg: "RS256", typ: "oauth-id-jag+jwt", kid: "nonexistent-key-id" }
     );
 
     const executor = {
@@ -259,7 +328,7 @@ describe("createXAAStateMachine", () => {
         expect.objectContaining({
           field: "kid",
         }),
-      ]),
+      ])
     );
   });
 
@@ -282,7 +351,7 @@ describe("createXAAStateMachine", () => {
           sub: "user-12345",
           email: "demo.user@example.com",
         },
-        { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" },
+        { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" }
       );
       const idJag = makeJwt({
         iss: "https://issuer.example/api/web/xaa",
@@ -458,8 +527,8 @@ describe("createXAAStateMachine", () => {
       expect(final.idJag).toBeTruthy();
       expect(
         (final.httpHistory ?? []).some(
-          (entry) => entry.step === "token_exchange_request",
-        ),
+          (entry) => entry.step === "token_exchange_request"
+        )
       ).toBe(true);
     });
   });
@@ -467,7 +536,7 @@ describe("createXAAStateMachine", () => {
   describe("discovery is a fallback, not a mandatory step", () => {
     const idToken = makeJwt(
       { iss: "https://issuer.example/api/web/xaa", sub: "user-12345" },
-      { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" },
+      { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" }
     );
     const idJag = makeJwt({
       iss: "https://issuer.example/api/web/xaa",
@@ -556,10 +625,10 @@ describe("createXAAStateMachine", () => {
       expect(state.currentStep).toBe("complete");
       // No protected-resource or auth-server metadata probe was ever fired.
       expect(
-        externalUrls.some((u) => u.includes("oauth-protected-resource")),
+        externalUrls.some((u) => u.includes("oauth-protected-resource"))
       ).toBe(false);
       expect(
-        externalUrls.some((u) => u.includes("oauth-authorization-server")),
+        externalUrls.some((u) => u.includes("oauth-authorization-server"))
       ).toBe(false);
     });
 
@@ -617,7 +686,7 @@ describe("createXAAStateMachine", () => {
       await machine.proceedToNextStep();
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(
-        externalUrls.some((u) => u.includes("oauth-protected-resource")),
+        externalUrls.some((u) => u.includes("oauth-protected-resource"))
       ).toBe(false);
 
       // received_resource_metadata -> AS discovery (RFC 8414) actually runs
@@ -625,7 +694,7 @@ describe("createXAAStateMachine", () => {
       expect(state.currentStep).toBe("received_authz_metadata");
       expect(state.tokenEndpoint).toBe("https://auth.example.com/oauth/token");
       expect(
-        externalUrls.some((u) => u.includes("oauth-authorization-server")),
+        externalUrls.some((u) => u.includes("oauth-authorization-server"))
       ).toBe(true);
     });
 

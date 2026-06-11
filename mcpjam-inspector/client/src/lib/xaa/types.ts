@@ -91,6 +91,9 @@ export interface XAAFlowState {
   userId?: string;
   email?: string;
   clientId?: string;
+  /** Test-credential secret for the jwt-bearer grant; never rendered — the
+   * logged copy of any request carrying it is masked. */
+  clientSecret?: string;
   scope?: string;
   identityAssertion?: string;
   idJag?: string;
@@ -127,11 +130,11 @@ export interface XAARequestResult {
 export interface XAARequestExecutor {
   internalRequest: (
     path: string,
-    init?: RequestInit,
+    init?: RequestInit
   ) => Promise<XAARequestResult>;
   externalRequest: (
     url: string,
-    init?: RequestInit,
+    init?: RequestInit
   ) => Promise<XAARequestResult>;
 }
 
@@ -149,6 +152,7 @@ export interface BaseXAAStateMachineConfig {
   userId?: string;
   email?: string;
   clientId?: string;
+  clientSecret?: string;
   scope?: string;
   authzServerIssuer?: string;
   /** Hosted registration-backed runs: sent to the token proxy instead of an
@@ -221,6 +225,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   userId: undefined,
   email: undefined,
   clientId: undefined,
+  clientSecret: undefined,
   scope: undefined,
   identityAssertion: undefined,
   idJag: undefined,
@@ -237,13 +242,12 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
 };
 
 export function createInitialXAAFlowState(
-  overrides: Partial<XAAFlowState> = {},
+  overrides: Partial<XAAFlowState> = {}
 ): XAAFlowState {
   return {
     ...EMPTY_XAA_FLOW_STATE,
     ...overrides,
-    negativeTestMode:
-      overrides.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE,
+    negativeTestMode: overrides.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE,
     httpHistory: overrides.httpHistory ?? [],
     infoLogs: overrides.infoLogs ?? [],
   };

@@ -12,6 +12,14 @@ export interface XAADebugProfile {
   serverUrl: string;
   authzServerIssuer: string;
   clientId: string;
+  /**
+   * Test-credential client secret for the jwt-bearer grant at confidential-
+   * client auth servers. Persisted in localStorage alongside the rest of the
+   * manual profile — debugger test credentials only, never production
+   * secrets. Registration-backed runs resolve their secret server-side and
+   * leave this empty.
+   */
+  clientSecret: string;
   scope: string;
   userId: string;
   email: string;
@@ -22,6 +30,7 @@ export const EMPTY_XAA_DEBUG_PROFILE: XAADebugProfile = {
   serverUrl: "",
   authzServerIssuer: "",
   clientId: "",
+  clientSecret: "",
   scope: "",
   userId: "user-12345",
   email: "demo.user@example.com",
@@ -71,7 +80,7 @@ export function saveStoredXAADebugProfile(profile: XAADebugProfile): void {
 
 export function deriveXAADebugProfileFromServer(
   server?: ServerWithName,
-  existingProfile: XAADebugProfile = EMPTY_XAA_DEBUG_PROFILE,
+  existingProfile: XAADebugProfile = EMPTY_XAA_DEBUG_PROFILE
 ): XAADebugProfile {
   if (!server) {
     return existingProfile;
@@ -99,7 +108,7 @@ export function deriveXAADebugProfileFromServer(
     clientId: existingProfile.clientId || configuredClientId,
     scope: existingProfile.scope || configuredScopes,
     negativeTestMode: sanitizeNegativeTestMode(
-      existingProfile.negativeTestMode,
+      existingProfile.negativeTestMode
     ),
   };
 }
