@@ -251,10 +251,17 @@ async function fetchSuiteRunServerSelection(
     throw error;
   }
 
-  const serverIds = Array.isArray(selection?.serverIds)
+  // A null read means the suite itself wasn't found — match the file's other
+  // Convex read-not-found semantics instead of misreporting it as a
+  // saved-selection validation problem.
+  if (selection == null) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval suite not found");
+  }
+
+  const serverIds = Array.isArray(selection.serverIds)
     ? selection.serverIds.map(String)
     : [];
-  const serverNames = Array.isArray(selection?.serverNames)
+  const serverNames = Array.isArray(selection.serverNames)
     ? selection.serverNames.map(String)
     : [];
   if (serverIds.length === 0) {

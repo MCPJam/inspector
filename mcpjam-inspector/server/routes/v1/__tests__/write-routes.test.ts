@@ -322,6 +322,23 @@ describe("v1 write routes", () => {
         );
       });
 
+      it("maps a null selection read to 404, not a validation error", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockResolvedValueOnce(null);
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(((await res.json()) as { code?: string }).code).toBe(
+          "NOT_FOUND"
+        );
+      });
+
       it("degrades to an explicit-serverIds instruction on older backends", async () => {
         mockHappyCreate();
         convexQueryMock.mockRejectedValueOnce(
