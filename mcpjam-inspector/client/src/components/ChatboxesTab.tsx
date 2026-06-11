@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import {
   AlertTriangle,
   ExternalLink,
   Inbox,
+  Link2,
   Loader2,
-  Settings2,
 } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
@@ -26,7 +28,7 @@ import { buildChatboxLink } from "@/lib/chatbox-session";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
-import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import { cn } from "@/lib/utils";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
@@ -34,35 +36,77 @@ import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
  * of the app chrome is the navigation control: switching hosts switches
  * the chatbox shown here. Tabs:
  *
- *   - Publish   — link, mode, members, chatUi (`ChatboxShareSection`)
+ *   - Publish   — link, mode, members, chatUi (`ChatboxShareSection`) on the
+ *                 left; the right pane toggles between a live preview of the
+ *                 published chatbox and the read-only host graph
  *   - Sessions  — thread list / detail (`ChatboxUsagePanel section="sessions"`)
  *   - Clusters  — topic map / insights (`ChatboxUsagePanel section="insights"`)
  *
- * No "Definition" / "Preview" tabs — those belong to the Host tab inside
- * Connect (agent config) and the public chatbox URL respectively. The
- * "Open preview" button here launches the public share link.
+ * No "Definition" tab — that belongs to the Host tab inside Connect (agent
+ * config). The "Open preview" button here launches the public share link in
+ * a new browser tab. Note the embedded preview loads the real share URL, so
+ * every visit to this (landing) tab starts a guest session — preview
+ * traffic shows up in Sessions and guest analytics.
  */
 interface ChatboxesTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
 }
 
-type ChatboxTab = "publish" | "preview" | "sessions" | "clusters";
+type ChatboxTab = "publish" | "sessions" | "clusters";
 
 const TAB_OPTIONS: ReadonlyArray<{ value: ChatboxTab; label: string }> = [
   { value: "publish", label: "Publish" },
-  { value: "preview", label: "Preview" },
   { value: "sessions", label: "Sessions" },
   { value: "clusters", label: "Clusters" },
 ];
+
+type PublishPanelView = "preview" | "graph";
+
+const PUBLISH_PANEL_OPTIONS: Array<{ value: PublishPanelView; label: string }> =
+  [
+    { value: "preview", label: "Preview" },
+    { value: "graph", label: "Host graph" },
+  ];
 
 export function ChatboxesTab({
   projectId,
   isAuthenticated,
 }: ChatboxesTabProps) {
-  const navigate = useAppNavigate();
-  const [tab, setTab] = useState<ChatboxTab>("publish");
-  const [previewedHostId] = usePreviewedHostId(projectId);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Deep link: `/chatboxes?host=<id>&session=<threadId>` (the Sessions tab's
+  // "Copy session link"). The params stay in the URL until the user navigates
+  // — App's auth/loading gates unmount and remount the route several times
+  // during a cold boot, so state captured from the params on first mount
+  // doesn't survive to the final mount. The URL itself is the stash: every
+  // remount re-seeds tab and thread selection from it.
+  const sessionDeepLinkThreadId = searchParams.get("session");
+  const [tab, setTab] = useState<ChatboxTab>(() =>
+    sessionDeepLinkThreadId ? "sessions" : "publish",
+  );
+  const [panelView, setPanelView] = useState<PublishPanelView>("preview");
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
+  // Apply the host half of the deep link once the project is known —
+  // `setPreviewedHostId` silently no-ops while projectId is null. The host
+  // param is dropped immediately after so the host bar can switch hosts
+  // without this effect snapping back to the linked one.
+  useEffect(() => {
+    if (!projectId) return;
+    const hostParam = searchParams.get("host");
+    if (!hostParam) return;
+    if (hostParam !== previewedHostId) {
+      setPreviewedHostId(hostParam);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("host");
+    setSearchParams(next, { replace: true });
+  }, [
+    projectId,
+    searchParams,
+    setSearchParams,
+    previewedHostId,
+    setPreviewedHostId,
+  ]);
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
   const { host } = useHost({
@@ -218,41 +262,20 @@ export function ChatboxesTab({
         className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
         data-testid="chatboxes-tab-header-chrome"
       >
-        <div className="flex min-w-0 items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-xl"
-            onClick={() => {
-              navigate(buildHostsPath(previewedHostId));
+        <div className="flex min-w-0 items-center justify-center">
+          <ViewModeSelector
+            value={tab}
+            ariaLabel="Chatbox view"
+            onChange={(next) => {
+              setTab(next as ChatboxTab);
+              // Manual navigation supersedes the deep link — drop the params
+              // so returning to Sessions doesn't re-seed the linked thread.
+              if (searchParams.size > 0) {
+                setSearchParams({}, { replace: true });
+              }
             }}
-            title="Open this host's config in Connect"
-          >
-            <Settings2 className="mr-1.5 size-4" />
-            Edit host config
-          </Button>
-          {publishLink ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-xl"
-              onClick={() => window.open(publishLink, "_blank", "noopener")}
-              title="Open the published chatbox in a new tab"
-            >
-              <ExternalLink className="mr-1.5 size-4" />
-              Open preview
-            </Button>
-          ) : null}
-        </div>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="pointer-events-auto">
-            <ViewModeSelector
-              value={tab}
-              ariaLabel="Chatbox view"
-              onChange={(next) => setTab(next as ChatboxTab)}
-              options={TAB_OPTIONS}
-            />
-          </div>
+            options={TAB_OPTIONS}
+          />
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -264,23 +287,34 @@ export function ChatboxesTab({
             <ResizablePanel defaultSize={50} minSize={32}>
               <div className="h-full overflow-y-auto px-6 py-6">
                 <div className="mx-auto flex max-w-3xl flex-col gap-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 className="text-lg font-semibold">{chatbox.name}</h2>
-                      <p className="text-xs text-muted-foreground">
-                        Publishing the {host?.name ?? "host"} chatbox — share
-                        link, access mode, members, and welcome surface.
-                      </p>
-                    </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2 className="min-w-0 truncate text-lg font-semibold">
+                      {chatbox.name}
+                    </h2>
                     {publishLink ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="rounded-xl"
-                        onClick={handleCopyLink}
-                      >
-                        Copy link
-                      </Button>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl"
+                          onClick={() =>
+                            window.open(publishLink, "_blank", "noopener")
+                          }
+                          title="Open the published chatbox in a new tab"
+                        >
+                          <ExternalLink className="mr-1.5 size-4" />
+                          Open preview
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl"
+                          onClick={handleCopyLink}
+                        >
+                          <Link2 className="mr-1.5 size-4" />
+                          Copy link
+                        </Button>
+                      </div>
                     ) : null}
                   </div>
                   <ChatboxPublishClientBar
@@ -297,22 +331,65 @@ export function ChatboxesTab({
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={30}>
-              <ChatboxHostCanvasPanel
-                hostId={chatbox.namedHostId}
-                projectId={chatbox.projectId}
-                isAuthenticated={effectiveAuth}
-              />
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 items-center justify-end border-b border-border/40 px-3 py-1.5">
+                  <SegmentedControl
+                    size="sm"
+                    value={panelView}
+                    onChange={setPanelView}
+                    options={PUBLISH_PANEL_OPTIONS}
+                  />
+                </div>
+                <div className="relative min-h-0 flex-1">
+                  {/* Keep the preview iframe mounted (just hidden) while the
+                      graph is shown so toggling back doesn't restart the
+                      guest session. The graph remounts cheaply, and hidden
+                      ReactFlow canvases mis-measure anyway. */}
+                  <div
+                    className={cn(
+                      "absolute inset-0",
+                      panelView === "preview" ? "" : "hidden",
+                    )}
+                  >
+                    <ChatboxPreviewPane
+                      publishLink={publishLink}
+                      mcpProfile={host?.config.mcpProfile}
+                    />
+                  </div>
+                  {panelView === "graph" ? (
+                    <div className="absolute inset-0">
+                      <ChatboxHostCanvasPanel
+                        hostId={chatbox.namedHostId}
+                        projectId={chatbox.projectId}
+                        isAuthenticated={effectiveAuth}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        ) : tab === "preview" ? (
-          <ChatboxPreviewPane
-            publishLink={publishLink}
-            mcpProfile={host?.config.mcpProfile}
-          />
         ) : tab === "sessions" ? (
-          <ChatboxUsagePanel chatbox={chatbox} section="sessions" />
+          <ChatboxUsagePanel
+            chatbox={chatbox}
+            section="sessions"
+            initialThreadId={sessionDeepLinkThreadId}
+          />
         ) : (
-          <ChatboxUsagePanel chatbox={chatbox} section="insights" />
+          <ChatboxUsagePanel
+            chatbox={chatbox}
+            section="insights"
+            onOpenSession={(threadId) => {
+              // Stash the target in the URL — same shape as the Sessions deep
+              // link — so auth-gate remounts re-seed the selection, then flip
+              // the tab. The panel instance itself survives the flip and has
+              // already updated its own thread selection.
+              const next = new URLSearchParams(searchParams);
+              next.set("session", threadId);
+              setSearchParams(next, { replace: true });
+              setTab("sessions");
+            }}
+          />
         )}
       </div>
     </div>

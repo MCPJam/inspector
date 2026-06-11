@@ -226,13 +226,6 @@ const navigationSections: NavSection[] = [
         featureFlag: "registry-enabled",
       },
       {
-        title: "Chatboxes",
-        url: "/chatboxes",
-        icon: Box,
-        featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
-      },
-      {
         title: "Playground",
         url: "/playground",
         icon: MessageCircle,
@@ -252,6 +245,13 @@ const navigationSections: NavSection[] = [
         title: "Views",
         url: "/views",
         icon: Layers,
+      },
+      {
+        title: "Chatboxes",
+        url: "/chatboxes",
+        icon: Box,
+        featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
       },
       {
         title: "Evaluate",

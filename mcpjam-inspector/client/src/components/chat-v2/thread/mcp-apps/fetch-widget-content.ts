@@ -51,6 +51,12 @@ export interface FetchMcpAppsWidgetContentRequest {
   template?: string;
   viewMode?: string;
   viewParams?: Record<string, unknown>;
+  /**
+   * Route through /api/web even on local builds. Set from
+   * `useWebManagedServers()` by chatbox-runtime renderers whose serverId
+   * is a Convex id the local /api/apps pool can't resolve.
+   */
+  forceWebEndpoint?: boolean;
 }
 
 export interface FetchMcpAppsWidgetContentResponse {
@@ -82,11 +88,12 @@ export interface FetchMcpAppsWidgetContentResponse {
 export async function fetchMcpAppsWidgetContent(
   request: FetchMcpAppsWidgetContentRequest,
 ): Promise<FetchMcpAppsWidgetContentResponse> {
-  const endpoint = HOSTED_MODE
+  const useWebEndpoint = HOSTED_MODE || request.forceWebEndpoint === true;
+  const endpoint = useWebEndpoint
     ? "/api/web/apps/mcp-apps/widget-content"
     : "/api/apps/mcp-apps/widget-content";
 
-  const payload = HOSTED_MODE
+  const payload = useWebEndpoint
     ? { ...buildServerRequest(request.serverId) }
     : { serverId: request.serverId };
 

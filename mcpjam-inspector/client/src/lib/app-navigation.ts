@@ -71,6 +71,19 @@ export function buildHostComparePath(
   return `${routePaths.hostCompare}?${search.toString()}`;
 }
 
+/**
+ * Build a path that deep-links to one chatbox session in the Sessions tab.
+ * `host` selects the previewed host (chatboxes are 1:1 with hosts) and
+ * `session` is the sharedChatThreads doc id to open in the detail pane.
+ */
+export function buildChatboxSessionPath(
+  hostId: string,
+  threadId: string,
+): string {
+  const search = new URLSearchParams({ host: hostId, session: threadId });
+  return `${routePaths.chatboxes}?${search.toString()}`;
+}
+
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,

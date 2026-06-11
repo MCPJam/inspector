@@ -465,14 +465,14 @@ export function GenerateSessionsDialog({
                           onChange={(e) =>
                             updatePersona(index, { name: e.target.value })
                           }
-                          placeholder="Name"
+                          placeholder="Persona"
                         />
                         <Input
                           value={persona.role}
                           onChange={(e) =>
                             updatePersona(index, { role: e.target.value })
                           }
-                          placeholder="Role"
+                          placeholder="Context"
                         />
                       </div>
                       <Textarea

@@ -4,7 +4,6 @@ import { Copy, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
-import { SessionClientConfigChip } from "@/components/chatboxes/SessionClientConfigChip";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
@@ -32,6 +31,12 @@ const EMPTY_SPANS: EvalTraceSpan[] = [];
 
 interface ShareUsageThreadDetailProps {
   threadId: string;
+  /**
+   * Full URL that deep-links back to this session. When provided the copy
+   * button copies it; otherwise it falls back to the raw session id (the
+   * host share-usage dialog has no deep-link target yet).
+   */
+  sessionLink?: string;
 }
 
 /**
@@ -58,6 +63,7 @@ async function hydrateSpans(
 
 export function ShareUsageThreadDetail({
   threadId,
+  sessionLink,
 }: ShareUsageThreadDetailProps) {
   const { thread } = useSharedChatThread({ threadId });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
@@ -177,14 +183,16 @@ export function ShareUsageThreadDetail({
 
   const handleCopySessionRef = useCallback(async () => {
     if (!thread) return;
-    const text = thread.chatSessionId ?? thread._id;
+    const text = sessionLink ?? thread.chatSessionId ?? thread._id;
     const ok = await copyToClipboard(text);
     if (ok) {
-      toast.success("Session reference copied");
+      toast.success(
+        sessionLink ? "Session link copied" : "Session reference copied",
+      );
     } else {
       toast.error("Failed to copy");
     }
-  }, [thread]);
+  }, [thread, sessionLink]);
 
   // Loading state: thread query or messages fetch
   if (thread === undefined || isLoadingMessages) {
@@ -238,8 +246,9 @@ export function ShareUsageThreadDetail({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Thread header */}
-      <div className="shrink-0 border-b px-4 py-3">
+      {/* Thread header — min-h keeps the border-b aligned with the
+          sessions-list toolbar on the other side of the resize handle. */}
+      <div className="flex min-h-[60px] shrink-0 flex-col justify-center border-b px-4 py-3">
         {hasFeedback ? (
           <div className="mb-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -284,16 +293,15 @@ export function ShareUsageThreadDetail({
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <SessionClientConfigChip sessionId={thread._id} />
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="font-mono text-xs"
+              className="rounded-xl"
               onClick={() => void handleCopySessionRef()}
             >
               <Copy className="mr-1.5 size-3.5" />
-              Copy session link
+              {sessionLink ? "Copy session link" : "Copy session ID"}
             </Button>
           </div>
         </div>

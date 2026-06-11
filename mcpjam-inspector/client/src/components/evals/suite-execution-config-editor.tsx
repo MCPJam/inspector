@@ -12,6 +12,8 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
+import { sanitizeHostConfigForEvalSuite } from "@/lib/host-config-computer";
 import type { EvalSuite } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -69,6 +71,11 @@ export function SuiteExecutionConfigEditor({
     input: HostConfigInputV2;
   }) => Promise<string>;
 
+  // Catalog drives which built-in tool ids are computer-backed (e.g. `bash`),
+  // so the eval-suite sanitizer can strip them. `undefined` while loading;
+  // the `computer` clear is catalog-independent either way.
+  const builtInToolCatalog = useBuiltInToolCatalog();
+
   const [value, setValue] = useState<HostConfigInputV2 | null>(null);
   const [baseline, setBaseline] = useState<HostConfigInputV2 | null>(null);
   const [hasJsonError, setHasJsonError] = useState(false);
@@ -94,17 +101,23 @@ export function SuiteExecutionConfigEditor({
     if (dto === undefined) return; // still loading
     const isSuiteSwitch = prevSuiteIdRef.current !== suite._id;
     prevSuiteIdRef.current = suite._id;
-    const next = dto
-      ? hostConfigDtoToInput(dto)
-      : emptyHostConfigInputV2({
-          // Seed empty editor with suite.defaultConfig.{modelId,systemPrompt,
-          // temperature} when the v2 row hasn't been written yet — so a
-          // first-time save through ClientConfigEditor doesn't blow away
-          // a legacy-only suite config.
-          modelId: legacyModelId,
-          systemPrompt: legacySystemPrompt,
-          temperature: legacyTemperature,
-        });
+    // Eval configs can never carry a computer: a stale suite config (or one
+    // seeded from a computer-bearing default) is sanitized on load so the
+    // editor never shows — or later persists — an invalid computer.
+    const next = sanitizeHostConfigForEvalSuite(
+      dto
+        ? hostConfigDtoToInput(dto)
+        : emptyHostConfigInputV2({
+            // Seed empty editor with suite.defaultConfig.{modelId,systemPrompt,
+            // temperature} when the v2 row hasn't been written yet — so a
+            // first-time save through ClientConfigEditor doesn't blow away
+            // a legacy-only suite config.
+            modelId: legacyModelId,
+            systemPrompt: legacySystemPrompt,
+            temperature: legacyTemperature,
+          }),
+      builtInToolCatalog
+    );
     setBaseline(next);
     setValue((current) => {
       // Suite switch: hard reset — never preserve previous suite's
@@ -123,7 +136,16 @@ export function SuiteExecutionConfigEditor({
     // input the seed depends on, and the prevSuiteIdRef guards the
     // cross-suite stale-closure case.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dto, suite._id, legacyModelId, legacySystemPrompt, legacyTemperature]);
+  }, [
+    dto,
+    suite._id,
+    legacyModelId,
+    legacySystemPrompt,
+    legacyTemperature,
+    // Re-seed when the catalog loads so computer-backed ids get stripped
+    // (the preserve-unsaved-edits guard above keeps in-progress edits safe).
+    builtInToolCatalog,
+  ]);
 
   const isDirty = useMemo(
     () =>
@@ -157,9 +179,15 @@ export function SuiteExecutionConfigEditor({
     if (!canSave) return;
     setIsSaving(true);
     try {
-      await setSuiteConfig({ suiteId: suite._id, input: value });
-      setBaseline(value);
-      setValue(value);
+      // Belt-and-suspenders: never persist a computer into an eval suite
+      // config, even if one slipped into `value` somehow.
+      const sanitized = sanitizeHostConfigForEvalSuite(
+        value,
+        builtInToolCatalog
+      );
+      await setSuiteConfig({ suiteId: suite._id, input: sanitized });
+      setBaseline(sanitized);
+      setValue(sanitized);
       toast.success("Suite execution config updated");
     } catch (err) {
       // Surface the failure to the user; do NOT rethrow. The button's
@@ -185,12 +213,18 @@ export function SuiteExecutionConfigEditor({
       // suite's frozen server snapshot. The mutation mints a new v2 row
       // when the project-default content differs from the suite's
       // existing row, or no-ops via dedupe when they already match.
-      const projectDefaultInput: HostConfigInputV2 = {
-        ...hostConfigDtoToInput(projectDefaultDto),
-        serverIds: value.serverIds,
-        optionalServerIds: value.optionalServerIds,
-        serverConnectionOverrides: value.serverConnectionOverrides,
-      };
+      // The project default may carry a `computer` (valid for chatbox hosts);
+      // strip it here so resetting an eval suite to the project default can't
+      // smuggle a computer into a config the backend will reject at run start.
+      const projectDefaultInput = sanitizeHostConfigForEvalSuite(
+        {
+          ...hostConfigDtoToInput(projectDefaultDto),
+          serverIds: value.serverIds,
+          optionalServerIds: value.optionalServerIds,
+          serverConnectionOverrides: value.serverConnectionOverrides,
+        },
+        builtInToolCatalog
+      );
       await setSuiteConfig({
         suiteId: suite._id,
         input: projectDefaultInput,
