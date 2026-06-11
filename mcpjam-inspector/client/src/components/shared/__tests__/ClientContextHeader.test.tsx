@@ -63,6 +63,7 @@ vi.mock("lucide-react", () => ({
   Settings2: () => <span data-testid="icon-settings" />,
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
+  Maximize2: () => <span data-testid="icon-maximize" />,
 }));
 
 vi.mock("@mcpjam/design-system/button", () => ({
