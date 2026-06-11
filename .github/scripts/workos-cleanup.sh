@@ -54,15 +54,20 @@ WORKOS_API_BASE="${WORKOS_API_BASE:-https://api.workos.com}"
 #
 # Lists the resource (following pagination cursors), collects ids whose
 # <field> equals <value> exactly, then deletes each id. Collect-then-delete
-# so deletions can't shift pagination out from under the scan.
+# so deletions can't shift pagination out from under the scan. The scan
+# stops at the first match: WorkOS rejects exact duplicates (422 "already
+# exists"), so one entry per exact value is all that can exist. A scan that
+# ends without a match AND without seeing the end of the list (page cap,
+# list failure) must NOT report "already clean" — it warns instead.
 delete_matching() {
   local resource="$1" field="$2" value="$3"
-  local after="" page=0 ids=""
+  local after="" page=0 ids="" scan_complete=0
 
   while [ "$page" -lt 10 ]; do
     page=$((page + 1))
     local url="${WORKOS_API_BASE}/user_management/${resource}?limit=100"
     if [ -n "$after" ]; then
+      # Cursors are WorkOS object ids (URL-safe); no escaping needed.
       url="${url}&after=${after}"
     fi
 
@@ -75,27 +80,35 @@ delete_matching() {
       "$url" || true)
     http_code="${http_code:-000}"
     if [ "$http_code" != "200" ]; then
-      echo "::warning::WorkOS ${resource} list failed (HTTP ${http_code}) — remove '${value}' manually in the staging WorkOS dashboard" >&2
+      echo "::warning::WorkOS ${resource} list failed (HTTP ${http_code}) on page ${page} — scan incomplete" >&2
       rm -f "$resp_file"
-      return 0
+      break
     fi
 
     local page_ids
     page_ids=$(jq -r --arg f "$field" --arg v "$value" \
       '.data[]? | select(.[$f] == $v) | .id' "$resp_file" 2>/dev/null || true)
     if [ -n "$page_ids" ]; then
-      ids="${ids}${ids:+$'\n'}${page_ids}"
+      ids="$page_ids"
+      rm -f "$resp_file"
+      scan_complete=1
+      break
     fi
 
     after=$(jq -r '.list_metadata.after // empty' "$resp_file" 2>/dev/null || true)
     rm -f "$resp_file"
     if [ -z "$after" ]; then
+      scan_complete=1
       break
     fi
   done
 
   if [ -z "$ids" ]; then
-    echo "::notice::No WorkOS ${resource} entry matched '${value}' (already clean)"
+    if [ "$scan_complete" -eq 1 ]; then
+      echo "::notice::No WorkOS ${resource} entry matched '${value}' (already clean)"
+    else
+      echo "::warning::WorkOS ${resource} scan ended after ${page} page(s) without finding '${value}' — verify/remove it manually in the staging WorkOS dashboard" >&2
+    fi
     return 0
   fi
 
