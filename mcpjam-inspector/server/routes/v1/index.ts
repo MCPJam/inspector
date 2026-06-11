@@ -3,9 +3,10 @@
  *
  * Mounted at `/api/v1`. Resource-oriented, project-scoped routes that wrap the
  * same core helpers as `/api/web/*` (no forked handler logic) and emit the
- * canonical v1 envelope. Read-only diagnostics ship first; mutating operations
- * (tools/execute, evals/run, generate-tests) are deferred to a follow-up that
- * adds the X-MCPJam-Approval flow.
+ * canonical v1 envelope. Covers read diagnostics (validate/doctor/lists) and
+ * write operations: tools/call, prompts/get, resources/read, OAuth token
+ * import, and async eval runs (POST creates + detaches; agents poll the GET
+ * routes for status, iteration results, and traces).
  */
 import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
@@ -15,6 +16,8 @@ import tools from "./tools.js";
 import prompts from "./prompts.js";
 import resources from "./resources.js";
 import exporter from "./export.js";
+import evals from "./evals.js";
+import oauth from "./oauth.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -44,6 +47,8 @@ v1.route("/", tools);
 v1.route("/", prompts);
 v1.route("/", resources);
 v1.route("/", exporter);
+v1.route("/", evals);
+v1.route("/", oauth);
 
 v1.onError((error, c) => v1OnError(error, c));
 

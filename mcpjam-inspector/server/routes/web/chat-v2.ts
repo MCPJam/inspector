@@ -27,7 +27,7 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
-import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
+import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
@@ -155,7 +155,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -164,7 +164,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -173,7 +173,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          },
+          }
         );
       }
     }
@@ -196,10 +196,11 @@ chatV2.post("/", async (c) => {
         );
         modelDefinition = hostModel;
       } else {
-        logger.warn(
-          "[chat-v2] host model not in catalog; swapping id only",
-          { chatboxId, body: modelDefinition.id, host: hostModelId }
-        );
+        logger.warn("[chat-v2] host model not in catalog; swapping id only", {
+          chatboxId,
+          body: modelDefinition.id,
+          host: hostModelId,
+        });
         modelDefinition = { ...modelDefinition, id: hostModelId };
       }
     }
@@ -209,15 +210,26 @@ chatV2.post("/", async (c) => {
     const respectToolVisibility = resolvedExecution.respectToolVisibility;
     const resolvedProgressiveToolDiscovery =
       resolvedExecution.progressiveToolDiscovery;
-    // Built-in tools (e.g. web_search) bill MCPJam credits via Convex; the
-    // bearer is guaranteed by assertBearerToken above and projectId by the
-    // hosted schema, so the auth context is always constructible here.
-    const builtInTools = safeResolveBuiltInTools(
-      resolvedExecution.builtInToolIds,
+    // Host-config tools (web_search, bash, …) — one resolver owns which
+    // config field produces which tool and with which gates (see
+    // built-in-tools/registry.ts). `computer` comes exclusively from the
+    // server-resolved runtime config — never the request body — so a
+    // tampered client can't attach a shell the host didn't authorize; the
+    // resolver also skips computer-backed tools for guest actors.
+    const builtInTools = resolveHostTools(
+      {
+        builtInToolIds: resolvedExecution.builtInToolIds,
+        computer:
+          isChatboxSession && hostRuntimeConfig
+            ? (hostRuntimeConfig as { computer?: unknown }).computer
+            : undefined,
+      },
       {
         authHeader: bearerToken,
         projectId: hostedBody.projectId,
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+        isGuest: Boolean(c.get("guestId")),
+        requireToolApproval,
       }
     );
 
