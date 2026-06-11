@@ -368,7 +368,7 @@ const runEvalSuiteInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project server names or IDs to run against. Defaults to every enabled HTTP server in the project."
+      "Project server names or IDs to run against. Defaults to every enabled HTTP server in the project. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted."
     ),
 });
 
@@ -601,8 +601,10 @@ async function resolveSuite(
  * Resolve the servers a run connects to. Explicit selectors resolve by id or
  * unique name (deduplicated) and must be hosted-runnable HTTP servers;
  * disabled servers stay selectable, since naming one is an explicit choice.
- * With no selectors, every enabled HTTP server in the project is used —
- * stdio servers can't run on the hosted platform.
+ * That mirrors what the platform itself permits: eval-run authorization is
+ * project-membership-based and does not consult the `enabled` toggle, which
+ * only controls the default connection set. With no selectors, every enabled
+ * HTTP server in the project is used — stdio servers can't run hosted.
  */
 async function resolveRunServers(
   client: PlatformApiClient,

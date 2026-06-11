@@ -35,7 +35,11 @@ require the project the run belongs to — `run_eval_suite` and
 `list_eval_suite_runs` return it, so the loop is self-contained.
 `run_eval_suite` is the only non-read tool: it starts LLM iterations that
 consume the organization's credits, and is annotated `readOnlyHint: false`
-(but non-destructive) so hosts can gate it accordingly.
+(but non-destructive) so hosts can gate it accordingly. Its server defaults
+exclude disabled servers, but naming a disabled server explicitly runs it —
+the platform authorizes eval runs by project membership, and the `enabled`
+toggle only shapes the default connection set. stdio servers never run
+hosted, explicitly named or not.
 
 ## Auth
 
