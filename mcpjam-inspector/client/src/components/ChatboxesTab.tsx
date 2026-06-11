@@ -233,41 +233,13 @@ export function ChatboxesTab({
         className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
         data-testid="chatboxes-tab-header-chrome"
       >
-        <div className="flex min-w-0 items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-xl"
-            onClick={() => {
-              navigate(buildHostsPath(previewedHostId));
-            }}
-            title="Open this host's config in Connect"
-          >
-            <Settings2 className="mr-1.5 size-4" />
-            Edit host
-          </Button>
-          {publishLink ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-xl"
-              onClick={() => window.open(publishLink, "_blank", "noopener")}
-              title="Open the published chatbox in a new tab"
-            >
-              <ExternalLink className="mr-1.5 size-4" />
-              Open preview
-            </Button>
-          ) : null}
-        </div>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="pointer-events-auto">
-            <ViewModeSelector
-              value={tab}
-              ariaLabel="Chatbox view"
-              onChange={(next) => setTab(next as ChatboxTab)}
-              options={TAB_OPTIONS}
-            />
-          </div>
+        <div className="flex min-w-0 items-center justify-center">
+          <ViewModeSelector
+            value={tab}
+            ariaLabel="Chatbox view"
+            onChange={(next) => setTab(next as ChatboxTab)}
+            options={TAB_OPTIONS}
+          />
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -310,7 +282,35 @@ export function ChatboxesTab({
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={30}>
               <div className="flex h-full min-h-0 flex-col">
-                <div className="flex shrink-0 justify-end border-b border-border/40 px-3 py-1.5">
+                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-1.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl"
+                      onClick={() => {
+                        navigate(buildHostsPath(previewedHostId));
+                      }}
+                      title="Open this host's config in Connect"
+                    >
+                      <Settings2 className="mr-1.5 size-4" />
+                      Edit host
+                    </Button>
+                    {publishLink ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={() =>
+                          window.open(publishLink, "_blank", "noopener")
+                        }
+                        title="Open the published chatbox in a new tab"
+                      >
+                        <ExternalLink className="mr-1.5 size-4" />
+                        Open preview
+                      </Button>
+                    ) : null}
+                  </div>
                   <SegmentedControl
                     size="sm"
                     value={panelView}
