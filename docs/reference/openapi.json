@@ -28,6 +28,14 @@
     {
       "name": "Export",
       "description": "Full-server snapshots for diffing and CI."
+    },
+    {
+      "name": "Eval runs",
+      "description": "Async eval suite runs. POST creates the run and responds 202; poll GET until status is terminal."
+    },
+    {
+      "name": "OAuth",
+      "description": "Import externally-obtained OAuth tokens so subsequent server calls succeed automatically."
     }
   ],
   "paths": {
