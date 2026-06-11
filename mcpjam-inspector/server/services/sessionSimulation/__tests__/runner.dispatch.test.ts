@@ -336,6 +336,48 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     ).rejects.toThrow(/spend cap.*spend_cap_exceeded.*HTTP 429/i);
   });
 
+  it("throws when the engine returns no turnTrace even WITHOUT a captured engine error (no silent empty turns)", async () => {
+    // Cursor Bugbot (PR 2610): a missing turnTrace on a non-aborted turn
+    // always means runSucceeded=false — engine-internal aborts or error
+    // sites the onEngineError callback doesn't cover must still fail the
+    // session instead of silently recording an empty assistant reply.
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    runAssistantTurnMock.mockImplementation(async (opts: any) => ({
+      messages: opts.messages,
+      assistantMessages: [],
+      toolCalls: [],
+      toolResults: [],
+      // no turnTrace, no onEngineError fired
+    }));
+
+    await expect(
+      drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(/engine returned no turn trace/i);
+  });
+
+  it("does not throw on a missing turnTrace when the abort signal fired (cancellation, not failure)", async () => {
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    const controller = new AbortController();
+    runAssistantTurnMock.mockImplementation(async (opts: any) => {
+      controller.abort();
+      return {
+        messages: opts.messages,
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+      };
+    });
+
+    const result = await drainAssistantTurn(
+      baseArgs({
+        abortSignal: controller.signal,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+    expect(result.turnTrace).toBeUndefined();
+  });
+
   it("does not throw when a turnTrace was produced despite a recovered per-step engine error", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
     runAssistantTurnMock.mockImplementation(async (opts: any) => {

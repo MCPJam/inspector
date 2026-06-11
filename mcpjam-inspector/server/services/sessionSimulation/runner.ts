@@ -1218,18 +1218,31 @@ export async function drainAssistantTurn(
 
   // Surface engine failures as throws (see the error contract above). A
   // produced turnTrace means the turn semantically succeeded — per-step
-  // engine errors that the loop recovered from don't fail the turn.
-  if (lastEngineError && !result.turnTrace && !args.abortSignal?.aborted) {
-    const detail = [
-      lastEngineError.code,
-      lastEngineError.httpStatus !== undefined
-        ? `HTTP ${lastEngineError.httpStatus}`
-        : undefined,
-    ]
-      .filter(Boolean)
-      .join(", ");
+  // engine errors that the loop recovered from don't fail the turn. A
+  // MISSING turnTrace on a non-aborted turn always means the engine failed
+  // (`runSucceeded === false`) — the same signal the eval runners' failure
+  // detection keys on — so throw even when no `onEngineError` event was
+  // captured (engine-internal aborts without our signal flipping, or error
+  // sites the callback doesn't cover). Without this, a failed turn would
+  // silently record an empty assistant reply and skip persistence.
+  if (!result.turnTrace && !args.abortSignal?.aborted) {
+    if (lastEngineError) {
+      const detail = [
+        lastEngineError.code,
+        lastEngineError.httpStatus !== undefined
+          ? `HTTP ${lastEngineError.httpStatus}`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      throw new Error(
+        detail
+          ? `${lastEngineError.message} (${detail})`
+          : lastEngineError.message
+      );
+    }
     throw new Error(
-      detail ? `${lastEngineError.message} (${detail})` : lastEngineError.message
+      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)"
     );
   }
 
