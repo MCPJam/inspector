@@ -131,6 +131,29 @@ describe("v1 catalog read proxies", () => {
     expect(res.status).toBe(502);
   });
 
+  it("maps an upstream timeout to 504 TIMEOUT", async () => {
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    fetchMock.mockRejectedValue(abortError);
+    const res = await request(makeApp(), "/api/v1/me");
+    expect(res.status).toBe(504);
+    expect(((await res.json()) as { code?: string }).code).toBe("TIMEOUT");
+  });
+
+  it("maps a response body stalled past the deadline to 504 TIMEOUT, not 502", async () => {
+    // fetch resolves on headers; the deadline must keep guarding the body
+    // read. A stalled body surfaces as json() rejecting with an abort.
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    fetchMock.mockResolvedValue({
+      status: 200,
+      json: () => Promise.reject(abortError),
+    } as unknown as Response);
+    const res = await request(makeApp(), "/api/v1/me");
+    expect(res.status).toBe(504);
+    expect(((await res.json()) as { code?: string }).code).toBe("TIMEOUT");
+  });
+
   it("returns the chatbox detail when the path projectId matches", async () => {
     const detail = {
       id: "cbx_1",

@@ -39,6 +39,14 @@ function forwardQueryParams(
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" ||
+      (error as { code?: string }).code === "ABORT_ERR")
+  );
+}
+
 async function fetchConvexV1Read(
   c: Context,
   convexPath: string,
@@ -56,20 +64,34 @@ async function fetchConvexV1Read(
   const target = new URL(convexPath, convexUrl);
   configure?.(target);
 
+  // The abort deadline must cover the WHOLE exchange: `fetch` resolves on
+  // headers, so clearing the timer there would leave a stalled response
+  // body free to hang `response.json()` indefinitely.
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
   let response: Response;
+  let body: unknown;
   try {
     response = await fetch(target, {
       method: "GET",
       headers: { Authorization: `Bearer ${bearer}` },
       signal: controller.signal,
     });
+    try {
+      body = await response.json();
+    } catch (parseError) {
+      // A body stalled past the deadline rejects with an abort, which is a
+      // timeout, not a malformed payload — let the outer classifier map it.
+      if (isAbortError(parseError)) throw parseError;
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        `Catalog service returned a non-JSON response (${response.status})`
+      );
+    }
   } catch (error) {
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        (error as { code?: string }).code === "ABORT_ERR");
+    if (error instanceof WebRouteError) throw error;
+    const isAbort = isAbortError(error);
     throw new WebRouteError(
       isAbort ? 504 : 502,
       isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
@@ -81,16 +103,6 @@ async function fetchConvexV1Read(
     clearTimeout(timeoutId);
   }
 
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new WebRouteError(
-      502,
-      ErrorCode.SERVER_UNREACHABLE,
-      `Catalog service returned a non-JSON response (${response.status})`
-    );
-  }
   return { status: response.status, body };
 }
 
