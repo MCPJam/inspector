@@ -23,7 +23,6 @@
  */
 
 import { existsSync } from "fs";
-import sharp from "sharp";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
   buildSandboxProxyWidgetCsp,
@@ -294,24 +293,13 @@ export function injectCspMeta(html: string, cspContent: string): string {
   return tag + html;
 }
 
-/**
- * Pixel-level blank check: true when a screenshot is (near-)uniform, i.e. the
- * widget has not painted any visible content. This is the ground truth the
- * DOM-based `isDocumentBlank` cannot give — a `<canvas>` widget (Excalidraw)
- * mounts its canvas element (a layout box, so "non-blank" to the DOM) well
- * before it draws anything INTO it, so DOM-presence alone snapshots an empty
- * canvas. A truly blank frame has per-channel stdev 0; any real content
- * (even a single small button) pushes it well past the threshold.
- */
-const PAINT_STDEV_THRESHOLD = 2;
-async function isScreenshotBlank(png: Buffer): Promise<boolean> {
-  try {
-    const { channels } = await sharp(png).stats();
-    return channels.every((c) => c.stdev < PAINT_STDEV_THRESHOLD);
-  } catch {
-    // If we can't analyze it, don't claim it's blank (fail toward "painted").
-    return false;
-  }
+// Paint detection (see `waitForWidgetPaint`) compares whole-frame PNG
+// screenshots byte-for-byte. Chromium encodes identical pixels to identical
+// bytes, so a plain Buffer compare is a reliable "did these two frames differ"
+// test — no image decoding, and therefore no native-image dependency dragged
+// into the server bundle.
+function framesEqual(a: Buffer | null, b: Buffer | null): boolean {
+  return !!a && !!b && a.length === b.length && a.equals(b);
 }
 
 // SEP-1865 host capabilities are declared as OBJECTS (an empty `{}` means
@@ -341,6 +329,14 @@ export class McpAppBrowserHarness {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  /**
+   * Screenshot of the empty host page, captured once before the first widget
+   * mounts. The host background + viewport are invariant, so this is the
+   * "nothing painted" reference every render's paint check diffs against. A
+   * widget that paints anything diverges from it; one that paints nothing
+   * stays identical to it (→ blank_screenshot).
+   */
+  private blankReference: Buffer | null = null;
 
   private readonly mounted = new Map<string, MountedWidget>();
   /**
@@ -587,6 +583,16 @@ export class McpAppBrowserHarness {
       };
     }
 
+    // Capture the empty-host baseline once, before the first widget ever mounts
+    // — nothing is on the page yet, so this is a clean "nothing painted" frame
+    // for the paint check to diff against. Host background + viewport are
+    // invariant, so the single reference serves every subsequent render.
+    if (!this.blankReference) {
+      this.blankReference = await page
+        .screenshot({ type: "png" })
+        .catch(() => null);
+    }
+
     // Capture only this render's console errors + blocked requests (otherwise
     // an observation would attach unrelated diagnostics from earlier widgets in
     // the same iteration).
@@ -746,38 +752,53 @@ export class McpAppBrowserHarness {
   }
 
   /**
-   * Wait until the widget has actually PAINTED pixels (not just mounted DOM),
-   * up to the paint budget; returns the final blank state. Polls real
-   * screenshots because `isDocumentBlank` reports a `<canvas>` widget as
-   * non-blank the moment its canvas element mounts — before it has drawn — so
-   * DOM-presence alone races the first real paint and snapshots an empty canvas.
-   * Returns as soon as the frame is non-blank, so a fast widget adds little
-   * latency and only a genuinely-blank one waits the whole budget.
+   * Wait until the widget's frame has both PAINTED (diverged from the empty-host
+   * baseline) and SETTLED (stopped changing between samples), bounded by the
+   * paint budget; returns the final blank state.
+   *
+   * This is content-agnostic, which is the point: it works the same for a DOM
+   * widget, a `<canvas>`/WebGL app (e.g. Excalidraw, which mounts its canvas
+   * element — "non-blank" to the DOM — long before it draws), a progressively
+   * hydrated app, or a slow CDN load, with no per-widget delay tuning. Frame
+   * equality is a byte compare of PNG screenshots (Chromium encodes identical
+   * pixels identically), so there's no image decoding and no native-image dep.
+   *
+   * - A widget that paints quickly diverges + stabilizes in a couple of samples.
+   * - A genuinely-blank widget never diverges from the baseline and falls
+   *   through to the budget → reported blank.
+   * - A perpetually-animating widget never stabilizes → hits the budget, and we
+   *   snapshot the latest (painted) frame → reported rendered.
    */
   private async waitForWidgetPaint(): Promise<boolean> {
     const page = this.page;
     if (!page) return true;
+    const baseline = this.blankReference;
     const deadline = Date.now() + this.budgets.paintTimeoutMs;
-    let blank = true;
+    // Let code/CDN fetches finish first, so a network-driven widget is sampled
+    // after its load rather than during it (avoids fixating on a pre-paint
+    // intermediate state). Best-effort — falls through on timeout.
+    await page
+      .waitForLoadState("networkidle", {
+        timeout: this.budgets.settleTimeoutMs,
+      })
+      .catch(() => {});
+
+    let prev: Buffer | null = null;
+    let frame: Buffer | null = null;
     while (Date.now() < deadline) {
-      const png = await page.screenshot({ type: "png" }).catch(() => null);
-      blank = png ? await isScreenshotBlank(png) : true;
-      if (!blank) break;
+      frame = await page.screenshot({ type: "png" }).catch(() => prev);
+      if (!frame) break;
+      const painted = !baseline || !framesEqual(frame, baseline);
+      const settled = framesEqual(frame, prev);
+      if (painted && settled) break;
+      prev = frame;
       await page.waitForTimeout(150);
     }
-    if (!blank) {
-      // The frame went non-blank on its FIRST visible pixels, but a widget like
-      // Excalidraw is still mid-draw then (fills appear before borders/text/
-      // arrows). Let outstanding subresource fetches settle, plus a short grace,
-      // so the snapshot is the finished widget — not a half-painted one.
-      await page
-        .waitForLoadState("networkidle", {
-          timeout: this.budgets.settleTimeoutMs,
-        })
-        .catch(() => {});
-      await page.waitForTimeout(400);
-    }
-    return blank;
+    // Blank iff the settled frame is still indistinguishable from the empty
+    // baseline. With no baseline (capture failed), fail toward "rendered" rather
+    // than mislabel a real widget blank.
+    if (!frame || !baseline) return false;
+    return framesEqual(frame, baseline);
   }
 
   /* ---- interact ---- */
@@ -985,6 +1006,8 @@ export class McpAppBrowserHarness {
     this.context = null;
     this.browser = null;
     this.page = null;
+    // Re-captured against the next launch's fresh page.
+    this.blankReference = null;
     this.mounted.clear();
     this.widgetCspSources = [];
   }
