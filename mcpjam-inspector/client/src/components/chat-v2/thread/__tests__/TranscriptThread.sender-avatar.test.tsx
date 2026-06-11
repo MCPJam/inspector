@@ -29,9 +29,19 @@ vi.mock("../message-view", () => ({
 }));
 
 // Loading-indicator hook reads provider-aware host style. We don't care here.
-vi.mock("@/components/chat-v2/shared/loading-indicator-content", () => ({
-  useResolvedHostStyleForIndicator: () => null,
-}));
+vi.mock(
+  "@/components/chat-v2/shared/loading-indicator-content",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/components/chat-v2/shared/loading-indicator-content")
+      >();
+    return {
+      ...actual,
+      useResolvedHostStyleForIndicator: () => null,
+    };
+  },
+);
 
 import { TranscriptThread } from "../transcript-thread";
 

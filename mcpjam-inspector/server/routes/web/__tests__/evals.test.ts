@@ -485,7 +485,13 @@ describe("web routes — evals", () => {
     expect(streamEvalTestCaseWithManagerMock).not.toHaveBeenCalled();
   });
 
-  it("rejects direct guest full suite eval runs", async () => {
+  it("allows guests to run full eval suites", async () => {
+    runEvalsWithManagerMock.mockResolvedValueOnce({
+      success: true,
+      suiteId: "guest-suite-1",
+      runId: "guest-run-1",
+    });
+
     const { app } = createEvalsTestApp();
     const { token } = issueGuestToken();
 
@@ -493,23 +499,32 @@ describe("web routes — evals", () => {
       app,
       "/api/web/evals/run",
       {
-        serverUrl: "https://guest.example.com/mcp",
-        serverName: "Guest Server",
+        projectId: "guest-project-1",
+        serverIds: ["guest-srv-1"],
+        serverNames: ["guest-server-1"],
         suiteName: "Guest Suite",
-        tests: [],
+        tests: [
+          {
+            title: "Test",
+            query: "Hello",
+            runs: 1,
+            model: "openai/gpt-5-mini",
+            provider: "openai",
+            expectedToolCalls: [],
+          },
+        ],
       },
       token,
     );
-    const { status, data } = await expectJson<{
-      code: string;
-      message: string;
-    }>(response);
 
-    expect(status).toBe(403);
-    expect(data).toEqual({
-      code: "FEATURE_NOT_SUPPORTED",
-      message: "Not available for guests yet. Sign in to use this.",
-    });
-    expect(runEvalsWithManagerMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(runEvalsWithManagerMock).toHaveBeenCalledTimes(1);
+    expect(runEvalsWithManagerMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        projectId: "guest-project-1",
+        serverIds: ["guest-srv-1"],
+        convexAuthToken: token,
+      }),
+    );
   });
 });

@@ -44,6 +44,39 @@ Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/e
 3. Choose your authentication method (None, Bearer Token, or OAuth 2.0)
 4. Start inspecting tools, resources, and prompts
 
+## Usage limits
+
+The hosted app uses a daily credit system to power AI features like chat.
+
+- **Guests** get a free daily usage allowance. The sidebar shows a progress bar with how much of your daily limit you've used and when it resets. When you reach the limit, you'll be prompted to sign in.
+- **Signed-in users** get **10×** the daily usage of a guest. Your daily usage and any paid credit balance are visible in the account menu at the bottom of the sidebar.
+- **Paid credits** can be topped up from the billing page and are shown alongside your daily limit in the account menu.
+
+## Signing out
+
+Open the **account menu** at the bottom of the sidebar (click your avatar or email) and choose **Sign out**. You'll be returned to the public app as a guest, and any signed-in usage allowance is replaced by the guest allowance until you sign back in.
+
+OAuth tokens you connected while signed in remain in your hosted workspace and are restored the next time you sign in on the same account.
+
+## OAuth token reveal
+
+When you connect an OAuth server in the hosted app, your OAuth credentials are stored securely in Vault. You can inspect those tokens on demand from the server's **Overview** tab without them ever being written to `localStorage` or shared with other users.
+
+To reveal tokens:
+
+1. Open the **Servers** tab and click the server name to open its detail modal.
+2. Go to the **Overview** tab.
+3. Under **OAuth Tokens**, click **Reveal tokens**.
+4. Each token (access token, refresh token, ID token) is masked by default. Click the eye icon next to a token to reveal its value, or click the copy icon to copy it directly without revealing it.
+
+Expired tokens are automatically refreshed before being returned. Revealed values are kept component-local and are cleared when you close the modal.
+
+<Note>
+  The **Reveal tokens** button only appears after the server has been synced to
+  your hosted workspace. If the button is not visible, disconnect and reconnect
+  the server to trigger a sync.
+</Note>
+
 ## What's different
 
 The following features are not available in the hosted app. They are available when running MCPJam locally via [npx, Docker, or the desktop app](/installation).
@@ -67,3 +100,20 @@ Skills live on your filesystem and can only be discovered and run from the local
 ### No tasks
 
 Tasks are not yet available in the hosted app.
+
+## Billing
+
+### Payment history
+
+The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
+
+| Column | Details |
+|--------|---------|
+| Date | When the top-up was processed |
+| Amount | Amount charged in USD |
+| Status | `Succeeded`, `Pending`, or `Failed` |
+| Receipt | Link to the Stripe-hosted receipt (opens in a new tab) |
+
+If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
+
+To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.

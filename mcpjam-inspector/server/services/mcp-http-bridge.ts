@@ -1,4 +1,4 @@
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, describeError } from "@mcpjam/sdk";
 import { z } from "zod";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
@@ -137,7 +137,11 @@ export async function handleJsonRpc(
             return respond({ result });
           }
           return respond({
-            error: { code: -32000, message: e?.message || String(e) },
+            error: {
+              code: -32000,
+              message: e?.message || String(e),
+              data: { normalized: describeError(e) },
+            },
           });
         }
       }
@@ -181,7 +185,11 @@ export async function handleJsonRpc(
           return respond({ result: resource });
         } catch (e: any) {
           return respond({
-            error: { code: -32000, message: e?.message || String(e) },
+            error: {
+              code: -32000,
+              message: e?.message || String(e),
+              data: { normalized: describeError(e) },
+            },
           });
         }
       }
@@ -220,7 +228,11 @@ export async function handleJsonRpc(
           return respond({ result: prompt });
         } catch (e: any) {
           return respond({
-            error: { code: -32000, message: e?.message || String(e) },
+            error: {
+              code: -32000,
+              message: e?.message || String(e),
+              data: { normalized: describeError(e) },
+            },
           });
         }
       }
@@ -231,14 +243,23 @@ export async function handleJsonRpc(
         return respond({ result: { success: true } });
       }
       default: {
+        const notImpl = new Error(`Method not implemented: ${method}`);
         return respond({
-          error: { code: -32601, message: `Method not implemented: ${method}` },
+          error: {
+            code: -32601,
+            message: notImpl.message,
+            data: { normalized: describeError(notImpl) },
+          },
         });
       }
     }
   } catch (e: any) {
     return respond({
-      error: { code: -32000, message: e?.message || String(e) },
+      error: {
+        code: -32000,
+        message: e?.message || String(e),
+        data: { normalized: describeError(e) },
+      },
     });
   }
 }

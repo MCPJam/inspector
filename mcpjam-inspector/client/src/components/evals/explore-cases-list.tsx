@@ -220,7 +220,7 @@ export function ExploreCasesList({
                   {c.title}
                 </div>
                 {c.isNegativeTest ? (
-                  <span className="text-[10px] text-orange-500">
+                  <span className="text-[10px] text-info">
                     Negative case
                   </span>
                 ) : null}

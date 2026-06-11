@@ -69,14 +69,14 @@ const result = await manager.executeTool("everything", "add", {
 console.log("5 + 3 =", result); // 8
 ```
 
-## Step 3: Create a TestAgent
+## Step 3: Create a HostRunner
 
 Connect an LLM to your MCP tools:
 
 ```typescript
-import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner } from "@mcpjam/sdk";
 
-const agent = new TestAgent({
+const agent = new HostRunner({
   tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -89,7 +89,7 @@ If `MCPJAM_API_KEY` is set, attaching the connected `MCPClientManager` also lets
 ## Step 4: Run Prompts
 
 ```typescript
-const result = await agent.prompt("What is 15 plus 27?");
+const result = await agent.run("What is 15 plus 27?");
 
 console.log("Response:", result.getText());
 console.log("Tools called:", result.toolsCalled());
@@ -105,7 +105,7 @@ import { describe, it, expect } from "vitest";
 
 describe("Math MCP Server", () => {
   it("should call add for addition", async () => {
-    const result = await agent.prompt("Add 10 and 5");
+    const result = await agent.run("Add 10 and 5");
     expect(matchToolCalls(["add"], result.toolsCalled())).toBe(true);
   });
 });
@@ -119,7 +119,7 @@ import { EvalTest } from "@mcpjam/sdk";
 const test = new EvalTest({
   name: "addition-accuracy",
   test: async (agent) => {
-    const result = await agent.prompt("Add 2 and 3");
+    const result = await agent.run("Add 2 and 3");
     return result.hasToolCall("add");
   },
 });
@@ -132,7 +132,7 @@ console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 ## Complete Example
 
 ```typescript
-import { MCPClientManager, TestAgent, EvalSuite, EvalTest } from "@mcpjam/sdk";
+import { MCPClientManager, HostRunner, EvalSuite, EvalTest } from "@mcpjam/sdk";
 
 async function main() {
   // Setup
@@ -144,7 +144,7 @@ async function main() {
   });
   await manager.connectToServer("everything");
 
-  const agent = new TestAgent({
+  const agent = new HostRunner({
     tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -152,7 +152,7 @@ async function main() {
   });
 
   // Quick test
-  const result = await agent.prompt("Echo 'Hello!'");
+  const result = await agent.run("Echo 'Hello!'");
   console.log("Response:", result.getText());
   console.log("Tools:", result.toolsCalled());
 
@@ -161,12 +161,12 @@ async function main() {
 
   suite.add(new EvalTest({
     name: "echo",
-    test: async (a) => (await a.prompt("Echo 'test'")).hasToolCall("echo"),
+    test: async (a) => (await a.run("Echo 'test'")).hasToolCall("echo"),
   }));
 
   suite.add(new EvalTest({
     name: "add",
-    test: async (a) => (await a.prompt("Add 1 and 2")).hasToolCall("add"),
+    test: async (a) => (await a.run("Add 1 and 2")).hasToolCall("add"),
   }));
 
   await suite.run(agent, { iterations: 10 });
@@ -186,7 +186,7 @@ You can also generate eval code directly from the MCPJam Inspector:
 
 1. Connect your MCP server in the Inspector
 2. Click the **⋮** menu on the server card
-3. Select **Copy markdown for server evals**
+3. Select **Copy markdown for evals**
 4. Paste the copied markdown into an LLM (Claude, ChatGPT, etc.)
 5. The LLM will generate eval test code using `@mcpjam/sdk`
 
@@ -194,7 +194,7 @@ You can also generate eval code directly from the MCPJam Inspector:
   <img
     className="block"
     src="/images/copy-markdown-menu.png"
-    alt="Copy markdown for server evals menu option"
+    alt="Copy markdown for evals menu option"
     width="300"
   />
 </Frame>

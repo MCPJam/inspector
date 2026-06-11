@@ -14,6 +14,16 @@ const mocks = vi.hoisted(() => ({
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
   isDirectGuest: false,
+  isAuthenticated: true,
+  useQuery: vi.fn(),
+  evalIterationQuota: undefined as
+    | {
+        used: number;
+        allowed: number | null;
+        resetsAt: number;
+        windowKind: "day" | "month";
+      }
+    | undefined,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -25,10 +35,12 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
-    isAuthenticated: true,
+    isAuthenticated: mocks.isAuthenticated,
     isLoading: false,
   }),
   useConvex: () => ({ query: vi.fn().mockResolvedValue([]) }),
+  useQuery: (...args: unknown[]) => mocks.useQuery(...args),
+  useMutation: () => vi.fn().mockResolvedValue({ _id: "stub-id" }),
 }));
 
 vi.mock("posthog-js", () => ({
@@ -46,6 +58,7 @@ vi.mock("@/lib/evals/generate-and-persist-tests", () => ({
 
 vi.mock("@/hooks/use-eval-tab-context", () => ({
   useEvalTabContext: () => ({
+    organizationId: "org-1",
     connectedServerNames: new Set(["server-a", "server-b"]),
     userMap: new Map(),
     canDeleteSuite: false,
@@ -231,10 +244,17 @@ describe("EvalsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isDirectGuest = false;
+    mocks.isAuthenticated = true;
+    mocks.evalIterationQuota = undefined;
+    mocks.useQuery.mockImplementation((name: unknown) =>
+      name === "billing:getEvalIterationQuota"
+        ? mocks.evalIterationQuota
+        : undefined
+    );
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
-        makeQueryState(selectedSuiteId),
+        makeQueryState(selectedSuiteId)
     );
   });
 
@@ -242,14 +262,8 @@ describe("EvalsTab", () => {
     render(<EvalsTab projectId="ws-1" />);
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
-    expect(screen.getByRole("tab", { name: "Suites" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: "Executions" })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
+    expect(screen.getByRole("button", { name: "Suites" })).toBeInTheDocument();
+    expect(screen.getByTitle("Suite suite-a")).toBeInTheDocument();
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       suite: expect.objectContaining({ _id: "suite-a" }),
@@ -268,17 +282,16 @@ describe("EvalsTab", () => {
     expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
   });
 
-  it("navigates to the eval list when the Suites tab is activated while a suite is open", async () => {
+  it("navigates to the eval list when the Suites breadcrumb is clicked while a suite is open", async () => {
     const user = userEvent.setup();
     render(<EvalsTab projectId="ws-1" />);
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("tab", { name: "Suites" }));
+    await user.click(screen.getByRole("button", { name: "Suites" }));
 
-    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
-      { type: "list" },
-      { replace: true },
-    );
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "list",
+    });
   });
 
   it("redirects invalid suite routes back to the eval list", async () => {
@@ -289,34 +302,60 @@ describe("EvalsTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "list" },
-        { replace: true },
+        { replace: true }
       );
     });
   });
 
-  it("shows a sign-in state instead of crashing when Convex rejects guest eval overview", () => {
+  it("passes eval iteration limit disabled state into the suite view", () => {
+    mocks.evalIterationQuota = {
+      used: 25,
+      allowed: 25,
+      resetsAt: Date.UTC(2026, 5, 2),
+      windowKind: "day",
+    };
+
+    render(<EvalsTab projectId="ws-1" />);
+
+    expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
+    expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+      evalRunsDisabledReason: expect.stringMatching(
+        /^Eval iteration limit reached\. Resets /
+      ),
+    });
+  });
+
+  it("fetches eval iteration quota for guest org sessions", () => {
+    mocks.isAuthenticated = false;
+
+    render(<EvalsTab projectId="ws-1" />);
+
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "billing:getEvalIterationQuota",
+      { organizationId: "org-1" }
+    );
+  });
+
+  it("shows the generic error fallback when the suites overview query throws", () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error\nUncaught Error: Not available for guests yet. Sign in to use this.",
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error"
         );
       });
 
-      render(<EvalsTab projectId="guest-project" />);
+      render(<EvalsTab projectId="project-1" />);
 
-      expect(screen.getByText("Sign in to use Testing")).toBeInTheDocument();
+      expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
       expect(
-        screen.getByText(
-          "Testing suites are not available for guests yet. Sign in to create suites, view runs, and investigate cases.",
-        ),
+        screen.getByRole("button", { name: "Try again" })
       ).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
       consoleError.mockRestore();
     }
   });
-
 });

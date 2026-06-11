@@ -22,7 +22,7 @@ icon: "rocket"
 
 ## 2. Draw something
 
-On first launch, MCPJam connects the Excalidraw sample server (diagramming MCP app) and opens **App Builder** with this prompt:
+On first launch, MCPJam connects the Excalidraw sample server (diagramming MCP app) and opens the **Playground** with this prompt:
 
 ```
 Draw me an MCP architecture diagram
@@ -30,27 +30,32 @@ Draw me an MCP architecture diagram
 
 Press **Send**. The diagram renders in the app. No API key, ngrok, or ChatGPT/Claude subscription needed. Sequence: tool call → widget → inspect.
 
+<Check>
+You should see a tool call to `create_view` followed by a rendered diagram inline in the chat. If you don't, check that the Excalidraw server shows **Connected** in the **Connect** tab.
+</Check>
+
 <Tip>
   Use the widget debug icons to open tool input/output, CSP activity, widget state, and JSON-RPC for that result.
 </Tip>
 
 ## 3. Connect your own server
 
-Open **Servers** in the left sidebar. Click **Add server**.
+Open the **Connect** tab in the left sidebar (labelled **Servers** in some builds). Click **Add server**.
 
 - **HTTP**: Paste a URL ending in `/mcp`. The web app accepts **HTTPS** URLs only. Desktop and Terminal accept **HTTP** or **HTTPS**. Add a bearer token or use the [OAuth Debugger](/inspector/guided-oauth) if the server requires auth.
 - **STDIO** (Desktop and Terminal only): Paste a command such as `npx -y @modelcontextprotocol/server-everything`. Not available in the web app. See [Hosted App](/hosted/overview).
 
-Each **Connected** server is available in App Builder, Chat, Tools, Prompts, and Resources. Connect more from **Servers** anytime.
+Each **Connected** server is available in the Playground, Tools, Prompts, and Resources. Connect more from the **Connect** tab anytime.
+
+<Check>
+You should see your server show **Connected** with a green dot in the **Connect** tab, and its tools should appear in the Playground's left rail.
+</Check>
 
 ## 4. Where to go next
 
 <CardGroup cols={2}>
-  <Card title="App Builder" icon="anvil" href="/inspector/app-builder">
-    Debug your MCP server against a model. Renders OpenAI Apps SDK and MCP app UIs as well as plain text tool results. Run individual tool calls, use the in-panel chat, or mix both, and switch between the Chat view, Trace, and Raw. When a tool returns a widget, use the emulator (iframe, `window.openai`, CSP, device frames, locale, widget debugging).
-  </Card>
-  <Card title="Chat" icon="message-circle" href="/inspector/chat">
-    Host-style chat (like ChatGPT or Claude): enable one or more MCP servers, then switch between the Chat view, Trace, and Raw as you go. Compare up to 3 frontier models on the same prompt.
+  <Card title="Playground" icon="joystick" href="/inspector/playground">
+    IDE-style workspace for developing against your MCP servers. Chat with frontier models, invoke tools by hand, render OpenAI Apps SDK and MCP app widgets, and inspect every step via Chat / Trace / Raw. Compare up to 3 models side by side; debug widgets with the emulator (iframe, `window.openai`, CSP, device frames, locale).
   </Card>
   <Card title="OAuth Debugger" icon="shield-check" href="/inspector/guided-oauth">
     Step through your MCP authorization flow and inspect each stage. Check conformance across protocol versions (03-26, 06-18, 11-25) and client registration paths: Dynamic Client Registration (DCR), client pre-registration, and CIMD.
@@ -58,4 +63,39 @@ Each **Connected** server is available in App Builder, Chat, Tools, Prompts, and
   <Card title="Projects" icon="folder" href="/inspector/projects">
     Group servers; share configuration with your team
   </Card>
+  <Card title="API keys" icon="key" href="/reference/api-keys">
+    The three things called "API key" in MCPJam (LLM provider key, `MCPJAM_API_KEY`, per-server bearer) and when you need each one.
+  </Card>
 </CardGroup>
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Does MCPJam need a database?" icon="database">
+    No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx` — none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are handled by the hosted backend; the Terminal and Desktop apps store config locally on disk.
+  </Accordion>
+  <Accordion title="How do I check which version of Inspector I'm running?" icon="tag">
+    All three installs (Web, Desktop, Terminal) show the running version in the **Settings** tab under **About**.
+
+    To see what the latest published version on npm is — useful for confirming an `@latest` pull actually moved you forward — run:
+
+    ```bash
+    npm view @mcpjam/inspector version
+    ```
+
+    The Desktop and Web apps update on their own. For the Terminal install, the `@latest` tag in `npx @mcpjam/inspector@latest` pulls the most recent release every run.
+  </Accordion>
+  <Accordion title="Can MCPJam auto-install MCP servers into my repo?" icon="package">
+    Not directly — MCPJam doesn't reach into your repo. The closest workflow is **Skills**: install the MCPJam CLI skill into a project so an agent working in that repo knows how to use MCP tools and call MCPJam against your servers. See [Skills](/inspector/skills).
+  </Accordion>
+  <Accordion title="Where are my files saved?" icon="folder">
+    It depends what you mean — the word covers three different things:
+
+    - **OAuth credentials** from `mcpjam login`: `~/.mcpjam/config.json`. Override per command with `--credentials-out`. See [CLI OAuth login](/cli/oauth-login).
+    - **Eval results**: uploaded to your MCPJam workspace via `MCPJAM_API_KEY`. See [Saving Results](/sdk/concepts/saving-results).
+    - **Inspector UI changes** (server config, client edits): persisted via the **Save** button in the project view. See [Inspector Views](/inspector/views).
+  </Accordion>
+  <Accordion title="How do I sign out of the hosted app?" icon="log-out">
+    Open the **account menu** at the bottom of the sidebar and pick **Sign out**. You'll be returned to the public app as a guest. See [Hosted App → Signing out](/hosted/overview#signing-out).
+  </Accordion>
+</AccordionGroup>

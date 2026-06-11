@@ -15,7 +15,7 @@ import type {
 } from "@/hooks/useOrganizationBilling";
 
 const minimalCatalogEntry = (
-  prices: PlanCatalogEntry["prices"],
+  prices: PlanCatalogEntry["prices"]
 ): PlanCatalogEntry =>
   ({
     plan: "team",
@@ -24,12 +24,12 @@ const minimalCatalogEntry = (
     prices,
     features: {} as PlanCatalogEntry["features"],
     limits: {} as PlanCatalogEntry["limits"],
-  }) as PlanCatalogEntry;
+  } as PlanCatalogEntry);
 
 function premiumness(
   overrides: Partial<PremiumnessState> & {
     gates?: PremiumnessState["gates"];
-  } = {},
+  } = {}
 ): PremiumnessState {
   return {
     plan: "free",
@@ -59,13 +59,13 @@ describe("getBillingErrorMessage", () => {
           code: "billing_limit_reached",
           limit: "maxEvalRunsPerMonth",
           allowedValue: 500,
-        }),
+        })
       ),
-      "fallback",
+      "fallback"
     );
 
     expect(message).toBe(
-      "This organization has reached its monthly eval run limit (500). Upgrade to continue.",
+      "This organization has reached its monthly eval run limit (500). Upgrade to continue."
     );
   });
 
@@ -76,15 +76,32 @@ describe("getBillingErrorMessage", () => {
           code: "billing_limit_reached",
           limit: "maxEvalRunsPerMonth",
           allowedValue: 500,
-        }),
+        })
       ),
       "fallback",
-      false,
+      false
     );
 
     expect(message).toBe(
-      "This organization has reached its monthly eval run limit (500). Ask an organization owner to upgrade.",
+      "This organization has reached its monthly eval run limit (500). Ask an organization owner to upgrade."
     );
+  });
+
+  it("formats eval iteration limit payloads with the reset time", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxEvalIterationsPerMonth",
+          allowedValue: 25,
+          resetsAt: Date.UTC(2026, 5, 2),
+          windowKind: "day",
+        })
+      ),
+      "fallback"
+    );
+
+    expect(message).toMatch(/^Eval iteration limit reached\. Resets /);
   });
 
   it("formats backend limit payloads for project chatboxes", () => {
@@ -94,13 +111,13 @@ describe("getBillingErrorMessage", () => {
           code: "billing_limit_reached",
           limit: "maxChatboxesPerProject",
           allowedValue: 5,
-        }),
+        })
       ),
-      "fallback",
+      "fallback"
     );
 
     expect(message).toBe(
-      "This project has reached its chatbox limit (5). Upgrade to continue.",
+      "This project has reached its chatbox limit (5). Upgrade to continue."
     );
   });
 
@@ -111,13 +128,13 @@ describe("getBillingErrorMessage", () => {
           code: "billing_limit_reached",
           limit: "maxMembers",
           allowedValue: 3,
-        }),
+        })
       ),
-      "fallback",
+      "fallback"
     );
 
     expect(message).toBe(
-      "This organization has reached its member limit (3). Upgrade to add more members.",
+      "This organization has reached its member limit (3). Upgrade to add more members."
     );
   });
 
@@ -128,14 +145,14 @@ describe("getBillingErrorMessage", () => {
           code: "billing_limit_reached",
           limit: "maxMembers",
           allowedValue: 3,
-        }),
+        })
       ),
       "fallback",
-      false,
+      false
     );
 
     expect(message).toBe(
-      "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+      "This organization has reached its member limit (3). Ask an organization owner to upgrade."
     );
   });
 
@@ -146,13 +163,13 @@ describe("getBillingErrorMessage", () => {
           code: "billing_limit_reached",
           limit: "maxProjects",
           allowedValue: 1,
-        }),
+        })
       ),
-      "fallback",
+      "fallback"
     );
 
     expect(message).toBe(
-      "This organization has reached its project limit (1). Upgrade to create more projects.",
+      "This organization has reached its project limit (1). Upgrade to create more projects."
     );
   });
 
@@ -163,14 +180,14 @@ describe("getBillingErrorMessage", () => {
           code: "billing_limit_reached",
           limit: "maxProjects",
           allowedValue: 1,
-        }),
+        })
       ),
       "fallback",
-      false,
+      false
     );
 
     expect(message).toBe(
-      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      "This organization has reached its project limit (1). Ask an organization owner to upgrade."
     );
   });
 
@@ -182,13 +199,13 @@ describe("getBillingErrorMessage", () => {
           feature: "chatboxes",
           plan: "free",
           upgradePlan: "team",
-        }),
+        })
       ),
-      "fallback",
+      "fallback"
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Upgrade to Team to continue.",
+      "Chatboxes is not included in the Free plan. Upgrade to Team to continue."
     );
   });
 
@@ -200,14 +217,14 @@ describe("getBillingErrorMessage", () => {
           feature: "chatboxes",
           plan: "free",
           upgradePlan: "team",
-        }),
+        })
       ),
       "fallback",
-      false,
+      false
     );
 
     expect(message).toBe(
-      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Team.",
+      "Chatboxes is not included in the Free plan. Ask an organization owner to upgrade to Team."
     );
   });
 
@@ -242,8 +259,8 @@ describe("isGateAccessDenied", () => {
             },
           ],
         }),
-        "evals",
-      ),
+        "evals"
+      )
     ).toBe(false);
   });
 
@@ -263,12 +280,12 @@ describe("isGateAccessDenied", () => {
             },
           ],
         }),
-        "evals",
-      ),
+        "evals"
+      )
     ).toBe(true);
   });
 
-  it("denies maxProjects when a free organization is already at cap", () => {
+  it("respects explicit denied maxProjects gate decisions", () => {
     expect(
       isGateAccessDenied(
         premiumness({
@@ -286,8 +303,8 @@ describe("isGateAccessDenied", () => {
             },
           ],
         }),
-        "maxProjects",
-      ),
+        "maxProjects"
+      )
     ).toBe(true);
   });
 
@@ -309,8 +326,8 @@ describe("isGateAccessDenied", () => {
             },
           ],
         }),
-        "chatboxes",
-      ),
+        "chatboxes"
+      )
     ).toBe(false);
   });
 });
@@ -321,9 +338,7 @@ describe("getDisplayPriceCentsForPlan", () => {
       monthly: 6100,
       annual: 29000,
     });
-    expect(getDisplayPriceCentsForPlan("team", "annual", drifted)).toBe(
-      29000,
-    );
+    expect(getDisplayPriceCentsForPlan("team", "annual", drifted)).toBe(29000);
     expect(getDisplayPriceCentsForPlan("team", "monthly", drifted)).toBe(6100);
   });
 

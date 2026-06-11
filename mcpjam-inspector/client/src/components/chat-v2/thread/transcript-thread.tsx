@@ -23,8 +23,11 @@ import type { ModelDefinition } from "@/shared/types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { cn } from "@/lib/utils";
-import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
-import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
+import {
+  useResolvedHostStyleForIndicator,
+  usesClaudeInlineStreamingFooter,
+  usesMcpjamInlineStreamingFooter,
+} from "@/components/chat-v2/shared/loading-indicator-content";
 
 const NOOP = (..._args: unknown[]) => {};
 const TRANSCRIPT_SCROLL_SETTLE_MS = 120;
@@ -264,14 +267,18 @@ export function TranscriptThread({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const shouldReduceMotion = useReducedMotion();
-  // Claude paints its loading mark inline beneath the last assistant
-  // bubble (the "footer" treatment). Direct Chat has no chatbox host
-  // context, so resolve via the same provider-aware helper Thread uses
-  // for `hasBrandIndicator` — otherwise the standalone indicator gets
-  // suppressed without a footer to replace it.
-  const isClaudeFamily =
-    getChatboxHostFamily(useResolvedHostStyleForIndicator(model.provider)) ===
-    "claude";
+  // Claude and MCPJam paint their loading marks inline beneath the last
+  // assistant bubble (the "footer" treatment). MCPJam shares the claude
+  // visual family for bubbles but owns its own footer indicator.
+  const resolvedIndicatorHostStyle = useResolvedHostStyleForIndicator(
+    model.provider,
+  );
+  const isClaudeFamily = usesClaudeInlineStreamingFooter(
+    resolvedIndicatorHostStyle,
+  );
+  const isMcpjamHost = usesMcpjamInlineStreamingFooter(
+    resolvedIndicatorHostStyle,
+  );
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds]
@@ -468,14 +475,17 @@ export function TranscriptThread({
           showSenderAvatarForMessage =
             !hadPrevUser || prevUserSenderId !== senderUserId;
         }
-        const claudeFooterMode =
-          isClaudeFamily &&
+        const isLatestAssistantMessage =
           message.role === "assistant" &&
-          message.id === lastRenderableMessageId
+          message.id === lastRenderableMessageId;
+        const claudeFooterMode =
+          isClaudeFamily && isLatestAssistantMessage
             ? isLoading
               ? "animated"
               : "static"
             : "none";
+        const mcpjamFooterActive =
+          isMcpjamHost && isLatestAssistantMessage && isLoading;
         const messageToolCallIds = getMessageToolCallIds(message);
         const messageAppToolInvocations =
           messageToolCallIds.size > 0
@@ -560,6 +570,7 @@ export function TranscriptThread({
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}
               claudeFooterMode={claudeFooterMode}
+              mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}
               senderAvatar={senderAvatar}
               showSenderAvatar={showSenderAvatarForMessage}

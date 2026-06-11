@@ -38,6 +38,13 @@ export default defineConfig({
     // Packages with dynamic requires
     "chalk",
     "supports-color",
+    // Headless-browser harness deps (eval browser-render): resolved at runtime,
+    // never bundled. `playwright` is a direct dep (auto-external); `playwright-core`
+    // is its transitive fallback (`await import("playwright-core")`) and must be
+    // listed explicitly, otherwise esbuild follows it into `bidiOverCdp` and
+    // fails on the optional `chromium-bidi` dependency.
+    "playwright",
+    "playwright-core",
   ],
   noExternal: [
     // Force bundling of problematic packages
@@ -46,6 +53,8 @@ export default defineConfig({
     "@mcpjam/sdk/operations",
     "@mcpjam/sdk/model-factory",
     "@mcpjam/sdk/matchers",
+    "@mcpjam/sdk/predicates",
+    "@mcpjam/sdk/host-config/internal",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -56,6 +65,11 @@ export default defineConfig({
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
       "@mcpjam/sdk/model-factory": join(rootDir, "../sdk/dist/model-factory.js"),
       "@mcpjam/sdk/matchers": join(rootDir, "../sdk/dist/matchers.js"),
+      "@mcpjam/sdk/predicates": join(rootDir, "../sdk/dist/predicates/index.js"),
+      "@mcpjam/sdk/host-config/internal": join(
+        rootDir,
+        "../sdk/dist/host-config/internal.js",
+      ),
     };
   },
 });

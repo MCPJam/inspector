@@ -65,6 +65,12 @@ describe("RunHeaderCompactStats", () => {
     ).toBeInTheDocument();
   });
 
+  it("omits pass rate in operational variant", () => {
+    render(<RunHeaderCompactStats run={makeRun()} variant="operational" />);
+    expect(screen.getByText(/6 passed · 1 failed · 2m 15s/)).toBeInTheDocument();
+    expect(screen.queryByText(/86%/)).not.toBeInTheDocument();
+  });
+
   it("shows run in progress when status is running", () => {
     render(
       <RunHeaderCompactStats

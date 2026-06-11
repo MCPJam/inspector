@@ -21,9 +21,16 @@ import type { Context } from "hono";
 import { createAuthorizedManager } from "../auth.js";
 import { WebRouteError } from "../errors.js";
 
+// Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same
+// store (in real Hono `c.get(k)` === `c.var[k]`). The delegated-auth header
+// builder reads `c.get("authMethod")`, so the mock must implement `get`.
+const mockVars: Record<string, unknown> = { requestLogContext: undefined };
 const mockContext = {
-  var: { requestLogContext: undefined },
-  set: vi.fn(),
+  var: mockVars,
+  get: (key: string) => mockVars[key],
+  set: vi.fn((key: string, value: unknown) => {
+    mockVars[key] = value;
+  }),
 } as unknown as Context;
 
 function fetchUrl(input: Parameters<typeof fetch>[0]): string {

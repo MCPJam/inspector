@@ -53,10 +53,14 @@ export function useEvalQueries({
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip"
   ) as SuiteDetailsQueryResponse | undefined;
 
+  // Raised from 20 → 100 so a multi-host run group (up to ~5 hosts in
+  // practice) is never truncated mid-group. The list consumer caps by
+  // *groups* after grouping rather than capping raw rows, so groups
+  // remain fully expandable even near the limit.
   const suiteRuns = useQuery(
     "testSuites:listTestSuiteRuns" as any,
     enableSuiteDetailsQuery
-      ? ({ suiteId: selectedSuiteId, limit: 20 } as any)
+      ? ({ suiteId: selectedSuiteId, limit: 100 } as any)
       : "skip"
   ) as EvalSuiteRun[] | undefined;
 

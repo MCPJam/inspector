@@ -5,11 +5,18 @@ import { useState } from "react";
 interface PassCriteriaSelectorProps {
   minimumPassRate: number;
   onMinimumPassRateChange: (rate: number) => void;
+  /**
+   * Suppress the inline "Minimum accuracy:" label so the caller can
+   * provide its own row label (e.g. the suite settings sheet's
+   * label/control split).
+   */
+  hideLabel?: boolean;
 }
 
 export function PassCriteriaSelector({
   minimumPassRate,
   onMinimumPassRateChange,
+  hideLabel = false,
 }: PassCriteriaSelectorProps) {
   const [editedValue, setEditedValue] = useState(minimumPassRate.toString());
 
@@ -37,9 +44,14 @@ export function PassCriteriaSelector({
 
   return (
     <div className="flex items-center gap-2">
-      <Label htmlFor="pass-criteria" className="text-sm text-muted-foreground">
-        Minimum accuracy:
-      </Label>
+      {hideLabel ? null : (
+        <Label
+          htmlFor="pass-criteria"
+          className="text-sm text-muted-foreground"
+        >
+          Minimum accuracy:
+        </Label>
+      )}
       <Input
         id="pass-criteria"
         type="number"

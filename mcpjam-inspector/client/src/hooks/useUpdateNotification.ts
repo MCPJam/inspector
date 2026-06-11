@@ -2,6 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
 import type { UpdateStatus } from "@/types/electron";
 
+// Public releases page — repo is github.com/MCPJam/inspector (verified from
+// mcpjam-inspector/package.json `repository.url`).
+const RELEASES_URL = "https://github.com/MCPJam/inspector/releases";
+
 export function useUpdateNotification() {
   const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
 
@@ -20,7 +24,21 @@ export function useUpdateNotification() {
       setStatus(next);
     });
     api.onUpdateError(() => {
-      toast.error("Update failed. Try again later.");
+      // Surface a fallback path — auto-update can stall silently on macOS
+      // (Squirrel staging / signing issues), so always offer a manual
+      // download as an escape hatch.
+      toast.error("Update failed. Try again later.", {
+        action: {
+          label: "Download manually",
+          onClick: () => {
+            window.electronAPI?.app
+              ?.openExternal(RELEASES_URL)
+              ?.catch((error) => {
+                console.warn("Failed to open releases page", error);
+              });
+          },
+        },
+      });
     });
 
     // Initial snapshot — apply only if a live event hasn't already overtaken it.

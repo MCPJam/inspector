@@ -4,7 +4,7 @@ description: "API reference for validator functions"
 icon: "book"
 ---
 
-The SDK provides 9 validator functions for asserting tool call behavior in tests. All validators return `boolean` values.
+The SDK provides 9 boolean validator functions for asserting tool call behavior in tests, plus `evaluateToolCalls` — a richer, configurable matcher that returns structured results.
 
 ## Import
 
@@ -19,7 +19,15 @@ import {
   matchToolCallWithPartialArgs,
   matchToolArgument,
   matchToolArgumentWith,
+  // Structured matcher
+  evaluateToolCalls,
 } from "@mcpjam/sdk";
+```
+
+The matchers module is also available as a standalone browser-safe entry point:
+
+```typescript
+import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
 ```
 
 ---
@@ -48,7 +56,7 @@ matchToolCalls(expected: string[], actual: string[]): boolean
 #### Example
 
 ```typescript
-const result = await agent.prompt("Add 2+3, then multiply by 4");
+const result = await agent.run("Add 2+3, then multiply by 4");
 // toolsCalled() = ["add", "multiply"]
 
 matchToolCalls(["add", "multiply"], result.toolsCalled()); // true
@@ -175,7 +183,7 @@ matchNoToolCalls(actual: string[]): boolean
 #### Example
 
 ```typescript
-const result = await agent.prompt("What is the capital of France?");
+const result = await agent.run("What is the capital of France?");
 matchNoToolCalls(result.toolsCalled()); // true (if no tools called)
 ```
 
@@ -210,7 +218,7 @@ matchToolCallWithArgs(
 #### Example
 
 ```typescript
-const result = await agent.prompt("Add 2 and 3");
+const result = await agent.run("Add 2 and 3");
 
 matchToolCallWithArgs("add", { a: 2, b: 3 }, result.getToolCalls()); // true
 matchToolCallWithArgs("add", { a: 2 }, result.getToolCalls());       // false (missing b)
@@ -364,12 +372,12 @@ import { matchToolCalls, matchToolCallWithArgs } from "@mcpjam/sdk";
 
 describe("Calculator", () => {
   it("calls add for addition", async () => {
-    const result = await agent.prompt("Add 5 and 3");
+    const result = await agent.run("Add 5 and 3");
     expect(matchToolCalls(["add"], result.toolsCalled())).toBe(true);
   });
 
   it("passes correct arguments", async () => {
-    const result = await agent.prompt("Add 10 and 20");
+    const result = await agent.run("Add 10 and 20");
     expect(
       matchToolCallWithArgs("add", { a: 10, b: 20 }, result.getToolCalls())
     ).toBe(true);
@@ -385,10 +393,105 @@ import { EvalTest, matchToolCallsSubset } from "@mcpjam/sdk";
 const test = new EvalTest({
   name: "multi-step",
   test: async (agent) => {
-    const result = await agent.prompt("Add 2+3, then multiply by 4");
+    const result = await agent.run("Add 2+3, then multiply by 4");
     return matchToolCallsSubset(["add", "multiply"], result.toolsCalled());
   },
 });
+```
+
+---
+
+## evaluateToolCalls()
+
+A configurable matcher that returns a structured result instead of a plain boolean. Use this when you need to know *why* a match failed (missing tools, argument mismatches, wrong order, extra calls) or when you want to control matching behavior per test case.
+
+```typescript
+evaluateToolCalls(
+  expected: EvalToolCall[],
+  actual: EvalToolCall[],
+  options?: EvalMatchOptions & { isNegativeTest?: boolean }
+): EvalToolCallMatchResult
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `expected` | `EvalToolCall[]` | Expected tool calls (each has `toolName` and optional `arguments`) |
+| `actual` | `EvalToolCall[]` | Actual tool calls from the trace |
+| `options` | `EvalMatchOptions` | Matching behavior overrides (see below) |
+
+### EvalMatchOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `toolCallOrder` | `"ignore" \| "strict"` | `"ignore"` | `"strict"` requires matched calls to appear in the same relative order as `expected`. |
+| `allowExtraToolCalls` | `boolean` | `true` | When `false`, any actual call beyond what's expected fails the test. |
+| `argumentMatching` | `"partial" \| "exact" \| "ignore"` | `"partial"` | `"partial"` checks only expected keys and supports type placeholders (`"string"`, `"number"`, `"any"`, etc.). `"exact"` requires deep equality. `"ignore"` skips argument comparison. |
+
+### EvalToolCallMatchResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether the match succeeded. |
+| `missing` | `EvalToolCall[]` | Expected calls that were not found in actual. |
+| `extra` | `EvalToolCall[]` | Actual calls beyond what was expected. |
+| `outOfOrder` | `EvalOutOfOrderToolCall[]` | Matched calls that appeared in the wrong order (only populated when `toolCallOrder: "strict"`). |
+| `argumentMismatches` | `EvalArgumentMismatch[]` | Calls matched by name but with incompatible arguments. |
+
+### Example
+
+```typescript
+import { evaluateToolCalls } from "@mcpjam/sdk";
+
+const result = await agent.run("Create a task called 'Deploy' with high priority");
+
+const match = evaluateToolCalls(
+  [{ toolName: "createTask", arguments: { priority: "high" } }],
+  result.getToolCalls(),
+  { argumentMatching: "partial" },
+);
+
+if (!match.passed) {
+  console.log("Missing:", match.missing);
+  console.log("Arg mismatches:", match.argumentMismatches);
+}
+```
+
+### Argument type placeholders
+
+When `argumentMatching` is `"partial"` (the default), string values in `expected` arguments are interpreted as type checks:
+
+| Placeholder | Matches |
+|-------------|---------|
+| `"any"` | Any non-undefined value |
+| `"string"` | `typeof value === "string"` |
+| `"number"` | `typeof value === "number"` |
+| `"boolean"` | `typeof value === "boolean"` |
+| `"object"` | Non-null, non-array object |
+| `"array"` | Array |
+| `"null"` | `null` |
+
+```typescript
+evaluateToolCalls(
+  [{ toolName: "sendEmail", arguments: { to: "string", subject: "any" } }],
+  result.getToolCalls(),
+);
+```
+
+### Layered match options
+
+`resolveMatchOptions` merges suite → case → run-override layers on top of defaults. Import it from `@mcpjam/sdk/matchers` when building custom eval pipelines:
+
+```typescript
+import { resolveMatchOptions } from "@mcpjam/sdk/matchers";
+
+const resolved = resolveMatchOptions(
+  { allowExtraToolCalls: false },   // suite-level
+  { argumentMatching: "exact" },    // case-level
+  undefined,                        // run-level override
+);
+// { toolCallOrder: "ignore", allowExtraToolCalls: false, argumentMatching: "exact" }
 ```
 
 ---
@@ -397,6 +500,7 @@ const test = new EvalTest({
 
 | Validator | Use Case |
 |-----------|----------|
+| `evaluateToolCalls` | Structured match with detailed diagnostics |
 | `matchToolCalls` | Exact sequence of tools |
 | `matchToolCallsSubset` | Required tools (any order) |
 | `matchAnyToolCall` | At least one of these tools |
@@ -414,3 +518,4 @@ const test = new EvalTest({
 - [Testing with LLMs](/sdk/concepts/testing-with-llms) - Conceptual guide
 - [PromptResult Reference](/sdk/reference/prompt-result) - Get tool calls
 - [EvalTest Reference](/sdk/reference/eval-test) - Use in evaluations
+- [Saving Eval Results](/sdk/reference/eval-reporting) - Per-result `matchOptions` on `EvalResultInput`

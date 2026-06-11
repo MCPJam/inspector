@@ -12,6 +12,13 @@ import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
+import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
+import { ChatboxHostCanvasPanel } from "@/components/chatboxes/ChatboxHostCanvasPanel";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { useChatboxByHostId } from "@/hooks/useChatboxes";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -19,6 +26,7 @@ import { buildChatboxLink } from "@/lib/chatbox-session";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
@@ -52,6 +60,7 @@ export function ChatboxesTab({
   projectId,
   isAuthenticated,
 }: ChatboxesTabProps) {
+  const navigate = useAppNavigate();
   const [tab, setTab] = useState<ChatboxTab>("publish");
   const [previewedHostId] = usePreviewedHostId(projectId);
   const convexAuth = useConvexAuth();
@@ -161,9 +170,9 @@ export function ChatboxesTab({
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="max-w-sm">
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
-          <p className="mt-3 text-sm font-medium">Pick a client</p>
+          <p className="mt-3 text-sm font-medium">Pick a host</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Use the client bar at the top to choose which client's chatbox you
+            Use the host bar at the top to choose which host's chatbox you
             want to manage.
           </p>
         </div>
@@ -215,16 +224,12 @@ export function ChatboxesTab({
             size="sm"
             className="rounded-xl"
             onClick={() => {
-              // The host bar at the top already has this host selected, so
-              // a plain Connect jump drops the user in the right host's
-              // editor. Hash-based hub navigation keeps parity with the
-              // sidebar's own Connect link.
-              window.location.hash = "connect";
+              navigate(buildHostsPath(previewedHostId));
             }}
-            title="Open this client's config in Connect"
+            title="Open this host's config in Connect"
           >
             <Settings2 className="mr-1.5 size-4" />
-            Edit client config
+            Edit host config
           </Button>
           {publishLink ? (
             <Button
@@ -252,30 +257,53 @@ export function ChatboxesTab({
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {tab === "publish" ? (
-          <div className="h-full overflow-y-auto px-6 py-6">
-            <div className="mx-auto flex max-w-3xl flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">{chatbox.name}</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Publishing the {host?.name ?? "host"} chatbox — share
-                    link, access mode, members, and welcome surface.
-                  </p>
+          <ResizablePanelGroup
+            direction="horizontal"
+            className="h-full"
+          >
+            <ResizablePanel defaultSize={50} minSize={32}>
+              <div className="h-full overflow-y-auto px-6 py-6">
+                <div className="mx-auto flex max-w-3xl flex-col gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-semibold">{chatbox.name}</h2>
+                      <p className="text-xs text-muted-foreground">
+                        Publishing the {host?.name ?? "host"} chatbox — share
+                        link, access mode, members, and welcome surface.
+                      </p>
+                    </div>
+                    {publishLink ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={handleCopyLink}
+                      >
+                        Copy link
+                      </Button>
+                    ) : null}
+                  </div>
+                  <ChatboxPublishClientBar
+                    chatboxId={chatbox.chatboxId}
+                    projectId={chatbox.projectId}
+                    hostId={chatbox.namedHostId}
+                    hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+                    isAuthenticated={effectiveAuth}
+                    currentServerIds={chatbox.servers.map((s) => s.serverId)}
+                  />
+                  <ChatboxShareSection chatbox={chatbox} />
                 </div>
-                {publishLink ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-xl"
-                    onClick={handleCopyLink}
-                  >
-                    Copy link
-                  </Button>
-                ) : null}
               </div>
-              <ChatboxShareSection chatbox={chatbox} />
-            </div>
-          </div>
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={50} minSize={30}>
+              <ChatboxHostCanvasPanel
+                hostId={chatbox.namedHostId}
+                projectId={chatbox.projectId}
+                isAuthenticated={effectiveAuth}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
         ) : tab === "preview" ? (
           <ChatboxPreviewPane
             publishLink={publishLink}

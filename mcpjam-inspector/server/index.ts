@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { createNodeWebSocket } from "@hono/node-ws";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -37,6 +38,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
+import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 
 const sysLogger = getSystemLogger("process");
 
@@ -62,7 +64,7 @@ process.on("unhandledRejection", (reason, _promise) => {
     {
       error: reason instanceof Error ? reason : undefined,
       sentry: true,
-    },
+    }
   );
 });
 
@@ -83,7 +85,7 @@ function logBox(content: string, title?: string) {
         " ".repeat(titlePadding) +
         title +
         " ".repeat(width - title.length - titlePadding) +
-        "│",
+        "│"
     );
     console.log("├" + "─".repeat(width) + "┤");
   }
@@ -100,8 +102,10 @@ function logBox(content: string, title?: string) {
 import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
+import v1Routes from "./routes/v1/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
+import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
 import {
   SERVER_PORT,
   CORS_ORIGINS,
@@ -140,7 +144,7 @@ function getMCPConfigFromEnv() {
               headers: serverConfig.headers, // Custom headers for HTTP
               useOAuth: serverConfig.useOAuth, // Trigger OAuth flow
             };
-          },
+          }
         );
 
         // Check for auto-connect server filter
@@ -221,13 +225,17 @@ const app = new Hono().onError((err, c) => {
 
   return c.json({ error: "Internal server error" }, 500);
 });
+// WebSocket support (computer terminal bridge). The upgrade handler is
+// registered on this app below; `injectWebSocket` is called on the node
+// server after `serve()` at the bottom of this file.
+const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
 const strictModeResponse = (c: any, path: string) =>
   c.json(
     {
       code: "FEATURE_NOT_SUPPORTED",
       message: `${path} is disabled in hosted mode`,
     },
-    410,
+    410
   );
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
@@ -243,7 +251,7 @@ const mcpClientManager = new MCPClientManager(
         message,
       });
     },
-  },
+  }
 );
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
@@ -263,7 +271,7 @@ app.use("*", originValidationMiddleware);
 // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
 if (HOSTED_MODE) {
   app.use("/api/session-token", (c) =>
-    strictModeResponse(c, "/api/session-token"),
+    strictModeResponse(c, "/api/session-token")
   );
   app.use("/api/mcp", (c, next) => {
     if (c.req.path === "/api/mcp/health") return next();
@@ -297,7 +305,7 @@ if (enableHttpLogs) {
     "*",
     logger((message) => {
       appLogger.info(scrubTokenFromUrl(message));
-    }),
+    })
   );
 }
 app.use(
@@ -305,7 +313,7 @@ app.use(
   cors({
     origin: CORS_ORIGINS,
     credentials: true,
-  }),
+  })
 );
 
 app.use(
@@ -318,9 +326,9 @@ app.use(
           code: "VALIDATION_ERROR",
           message: "Request body exceeds 1MB limit",
         },
-        400,
+        400
       ),
-  }),
+  })
 );
 
 // Typed event logging context (matches app.ts)
@@ -337,17 +345,43 @@ if (!HOSTED_MODE) {
       service: "MCP API",
       status: "ready",
       timestamp: new Date().toISOString(),
-    }),
+    })
   );
   app.get("/api/apps/health", (c) =>
     c.json({
       service: "Apps API",
       status: "ready",
       timestamp: new Date().toISOString(),
-    }),
+    })
   );
 }
 app.route("/api/web", webRoutes);
+// Computer terminal WebSocket (Project Computers). Registered directly on
+// the root app because the upgrade handler comes from `createNodeWebSocket`;
+// auth is the Convex-minted terminal token (see routes/web/computer-terminal).
+app.get(
+  "/api/web/computers/terminal",
+  createComputerTerminalWsHandler(upgradeWebSocket)
+);
+
+// Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same
+// core helpers and emit the canonical v1 envelope. Mirror of the mount in
+// server/app.ts::createHonoApp — both production entries must wire this up.
+app.use(
+  "/api/v1/*",
+  bodyLimit({
+    maxSize: 1024 * 1024,
+    onError: (c) =>
+      c.json(
+        {
+          code: "VALIDATION_ERROR",
+          message: "Request body exceeds 1MB limit",
+        },
+        400
+      ),
+  })
+);
+app.route("/api/v1", v1Routes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
@@ -384,11 +418,11 @@ app.get("/api/session-token", (c) => {
 
   if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
     appLogger.warn(
-      `[Security] Token request denied - non-allowed Host: ${host}`,
+      `[Security] Token request denied - non-allowed Host: ${host}`
     );
     return c.json(
       { error: "Token only available via localhost or allowed hosts" },
-      403,
+      403
     );
   }
 
@@ -447,7 +481,7 @@ if (process.env.NODE_ENV === "production") {
       } else {
         // Non-allowed host access - no token (security measure)
         appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`,
+          `[Security] Token not injected - non-allowed Host: ${host}`
         );
         const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
@@ -457,7 +491,7 @@ if (process.env.NODE_ENV === "production") {
       if (runtimeConfigScript) {
         htmlContent = htmlContent.replace(
           "</head>",
-          `${runtimeConfigScript}</head>`,
+          `${runtimeConfigScript}</head>`
         );
       }
 
@@ -465,7 +499,7 @@ if (process.env.NODE_ENV === "production") {
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
         const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
-          mcpConfig,
+          mcpConfig
         )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
@@ -511,10 +545,12 @@ const server = serve({
   port: SERVER_PORT,
   hostname,
 });
+// Attach the WebSocket upgrade listener (computer terminal bridge).
+injectWebSocket(server);
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
-  10,
+  10
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
@@ -524,7 +560,7 @@ const logFlushExitMs = 1000;
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs,
+    logFlushExitMs
   );
   exitFallbackTimer.unref();
 
@@ -549,7 +585,7 @@ async function shutdown() {
   const forceExitTimer = setTimeout(() => {
     appLogger.error(
       "Shutdown timed out; forcing process exit.",
-      new Error("Shutdown timed out; forcing process exit."),
+      new Error("Shutdown timed out; forcing process exit.")
     );
     exitAfterLogFlush(1);
   }, shutdownForceExitMs);
@@ -557,6 +593,10 @@ async function shutdown() {
 
   appLogger.info("Shutting down gracefully...");
   try {
+    // Abort active synthetic-session runs and write a terminal "failed"
+    // status so the dialog/UI doesn't see a stuck "running" run. Bounded
+    // by an internal timeout; the outer `forceExitTimer` still wins.
+    await shutdownRunningSimulations();
     await tunnelManager.closeAll();
     server.close();
     await appLogger.flush();

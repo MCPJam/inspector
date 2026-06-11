@@ -50,12 +50,18 @@ COPY mcpjam-inspector/server ./mcpjam-inspector/server
 COPY mcpjam-inspector/scripts ./mcpjam-inspector/scripts
 RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
-    npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
-    npm run build:server -w @mcpjam/inspector
+    npm run bundle:sandbox-proxies -w @mcpjam/inspector
 
+# `bundle:browser-harness` esbuilds `server/utils/browser-harness/host-page.ts`,
+# which imports `@/components/chat-v2/thread/mcp-apps/host-app-bridge` from the
+# client tree. It therefore has to run AFTER `mcpjam-inspector/client` is on
+# disk; `build:server` consumes the generated harness bundle so it runs in the
+# same step.
 COPY design-system ./design-system
 COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
+RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
+    npm run build:server -w @mcpjam/inspector
 RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
@@ -81,6 +87,10 @@ COPY cli/package.json /usr/src/app/cli/package.json
 COPY mcpjam-inspector/package.json ./package.json
 
 COPY --from=deps /usr/src/app/node_modules /usr/src/app/node_modules
+# Workspace-local deps that can't hoist to root (e.g. @workos-inc/node@^10
+# while @convex-dev/workos transitively pins @workos-inc/node@^7) land under
+# mcpjam-inspector/node_modules and must be carried into the runtime image.
+COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
 COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
 COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
 COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production

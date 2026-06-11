@@ -3,11 +3,17 @@ import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
+import type {
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
+} from "@/shared/eval-trace";
 import type { PromptTurn } from "@/shared/prompt-turns";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import { finalizeEvalIteration } from "./finalize-iteration.js";
+import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -55,12 +61,31 @@ export type SuiteRunRecorder = {
     spans?: EvalTraceSpan[];
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
+    /**
+     * Resolved system prompt for the eval session. Forwarded to
+     * `persistEvalTraceFanout` → `appendEvalTurnTrace.systemPrompt`,
+     * which the backend persists to `chatSessions.systemPrompt` with
+     * first-write-wins semantics. Replaces the persistence-side
+     * `{role:"system", ...}` prepend each runner used to splice into
+     * `messages`.
+     */
+    systemPrompt?: string;
+    /**
+     * PR 6b: browser-rendered MCP App eval artifacts (runner-local shape).
+     * Pure pass-through — `finishIteration` forwards them to
+     * `finalizeEvalIteration`, which owns screenshot upload + serialization.
+     */
+    widgetRenderObservations?: RunnerWidgetRenderObservation[];
+    browserInteractionSteps?: RunnerBrowserInteractionStep[];
     status?: IterationStatus;
     startedAt?: number;
     error?: string;
     errorDetails?: string;
     resultSource?: "reported" | "derived";
-    metadata?: Record<string, string | number | boolean>;
+    // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
+    // nested `predicates: PredicateResult[]` rows. Persisted to
+    // `testIteration.metadata`; the Convex validator accepts nested values.
+    metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
     status: "completed" | "failed" | "cancelled";
@@ -73,8 +98,6 @@ export type SuiteRunRecorder = {
     notes?: string;
   }): Promise<void>;
 };
-
-const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
 
 function isSuiteRunEnvironmentSnapshot(
   value: unknown,
@@ -185,92 +208,22 @@ export const createSuiteRunRecorder = ({
         return undefined;
       }
     },
-    async finishIteration({
-      iterationId,
-      passed,
-      toolsCalled,
-      usage,
-      messages,
-      spans,
-      prompts,
-      widgetSnapshots,
-      status,
-      error,
-      errorDetails,
-      resultSource,
-      metadata,
-    }) {
-      if (!iterationId || runDeleted) {
+    async finishIteration(params) {
+      if (runDeleted) {
         return;
       }
-
-      // Check if iteration was cancelled before trying to update
-      try {
-        const iteration = await convexClient.query(
-          "testSuites:getTestIteration" as any,
-          { iterationId },
-        );
-        if (iteration?.status === "cancelled") {
-          logger.debug(
-            "[evals] Skipping update for cancelled iteration:",
-            iterationId,
-          );
-          return;
-        }
-      } catch (error) {
-        // If we can't check status, continue anyway
-      }
-
-      const iterationStatus =
-        status ?? (passed ? DEFAULT_ITERATION_STATUS : "failed");
-      const result = passed ? "passed" : "failed";
-
-      try {
-        await convexClient.action("testSuites:updateTestIteration" as any, {
-          iterationId,
-          status:
-            iterationStatus === "completed" ? "completed" : iterationStatus,
-          result,
-          actualToolCalls: sanitizeForConvexTransport(toolsCalled),
-          tokensUsed: usage.totalTokens ?? 0,
-          messages: sanitizeForConvexTransport(messages),
-          ...(spans?.length
-            ? { spans: sanitizeForConvexTransport(spans) }
-            : {}),
-          ...(prompts?.length
-            ? { prompts: sanitizeForConvexTransport(prompts) }
-            : {}),
-          ...(widgetSnapshots?.length
-            ? {
-                widgetSnapshots:
-                  sanitizeForConvexTransport(widgetSnapshots),
-              }
-            : {}),
-          error,
-          errorDetails,
-          resultSource,
-          metadata,
-        });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        // Check if run was deleted/not found or iteration was cancelled
-        if (
-          errorMessage.includes("not found") ||
-          errorMessage.includes("unauthorized") ||
-          errorMessage.includes("cancelled")
-        ) {
+      await finalizeEvalIteration({
+        convexClient,
+        ...params,
+        // Suite-run-scoped short-circuit: flip the recorder's
+        // `runDeleted` flag when the shared finalize step sees a
+        // "not found" / "unauthorized" / "cancelled" update error so
+        // subsequent calls on this recorder no-op. The quick-run
+        // direct path (no recorder) passes no callback.
+        onRunDeleted: () => {
           runDeleted = true;
-          // Silently skip - run was likely cancelled/deleted
-          return;
-        }
-
-        logger.error(
-          "[evals] Failed to record iteration result:",
-          new Error(errorMessage),
-        );
-      }
+        },
+      });
     },
     async finalize({ status, summary, notes }) {
       if (runDeleted) {
@@ -322,6 +275,7 @@ export const startSuiteRunWithRecorder = async ({
   iterationOverride,
   matchOptionsOverride,
   namedHostId,
+  runGroupId,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -360,6 +314,13 @@ export const startSuiteRunWithRecorder = async ({
    * just receives the host's servers like any other run.
    */
   namedHostId?: string;
+  /**
+   * Client-generated UUID shared by every per-host run when a multi-host
+   * eval launch fans out. Persisted on `testSuiteRun.runGroupId` so the
+   * UI can collapse sibling rows into a single group. Absent on
+   * single-host launches.
+   */
+  runGroupId?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -375,6 +336,7 @@ export const startSuiteRunWithRecorder = async ({
       iterationOverride,
       matchOptionsOverride,
       ...(namedHostId ? { namedHostId } : {}),
+      ...(runGroupId ? { runGroupId } : {}),
     },
   );
 
@@ -409,9 +371,52 @@ export const startSuiteRunWithRecorder = async ({
         .environment as SuiteRunEnvironmentSnapshot)
     : { servers: serverIds ?? [] };
 
+  // Resolve suite default predicates once so per-case envelopes can be
+  // collapsed to a flat list for the runner. Prefer the configSnapshot when
+  // present (mirrors how Convex freezes other suite defaults onto the run);
+  // an intentionally empty snapshot (`[]`) means "this run was frozen with
+  // no suite defaults" and must NOT fall back to the live suite, otherwise
+  // suite defaults added after run-precreate retroactively gate frozen
+  // cases. Only the absent-or-non-array case falls back to a live query.
+  const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
+  let suiteDefaultPredicates: import("@/shared/eval-matching").Predicate[] | undefined;
+  if (Array.isArray(snapshotDefaults)) {
+    suiteDefaultPredicates = snapshotDefaults.length > 0
+      ? (snapshotDefaults as import("@/shared/eval-matching").Predicate[])
+      : undefined;
+  } else {
+    try {
+      const suite = await convexClient.query(
+        "testSuites:getTestSuite" as any,
+        { suiteId },
+      );
+      const defaults = (suite as { defaultPredicates?: unknown } | undefined)
+        ?.defaultPredicates;
+      suiteDefaultPredicates = Array.isArray(defaults) && defaults.length > 0
+        ? (defaults as import("@/shared/eval-matching").Predicate[])
+        : undefined;
+    } catch {
+      suiteDefaultPredicates = undefined;
+    }
+  }
+
+  const resolvePredicatesForCase = (
+    tc: Record<string, any>,
+  ): import("@/shared/eval-matching").Predicate[] | undefined =>
+    resolveCaseSuccessPredicates({
+      suiteDefaults: suiteDefaultPredicates,
+      envelope: tc.predicates as
+        | import("@/shared/eval-matching").CasePredicates
+        | undefined,
+      legacyCase: tc.successPredicates as
+        | import("@/shared/eval-matching").Predicate[]
+        | undefined,
+    });
+
   // Build config from test cases for backward compatibility
   const config = {
     tests: testCases.flatMap((tc: any) => {
+      const successPredicates = resolvePredicatesForCase(tc);
       if (Array.isArray(tc.models) && tc.models.length > 0) {
         return tc.models.map((model: any) => ({
           title: tc.title,
@@ -425,6 +430,7 @@ export const startSuiteRunWithRecorder = async ({
           promptTurns: tc.promptTurns,
           advancedConfig: tc.advancedConfig,
           matchOptions: tc.matchOptions,
+          successPredicates,
           testCaseId: tc._id,
         }));
       }
@@ -443,6 +449,7 @@ export const startSuiteRunWithRecorder = async ({
             promptTurns: tc.promptTurns,
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
+            successPredicates,
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];

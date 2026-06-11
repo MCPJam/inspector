@@ -9,16 +9,48 @@ import { logger } from "./logger.js";
 
 type Manager = InstanceType<typeof MCPClientManager>;
 
+/**
+ * Tool-snapshot envelope version. v2 added the MCP `annotations` hint booleans
+ * and `execution.taskSupport`. Deterministic serverQuality prechecks gate
+ * annotation/execution-derived facts on `version >= 2`, so older snapshots emit
+ * no false "missing hint" findings.
+ */
+export const SERVER_TOOL_SNAPSHOT_VERSION = 2;
+
 export type ServerToolSnapshotTool = {
   name: string;
   description?: string;
   inputSchema?: unknown;
   outputSchema?: unknown;
+  metadata?: Record<string, unknown>;
+  /** MCP ToolAnnotations — only the four spec hint booleans (no `title`, which
+   * is server-controlled display text we deliberately keep out of the judge). */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+  /** MCP Tool.execution — task-augmentation support hint. */
+  execution?: {
+    taskSupport?: "forbidden" | "optional" | "required";
+  };
+};
+
+// The server's response to MCP `initialize`. Captured alongside the tool
+// catalog so the backend's diff engine can surface protocol/capability drift
+// across reconnects.
+export type ServerToolSnapshotInitialize = {
+  protocolVersion?: string;
+  serverInfo?: { name?: string; version?: string };
+  capabilities?: Record<string, unknown>;
+  instructions?: string;
 };
 
 export type ServerToolSnapshotServer = {
   serverId: string;
   tools: ServerToolSnapshotTool[];
+  initialize?: ServerToolSnapshotInitialize;
   captureError?: string;
 };
 
@@ -259,6 +291,155 @@ export function flattenServerToolSnapshotTools(
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Convex rejects any object field name that starts with `$` (e.g. JSON
+// Schema's `$schema` / `$ref` / `$defs` / `$id`) at every nesting depth — the
+// value is invalid the instant it crosses a Convex function-argument boundary,
+// well before the backend's storage-time redaction can run. MCP tool schemas
+// routinely carry these keywords, and every consumer of these snapshots (chat
+// persist, connect inspection, eval authoring) forwards the result straight
+// into a Convex action/mutation. So strip them here at the source. The drop is
+// lossy but matches what the backend would store anyway — it mirrors
+// `sanitizeConvexReservedKeys` in convex/lib/serverToolSnapshot.ts. `_`-prefixed
+// nested keys stay (Convex only reserves `_` for top-level document fields, so
+// MCP's `_meta` survives).
+function stripConvexReservedKeys<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripConvexReservedKeys(entry)) as unknown as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      if (key.startsWith("$")) {
+        continue;
+      }
+      out[key] = stripConvexReservedKeys(entry);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/** MCP ToolAnnotations → the four spec hint booleans only (drops `title` and
+ * any vendor extras). Returns undefined when none are present. */
+function pickToolAnnotations(
+  value: unknown,
+): ServerToolSnapshotTool["annotations"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const a = value as Record<string, unknown>;
+  const out: NonNullable<ServerToolSnapshotTool["annotations"]> = {};
+  if (typeof a.readOnlyHint === "boolean") out.readOnlyHint = a.readOnlyHint;
+  if (typeof a.destructiveHint === "boolean")
+    out.destructiveHint = a.destructiveHint;
+  if (typeof a.idempotentHint === "boolean")
+    out.idempotentHint = a.idempotentHint;
+  if (typeof a.openWorldHint === "boolean")
+    out.openWorldHint = a.openWorldHint;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** MCP Tool.execution → taskSupport enum, validated. */
+function pickToolExecution(
+  value: unknown,
+): ServerToolSnapshotTool["execution"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const ts = (value as Record<string, unknown>).taskSupport;
+  if (ts === "forbidden" || ts === "optional" || ts === "required") {
+    return { taskSupport: ts };
+  }
+  return undefined;
+}
+
+function transformToolForSnapshot(tool: any): ServerToolSnapshotTool {
+  const meta =
+    tool._meta &&
+    typeof tool._meta === "object" &&
+    !Array.isArray(tool._meta)
+      ? (tool._meta as Record<string, unknown>)
+      : undefined;
+  const annotations = pickToolAnnotations(tool.annotations);
+  const execution = pickToolExecution(tool.execution);
+  return {
+    name: tool.name,
+    ...(normalizeTrimmedString(tool.description)
+      ? { description: normalizeTrimmedString(tool.description) }
+      : {}),
+    ...(tool.inputSchema !== undefined
+      ? { inputSchema: stripConvexReservedKeys(tool.inputSchema) }
+      : {}),
+    ...(tool.outputSchema !== undefined
+      ? { outputSchema: stripConvexReservedKeys(tool.outputSchema) }
+      : {}),
+    ...(meta && Object.keys(meta).length > 0
+      ? { metadata: stripConvexReservedKeys(meta) }
+      : {}),
+    ...(annotations ? { annotations } : {}),
+    ...(execution ? { execution } : {}),
+  };
+}
+
+function readInitializeFromManager(
+  manager: Manager,
+  serverId: string,
+): ServerToolSnapshotInitialize | undefined {
+  let info: unknown;
+  try {
+    info = (manager as { getInitializationInfo?: (id: string) => unknown })
+      .getInitializationInfo?.(serverId);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(info)) {
+    return undefined;
+  }
+
+  const result: ServerToolSnapshotInitialize = {};
+
+  const protocolVersion =
+    typeof info.protocolVersion === "string"
+      ? info.protocolVersion.trim()
+      : undefined;
+  if (protocolVersion) {
+    result.protocolVersion = protocolVersion;
+  }
+
+  if (isRecord(info.serverInfo)) {
+    const name =
+      typeof info.serverInfo.name === "string"
+        ? info.serverInfo.name.trim()
+        : undefined;
+    const version =
+      typeof info.serverInfo.version === "string"
+        ? info.serverInfo.version.trim()
+        : undefined;
+    if (name || version) {
+      result.serverInfo = {
+        ...(name ? { name } : {}),
+        ...(version ? { version } : {}),
+      };
+    }
+  }
+
+  if (isRecord(info.capabilities)) {
+    result.capabilities = stripConvexReservedKeys(info.capabilities);
+  }
+
+  if (typeof info.instructions === "string" && info.instructions.trim()) {
+    result.instructions = info.instructions.trim();
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export async function exportConnectedServerToolSnapshotForEvalAuthoring(
   manager: Manager,
   serverIds: string[],
@@ -269,22 +450,14 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
     [...new Set(serverIds)].map(async (serverId) => {
       try {
         const result = await manager.listTools(serverId);
-        const tools = (result?.tools ?? []).map((tool: any) => ({
-          name: tool.name,
-          ...(normalizeTrimmedString(tool.description)
-            ? { description: normalizeTrimmedString(tool.description) }
-            : {}),
-          ...(tool.inputSchema !== undefined
-            ? { inputSchema: tool.inputSchema }
-            : {}),
-          ...(tool.outputSchema !== undefined
-            ? { outputSchema: tool.outputSchema }
-            : {}),
-        }));
+        const tools = (result?.tools ?? []).map(transformToolForSnapshot);
+
+        const initialize = readInitializeFromManager(manager, serverId);
 
         return {
           serverId,
           tools: sortSnapshotTools(tools),
+          ...(initialize ? { initialize } : {}),
         } satisfies ServerToolSnapshotServer;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -305,9 +478,56 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
   );
 
   return {
-    version: 1,
+    version: SERVER_TOOL_SNAPSHOT_VERSION,
     capturedAt: Date.now(),
     servers: sortSnapshotServers(servers),
+  };
+}
+
+/**
+ * One-server inspection snapshot for the connect-time path.
+ *
+ * The manager is keyed by `managerKey` (display name in the connect path,
+ * Convex Id in the eval path), but the snapshot's `serverId` carries
+ * `snapshotServerId` so the backend's `normalizeId('servers', …)` resolves
+ * correctly. Always returns a valid snapshot — failures land in
+ * `captureError` rather than throwing — so callers can use this without an
+ * outer try/catch.
+ */
+export async function exportSingleServerForInspection(
+  manager: Manager,
+  managerKey: string,
+  snapshotServerId: string,
+  options?: { logPrefix?: string },
+): Promise<ServerToolSnapshot> {
+  const logPrefix = options?.logPrefix ?? "inspection";
+  let server: ServerToolSnapshotServer;
+  try {
+    const result = await manager.listTools(managerKey);
+    const tools = (result?.tools ?? []).map(transformToolForSnapshot);
+    const initialize = readInitializeFromManager(manager, managerKey);
+    server = {
+      serverId: snapshotServerId,
+      tools: sortSnapshotTools(tools),
+      ...(initialize ? { initialize } : {}),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`[${logPrefix}] Failed to capture inspection snapshot`, {
+      managerKey,
+      snapshotServerId,
+      error: message,
+    });
+    server = {
+      serverId: snapshotServerId,
+      tools: [],
+      captureError: message,
+    };
+  }
+  return {
+    version: SERVER_TOOL_SNAPSHOT_VERSION,
+    capturedAt: Date.now(),
+    servers: [server],
   };
 }
 

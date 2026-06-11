@@ -7,12 +7,16 @@ import {
   type ReactNode,
 } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
-import { Loader2, Minus, Plus } from "lucide-react";
+import { Loader2, Minus, Plus, Code2, Columns2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
-import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceSpan,
+  EvalTraceWidgetRenderObservationView,
+} from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
@@ -33,6 +37,8 @@ import {
 } from "./recorded-trace-toolbar";
 import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
+import { BrowserArtifactsView } from "./browser-artifacts-view";
+import { ToolCallsDiffView } from "./tool-calls-diff-view";
 import {
   TraceRawView,
   type TraceRawRequestPayloadHistory,
@@ -84,7 +90,8 @@ interface TraceViewerProps {
   expectedToolCalls?: TraceViewerEvalToolCall[];
   /** Tool calls observed for this iteration; enables the Tools tab. */
   actualToolCalls?: TraceViewerEvalToolCall[];
-  /** Force a single mode (used when TraceViewer is embedded into a larger shell). */
+  /** Force a single mode (used when TraceViewer is embedded into a larger shell).
+   *  The eval-only "browser" mode is trace-viewer-local, never forced by shells. */
   forcedViewMode?: "timeline" | "chat" | "raw" | "tools";
   /** Hide the internal toolbar when the parent shell provides its own tabs. */
   hideToolbar?: boolean;
@@ -193,6 +200,23 @@ function getRecordedSpans(
   return raw as EvalTraceSpan[];
 }
 
+// PR 7: pull the browser-rendered MCP App artifacts off the trace envelope.
+function getBrowserObservations(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): EvalTraceWidgetRenderObservationView[] {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return [];
+  const raw = (trace as TraceEnvelope).widgetRenderObservations;
+  return Array.isArray(raw) ? raw : [];
+}
+
+function getBrowserSteps(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+): EvalTraceBrowserInteractionStepView[] {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return [];
+  const raw = (trace as TraceEnvelope).browserInteractionSteps;
+  return Array.isArray(raw) ? raw : [];
+}
+
 export function TraceViewer({
   trace,
   model,
@@ -254,8 +278,11 @@ export function TraceViewer({
     hostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
 
   const [viewMode, setViewMode] = useState<
-    "timeline" | "chat" | "raw" | "tools"
+    "timeline" | "chat" | "raw" | "tools" | "browser"
   >("timeline");
+  const [toolsCompareLayout, setToolsCompareLayout] = useState<"diff" | "json">(
+    "diff",
+  );
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(
     () => new Set(),
@@ -283,6 +310,16 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  // PR 7: browser-rendered MCP App eval artifacts (render observations +
+  // Computer Use steps). Only iterations driven through the headless-Chromium
+  // harness carry these, so the Browser tab is gated on their presence.
+  const browserObservations = useMemo(
+    () => getBrowserObservations(trace),
+    [trace],
+  );
+  const browserSteps = useMemo(() => getBrowserSteps(trace), [trace]);
+  const hasBrowserArtifacts =
+    browserObservations.length > 0 || browserSteps.length > 0;
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
     [recordedSpans],
@@ -357,6 +394,12 @@ export function TraceViewer({
   }, [hasEvalToolCalls]);
 
   useEffect(() => {
+    if (!hasBrowserArtifacts) {
+      setViewMode((mode) => (mode === "browser" ? "timeline" : mode));
+    }
+  }, [hasBrowserArtifacts]);
+
+  useEffect(() => {
     if (effectiveViewMode !== "raw" && effectiveViewMode !== "chat") return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
@@ -426,7 +469,43 @@ export function TraceViewer({
   const flexFillChrome =
     fillContent ||
     effectiveViewMode === "raw" ||
+    effectiveViewMode === "browser" ||
     (effectiveViewMode === "tools" && hasEvalToolCalls);
+
+  const toolsCompareLayoutToggle = (
+    <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
+      <button
+        type="button"
+        onClick={() => setToolsCompareLayout("diff")}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+          toolsCompareLayout === "diff"
+            ? "bg-primary/10 font-medium text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        title="Structured diff view"
+        data-testid="trace-viewer-tools-layout-diff"
+      >
+        <Columns2 className="size-3" aria-hidden />
+        Diff
+      </button>
+      <button
+        type="button"
+        onClick={() => setToolsCompareLayout("json")}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+          toolsCompareLayout === "json"
+            ? "bg-primary/10 font-medium text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        title="Raw JSON view"
+        data-testid="trace-viewer-tools-layout-json"
+      >
+        <Code2 className="size-3" aria-hidden />
+        JSON
+      </button>
+    </div>
+  );
 
   return (
     <div
@@ -528,9 +607,16 @@ export function TraceViewer({
               </div>
               {!forcedViewMode ? (
                 <TraceViewModeTabs
-                  mode={effectiveViewMode}
+                  mode={
+                    effectiveViewMode === "browser"
+                      ? "timeline"
+                      : effectiveViewMode
+                  }
                   onModeChange={setViewMode}
                   showToolsTab={hasEvalToolCalls}
+                  showBrowserTab={hasBrowserArtifacts}
+                  browserActive={effectiveViewMode === "browser"}
+                  onSelectBrowser={() => setViewMode("browser")}
                 />
               ) : null}
             </div>
@@ -569,6 +655,24 @@ export function TraceViewer({
               trace={trace}
               requestPayloadHistory={rawRequestPayloadHistory}
               growWithContent={rawGrowWithContent}
+            />
+          </div>
+        )}
+
+        {effectiveViewMode === "browser" && (
+          <div
+            className={cn(
+              "min-w-0 flex flex-col",
+              flexFillChrome
+                ? "min-h-0 flex-1"
+                : "min-h-0 max-h-[min(70vh,36rem)]",
+            )}
+            data-testid="trace-viewer-browser"
+          >
+            <BrowserArtifactsView
+              observations={browserObservations}
+              steps={browserSteps}
+              className={flexFillChrome ? "flex-1" : undefined}
             />
           </div>
         )}
@@ -638,153 +742,173 @@ export function TraceViewer({
                 "min-w-0 rounded-md border border-border/30 bg-background/50 flex flex-col",
                 fillContent
                   ? "min-h-0 flex-1 overflow-hidden"
-                  : "min-h-0 max-h-[min(70vh,36rem)] overflow-hidden",
+                  : "min-h-0",
               )}
               data-testid="trace-viewer-chat"
             >
-              <StickToBottom
-                className="relative flex min-h-0 flex-1 flex-col"
-                resize="smooth"
-                initial="smooth"
-              >
-                <div className="relative flex-1 min-h-0">
-                  <StickToBottom.Content className="flex flex-col min-h-0">
-                    {(() => {
-                      // Trace `<Thread>` mount. Wrapped in
-                      // `ActiveHostCapsResolverScope` ONLY when the
-                      // caller passed explicit host inputs
-                      // (`activeHost` or `hostStyle`). Otherwise we
-                      // render Thread directly so any outer scope from
-                      // the chat surface (ClientStyledChatTabV2 /
-                      // PlaygroundTab) flows through with the user's
-                      // saved capability edits intact. Installing an
-                      // inner scope unconditionally would shadow the
-                      // outer one with template-seed caps.
-                      const threadEl = (
-                        <Thread
-                          chatSessionId={chatSessionId}
-                          messages={adaptedTrace.messages}
-                          sendFollowUpMessage={sendFollowUpMessage}
-                          model={resolvedModel}
-                          isLoading={isLoading}
-                          toolsMetadata={toolsMetadata}
-                          toolServerMap={toolServerMap}
-                          onWidgetStateChange={onWidgetStateChange}
-                          onModelContextUpdate={onModelContextUpdate}
-                          displayMode={displayMode}
-                          onDisplayModeChange={onDisplayModeChange}
-                          enableFullscreenChatOverlay={
-                            enableFullscreenChatOverlay
-                          }
-                          fullscreenChatPlaceholder={fullscreenChatPlaceholder}
-                          fullscreenChatDisabled={fullscreenChatDisabled}
-                          fullscreenChatSendBlocked={fullscreenChatSendBlocked}
-                          onFullscreenChatStop={onFullscreenChatStop}
-                          onFullscreenChange={onFullscreenChange}
-                          onToolApprovalResponse={onToolApprovalResponse}
-                          toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                          showSaveViewButton={false}
-                          minimalMode={true}
-                          interactive={threadInteractive}
-                          reasoningDisplayMode="collapsed"
-                          focusMessageId={transcriptNavigation.focusMessageId}
-                          highlightedMessageIds={
-                            transcriptNavigation.highlightedMessageIds
-                          }
-                          navigationKey={transcriptNavigation.navigationKey}
-                          contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
-                          getMessageWrapperProps={({ message }) => {
-                            const sourceRange =
-                              adaptedTrace.uiMessageSourceRanges[message.id];
-                            return {
-                              "data-source-range": sourceRange
-                                ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
-                                : undefined,
-                            };
-                          }}
-                        />
-                      );
-                      if (!shouldInstallTraceScope) return threadEl;
-                      return (
-                        <ActiveHostCapsResolverScope
-                          activeHost={activeHost ?? null}
-                          hostStyle={traceScopeHostStyle}
-                        >
-                          {threadEl}
-                        </ActiveHostCapsResolverScope>
-                      );
-                    })()}
-                  </StickToBottom.Content>
-                  <ScrollToBottomButton />
-                </div>
-              </StickToBottom>
+              {(() => {
+                // Trace `<Thread>` mount. Wrapped in
+                // `ActiveHostCapsResolverScope` ONLY when the caller
+                // passed explicit host inputs (`activeHost` or
+                // `hostStyle`). Otherwise we render Thread directly so
+                // any outer scope from the chat surface
+                // (ClientStyledChatTabV2 / PlaygroundTab) flows through
+                // with the user's saved capability edits intact.
+                // Installing an inner scope unconditionally would
+                // shadow the outer one with template-seed caps.
+                const threadEl = (
+                  <Thread
+                    chatSessionId={chatSessionId}
+                    messages={adaptedTrace.messages}
+                    sendFollowUpMessage={sendFollowUpMessage}
+                    model={resolvedModel}
+                    isLoading={isLoading}
+                    toolsMetadata={toolsMetadata}
+                    toolServerMap={toolServerMap}
+                    onWidgetStateChange={onWidgetStateChange}
+                    onModelContextUpdate={onModelContextUpdate}
+                    displayMode={displayMode}
+                    onDisplayModeChange={onDisplayModeChange}
+                    enableFullscreenChatOverlay={enableFullscreenChatOverlay}
+                    fullscreenChatPlaceholder={fullscreenChatPlaceholder}
+                    fullscreenChatDisabled={fullscreenChatDisabled}
+                    fullscreenChatSendBlocked={fullscreenChatSendBlocked}
+                    onFullscreenChatStop={onFullscreenChatStop}
+                    onFullscreenChange={onFullscreenChange}
+                    onToolApprovalResponse={onToolApprovalResponse}
+                    toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+                    showSaveViewButton={false}
+                    minimalMode={true}
+                    interactive={threadInteractive}
+                    reasoningDisplayMode="collapsed"
+                    focusMessageId={transcriptNavigation.focusMessageId}
+                    highlightedMessageIds={
+                      transcriptNavigation.highlightedMessageIds
+                    }
+                    navigationKey={transcriptNavigation.navigationKey}
+                    contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                    getMessageWrapperProps={({ message }) => {
+                      const sourceRange =
+                        adaptedTrace.uiMessageSourceRanges[message.id];
+                      return {
+                        "data-source-range": sourceRange
+                          ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
+                          : undefined,
+                      };
+                    }}
+                  />
+                );
+                const scoped = shouldInstallTraceScope ? (
+                  <ActiveHostCapsResolverScope
+                    activeHost={activeHost ?? null}
+                    hostStyle={traceScopeHostStyle}
+                  >
+                    {threadEl}
+                  </ActiveHostCapsResolverScope>
+                ) : (
+                  threadEl
+                );
+                // Live streaming (fillContent): keep StickToBottom so
+                // new messages auto-pin to the bottom inside the
+                // viewport-bounded shell. Static replay: render
+                // directly and let the surrounding page own scroll,
+                // starting from the first message.
+                if (!fillContent) return scoped;
+                return (
+                  <StickToBottom
+                    className="relative flex min-h-0 flex-1 flex-col"
+                    resize="smooth"
+                    initial="smooth"
+                  >
+                    <div className="relative flex-1 min-h-0">
+                      <StickToBottom.Content className="flex flex-col min-h-0">
+                        {scoped}
+                      </StickToBottom.Content>
+                      <ScrollToBottomButton />
+                    </div>
+                  </StickToBottom>
+                );
+              })()}
             </div>
           ))}
 
         {effectiveViewMode === "tools" && hasEvalToolCalls ? (
           <div
-            className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
             data-testid="trace-viewer-tools-compare"
           >
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
-              <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
-                Expected
-              </div>
-              {expectedToolCalls.length === 0 ? (
-                <div className="text-xs text-muted-foreground italic">
-                  No expected tool calls
+            {toolsCompareLayout === "diff" ? (
+              <ToolCallsDiffView
+                expected={expectedToolCalls}
+                actual={actualToolCalls}
+                isLoading={isLoading}
+                headerTrailing={toolsCompareLayoutToggle}
+              />
+            ) : (
+              <>
+                <div className="flex shrink-0 items-center justify-end">
+                  {toolsCompareLayoutToggle}
                 </div>
-              ) : (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
-                  <JsonEditor
-                    value={expectedToolCalls}
-                    viewOnly
-                    collapsible
-                    defaultExpandDepth={2}
-                    collapseStringsAfterLength={160}
-                    height="100%"
-                    className="min-h-0"
-                  />
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+                  <div className="shrink-0 text-xs font-medium uppercase text-muted-foreground">
+                    Expected
+                  </div>
+                  {expectedToolCalls.length === 0 ? (
+                    <div className="text-xs italic text-muted-foreground">
+                      No expected tool calls
+                    </div>
+                  ) : (
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+                      <JsonEditor
+                        value={expectedToolCalls}
+                        viewOnly
+                        collapsible
+                        defaultExpandDepth={2}
+                        collapseStringsAfterLength={160}
+                        height="100%"
+                        className="min-h-0"
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
-              <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase">
-                Actual
-                {isLoading ? (
-                  <Loader2
-                    className="h-3 w-3 shrink-0 animate-spin"
-                    aria-hidden
-                    data-testid="trace-viewer-actual-loading"
-                  />
-                ) : null}
-              </div>
-              {actualToolCalls.length === 0 ? (
-                <div className="text-xs text-muted-foreground italic">
-                  No tool calls made
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+                  <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
+                    Actual
+                    {isLoading ? (
+                      <Loader2
+                        className="h-3 w-3 shrink-0 animate-spin"
+                        aria-hidden
+                        data-testid="trace-viewer-actual-loading"
+                      />
+                    ) : null}
+                  </div>
+                  {actualToolCalls.length === 0 ? (
+                    <div className="text-xs italic text-muted-foreground">
+                      No tool calls made
+                    </div>
+                  ) : (
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+                      <JsonEditor
+                        value={actualToolCalls.map(
+                          ({ toolName, arguments: args }) => ({
+                            toolName,
+                            arguments: args,
+                          }),
+                        )}
+                        viewOnly
+                        collapsible
+                        defaultExpandDepth={2}
+                        collapseStringsAfterLength={160}
+                        height="100%"
+                        className="min-h-0"
+                      />
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
-                  <JsonEditor
-                    // Reconstruct each entry as a new object so JSON.stringify
-                    // always serialises toolName before arguments, matching the
-                    // key order of expectedToolCalls. The server stores objects
-                    // in alphabetical key order (arguments < toolName), so the
-                    // normalisation must happen here at the display boundary.
-                    value={actualToolCalls.map(({ toolName, arguments: args }) => ({
-                      toolName,
-                      arguments: args,
-                    }))}
-                    viewOnly
-                    collapsible
-                    defaultExpandDepth={2}
-                    collapseStringsAfterLength={160}
-                    height="100%"
-                    className="min-h-0"
-                  />
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         ) : null}
       </div>

@@ -286,6 +286,7 @@ describe("useChatSession minimal mode parity", () => {
       hasPendingLimit: false,
       isOpen: false,
       intent: null,
+      organizationId: null,
       pendingInput: null,
     });
     mockTransportInstances.length = 0;
@@ -618,6 +619,7 @@ describe("useChatSession minimal mode parity", () => {
       hasPendingLimit: false,
       isOpen: false,
       intent: null,
+      organizationId: null,
       pendingInput: null,
     });
     mockWindowFetch.mockResolvedValueOnce(
@@ -665,6 +667,7 @@ describe("useChatSession minimal mode parity", () => {
       hasPendingLimit: false,
       isOpen: false,
       intent: null,
+      organizationId: null,
       pendingInput: null,
     });
     mockWindowFetch.mockResolvedValueOnce(

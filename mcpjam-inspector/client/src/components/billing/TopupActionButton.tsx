@@ -6,9 +6,9 @@ interface TopupActionButtonProps {
 }
 
 /**
- * Renders the "Top up" button only when the topup preset endpoint has
+ * Renders the "Buy credits" button only when the credit package endpoint has
  * resolved with at least one preset. Avoids the dead-end UX where clicking
- * the button opens a dialog that immediately shows "Top-up amounts are
+ * the button opens a dialog that immediately shows "Credit packages are
  * unavailable right now" because the backend is missing the function.
  *
  * Wrap this in an `<ErrorBoundary fallback={null}>` at the call site so a
@@ -20,7 +20,7 @@ export function TopupActionButton({ onClick }: TopupActionButtonProps) {
   if (!presets || presets.length === 0) return null;
   return (
     <Button type="button" size="sm" onClick={onClick}>
-      Top up
+      Buy credits
     </Button>
   );
 }

@@ -2,11 +2,16 @@
 title: "MCP protocol versions"
 description: "Pin the inspector to a specific MCP protocol version — including the 2026-07-28 stateless RC — to test how your server behaves across versions."
 icon: "git-branch"
+tag: "Preview"
 ---
 
 The inspector can speak more than one version of the MCP protocol. By default it negotiates whatever the SDK considers current, but you can pin a different version when you want to test how your server behaves against a specific draft — including the new **2026-07-28 stateless RC**.
 
 This page covers how to pick a version. Automatic per-server version detection is on the roadmap; for now you tell the inspector which version to use.
+
+<Warning>
+  **Migration required if you used the old Draft version.** The previous `DRAFT-2026-v1` placeholder has been retired and replaced with the upstream RC literal `2026-07-28`. If you had any servers pinned to `DRAFT-2026-v1`, you must re-select the protocol version in the inspector UI. Stored `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004 UnsupportedProtocolVersionError`.
+</Warning>
 
 ## Where the setting lives
 

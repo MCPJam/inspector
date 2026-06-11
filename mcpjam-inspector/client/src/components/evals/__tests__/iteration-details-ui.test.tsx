@@ -250,7 +250,7 @@ describe("IterationDetails trace blob load error", () => {
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
 
     await waitFor(() => expect(mockGetBlob).toHaveBeenCalledTimes(2));
-    expect(mockGetBlob).toHaveBeenLastCalledWith({ blobId: "blob-conn" });
+    expect(mockGetBlob).toHaveBeenLastCalledWith({ iterationId: "iter-1" });
     await screen.findByTestId("mock-trace-viewer");
   });
 

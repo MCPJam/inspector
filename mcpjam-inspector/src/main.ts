@@ -7,11 +7,18 @@ Sentry.init({
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
 });
 
-import { app, BrowserWindow, shell, Menu } from "electron";
+import { app, BrowserWindow, shell, Menu, dialog } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
 import { serve } from "@hono/node-server";
 import path from "path";
-import { createHonoApp } from "../server/app.js";
+import fs from "fs";
+// IMPORTANT: do NOT statically import "../server/app.js" or anything that
+// transitively reads server/config.ts at module-load time. `SERVER_PORT`
+// in that config is a top-level const computed from `process.env`, so we
+// have to set `process.env.SERVER_PORT` (after probing for a free port)
+// BEFORE the server module graph is first evaluated. The dynamic import
+// in `startHonoServer()` enforces that ordering.
+import { probeFreePort } from "./server-port-fallback.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
@@ -241,9 +248,22 @@ function openSafeOAuthWindow(
   });
 }
 
+const DEFAULT_SERVER_PORT = 6274;
+const SERVER_PORT_FALLBACK_ATTEMPTS = 10;
+
+// Cache the port we successfully probed on first launch so subsequent
+// startHonoServer() invocations (macOS dock activation after
+// window-all-closed) reuse it. The server/config.ts module is in Node's
+// module cache after the first dynamic import, so its SERVER_PORT /
+// LOCAL_SERVER_ADDR / CORS_ORIGINS were frozen to the first effective
+// port. If we probed again and the result differed, the renderer would
+// load from the new port while origin-validation/CORS/ngrok all still
+// reference the old one — same fallback-port-not-synced class of bug we
+// fixed at first launch.
+let cachedProbedPort: number | null = null;
+
 async function startHonoServer(): Promise<number> {
   try {
-    const port = 6274;
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
     process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";
@@ -253,10 +273,48 @@ async function startHonoServer(): Promise<number> {
       : app.getAppPath();
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
 
-    const honoApp = createHonoApp();
-
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
     const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
+
+    let port: number;
+    if (cachedProbedPort !== null) {
+      // Re-use the port from first launch — server/config.ts is already
+      // module-cached against this value; probing again would risk
+      // picking a different free port and silently desyncing CORS,
+      // origin validation, and LOCAL_SERVER_ADDR from the bound port.
+      port = cachedProbedPort;
+      log.info(
+        `Reusing previously-probed port ${port} for server restart`,
+      );
+    } else {
+      // Probe for a free port BEFORE loading server modules. server/config.ts
+      // reads SERVER_PORT from process.env once, at module-init time, and that
+      // value flows into LOCAL_SERVER_ADDR, CORS_ORIGINS, and the
+      // origin-validation allowlist. If we bound the server before setting
+      // this, the renderer (loading from the fallback port) would 403 on its
+      // own API calls and ngrok would target the wrong local address.
+      port = await probeFreePort(
+        hostname,
+        DEFAULT_SERVER_PORT,
+        SERVER_PORT_FALLBACK_ATTEMPTS,
+        {
+          onAttemptFailed: (failedPort, err) => {
+            log.warn(
+              `Port ${failedPort} unavailable (${err.code ?? err.message}); trying next port`,
+            );
+          },
+        },
+      );
+      process.env.SERVER_PORT = String(port);
+      cachedProbedPort = port;
+    }
+
+    // Dynamic import so server/config.ts evaluates with the env var we just
+    // set, not the build-time default. After the first call the module is in
+    // Node's cache; subsequent calls just return the cached exports, which
+    // is exactly what we want now that we're reusing the same port.
+    const { createHonoApp } = await import("../server/app.js");
+    const honoApp = createHonoApp();
 
     server = serve({
       fetch: honoApp.fetch,
@@ -264,7 +322,13 @@ async function startHonoServer(): Promise<number> {
       hostname,
     });
 
-    log.info(`🚀 MCPJam Server started on port ${port}`);
+    if (port !== DEFAULT_SERVER_PORT) {
+      log.warn(
+        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`,
+      );
+    } else {
+      log.info(`🚀 MCPJam Server started on port ${port}`);
+    }
     return port;
   } catch (error) {
     log.error("Failed to start Hono server:", error);
@@ -527,9 +591,144 @@ function createAppMenu(): void {
   Menu.setApplicationMenu(menu);
 }
 
+function pruneStaleCachesOnVersionChange(): void {
+  // Dev launches change app version constantly with HMR/refresh; skip there.
+  if (!app.isPackaged) return;
+
+  const userData = app.getPath("userData");
+  const versionFile = path.join(userData, ".last-launched-version");
+  const currentVersion = app.getVersion();
+
+  let previousVersion: string | null = null;
+  try {
+    previousVersion = fs.readFileSync(versionFile, "utf8").trim();
+  } catch {
+    previousVersion = null;
+  }
+
+  if (previousVersion === currentVersion) {
+    return;
+  }
+
+  log.info(
+    `App version changed (${previousVersion ?? "<none>"} → ${currentVersion}); pruning stale GPU/HTTP caches`,
+  );
+
+  for (const sub of ["Cache", "Code Cache", "GPUCache"]) {
+    try {
+      fs.rmSync(path.join(userData, sub), { recursive: true, force: true });
+    } catch (err) {
+      log.warn(`Failed to prune ${sub} during version-change cleanup:`, err);
+    }
+  }
+
+  try {
+    fs.writeFileSync(versionFile, currentVersion);
+  } catch (err) {
+    log.warn("Failed to persist .last-launched-version marker:", err);
+  }
+}
+
+function summarizeInitError(error: unknown): {
+  message: string;
+  detail: string;
+} {
+  const err =
+    error instanceof Error ? error : new Error(String(error ?? "Unknown error"));
+
+  const isServerStartFailure = /bind server|EADDRINUSE|Hono/i.test(err.message);
+  const message = isServerStartFailure
+    ? "Couldn't start the internal server."
+    : "Initialization failed.";
+
+  const logsPath = (() => {
+    try {
+      return app.getPath("logs");
+    } catch {
+      return "(logs path unavailable)";
+    }
+  })();
+
+  const detail = `${err.message}\n\nLogs: ${logsPath}`;
+  return { message, detail };
+}
+
+function showStartupFailureDialog(error: unknown): void {
+  const { message, detail } = summarizeInitError(error);
+
+  const choice = dialog.showMessageBoxSync({
+    type: "error",
+    title: "MCPJam Inspector failed to start",
+    message,
+    detail,
+    buttons: ["Reset app data and quit", "Open logs folder", "Quit"],
+    defaultId: 2,
+    cancelId: 2,
+    noLink: true,
+  });
+
+  if (choice === 0) {
+    const userData = app.getPath("userData");
+    for (const sub of ["Cache", "Code Cache", "GPUCache", "Local Storage"]) {
+      try {
+        fs.rmSync(path.join(userData, sub), { recursive: true, force: true });
+        log.info(`Removed ${sub} during recovery reset`);
+      } catch (rmErr) {
+        log.warn(`Failed to remove ${sub} during recovery reset:`, rmErr);
+      }
+    }
+    // Also clear the version marker so the next launch always re-runs
+    // pruneStaleCachesOnVersionChange(). Otherwise a partial reset (some
+    // rmSync above failed and threw) plus an unchanged version string
+    // means the version-based prune is skipped — the next launch sees
+    // exactly the broken state that brought us here.
+    try {
+      fs.rmSync(path.join(userData, ".last-launched-version"), { force: true });
+    } catch (rmErr) {
+      log.warn(
+        "Failed to remove .last-launched-version during recovery reset:",
+        rmErr,
+      );
+    }
+    app.relaunch();
+    app.quit();
+    return;
+  }
+
+  if (choice === 1) {
+    // Don't fire-and-forget: shutdown can finish before Finder/Explorer
+    // gets the openPath message, making the recovery action appear to do
+    // nothing. Chain the quit so it runs only after openPath settles.
+    // Electron's shell.openPath resolves with an empty string on success
+    // and a non-empty error message on logical failure — `.catch()` only
+    // catches sync/promise throws, so check the resolved value too.
+    shell
+      .openPath(app.getPath("logs"))
+      .then((result) => {
+        if (result) {
+          log.warn(`shell.openPath reported error opening logs folder: ${result}`);
+        }
+      })
+      .catch((openErr) => log.warn("Failed to open logs folder:", openErr))
+      .finally(() => app.quit());
+    return;
+  }
+
+  app.quit();
+}
+
 // App event handlers
 app.whenReady().then(async () => {
   try {
+    // Best-effort cleanup of GPU/HTTP caches when the app version changes.
+    // Stale caches from a previous build can crash the renderer/GPU process
+    // on launch after an auto-update.
+    try {
+      pruneStaleCachesOnVersionChange();
+    } catch (err) {
+      log.warn("pruneStaleCachesOnVersionChange threw; continuing:", err);
+    }
+
     // Start the embedded Hono server
     serverPort = await startHonoServer();
     const serverUrl = getServerUrl();
@@ -559,7 +758,15 @@ app.whenReady().then(async () => {
     log.info("MCPJam Electron app ready");
   } catch (error) {
     log.error("Failed to initialize app:", error);
-    app.quit();
+    try {
+      showStartupFailureDialog(error);
+    } catch (dialogErr) {
+      log.error(
+        "Failed to show startup failure dialog; quitting silently:",
+        dialogErr,
+      );
+      app.quit();
+    }
   }
 });
 

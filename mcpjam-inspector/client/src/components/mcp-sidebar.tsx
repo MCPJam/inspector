@@ -17,10 +17,10 @@ import {
   Box,
   LayoutGrid,
   GitBranch,
-  Puzzle,
   UserPlus,
   ShieldCheck,
   Loader2,
+  Key,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { isPostHogBooleanFlagOn, standardEventProps } from "@/lib/PosthogUtils";
@@ -73,6 +73,7 @@ import {
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import {
   useOrganizationBillingStatus,
   type BillingFeatureName,
@@ -132,6 +133,29 @@ export function filterByFeatureFlags(
 }
 
 /**
+ * Resolve the effective "hosts-enabled" rollout flag for the current build,
+ * independent of authentication state.
+ *
+ * Hosted web rolls Hosts/Connect out via PostHog so the flag must be honored
+ * server-side. Desktop ships a single binary with no staged rollout — and on
+ * the packaged Electron app PostHog may be blocked, slow, or simply hasn't
+ * resolved when the sidebar first renders. Treating the flag as off in that
+ * window hides the new Connect tab and leaves the legacy Servers item in
+ * place, which is what Ray reported.
+ *
+ * Callers still AND this with `isAuthenticated` at each site — only signed-in
+ * users see the Hosts/Connect surface.
+ */
+export function computeHostsHubFlagEnabled(opts: {
+  hostsFlag: unknown;
+  hostedMode: boolean;
+}): boolean {
+  const { hostsFlag, hostedMode } = opts;
+  if (!hostedMode) return true;
+  return isPostHogBooleanFlagOn(hostsFlag);
+}
+
+/**
  * Keeps billed nav items visible; marks them disabled when the gate denies access
  * and enforcement is enabled (not soft/disabled).
  *
@@ -187,7 +211,7 @@ const navigationSections: NavSection[] = [
         url: "/servers",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
-        matchTabs: ["clients"],
+        matchTabs: ["clients", "host-compare"],
       },
       {
         title: "Servers",
@@ -233,6 +257,7 @@ const navigationSections: NavSection[] = [
         title: "Evaluate",
         url: "/evals",
         icon: FlaskConical,
+        featureFlag: "evaluate-ui",
         billingFeature: "evals",
         evalsSubnav: true,
       },
@@ -313,6 +338,11 @@ const navigationSections: NavSection[] = [
         icon: MessageCircleQuestionIcon,
       },
       {
+        title: "API Keys",
+        url: "/settings/api-keys",
+        icon: Key,
+      },
+      {
         title: "Settings",
         url: "/settings",
         icon: Settings,
@@ -391,9 +421,9 @@ function navigateToEvalsRunsList() {
 }
 
 type EvalsSubnavItem = {
-  title: "Playground" | "Runs";
+  title: "Runs";
   href: string;
-  icon: typeof Puzzle | typeof GitBranch;
+  icon: typeof GitBranch;
   isActive: (activeTab?: string) => boolean;
   onClick: () => void;
 };
@@ -401,27 +431,16 @@ type EvalsSubnavItem = {
 export function getEvalsSubnavItems(options: {
   evaluateRunsEnabled: boolean;
 }): EvalsSubnavItem[] {
-  const items: EvalsSubnavItem[] = [
+  if (!options.evaluateRunsEnabled) return [];
+  return [
     {
-      title: "Playground",
-      href: buildEvalsPath({ type: "list" }),
-      icon: Puzzle,
-      isActive: (activeTab) => activeTab === "evals",
-      onClick: navigateToEvalsExploreList,
-    },
-  ];
-
-  if (options.evaluateRunsEnabled) {
-    items.push({
       title: "Runs",
       href: "/ci-evals",
       icon: GitBranch,
       isActive: (activeTab) => activeTab === "ci-evals",
       onClick: navigateToEvalsRunsList,
-    });
-  }
-
-  return items;
+    },
+  ];
 }
 
 export function SidebarEvalsNavGroup({
@@ -446,6 +465,7 @@ export function SidebarEvalsNavGroup({
   const subnavItems = getEvalsSubnavItems({
     evaluateRunsEnabled: showRuns,
   });
+  const hasSubnav = subnavItems.length > 0;
 
   const parentButton = (
     <SidebarMenuButton
@@ -491,55 +511,47 @@ export function SidebarEvalsNavGroup({
                   </TooltipContent>
                 ) : null}
               </Tooltip>
+            ) : isPlaygroundLocked && !hasSubnav ? (
+              <Tooltip>
+                <TooltipTrigger asChild>{parentButton}</TooltipTrigger>
+                <TooltipContent side="right" sideOffset={6}>
+                  Coming soon. Playground is in beta.
+                </TooltipContent>
+              </Tooltip>
             ) : (
               parentButton
             )}
-            <SidebarMenuSub>
-              {subnavItems.map((item) => {
-                const ItemIcon = item.icon;
-                const isItemPlaygroundLocked =
-                  item.title === "Playground" && isPlaygroundLocked;
-                const isItemDisabled = disabled || isItemPlaygroundLocked;
+            {hasSubnav ? (
+              <SidebarMenuSub>
+                {subnavItems.map((item) => {
+                  const ItemIcon = item.icon;
+                  const isItemDisabled = disabled || isPlaygroundLocked;
 
-                const subnavButton = (
-                  <SidebarMenuSubButton
-                    isActive={!isItemDisabled && item.isActive(activeTab)}
-                    href={item.href}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (isItemDisabled) return;
-                      item.onClick();
-                    }}
-                    aria-disabled={isItemDisabled || undefined}
-                    className={cn(
-                      isItemDisabled &&
-                        "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
-                      isItemPlaygroundLocked &&
-                        "aria-disabled:pointer-events-auto",
-                      disabled && "pointer-events-none"
-                    )}
-                  >
-                    <ItemIcon className="h-4 w-4" />
-                    <span className="min-w-0 truncate">{item.title}</span>
-                  </SidebarMenuSubButton>
-                );
-
-                return (
-                  <SidebarMenuSubItem key={item.title}>
-                    {isItemPlaygroundLocked ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>{subnavButton}</TooltipTrigger>
-                        <TooltipContent side="right" sideOffset={6}>
-                          Coming soon. Playground is in beta.
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      subnavButton
-                    )}
-                  </SidebarMenuSubItem>
-                );
-              })}
-            </SidebarMenuSub>
+                  return (
+                    <SidebarMenuSubItem key={item.title}>
+                      <SidebarMenuSubButton
+                        isActive={!isItemDisabled && item.isActive(activeTab)}
+                        href={item.href}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (isItemDisabled) return;
+                          item.onClick();
+                        }}
+                        aria-disabled={isItemDisabled || undefined}
+                        className={cn(
+                          isItemDisabled &&
+                            "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
+                          disabled && "pointer-events-none"
+                        )}
+                      >
+                        <ItemIcon className="h-4 w-4" />
+                        <span className="min-w-0 truncate">{item.title}</span>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  );
+                })}
+              </SidebarMenuSub>
+            ) : null}
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroupContent>
@@ -573,7 +585,8 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
@@ -642,8 +655,13 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
-      "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
+      "hosts-enabled":
+        computeHostsHubFlagEnabled({
+          hostsFlag: hostsEnabled,
+          hostedMode: HOSTED_MODE,
+        }) && isAuthenticated,
       "home-page-enabled": homePageEnabled === true && isAuthenticated,
+      "evaluate-ui": evaluateUiEnabled === true,
       xaa: xaaEnabled === true,
     }),
     [
@@ -653,6 +671,7 @@ export function MCPSidebar({
       conformanceEnabled,
       hostsEnabled,
       homePageEnabled,
+      evaluateUiEnabled,
       xaaEnabled,
       isAuthenticated,
     ]
@@ -770,8 +789,28 @@ export function MCPSidebar({
         </SidebarHeader>
         <SidebarContent>
           {visibleNavigationSections.map((section, sectionIndex) => {
-            const evalsEntry = section.items.find((item) => item.evalsSubnav);
-            const flatItems = section.items.filter((item) => !item.evalsSubnav);
+            const rawEvalsEntry = section.items.find((item) => item.evalsSubnav);
+            // Only render Evaluate through the SidebarEvalsNavGroup wrapper
+            // (which adds its own SidebarGroup padding) when there's actually
+            // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
+            // so it sits flush with Views and matches sibling spacing.
+            const useEvalsSubnavWrapper =
+              !!rawEvalsEntry && evaluateRunsEnabled === true;
+            const evalsEntry = useEvalsSubnavWrapper ? rawEvalsEntry : undefined;
+            const flatItems = section.items
+              .map((item) => {
+                if (!item.evalsSubnav) return item;
+                if (useEvalsSubnavWrapper) return null;
+                const locked = playgroundEnabled !== true;
+                return {
+                  ...item,
+                  disabled: locked || item.disabled,
+                  disabledTooltip: locked
+                    ? "Coming soon. Playground is in beta."
+                    : item.disabledTooltip,
+                };
+              })
+              .filter((item): item is NavItem => item !== null);
 
             return (
               <React.Fragment key={section.id}>
@@ -793,6 +832,14 @@ export function MCPSidebar({
                           onExpand: learnMore.openExpandedModal,
                         }
                       : null
+                  }
+                  renderSlotAfter={
+                    section.id === "settings"
+                      ? (itemTitle) =>
+                          itemTitle === "Support" ? (
+                            <NotificationBell variant="sidebar" />
+                          ) : null
+                      : undefined
                   }
                 />
                 {evalsEntry ? (
@@ -839,10 +886,7 @@ export function MCPSidebar({
             />
           ) : null}
           {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
-          <SidebarUser
-            activeOrganizationId={activeOrganizationId}
-            onBeforeSignOut={onBeforeSignOut}
-          />
+          <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

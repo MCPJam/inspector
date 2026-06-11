@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { startSuiteRunWithRecorder } from "../recorder.js";
+import type { ModelMessage } from "ai";
+import { createSuiteRunRecorder, startSuiteRunWithRecorder } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
   it("forwards tool snapshot metadata when creating a suite run", async () => {
@@ -191,5 +192,62 @@ describe("startSuiteRunWithRecorder", () => {
     });
 
     expect(result.config.environment).toEqual(snapshotEnvironment);
+  });
+});
+
+describe("createSuiteRunRecorder", () => {
+  it("flips runDeleted when finishIteration's shared finalize sees 'not found', short-circuiting subsequent startIteration", async () => {
+    // Pre-check getTestIteration returns running; updateTestIteration throws
+    // "not found" → shared finalizeEvalIteration fires `onRunDeleted` →
+    // recorder's `runDeleted` flag flips → next `startIteration` no-ops
+    // without ever querying Convex.
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:getTestIteration") {
+        return { status: "running" };
+      }
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const action = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:appendEvalTurnTrace") {
+        return { skipped: false };
+      }
+      if (ref === "testSuites:updateTestIteration") {
+        throw new Error("iteration not found");
+      }
+      if (ref === "testSuites:lockEvalSession") {
+        return { skipped: false, locked: true, alreadyLocked: false };
+      }
+      throw new Error(`unexpected action ${ref}`);
+    });
+    const mutation = vi.fn();
+    const convexClient = { query, action, mutation } as any;
+
+    const recorder = createSuiteRunRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+
+    await recorder.finishIteration({
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      messages: [{ role: "user", content: "hi" } as ModelMessage],
+    });
+
+    // The action threw "not found"; the runDeleted callback should have
+    // fired. Confirm by calling startIteration and asserting it
+    // short-circuits (no Convex calls).
+    const queryCallsBefore = query.mock.calls.length;
+    const mutationCallsBefore = mutation.mock.calls.length;
+    const result = await recorder.startIteration({
+      testCaseId: "tc1",
+      iterationNumber: 1,
+      startedAt: Date.now(),
+    });
+    expect(result).toBeUndefined();
+    expect(query.mock.calls.length).toBe(queryCallsBefore);
+    expect(mutation.mock.calls.length).toBe(mutationCallsBefore);
   });
 });

@@ -91,6 +91,10 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(false, "#hosts")).toBe(true);
     });
 
+    it("returns true when hash is #home (the default landing route)", () => {
+      expect(isFirstRunEligible(false, "#home")).toBe(true);
+    });
+
     it("returns false when hash points to a specific tab", () => {
       expect(isFirstRunEligible(false, "#tools")).toBe(false);
     });

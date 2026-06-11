@@ -13,7 +13,7 @@ export function useEvalTraceBlob({
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
-  ) as unknown as (args: { blobId: string }) => Promise<any>;
+  ) as unknown as (args: { iterationId: string }) => Promise<any>;
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +34,7 @@ export function useEvalTraceBlob({
         return;
       }
 
-      if (!iteration?.blob) {
+      if (!iteration?.blob && !iteration?.chatSessionId) {
         setBlob(null);
         setLoading(false);
         setError(null);
@@ -46,7 +46,11 @@ export function useEvalTraceBlob({
       setError(null);
 
       try {
-        const data = await getBlob({ blobId: iteration.blob });
+        // Backend authorizes via the iteration's testSuite and resolves the
+        // trace server-side from either the legacy blob or the unified
+        // chatSessions path. Gate skips the roundtrip only when neither
+        // source is present.
+        const data = await getBlob({ iterationId: iteration._id });
         if (!cancelled) {
           setBlob(data);
           onTraceLoadedRef.current?.();
@@ -68,7 +72,7 @@ export function useEvalTraceBlob({
     return () => {
       cancelled = true;
     };
-  }, [enabled, getBlob, iteration?.blob]);
+  }, [enabled, getBlob, iteration?.blob, iteration?.chatSessionId]);
 
   return {
     blob,

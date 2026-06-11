@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { COMPARE_PLAN_MARKETING_SECTIONS } from "@/components/organization/compare-plan-marketing";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import type { PlanCatalog } from "@/hooks/useOrganizationBilling";
 
-function createPlanCatalog(
-  maxEvalRunsPerMonth: { free: number; team: number },
-): PlanCatalog {
+function createPlanCatalog(): PlanCatalog {
   const baseEntry = {
     prices: {
       monthly: { amountCents: 0, stripePriceId: null },
@@ -20,19 +19,23 @@ function createPlanCatalog(
       free: {
         ...baseEntry,
         limits: {
-          maxMembers: 1,
-          maxProjects: 1,
-          maxServersPerProject: 3,
-          maxEvalRunsPerMonth: maxEvalRunsPerMonth.free,
+          maxMembers: null,
+          maxProjects: null,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: null,
+          maxEvalRunsPerMonth: null,
+          insightsPerDay: null,
         },
       },
       team: {
         ...baseEntry,
         limits: {
-          maxMembers: 10,
-          maxProjects: 10,
-          maxServersPerProject: 10,
-          maxEvalRunsPerMonth: maxEvalRunsPerMonth.team,
+          maxMembers: null,
+          maxProjects: null,
+          maxServersPerProject: null,
+          maxChatboxesPerProject: null,
+          maxEvalRunsPerMonth: null,
+          insightsPerDay: null,
         },
       },
       enterprise: {
@@ -41,35 +44,26 @@ function createPlanCatalog(
           maxMembers: null,
           maxProjects: null,
           maxServersPerProject: null,
+          maxChatboxesPerProject: null,
           maxEvalRunsPerMonth: null,
+          insightsPerDay: null,
         },
       },
     },
   };
 }
 
-function findEvalIterationCapRow(
-  sections: ReturnType<typeof buildComparePlanSectionsFromCatalog>,
-) {
-  for (const section of sections) {
-    const row = section.rows.find((r) => r.label === "Eval iteration cap");
-    if (row) return row;
-  }
-  throw new Error("Eval iteration cap row not found");
-}
-
 describe("buildComparePlanSectionsFromCatalog", () => {
-  it("keeps static eval iteration cap copy instead of catalog limits", () => {
-    const sections = buildComparePlanSectionsFromCatalog(
-      createPlanCatalog({ free: 5, team: 5000 }),
-    );
-    const row = findEvalIterationCapRow(sections);
+  it("returns the static marketing compare sections", () => {
+    const sections = buildComparePlanSectionsFromCatalog(createPlanCatalog());
 
-    expect(row.free).toEqual({ kind: "text", text: "100 iter. / mo" });
-    expect(row.team).toEqual({
-      kind: "text",
-      text: "5,000 iter. / mo",
-      emphasize: true,
-    });
+    expect(sections).toBe(COMPARE_PLAN_MARKETING_SECTIONS);
+    expect(sections.map((section) => section.title)).toEqual([
+      "Credits & seats",
+      "Evaluations",
+      "Security & Compliance",
+      "Support",
+      "Standard features",
+    ]);
   });
 });

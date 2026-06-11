@@ -26,58 +26,14 @@ import type {
   CommitGroup,
 } from "./types";
 import { classifyFailure, type FailureTag } from "./ai-insights";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Strip trailing timestamp suffixes from suite names for display, e.g. "Suite (2026-03-12 15:20:43)" → "Suite" */
-function stripTimestampSuffix(name: string): string {
-  return name.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() || name;
-}
-
-function toPercent(value: number): number {
-  const n = value <= 1 ? value * 100 : value;
-  return Math.max(0, Math.min(100, Math.round(n)));
-}
-
-function formatRelativeTime(timestamp?: number): string {
-  if (!timestamp) return "";
-  const now = Date.now();
-  const diff = now - timestamp;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
-}
-
-/** Tiny inline sparkline rendered as CSS bars. */
-function Sparkline({
-  data,
-  className,
-}: {
-  data: number[];
-  className?: string;
-}) {
-  if (data.length === 0) return null;
-  return (
-    <div className={cn("flex items-end gap-px", className)}>
-      {data.map((value, idx) => (
-        <div
-          key={idx}
-          className="w-1.5 rounded-sm bg-primary/70"
-          style={{
-            height: `${Math.max(3, (toPercent(value) / 100) * 100)}%`,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
+import {
+  Sparkline,
+  stripTimestampSuffix,
+  toPercent,
+  computeSuitePassRateDelta,
+  getSuitePassRateLabel,
+  formatOverviewRelativeTime as formatRelativeTime,
+} from "./suite-overview-presentation";
 
 // ---------------------------------------------------------------------------
 // Run timeline bucketing
@@ -353,41 +309,6 @@ export function OverviewPanel({
   // Auto-collapse failure feed when no failures
   const hasFailures = failureEntries.length > 0;
 
-  // ---------------------------------------------------------------------------
-  // Helpers for delta computation
-  // ---------------------------------------------------------------------------
-  function computeDelta(entry: EvalSuiteOverviewEntry): {
-    value: number | null;
-    label: string;
-    colorClass: string;
-  } {
-    const trend = entry.passRateTrend;
-    if (!entry.latestRun) {
-      return { value: null, label: "—", colorClass: "text-muted-foreground" };
-    }
-    if (trend.length < 2) {
-      return { value: null, label: "NEW", colorClass: "text-blue-500" };
-    }
-    const delta = Math.round(
-      (trend[trend.length - 1] - trend[trend.length - 2]) * 100,
-    );
-    if (delta === 0) {
-      return { value: 0, label: "+0%", colorClass: "text-muted-foreground" };
-    }
-    return {
-      value: delta,
-      label: `${delta > 0 ? "+" : ""}${delta}%`,
-      colorClass: delta > 0 ? "text-emerald-500" : "text-destructive",
-    };
-  }
-
-  function getPassRate(entry: EvalSuiteOverviewEntry): string {
-    if (!entry.latestRun) return "--";
-    const total = entry.totals.passed + entry.totals.failed;
-    if (total === 0) return "--";
-    return `${Math.round((entry.totals.passed / total) * 100)}%`;
-  }
-
   function getStatusIcon(entry: EvalSuiteOverviewEntry) {
     if (!entry.latestRun) {
       return <MinusCircle className="h-5 w-5 text-muted-foreground" />;
@@ -396,10 +317,10 @@ export function OverviewPanel({
       entry.latestRun.status === "running" ||
       entry.latestRun.status === "pending"
     ) {
-      return <Loader2 className="h-5 w-5 text-amber-500 animate-spin" />;
+      return <Loader2 className="h-5 w-5 text-warning animate-spin" />;
     }
     if (entry.latestRun.result === "passed") {
-      return <CheckCircle2 className="h-5 w-5 text-emerald-500" />;
+      return <CheckCircle2 className="h-5 w-5 text-success" />;
     }
     if (entry.latestRun.result === "failed") {
       return <XCircle className="h-5 w-5 text-destructive" />;
@@ -419,18 +340,18 @@ export function OverviewPanel({
 
   const bannerConfig = {
     failure: {
-      bg: "bg-destructive/10 border-destructive/30",
+      bg: "bg-destructive/50 border-destructive/50",
       icon: <AlertTriangle className="h-4 w-4 text-destructive" />,
       text: `${stats.failedCount} ${stats.failedCount === 1 ? "FAILURE" : "FAILURES"}`,
     },
     running: {
-      bg: "bg-amber-500/10 border-amber-500/30",
-      icon: <Loader2 className="h-4 w-4 text-amber-500 animate-spin" />,
+      bg: "bg-warning/50 border-warning/50",
+      icon: <Loader2 className="h-4 w-4 text-warning animate-spin" />,
       text: `${stats.runningCount} RUNNING`,
     },
     success: {
-      bg: "bg-emerald-500/10 border-emerald-500/30",
-      icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
+      bg: "bg-success/50 border-success/50",
+      icon: <CheckCircle2 className="h-4 w-4 text-success" />,
       text: "ALL PASSING",
     },
   }[bannerState];
@@ -503,12 +424,12 @@ export function OverviewPanel({
               const isActive = bucket.id === activeBucketId;
               const chipColor =
                 bucket.result === "failed"
-                  ? "bg-destructive"
+                  ? "bg-destructive/50"
                   : bucket.result === "running"
-                    ? "bg-amber-500"
+                    ? "bg-warning/50"
                     : bucket.result === "passed"
-                      ? "bg-emerald-500"
-                      : "bg-muted-foreground";
+                      ? "bg-success/50"
+                      : "bg-muted-foreground/50";
 
               const chipLabel = bucket.commitSha
                 ? bucket.commitSha.slice(0, 7)
@@ -627,8 +548,8 @@ export function OverviewPanel({
                                   className={cn(
                                     "h-full rounded-full transition-all",
                                     passRate! >= 75
-                                      ? "bg-amber-500"
-                                      : "bg-destructive",
+                                      ? "bg-warning/50"
+                                      : "bg-destructive/50",
                                   )}
                                   style={{ width: `${passRate}%` }}
                                 />
@@ -789,8 +710,8 @@ export function OverviewPanel({
           ) : (
             tableSuites.map((entry) => {
               const isFailed = entry.latestRun?.result === "failed";
-              const delta = computeDelta(entry);
-              const passRate = getPassRate(entry);
+              const delta = computeSuitePassRateDelta(entry);
+              const passRate = getSuitePassRateLabel(entry);
               const trend = entry.passRateTrend.slice(-8);
               const lastRunTs =
                 entry.latestRun?.completedAt ?? entry.latestRun?.createdAt;
@@ -832,9 +753,9 @@ export function OverviewPanel({
                       passRate === "--"
                         ? "text-muted-foreground"
                         : parseInt(passRate) >= 95
-                          ? "text-emerald-500"
+                          ? "text-success"
                           : parseInt(passRate) >= 75
-                            ? "text-amber-500"
+                            ? "text-warning"
                             : "text-destructive",
                     )}
                   >
@@ -938,17 +859,17 @@ function InlineFailureTag({ tag }: { tag: FailureTag }) {
     regression: {
       label: "regression",
       className:
-        "text-destructive bg-destructive/10 border-destructive/30 dark:bg-destructive/20 dark:border-destructive/40",
+        "text-foreground bg-destructive/50 border-destructive/50",
     },
     flaky: {
       label: "flaky",
       className:
-        "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-800",
+        "text-foreground bg-warning/50 border-warning/50",
     },
     new: {
       label: "new",
       className:
-        "text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-950/50 dark:border-blue-800",
+        "text-foreground bg-info/50 border-info/50",
     },
   }[tag];
 

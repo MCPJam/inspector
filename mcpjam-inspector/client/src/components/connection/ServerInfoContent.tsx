@@ -19,6 +19,7 @@ import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
+import { ErrorCard } from "@/components/ui/error-card";
 
 interface ServerInfoContentProps {
   server: ServerWithName;
@@ -444,13 +445,16 @@ export function ServerInfoContent({
   return (
     <div className="space-y-4">
       {server.lastError ? (
-        <div className="rounded-md border border-red-300/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
-          <div className="font-medium">
-            {oauthFailureStep
-              ? `OAuth failed during ${oauthFailureStep.title}`
-              : "Last connection error"}
-          </div>
-          <div className="mt-1 break-all">{server.lastError}</div>
+        <div className="space-y-1">
+          {oauthFailureStep ? (
+            <div className="text-sm font-medium text-red-700 dark:text-red-300">
+              OAuth failed during {oauthFailureStep.title}
+            </div>
+          ) : null}
+          <ErrorCard
+            error={server.lastNormalizedError ?? server.lastError}
+            defaultOpen
+          />
         </div>
       ) : null}
       {needsReconnect ? (

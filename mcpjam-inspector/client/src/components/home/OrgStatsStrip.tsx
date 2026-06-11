@@ -1,7 +1,7 @@
 import {
   Users,
   FolderOpen,
-  Plug,
+  Server,
   FlaskConical,
   Zap,
   MessageSquare,
@@ -36,26 +36,24 @@ function formatCompact(n: number): string {
 
 function Stat({ icon: Icon, value, label, onClick, title }: StatProps) {
   const body = (
-    <span className="inline-flex items-center gap-1.5">
-      <Icon className="size-3.5 text-muted-foreground" />
+    <span className="inline-flex items-center gap-1">
+      <Icon className="size-3 text-muted-foreground/70" />
       {value === null ? (
-        <span className="inline-block h-3.5 w-5 animate-pulse rounded-sm bg-muted align-middle" />
+        <span className="inline-block h-3 w-4 animate-pulse rounded-sm bg-muted align-middle" />
       ) : (
-        <span className="font-semibold tabular-nums tracking-tight text-foreground">
-          {formatCompact(value)}
-        </span>
+        <span className="tabular-nums text-foreground/80">{formatCompact(value)}</span>
       )}
-      <span className="text-muted-foreground">{label}</span>
+      <span>{label}</span>
     </span>
   );
 
-  const base = "rounded-md px-2 py-1 text-[13px] leading-none transition-colors";
+  const base = "rounded-sm px-1 py-0.5 transition-colors";
   return onClick ? (
     <button
       type="button"
       onClick={onClick}
       title={title}
-      className={`${base} -mx-1 hover:bg-accent hover:text-accent-foreground`}
+      className={`${base} -mx-0.5 hover:text-foreground`}
     >
       {body}
     </button>
@@ -87,7 +85,7 @@ export function OrgStatsStrip({
   const navigate = useAppNavigate();
 
   return (
-    <div className="-mx-2 flex flex-wrap items-center gap-x-1.5 gap-y-2">
+    <div className="flex flex-wrap items-center gap-x-1 gap-y-1.5 text-xs text-muted-foreground">
       <Stat
         icon={Users}
         value={memberCount}
@@ -102,7 +100,7 @@ export function OrgStatsStrip({
       />
       <Sep />
       <Stat
-        icon={Plug}
+        icon={Server}
         value={totalServerCount}
         label={totalServerCount === 1 ? "server" : "servers"}
         onClick={() => navigate("/servers")}

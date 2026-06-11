@@ -4,9 +4,15 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/client";
-import type { MCPTask, TaskOptions } from "@mcpjam/sdk/browser";
+import type {
+  MCPTask,
+  NormalizedError,
+  TaskOptions,
+} from "@mcpjam/sdk/browser";
+import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { authFetch } from "@/lib/session-token";
+import { WebApiError } from "@/lib/apis/web/base";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 
@@ -83,6 +89,12 @@ export type ToolExecutionResponse =
     }
   | {
       error: string;
+      /**
+       * When the error originated from a hosted route that carried a
+       * describe-error block, surface it so consumers can render an
+       * ErrorCard directly without re-classifying from `error`.
+       */
+      normalized?: NormalizedError;
     };
 
 export async function listTools({
@@ -117,7 +129,16 @@ export async function listTools({
       } catch {}
       if (!res.ok) {
         const message = body?.error || `List tools failed (${res.status})`;
-        throw new Error(message);
+        const code = typeof body?.code === "string" ? body.code : null;
+        // Preserve the backend-attached describer block. Throwing a plain
+        // `Error(message)` here used to strip `normalized`, forcing the UI
+        // catch to fall back to client-side classification from just the
+        // message string and producing a less specific ErrorCard.
+        const normalized =
+          body && typeof body.normalized === "object" && body.normalized
+            ? (body.normalized as NormalizedError)
+            : undefined;
+        throw new WebApiError(res.status, code, message, normalized);
       }
       return attachToolMetadata(body as ListToolsResultWithMetadata);
     },
@@ -141,7 +162,16 @@ export async function executeToolApi(
         })) as ToolExecutionResponse;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { error: message };
+        // Validate the WebApiError-attached block with the shared SDK
+        // shape guard before forwarding it. Without this a partial
+        // payload (older server, schema drift, proxy mangling) would
+        // reach ResultsPanel as `normalizedError` and shadow the real
+        // `error` string at render (renderer prefers normalizedError).
+        const normalized =
+          error instanceof WebApiError && isNormalizedError(error.normalized)
+            ? error.normalized
+            : undefined;
+        return { error: message, ...(normalized ? { normalized } : {}) };
       }
     },
     local: async () => {
@@ -155,9 +185,19 @@ export async function executeToolApi(
         body = await res.json();
       } catch {}
       if (!res.ok) {
-        // Surface server-provided error message if present
+        // Surface server-provided error message if present, plus the
+        // server-attached describe-error block if it came back (the
+        // jsonError helper in /api/mcp/tools/execute always populates it).
         const message = body?.error || `Execute tool failed (${res.status})`;
-        return { error: message } as ToolExecutionResponse;
+        // Shape-validate before forwarding — same rationale as the
+        // hosted catch above. Bare `typeof === "object"` is not enough.
+        const normalized = isNormalizedError(body?.normalized)
+          ? (body.normalized as NormalizedError)
+          : undefined;
+        return {
+          error: message,
+          ...(normalized ? { normalized } : {}),
+        } as ToolExecutionResponse;
       }
 
       // Server now returns { status: "task_created", task: { taskId, ... } } for task-augmented requests

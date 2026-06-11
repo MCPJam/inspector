@@ -24,7 +24,7 @@ Configure the inspector via CLI flags when running `npx @mcpjam/inspector@latest
 npx @mcpjam/inspector@latest \
   --url http://localhost:3000/mcp \
   --name "My Server" \
-  --tab app-builder
+  --tab playground
 ```
 
 ### Available Flags
@@ -33,7 +33,7 @@ npx @mcpjam/inspector@latest \
 | ---------------------- | ------------------------------------- | --------------------------------- |
 | `--url <url>`          | HTTP transport URL to connect to      | `--url http://localhost:3000/mcp` |
 | `--name <name>`        | Display name for the server           | `--name "My Server"`              |
-| `--tab <tab>`          | Initial tab to navigate to            | `--tab app-builder`               |
+| `--tab <tab>`          | Initial tab to navigate to            | `--tab playground`                |
 | `--bearer <token>`     | Bearer token for Authorization header | `--bearer sk-xxx`                 |
 | `--oauth`              | Trigger OAuth flow on connect         | `--oauth`                         |
 | `--header <key=value>` | Custom header (repeatable)            | `-H "X-Custom=value"`             |
@@ -75,13 +75,13 @@ await inspector.stop();
 
 ### LaunchOptions
 
-| Option            | Type                     | Default | Description                                                                                |
-| ----------------- | ------------------------ | ------- | ------------------------------------------------------------------------------------------ |
-| `server.name`     | `string`                 | -       | Display name for the server in the UI                                                      |
-| `server.url`      | `string`                 | -       | HTTP URL of the MCP server                                                                 |
-| `server.headers`  | `Record<string, string>` | -       | Custom headers to send with requests                                                       |
-| `server.useOAuth` | `boolean`                | `false` | Trigger OAuth flow on connect                                                              |
-| `defaultTab`      | `string`                 | -       | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"chat"`, `"app-builder"` |
+| Option            | Type                     | Default | Description                                                                               |
+| ----------------- | ------------------------ | ------- | ----------------------------------------------------------------------------------------- |
+| `server.name`     | `string`                 | -       | Display name for the server in the UI                                                     |
+| `server.url`      | `string`                 | -       | HTTP URL of the MCP server                                                                |
+| `server.headers`  | `Record<string, string>` | -       | Custom headers to send with requests                                                      |
+| `server.useOAuth` | `boolean`                | `false` | Trigger OAuth flow on connect                                                             |
+| `defaultTab`      | `string`                 | -       | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"playground"` |
 
 ### InspectorInstance
 
@@ -111,7 +111,7 @@ async function main() {
       name: "Dev Server",
       url: "http://localhost:3000/mcp",
     },
-    defaultTab: "app-builder",
+    defaultTab: "playground",
   });
 
   console.log(`Inspector: ${inspector.url}`);
@@ -143,7 +143,7 @@ export default defineConfig({
         name: "My MCP Server",
         url: "http://localhost:3000/mcp",
       },
-      defaultTab: "app-builder",
+      defaultTab: "playground",
     }),
   ],
 });
@@ -153,11 +153,11 @@ When you run `npm run dev`, the inspector automatically launches and connects to
 
 ### Plugin Options
 
-| Option       | Type      | Default         | Description                                     |
-| ------------ | --------- | --------------- | ----------------------------------------------- |
-| `server`     | `object`  | -               | Server configuration (same as programmatic API) |
-| `defaultTab` | `string`  | `"app-builder"` | Initial tab to navigate to                      |
-| `autoLaunch` | `boolean` | `true`          | Launch inspector when Vite starts               |
+| Option       | Type      | Default          | Description                                     |
+| ------------ | --------- | ---------------- | ----------------------------------------------- |
+| `server`     | `object`  | -                | Server configuration (same as programmatic API) |
+| `defaultTab` | `string`  | `"playground"`   | Initial tab to navigate to                      |
+| `autoLaunch` | `boolean` | `true`           | Launch inspector when Vite starts               |
 
 ## Feedback Wanted
 

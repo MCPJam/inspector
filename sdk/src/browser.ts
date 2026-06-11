@@ -14,6 +14,23 @@ export {
 } from "./mcp-client-manager/capabilities.js";
 export { redactSensitiveValue } from "./redaction.js";
 
+// Error describer — pure, browser-safe. Same module exported from the
+// root entrypoint; client code MUST import from this `/browser` subpath
+// to avoid pulling Node-only deps via root `@mcpjam/sdk`.
+export {
+  describeError,
+  describeAsSlug,
+  isNormalizedError,
+  ERROR_CATALOG,
+  extractNodeErrno,
+  RETRYABLE_NODE_ERROR_CODES,
+} from "./error-describer/index.js";
+export type {
+  NormalizedError,
+  ErrorCatalogEntry,
+  ErrorCatalogSlug,
+} from "./error-describer/index.js";
+
 export type {
   BaseServerConfig,
   HttpServerConfig,
@@ -190,3 +207,20 @@ export {
   isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
+
+// HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).
+// Browser-safe: the class wraps the pure canonicalizer + Web Crypto hash.
+// `McpProtocolVersion` is omitted here — already exported just above.
+export { Host } from "./host-config/index.js";
+export type {
+  HostInit,
+  HostJson,
+  HostMcp,
+  HostServerOverride,
+  HostConnectionDefaults,
+  HostStyleId,
+  ServerId,
+  CspDomainSet,
+  OpenAiAppsCapabilities,
+  McpAppsCapabilities,
+} from "./host-config/index.js";

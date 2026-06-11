@@ -3,6 +3,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+import {
+  PredicatesList,
+  parseIterationPredicates,
+} from "./predicates-list";
 import { TraceViewer } from "./trace-viewer";
 import {
   MessageSquare,
@@ -247,7 +251,7 @@ export function IterationDetails({
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
-  ) as unknown as (args: { blobId: string }) => Promise<any>;
+  ) as unknown as (args: { iterationId: string }) => Promise<any>;
 
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -270,24 +274,33 @@ export function IterationDetails({
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
 
+  // Source-aware trace identity. New iterations carry `chatSessionId`
+  // (unified path); legacy iterations carry `blob`. The hook gates on
+  // either being present and re-runs when either changes.
+  const traceSourceKey = iteration.blob ?? iteration.chatSessionId;
+
   useEffect(() => {
     let cancelled = false;
     async function run() {
-      if (!iteration.blob) {
+      if (!traceSourceKey) {
         prevBlobIdRef.current = undefined;
         setBlob(null);
         setLoading(false);
         setError(null);
         return;
       }
-      if (prevBlobIdRef.current !== iteration.blob) {
-        prevBlobIdRef.current = iteration.blob;
+      if (prevBlobIdRef.current !== traceSourceKey) {
+        prevBlobIdRef.current = traceSourceKey;
         setIsBlobErrorDetailsOpen(false);
       }
       setLoading(true);
       setError(null);
       try {
-        const data = await getBlob({ blobId: iteration.blob });
+        // Backend `getTestIterationBlob` is source-aware: it returns the
+        // chatSessions transcript when `iteration.chatSessionId` is set,
+        // otherwise reads from `iteration.blob`. Both paths return the
+        // same envelope shape to `TraceViewer`.
+        const data = await getBlob({ iterationId: iteration._id });
         if (!cancelled) setBlob(data);
       } catch (e: any) {
         if (!cancelled) {
@@ -302,7 +315,7 @@ export function IterationDetails({
     return () => {
       cancelled = true;
     };
-  }, [iteration.blob, getBlob, blobRetryTick]);
+  }, [traceSourceKey, getBlob, blobRetryTick]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;
@@ -588,7 +601,8 @@ export function IterationDetails({
 
   const hasToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
-  const traceFirst = layoutMode === "full" && Boolean(iteration.blob);
+  const hasTrace = Boolean(iteration.blob || iteration.chatSessionId);
+  const traceFirst = layoutMode === "full" && hasTrace;
   const toolCallsSummary = formatToolCallsSummary(
     expectedToolCalls,
     actualToolCalls,
@@ -720,7 +734,7 @@ export function IterationDetails({
   );
 
   const toolCallsSection =
-    hasToolCalls && !iteration.blob ? (
+    hasToolCalls && !hasTrace ? (
       layoutMode === "full" ? (
         <Collapsible
           open={toolCallsSectionOpen}
@@ -784,7 +798,20 @@ export function IterationDetails({
       )
     ) : null;
 
-  const traceSection = iteration.blob ? (
+  const predicates = useMemo(
+    () => parseIterationPredicates(iteration.metadata),
+    [iteration.metadata],
+  );
+  const predicatesSection = predicates ? (
+    <div className="space-y-2" data-testid="iteration-predicates-section">
+      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+        <div className="text-xs font-semibold">Predicate Gate</div>
+      </div>
+      <PredicatesList predicates={predicates} />
+    </div>
+  ) : null;
+
+  const traceSection = hasTrace ? (
     <div
       className={cn(
         "flex flex-col",
@@ -800,7 +827,7 @@ export function IterationDetails({
         className={cn(
           layoutMode === "compact" && "rounded-md bg-muted/20 p-3",
           layoutMode === "full" &&
-            iteration.blob &&
+            hasTrace &&
             !error &&
             "flex min-h-0 flex-1 flex-col",
           layoutMode === "full" &&
@@ -842,7 +869,7 @@ export function IterationDetails({
   ) : null;
 
   const caseInsightFallback =
-    caseInsightSlot && !iteration.blob ? (
+    caseInsightSlot && !hasTrace ? (
       <div className="min-w-0" data-testid="iteration-case-insight-fallback">
         {caseInsightSlot}
       </div>
@@ -874,8 +901,8 @@ export function IterationDetails({
                   className={cn(
                     "rounded-full px-2 py-0.5 text-[10px] font-medium",
                     summary.passed
-                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                      : "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+                      ? "bg-success/50 text-foreground"
+                      : "bg-destructive/50 text-foreground",
                   )}
                 >
                   {summary.passed ? "Passed" : "Failed"}
@@ -889,7 +916,7 @@ export function IterationDetails({
                 {summary.actualToolCalls.length}
               </div>
               {!summary.passed ? (
-                <div className="text-[10px] text-rose-700 dark:text-rose-400">
+                <div className="text-[10px] text-destructive">
                   {formatToolCallsSummary(
                     summary.expectedToolCalls,
                     summary.actualToolCalls,
@@ -961,10 +988,12 @@ export function IterationDetails({
         <>
           {traceSection}
           {toolCallsSection}
+          {predicatesSection}
         </>
       ) : (
         <>
           {toolCallsSection}
+          {predicatesSection}
           {traceSection}
         </>
       )}

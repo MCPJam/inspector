@@ -1,7 +1,7 @@
 /**
  * Marketing compare-plans table: product rows mirror `mcpjam_pricing_page.html`;
- * tier caps and org/project limits follow the internal tier-limits spec (projects,
- * members, servers, audit retention, project modes, SSO, custom roles).
+ * eval caps and enterprise security features carry the commercial
+ * distinctions.
  */
 
 export type ComparePlanCell =
@@ -20,6 +20,8 @@ export type ComparePlanRow = {
 
 export type ComparePlanSection = {
   title: string;
+  /** When true, rows render without the uppercase section header row. */
+  hideTitle?: boolean;
   rows: ComparePlanRow[];
 };
 
@@ -29,31 +31,20 @@ function t(text: string, emphasize?: boolean): ComparePlanCell {
   return { kind: "text", text, emphasize };
 }
 
-/** Section order: organization & projects, evaluations, LLM usage, security, support, standard features. */
+/** Section order: credits & seats, evaluations, security, support, standard features. */
 export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
   {
-    title: "Organization & projects",
+    title: "Credits & seats",
+    hideTitle: true,
     rows: [
       {
+        label: "Included credits",
+        free: t("200 / day"),
+        team: t("10,000 / seat / mo", true),
+        enterprise: t("Custom", true),
+      },
+      {
         label: "Seat limit",
-        free: t("5"),
-        team: t("Unlimited", true),
-        enterprise: t("Custom", true),
-      },
-      {
-        label: "Projects",
-        free: t("3"),
-        team: t("Unlimited", true),
-        enterprise: t("Custom", true),
-      },
-      {
-        label: "Project access levels",
-        free: x,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Servers per project",
         free: t("Unlimited"),
         team: t("Unlimited", true),
         enterprise: t("Unlimited", true),
@@ -64,65 +55,17 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     title: "Evaluations",
     rows: [
       {
+        label: "Eval iterations",
+        free: t("25 / day"),
+        team: t("5,000 / mo", true),
+        enterprise: t("Custom", true),
+      },
+      {
         label: "Traces",
         tooltipKey: "Evaluation traces",
         free: c,
         team: c,
         enterprise: c,
-      },
-      {
-        label: "Playground",
-        free: c,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Triage Insights",
-        free: x,
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Insights Data Export",
-        free: x,
-        team: x,
-        enterprise: c,
-      },
-      {
-        label: "Eval iteration cap",
-        free: t("100 iter. / mo"),
-        team: t("5,000 iter. / mo", true),
-        enterprise: t("Custom", true),
-      },
-      {
-        label: "Eval iteration overage",
-        tooltipKey: "Eval iteration overage",
-        free: x,
-        team: t("$0.02 / iter.", true),
-        enterprise: t("Custom", true),
-      },
-    ],
-  },
-  {
-    title: "LLM Usage",
-    rows: [
-      {
-        label: "Open models",
-        free: t("Rate limited"),
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Frontier models",
-        free: t("Rate limited"),
-        team: c,
-        enterprise: c,
-      },
-      {
-        label: "Free daily credits / user",
-        free: x,
-        team: t("$5", true),
-        enterprise: t("Custom", true),
       },
     ],
   },
@@ -130,16 +73,16 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     title: "Security & Compliance",
     rows: [
       {
+        label: "Role-based access control (RBAC)",
+        free: t("Basic"),
+        team: t("Basic", true),
+        enterprise: t("Custom", true),
+      },
+      {
         label: "SSO / SAML",
         free: x,
         team: x,
         enterprise: c,
-      },
-      {
-        label: "Role-based access control (RBAC)",
-        free: x,
-        team: t("Basic", true),
-        enterprise: t("Custom", true),
       },
       {
         label: "Audit log retention",
@@ -150,7 +93,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       {
         label: "Data processing agreement (DPA)",
         free: x,
-        team: t("Click-through", true),
+        team: x,
         enterprise: t("Custom", true),
       },
       {

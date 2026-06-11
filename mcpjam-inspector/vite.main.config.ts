@@ -47,7 +47,25 @@ export default defineConfig({
         ...builtinModules.map((m) => `node:${m}`),
       ],
       output: {
-        inlineDynamicImports: true,
+        // Do NOT inline dynamic imports. main.ts uses `await import(...)`
+        // for `../server/app.js` so that `process.env.SERVER_PORT` (set
+        // after the port probe) is picked up by `server/config.ts` at
+        // module evaluation. With `inlineDynamicImports: true`, Rollup
+        // hoists that module to the top of the bundle and evaluates it
+        // eagerly at startup — defeating the fix for PR #2418's
+        // fallback-port-not-synced regression. Keeping dynamic imports
+        // as separate chunks preserves the deferral semantics.
+        inlineDynamicImports: false,
+        // Pin every emitted JS file to `.cjs`. package.json has
+        // `"type": "module"`, so Node treats unknown `.js` files as ESM.
+        // The entry is already `.cjs` via `lib.fileName`, and Vite's
+        // current lib-mode default happens to give chunks `.cjs` too,
+        // but that's implicit. Make it explicit so a future Vite version
+        // can't silently emit a `.js` chunk that main.cjs's
+        // `require(...)` would then fail to load with "exports is not
+        // defined".
+        entryFileNames: "[name].cjs",
+        chunkFileNames: "[name]-[hash].cjs",
       },
     },
   },

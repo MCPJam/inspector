@@ -54,11 +54,11 @@ function getStatusDot(entry: EvalSuiteOverviewEntry): {
   const run = entry.latestRun;
   if (!run) return { label: "No runs", dotClass: "bg-muted-foreground/40" };
   if (run.status === "running" || run.status === "pending")
-    return { label: "Running", dotClass: "bg-amber-500 animate-pulse" };
+    return { label: "Running", dotClass: "bg-warning/50 animate-pulse" };
   if (run.result === "passed")
-    return { label: "Passed", dotClass: "bg-emerald-500" };
+    return { label: "Passed", dotClass: "bg-success/50" };
   if (run.result === "failed")
-    return { label: "Failed", dotClass: "bg-destructive" };
+    return { label: "Failed", dotClass: "bg-destructive/50" };
   return { label: run.status, dotClass: "bg-muted-foreground/40" };
 }
 
@@ -289,18 +289,18 @@ export function TagAggregationPanel({
           const cardBorderClass = !hasData
             ? "border-muted-foreground/20"
             : group.passRate >= 95
-              ? "border-emerald-500/40"
+              ? "border-success/50"
               : group.passRate >= 75
-                ? "border-amber-500/40"
-                : "border-destructive/40";
+                ? "border-warning/50"
+                : "border-destructive/50";
 
           const barColorClass = !hasData
             ? "bg-muted-foreground/30"
             : group.passRate >= 95
-              ? "bg-emerald-500/70"
+              ? "bg-success/50"
               : group.passRate >= 75
-                ? "bg-amber-500/70"
-                : "bg-destructive/70";
+                ? "bg-warning/50"
+                : "bg-destructive/50";
 
           return (
             <div
@@ -338,7 +338,7 @@ export function TagAggregationPanel({
                   <span
                     className={cn(
                       "flex items-center gap-1 text-xs",
-                      trendDelta > 0 ? "text-emerald-500" : "text-destructive",
+                      trendDelta > 0 ? "text-success" : "text-destructive",
                     )}
                   >
                     {trendDelta > 0 ? (
@@ -615,7 +615,7 @@ export function TagAggregationPanel({
                     {group.totals.passed + group.totals.failed > 0 ? (
                       <>
                         <span className="text-xs text-muted-foreground">
-                          <span className="text-emerald-600">
+                          <span className="text-success">
                             {group.totals.passed} passed
                           </span>
                           {" · "}
@@ -659,9 +659,9 @@ export function TagAggregationPanel({
                         suitePassRate === null
                           ? "text-muted-foreground"
                           : suitePassRate >= 95
-                            ? "text-emerald-500"
+                            ? "text-success"
                             : suitePassRate >= 75
-                              ? "text-amber-500"
+                              ? "text-warning"
                               : "text-destructive";
 
                       return (
@@ -704,7 +704,7 @@ export function TagAggregationPanel({
                           <div className="w-20 text-right text-xs text-muted-foreground">
                             {total > 0 ? (
                               <>
-                                <span className="text-emerald-600">
+                                <span className="text-success">
                                   {entry.totals.passed}
                                 </span>
                                 {" / "}

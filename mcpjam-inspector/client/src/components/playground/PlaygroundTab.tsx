@@ -48,7 +48,7 @@ interface PlaygroundTabProps {
   /**
    * Shared (Convex) project id for the active project, when synced. Used as
    * the canonical previewed-host storage scope so this tab agrees with the
-   * global host bar and ClientsTab. Falls back to `activeProjectId` for
+   * global host bar and HostsTab. Falls back to `activeProjectId` for
    * CLI / no-cloud-sync flows.
    */
   sharedProjectId?: string | null;

@@ -31,7 +31,7 @@ import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
-import { ActiveClientServerReconciler } from "./components/ActiveClientServerReconciler";
+import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -47,11 +47,23 @@ import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
-import { ClientsTab } from "./components/ClientsTab";
+import { HostsTab } from "./components/HostsTab";
+import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
+import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
+import { motion } from "framer-motion";
+import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
-import { MCPSidebar } from "./components/mcp-sidebar";
-import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
+import {
+  MCPSidebar,
+  computeHostsHubFlagEnabled,
+} from "./components/mcp-sidebar";
+import {
+  SidebarInset,
+  SidebarProvider,
+  useSidebar,
+} from "./components/ui/sidebar";
+import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
 import {
   Alert,
   AlertDescription,
@@ -87,11 +99,7 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
 // Import global styles
 import "./index.css";
-import {
-  detectEnvironment,
-  detectPlatform,
-  isPostHogBooleanFlagOn,
-} from "./lib/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -171,6 +179,10 @@ import {
   readCliSignInReturnPath,
 } from "./lib/cli-signin-return-path";
 import {
+  clearApiKeysSignInReturnPath,
+  readApiKeysSignInReturnPath,
+} from "./lib/api-keys-signin-return-path";
+import {
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
@@ -190,7 +202,7 @@ import {
 import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
-  buildClientsPath,
+  buildHostsPath,
   buildOrganizationPath,
   buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
@@ -395,7 +407,8 @@ type AppChromeHeaderProps = ComponentProps<typeof Header> & {
 };
 
 function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
-  if (hidden) {
+  const { isMobile } = useSidebar();
+  if (hidden && !isMobile) {
     return null;
   }
 
@@ -438,7 +451,9 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "tracing":
       return <TracingRoute />;
     case "clients":
-      return <ClientsRoute />;
+      return <HostsRoute />;
+    case "host-compare":
+      return <HostCompareRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "playground":
@@ -502,11 +517,11 @@ export function ServersRoute() {
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
-  // happens in ClientsRoute via the URL → hostsTabSelectedHostId effect, so
+  // happens in HostsRoute via the URL → hostsTabSelectedHostId effect, so
   // here we only need to drive the URL.
   const handleSelectHost = useCallback(
     (next: string | null) => {
-      navigate(next ? buildClientsPath(next) : routePaths.servers);
+      navigate(next ? buildHostsPath(next) : routePaths.servers);
     },
     [navigate],
   );
@@ -516,7 +531,7 @@ export function ServersRoute() {
   }
 
   return (
-    <ClientsTab
+    <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
@@ -575,7 +590,7 @@ function ServersTabBody() {
   );
 }
 
-export function ClientsRoute() {
+export function HostsRoute() {
   const {
     convexProjectId,
     hostsHubFlagEnabled,
@@ -596,7 +611,7 @@ export function ClientsRoute() {
   }, [params.hostId]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
-  // state so `GlobalClientBar`, `onCanvasReplaceHost`, and other surfaces that
+  // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
     if (hostsTabSelectedHostId === urlHostId) return;
@@ -605,7 +620,7 @@ export function ClientsRoute() {
 
   const handleSelectHost = useCallback(
     (next: string | null) => {
-      navigate(next ? buildClientsPath(next) : routePaths.clients);
+      navigate(next ? buildHostsPath(next) : routePaths.hosts);
     },
     [navigate],
   );
@@ -615,13 +630,56 @@ export function ClientsRoute() {
   }
 
   return (
-    <ClientsTab
+    <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={urlHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
+  );
+}
+
+export function HostCompareRoute() {
+  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
+    useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const navigate = useAppNavigate();
+
+  const compareView = (
+    <HostConfigCompareView
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+    />
+  );
+
+  // Mirror the gating HostsRoute uses: when the hosts hub is off, Compare
+  // has no peer Servers/Client tabs to switch to, so render bare.
+  if (!hostsHubFlagEnabled || !isAuthenticated) {
+    return compareView;
+  }
+
+  return (
+    <motion.div
+      key="host-compare"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
+      <ConnectViewHeader
+        value="compare"
+        previewedHostId={previewedHostId}
+        onChange={(next) => {
+          if (next === "servers") {
+            navigate(routePaths.servers);
+          } else if (next === "host" && previewedHostId) {
+            navigate(buildHostsPath(previewedHostId));
+          }
+        }}
+      />
+      <div className="min-h-0 flex-1">{compareView}</div>
+    </motion.div>
   );
 }
 
@@ -675,21 +733,22 @@ export function ToolsRoute() {
 
 export function EvalsRoute() {
   const {
-    playgroundEnabled,
+    evaluateUiEnabled,
     billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
     ensureServersReady,
     handleContinueEvalInChat,
+    handleConnect,
   } = useAppRouteContext();
 
-  if (playgroundEnabled === false) {
+  if (evaluateUiEnabled !== true) {
     return (
       <EmptyState
         icon={Construction}
-        title="Playground Coming Soon"
-        description="The Playground is under construction. Stay tuned!"
+        title="Evaluate Coming Soon"
+        description="The Evaluate suite is under construction. Stay tuned!"
       />
     );
   }
@@ -703,6 +762,7 @@ export function EvalsRoute() {
       projectId={convexProjectId}
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
+      handleConnect={handleConnect}
     />
   );
 }
@@ -1118,9 +1178,16 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
-  const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
+  // Desktop builds default the Hosts/Connect rollout on (PostHog may be
+  // unreachable on the packaged Electron app), while hosted web keeps the
+  // PostHog gate. See `computeHostsHubFlagEnabled` for details.
+  const hostsHubFlagEnabled = computeHostsHubFlagEnabled({
+    hostsFlag: hostsEnabled,
+    hostedMode: HOSTED_MODE,
+  });
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
-  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
+  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
@@ -1183,6 +1250,7 @@ export default function App() {
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
+  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   useEffect(() => {
@@ -1389,7 +1457,6 @@ export default function App() {
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
-  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug"
@@ -1429,13 +1496,19 @@ export default function App() {
         ? readBillingSignInReturnPath()
         : null;
       const cliReturnPath = readCliSignInReturnPath();
+      const apiKeysReturnPath = readApiKeysSignInReturnPath();
       clearChatboxSignInReturnPath();
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
+      clearApiKeysSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ?? billingReturnPath ?? cliReturnPath ?? "/"
+        chatboxReturnPath ??
+          billingReturnPath ??
+          cliReturnPath ??
+          apiKeysReturnPath ??
+          "/"
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -2842,22 +2915,26 @@ export default function App() {
         }
       : undefined;
 
+  const isEvalsTab = activeTab === "evals" || activeTab === "ci-evals";
   const globalHostBarProps =
-    hostsHubFlagEnabled && isAuthenticated && convexProjectId
+    hostsHubFlagEnabled && isAuthenticated && convexProjectId && !isEvalsTab
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
             setHostsTabSelectedHostId(hostId);
-            navigateApp(buildClientsPath(hostId));
+            navigateApp(buildHostsPath(hostId));
           },
-          // Only present while the host canvas is open — re-targets it on
-          // dropdown change so the diagram tracks the selected host instead
-          // of stuck on whatever was first opened via Edit.
+          // Active whenever the clients tab is mounted — the URL is the
+          // source of truth for which host the canvas renders, so every
+          // dropdown/cycle change must push `/clients/<hostId>`. Without
+          // this, bare `/clients` (no `:hostId`) renders the cached
+          // `previewedHostId` and clicking a different host only updates
+          // the preview store, leaving the canvas stuck on the original.
           onCanvasReplaceHost:
-            activeTab === "clients" && hostsTabSelectedHostId
+            activeTab === "clients"
               ? (hostId: string) => {
                   setHostsTabSelectedHostId(hostId);
-                  navigateApp(buildClientsPath(hostId), { replace: true });
+                  navigateApp(buildHostsPath(hostId), { replace: true });
                 }
               : undefined,
         }
@@ -2918,6 +2995,7 @@ export default function App() {
     navigateToTarget,
     pendingDashboardOAuth,
     playgroundEnabled,
+    evaluateUiEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,
@@ -2968,7 +3046,7 @@ export default function App() {
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
-          hidden={playgroundOnboarding}
+          hidden={playgroundOnboarding || activeTab === "home"}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
@@ -2994,6 +3072,11 @@ export default function App() {
           </AppRouteReactContext.Provider>
         </div>
       </SidebarInset>
+      <AgentSidePanelMount
+        projectId={activeProjectId ?? null}
+        organizationId={activeOrganizationId ?? null}
+        activeTab={activeTab}
+      />
       <Dialog
         open={showTrialDecisionModal}
         onOpenChange={(open) => {
@@ -3068,7 +3151,7 @@ export default function App() {
           setSelectedServerNames: setSelectedMCPConfigs,
         }}
       >
-        <ActiveClientServerReconciler
+        <ActiveHostServerReconciler
           projectId={convexProjectId}
           isAuthenticated={isAuthenticated}
           activeHost={activeHost}
@@ -3084,6 +3167,7 @@ export default function App() {
           <Toaster />
           <MCPJamLimitDialog />
           <div
+            data-testid="app-shell"
             aria-hidden={shouldShowBillingHandoffOverlay || undefined}
             className={
               shouldShowBillingHandoffOverlay

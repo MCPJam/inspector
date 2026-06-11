@@ -14,9 +14,14 @@ on:
         required: false
         type: string
 
+env:
+  NODE_VERSION: "24.14.0"
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    outputs:
+      base_url: ${{ steps.target.outputs.base_url }}
     steps:
       - name: Resolve staging URL
         id: target
@@ -65,3 +70,48 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Target: \`$BASE_URL\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Checked: \`/health\`, \`/api/mcp/health\`, \`/api/apps/health\`, unauthenticated \`/api/web/tools/list\`" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    needs: smoke
+    runs-on: ubuntu-latest
+    # Non-gating during the initial soak. deploy-staging.yml calls this workflow
+    # and release.yml polls deploy-staging.yml success as the release gate, so a
+    # hard failure here would gate releases. Remove once the suite is promoted.
+    continue-on-error: true
+    # Drives a deployed URL; never launches Electron, so skip its binary download.
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright smoke against staging
+        # PLAYWRIGHT_BASE_URL makes the config skip the local webServer and drive
+        # the deployed URL, so no inspector build is needed here. Sourced from the
+        # smoke job's output because step outputs are job-local.
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ needs.smoke.outputs.base_url }}
+        run: npm run test:e2e -w @mcpjam/inspector
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-staging
+          path: |
+            mcpjam-inspector/playwright-report/
+            mcpjam-inspector/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -392,7 +392,11 @@ describe("ServerConnectionCard", () => {
       expect(screen.getByText("Connection refused")).toBeInTheDocument();
     });
 
-    it("truncates long error messages", () => {
+    it("renders long error messages via the ErrorCard", () => {
+      // The ErrorCard owns details disclosure; we just confirm the rich
+      // surface shows up (title + Learn more link) rather than the old
+      // ad-hoc truncation. The full message lives in the collapsed
+      // details panel.
       const longError = "A".repeat(150);
       const server = createServer({
         connectionStatus: "failed",
@@ -400,8 +404,7 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      // Should show truncated version
-      expect(screen.getByText(`${"A".repeat(140)}...`)).toBeInTheDocument();
+      expect(screen.getByText("Learn more")).toBeInTheDocument();
     });
 
     it("shows troubleshooting link when connection failed", () => {

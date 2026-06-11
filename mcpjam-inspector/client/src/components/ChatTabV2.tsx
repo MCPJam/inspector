@@ -11,6 +11,10 @@ import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
+import {
+  canManageOrgCredits,
+  useOrganizationQueries,
+} from "@/hooks/useOrganizations";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -296,6 +300,16 @@ export function ChatTabV2({
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const organizationId = activeProject?.organizationId ?? null;
+  // Only owners/admins/creators may buy credits (mirrors the backend gate).
+  // Non-managers see an "ask org admin" hint instead of the buy button.
+  const { sortedOrganizations } = useOrganizationQueries({
+    isAuthenticated: isConvexAuthenticated,
+  });
+  const canManageOrgCreditsForActiveOrg = canManageOrgCredits(
+    organizationId
+      ? sortedOrganizations.find((org) => org._id === organizationId)
+      : null
+  );
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
@@ -457,11 +471,11 @@ export function ChatTabV2({
   });
   const senderProfileByUserId = useMemo(
     () => buildProjectOwnerProfileByUserId(senderActiveMembers),
-    [senderActiveMembers],
+    [senderActiveMembers]
   );
   const currentUserForSender = useQuery(
     "users:getCurrentUser" as any,
-    isConvexAuthenticated ? ({} as any) : "skip",
+    isConvexAuthenticated ? ({} as any) : "skip"
   ) as { _id?: string } | undefined;
   const senderFallbackUserId =
     reactiveHistorySession?.userId ??
@@ -475,7 +489,7 @@ export function ChatTabV2({
         profileByUserId: senderProfileByUserId,
         fallbackOwnerUserId: senderFallbackUserId,
       }),
-    [senderProfileByUserId, senderFallbackUserId],
+    [senderProfileByUserId, senderFallbackUserId]
   );
   // Stamp the current user onto live outgoing prompts in shared sessions so
   // the transcript can attribute them immediately, before persistence
@@ -2179,6 +2193,7 @@ export function ChatTabV2({
                               errorMessage.isMCPJamPlatformError
                             }
                             canTopUp={canShowTopupCta}
+                            canManageCredits={canManageOrgCreditsForActiveOrg}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -2324,6 +2339,11 @@ export function ChatTabV2({
                               executionConfig?.progressiveToolDiscovery,
                             respectToolVisibility:
                               executionConfig?.respectToolVisibility,
+                            // Same rationale: forward attached built-in
+                            // tools so each per-model card resolves the
+                            // same ToolSet the single-model path would.
+                            builtInToolIds:
+                              executionConfig?.builtInToolIds,
                           }}
                           hostedContext={{
                             ...hostedContext,
@@ -2440,6 +2460,7 @@ export function ChatTabV2({
                                 errorMessage.isMCPJamPlatformError
                               }
                               canTopUp={canShowTopupCta}
+                              canManageCredits={canManageOrgCreditsForActiveOrg}
                               onTopUp={handleOpenTopupDialog}
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
@@ -2544,6 +2565,7 @@ export function ChatTabV2({
                               errorMessage.isMCPJamPlatformError
                             }
                             canTopUp={canShowTopupCta}
+                            canManageCredits={canManageOrgCreditsForActiveOrg}
                             onTopUp={handleOpenTopupDialog}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
@@ -2773,6 +2795,7 @@ export function ChatTabV2({
           onOpenChange={handleTopupDialogOpenChange}
           chatSessionId={chatSessionId}
           lastUserMessage={pendingResendMessage}
+          organizationId={organizationId}
           source="chat_banner"
         />
       )}

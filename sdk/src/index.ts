@@ -242,18 +242,18 @@ export type {
   OAuthTraceStepStatus,
 } from "./oauth/state-machines/trace.js";
 
-// EvalAgent interface (for deterministic testing without concrete TestAgent)
-export type { EvalAgent, PromptOptions } from "./EvalAgent.js";
+// HostExecutor interface (for deterministic testing without concrete HostRunner)
+export type { HostExecutor, PromptOptions } from "./HostExecutor.js";
 
-// AI SDK stop condition helpers re-exported for TestAgent.prompt()
+// AI SDK stop condition helpers re-exported for HostRunner.run()
 export { hasToolCall, stepCountIs } from "ai";
 export type { StopCondition } from "ai";
 
-// TestAgent
-export { TestAgent } from "./TestAgent.js";
-export type { TestAgentConfig } from "./TestAgent.js";
+// HostRunner
+export { HostRunner } from "./HostRunner.js";
+export type { HostRunnerConfig } from "./HostRunner.js";
 
-// PromptResult class (preferred over TestAgent's interface)
+// PromptResult class (preferred over HostRunner's interface)
 export { PromptResult } from "./PromptResult.js";
 
 // Validators for tool call matching
@@ -415,6 +415,24 @@ export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 // Skill reference (SKILL.md content for agent brief generation)
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 
+// Error describer — single source of truth for friendly error titles,
+// likely causes, next steps, and docs anchors. Browser-safe; mirrored on
+// `@mcpjam/sdk/browser` so client code can call `describeError` without
+// dragging in Node-only deps.
+export {
+  describeError,
+  describeAsSlug,
+  isNormalizedError,
+  ERROR_CATALOG,
+  extractNodeErrno,
+  RETRYABLE_NODE_ERROR_CODES,
+} from "./error-describer/index.js";
+export type {
+  NormalizedError,
+  ErrorCatalogEntry,
+  ErrorCatalogSlug,
+} from "./error-describer/index.js";
+
 // OAuth conformance
 export {
   OAuthConformanceTest,
@@ -536,3 +554,36 @@ export type {
   EvalToolCall,
   EvalToolCallMatchResult,
 } from "./matchers.js";
+
+// HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).
+// SOURCE OF TRUTH for the host shape + canonicalizer + hash; the Convex
+// backend hand-mirrors it under a golden-vector parity test. The canonicalizer
+// itself is internal — `Host.toJSON()` / `Host.hash()` are the public seam.
+// `McpProtocolVersion` is intentionally omitted here — already exported above.
+export {
+  Host,
+  HostRuntime,
+  isHostJson,
+  snapshotHostSource,
+  assertHostServersKnown,
+  resolveKnownServerIds,
+} from "./host-config/index.js";
+export type {
+  HostServerRegistry,
+  HostSource,
+  HostRuntimeDefaults,
+  HostRuntimeManager,
+} from "./host-config/index.js";
+export type {
+  HostInit,
+  HostJson,
+  HostMcp,
+  HostComputer,
+  HostServerOverride,
+  HostConnectionDefaults,
+  HostStyleId,
+  ServerId,
+  CspDomainSet,
+  OpenAiAppsCapabilities,
+  McpAppsCapabilities,
+} from "./host-config/index.js";

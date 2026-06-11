@@ -44,6 +44,19 @@ export async function fetchRuntimeServerSecrets(args: {
   accessScope?: "project_member" | "chat_v2";
   chatboxId?: string;
   accessVersion?: number;
+  /**
+   * When the caller authenticated via a WorkOS API key, Inspector exchanges
+   * the user bearer for `INSPECTOR_SERVICE_TOKEN` + `x-mcpjam-acting-as`
+   * (the WorkOS user id / Convex `externalId`) + `x-mcpjam-acting-in-org`
+   * (the org the key is bound to). Passed by `createAuthorizedManager` so
+   * secret reveals during the `/api/v1/*` flow follow the same trust model
+   * as `authorizeBatch`. The bearer middleware sets
+   * `authMethod="workos_api_key"`; callers just forward those Context values.
+   */
+  workosApiKeyActingAs?: {
+    workosUserId: string;
+    mcpjamOrganizationId: string;
+  };
 }): Promise<ServerSecretsResult> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -62,12 +75,29 @@ export async function fetchRuntimeServerSecrets(args: {
 
   let response: Response;
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (args.workosApiKeyActingAs) {
+      const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+      if (!serviceToken) {
+        throw new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
+        );
+      }
+      headers["Authorization"] = `Bearer ${serviceToken}`;
+      headers["x-mcpjam-acting-as"] = args.workosApiKeyActingAs.workosUserId;
+      headers["x-mcpjam-acting-in-org"] =
+        args.workosApiKeyActingAs.mcpjamOrganizationId;
+    } else {
+      headers["Authorization"] = `Bearer ${args.bearerToken}`;
+    }
+
     response = await fetch(`${convexUrl}/web/server/reveal-secrets`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${args.bearerToken}`,
-      },
+      headers,
       body: JSON.stringify({
         purpose: "runtime",
         projectId: args.projectId,

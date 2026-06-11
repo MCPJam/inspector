@@ -7,6 +7,7 @@ import {
   createDiscoveryState,
   decideProgressivePlan,
   estimateTokens,
+  gateToolsToActiveSubset,
   lookupToolIdByModelName,
   META_TOOL_LOAD,
   META_TOOL_NAMES,
@@ -388,5 +389,65 @@ describe("commitNewlyLoaded", () => {
     state.newlyLoadedToolIds.add("a");
     const promoted = commitNewlyLoaded(state);
     expect(promoted).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gateToolsToActiveSubset (execution gate)
+// ---------------------------------------------------------------------------
+
+describe("gateToolsToActiveSubset", () => {
+  // Cataloged MCP tools plus tools injected AFTER the catalog was built (an
+  // eval-style `computer` tool, and a meta-tool) — mirrors the eval Computer Use
+  // wiring where the harness tools are merged in downstream of plan creation.
+  const cataloged: ToolSet = {
+    asana_create_task: makeMcpTool({ serverId: "asana", fields: {} }),
+    asana_get_task: makeMcpTool({ serverId: "asana", fields: {} }),
+  } as unknown as ToolSet;
+  const catalog = buildToolCatalog(cataloged);
+  const fullTools = {
+    ...cataloged,
+    [META_TOOL_SEARCH]: { execute: async () => ({ meta: true }) },
+    computer: { execute: async () => ({ ran: "computer" }) },
+  } as unknown as ToolSet;
+
+  it("returns the tool map unchanged when progressive is disabled", () => {
+    const plan = decideProgressivePlan({ catalog, envOverride: false });
+    const gated = gateToolsToActiveSubset(fullTools, plan, () =>
+      createDiscoveryState(),
+    );
+    expect(gated).toBe(fullTools);
+  });
+
+  it("throws for a cataloged tool that isn't loaded yet", async () => {
+    const plan = decideProgressivePlan({ catalog, envOverride: true });
+    const state = createDiscoveryState();
+    const gated = gateToolsToActiveSubset(fullTools, plan, () => state);
+    const exec = (gated.asana_create_task as { execute: Function }).execute;
+    await expect(exec({}, {})).rejects.toThrow(/not loaded in this step/);
+  });
+
+  it("executes a cataloged tool once it is loaded", async () => {
+    const plan = decideProgressivePlan({ catalog, envOverride: true });
+    const state = createDiscoveryState();
+    state.loadedToolIds.add(
+      lookupToolIdByModelName(plan.catalog, "asana_create_task")!,
+    );
+    const gated = gateToolsToActiveSubset(fullTools, plan, () => state);
+    const exec = (gated.asana_create_task as { execute: Function }).execute;
+    await expect(exec({}, {})).resolves.toEqual({});
+  });
+
+  it("never gates tools outside the catalog (injected `computer`, meta-tools)", async () => {
+    // The regression: `computer` is injected after plan-build, so it has no
+    // catalog toolId and could never be load_mcp_tools'd. Gating it would make
+    // it permanently uncallable under progressive discovery. It must execute.
+    const plan = decideProgressivePlan({ catalog, envOverride: true });
+    const state = createDiscoveryState(); // nothing loaded
+    const gated = gateToolsToActiveSubset(fullTools, plan, () => state);
+    const computer = (gated.computer as { execute: Function }).execute;
+    await expect(computer({}, {})).resolves.toEqual({ ran: "computer" });
+    const meta = (gated[META_TOOL_SEARCH] as { execute: Function }).execute;
+    await expect(meta({}, {})).resolves.toEqual({ meta: true });
   });
 });

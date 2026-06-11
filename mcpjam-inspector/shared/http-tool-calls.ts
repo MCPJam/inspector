@@ -234,6 +234,42 @@ export async function executeToolCallsFromMessages(
               : Object.assign(new Error("Aborted"), { name: "AbortError" });
           }
 
+          // AI SDK tool contract: when a tool defines `toModelOutput`, the
+          // model-visible output is its mapping of the implementation result
+          // — e.g. the eval `computer` tool turns `{screenshotBase64}` into
+          // `{type:"content", value:[{type:"image-data",…}]}` so the model
+          // sees the screenshot as an image instead of a base64 JSON blob.
+          // The raw implementation result is NOT duplicated onto the part
+          // (`result:` below) in this branch: content outputs already carry
+          // the full model-facing payload, and double-shipping screenshots
+          // would bloat every subsequent per-step request body.
+          const toModelOutput = (
+            tool as {
+              toModelOutput?: (ctx: {
+                output: unknown;
+              }) => ToolResultPart | Promise<ToolResultPart>;
+            }
+          ).toModelOutput;
+          if (typeof toModelOutput === "function") {
+            const mappedOutput = await toModelOutput({ output: result });
+            const toolResultMessage: ModelMessage = {
+              role: "tool" as const,
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: content.toolCallId,
+                  toolName: toolName,
+                  output: mappedOutput,
+                  serverId: extractServerId(toolName),
+                },
+              ],
+            } as any;
+            if (!resultsByAssistantIdx.has(i)) resultsByAssistantIdx.set(i, []);
+            resultsByAssistantIdx.get(i)!.push(toolResultMessage);
+            allNewResults.push(toolResultMessage);
+            continue;
+          }
+
           let output: ToolResultPart;
           if (result !== undefined && result !== null) {
             if (typeof result === "object") {

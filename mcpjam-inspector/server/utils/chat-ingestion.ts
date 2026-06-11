@@ -139,13 +139,24 @@ export interface PersistedTurnTrace {
   modelId: string;
 }
 
+// Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
+// boundary so a new surface can't be added without explicitly choosing one.
+// Backend still accepts undefined for historical-row compatibility; the
+// inspector pins to the closed set.
+export type ChatOrigin =
+  | "playground"
+  | "mcpjam_agent"
+  | "chatbox"
+  | "eval";
+
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
   modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
   projectId?: string;
-  sourceType?: "chatbox" | "direct";
+  sourceType?: "chatbox" | "direct" | "eval";
+  origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   chatboxId?: string;
@@ -170,6 +181,26 @@ interface PersistChatSessionOptions {
   hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
+  /**
+   * Multi-server MCP tool snapshot present when this ingestion fired. The
+   * backend fans it out to per-server `serverInspections` rows for cross-run
+   * diffing. Optional: if absent, the backend skips inspection bookkeeping
+   * for this session/turn.
+   */
+  toolSnapshot?: unknown;
+  /**
+   * Synthetic-session tagging propagated from
+   * `server/services/sessionSimulation/runner.ts` into the Convex
+   * `chatSessions` row. The backend uses these to (a) badge the thread
+   * "Synthetic" in the Sessions list, (b) default
+   * `visitorDisplayName = personaLabel` when omitted, (c) exclude the
+   * row from semantic clustering, and (d) join the row back to its
+   * `chatboxSynthesisRuns` parent for progress polling.
+   */
+  synthetic?: boolean;
+  personaId?: string;
+  personaLabel?: string;
+  synthesisRunId?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -289,9 +320,10 @@ export async function persistChatSessionToConvex(
   c?: Context
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl || !options.authHeader || !options.chatSessionId) {
+  if (!convexUrl || !options.chatSessionId) {
     return;
   }
+  if (!options.authHeader) return;
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_INGEST_TIMEOUT_MS;
   const controller = new AbortController();
@@ -299,14 +331,16 @@ export async function persistChatSessionToConvex(
     controller.abort();
   }, timeoutMs);
 
+  const ingestHeaders: Record<string, string> = {
+    "content-type": "application/json",
+    authorization: options.authHeader,
+    ...options.forwardHeaders,
+  };
+
   try {
     const response = await fetch(`${convexUrl}/ingest-chat`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: options.authHeader,
-        ...options.forwardHeaders,
-      },
+      headers: ingestHeaders,
       signal: controller.signal,
       body: JSON.stringify({
         chatSessionId: options.chatSessionId,
@@ -314,6 +348,7 @@ export async function persistChatSessionToConvex(
         modelSource: options.modelSource,
         ...(options.projectId ? { projectId: options.projectId } : {}),
         ...(options.sourceType ? { sourceType: options.sourceType } : {}),
+        origin: options.origin,
         ...(options.directVisibility
           ? { directVisibility: options.directVisibility }
           : {}),
@@ -351,6 +386,17 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
         ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
+        ...(options.toolSnapshot
+          ? { toolSnapshot: options.toolSnapshot }
+          : {}),
+        ...(options.synthetic ? { synthetic: true } : {}),
+        ...(options.personaId ? { personaId: options.personaId } : {}),
+        ...(options.personaLabel
+          ? { personaLabel: options.personaLabel }
+          : {}),
+        ...(options.synthesisRunId
+          ? { synthesisRunId: options.synthesisRunId }
+          : {}),
       }),
     });
 
@@ -387,6 +433,7 @@ export async function persistChatSessionToConvex(
           failureKind,
           statusCode: response.status,
           sourceType: options.sourceType,
+          origin: options.origin,
         });
       } else {
         const logMessage =
@@ -403,6 +450,7 @@ export async function persistChatSessionToConvex(
         reqLogger.event("chat.session.persist.failed", {
           failureKind: "timeout",
           sourceType: options.sourceType,
+          origin: options.origin,
         });
       } else {
         logger.warn(
@@ -417,7 +465,11 @@ export async function persistChatSessionToConvex(
       const reqLogger = getRequestLogger(c, "utils.chat-ingestion");
       reqLogger.event(
         "chat.session.persist.failed",
-        { failureKind: "exception", sourceType: options.sourceType },
+        {
+          failureKind: "exception",
+          sourceType: options.sourceType,
+          origin: options.origin,
+        },
         { error: error instanceof Error ? error : undefined }
       );
     } else {

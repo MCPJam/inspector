@@ -295,6 +295,73 @@ function stripStdioFieldsFromHostedConfig<
   return { ...holder, serverConfig: cleaned };
 }
 
+/**
+ * Build the auth headers used by Inspector → Convex `/web/*` calls.
+ *
+ * - For session/guest JWTs (the default): forward the caller's bearer
+ *   verbatim. Convex sees the same identity it always has.
+ * - For WorkOS API keys (`authMethod === "workos_api_key"`): exchange
+ *   the bearer for `INSPECTOR_SERVICE_TOKEN` and add
+ *   `x-mcpjam-acting-as: <workosUserId>` (the user's Convex `externalId`)
+ *   plus `x-mcpjam-acting-in-org: <mcpjamOrganizationId>` (the org the key
+ *   is bound to). Convex never sees the `sk_` value — Inspector is the
+ *   trust boundary that validated it once via WorkOS and now vouches for
+ *   the resolved user, scoped to the key's organization. The backend
+ *   `requestIdentity` resolver requires BOTH headers and re-checks that the
+ *   user is a member of that org.
+ *
+ * Keeping this in one helper so every `/web/*` callsite picks up the
+ * same exchange (currently `authorizeServer` and `authorizeBatch` in
+ * this file). Other Convex-forwarding helpers under `server/utils/*`
+ * (e.g. `chat-history.ts`, `hosted-oauth-refresh.ts`,
+ * `local-server-resolver.ts`) are NOT on the `/api/v1/*` path today
+ * and stay on the original-bearer path until they're either reached
+ * by an API key request or refactored to receive Context.
+ */
+export function buildConvexAuthHeaders(
+  c: Context,
+  originalBearer: string
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (c.get("authMethod") === "workos_api_key") {
+    const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+    if (!serviceToken) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Server missing INSPECTOR_SERVICE_TOKEN for WorkOS API key auth"
+      );
+    }
+    // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
+    // NOT the Convex user `_id`: the backend resolves the delegated user by
+    // externalId. Sending the Convex id here would 404 as UNKNOWN_DELEGATED_USER.
+    const actingAs = c.get("workosUserId");
+    if (!actingAs) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Missing workosUserId for WorkOS API key auth exchange"
+      );
+    }
+    const actingInOrg = c.get("mcpjamOrganizationId");
+    if (!actingInOrg) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Missing mcpjamOrganizationId for WorkOS API key auth exchange"
+      );
+    }
+    headers["Authorization"] = `Bearer ${serviceToken}`;
+    headers["x-mcpjam-acting-as"] = actingAs;
+    headers["x-mcpjam-acting-in-org"] = actingInOrg;
+    return headers;
+  }
+  headers["Authorization"] = `Bearer ${originalBearer}`;
+  return headers;
+}
+
 export async function authorizeServer(
   c: Context,
   bearerToken: string,
@@ -319,10 +386,7 @@ export async function authorizeServer(
   try {
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${bearerToken}`,
-      },
+      headers: buildConvexAuthHeaders(c, bearerToken),
       body: JSON.stringify({
         projectId,
         serverId,
@@ -399,10 +463,7 @@ export async function authorizeBatch(
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${bearerToken}`,
-      },
+      headers: buildConvexAuthHeaders(c, bearerToken),
       body: JSON.stringify({
         projectId,
         serverIds,
@@ -788,6 +849,20 @@ export async function createAuthorizedManager(
                       accessScope: options?.accessScope,
                       chatboxId: options?.chatboxId,
                       accessVersion: options?.accessVersion,
+                      // When the caller authed via WorkOS API key, secret
+                      // reveal must use the same delegated-identity exchange
+                      // as `authorizeBatch` — otherwise Convex would see the
+                      // service token without an acting-as user.
+                      workosApiKeyActingAs:
+                        c.get("authMethod") === "workos_api_key" &&
+                        c.get("workosUserId") &&
+                        c.get("mcpjamOrganizationId")
+                          ? {
+                              workosUserId: c.get("workosUserId")!,
+                              mcpjamOrganizationId:
+                                c.get("mcpjamOrganizationId")!,
+                            }
+                          : undefined,
                     })
                   ).headers ?? {}),
                 },
@@ -992,6 +1067,88 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
  * management via `onStreamComplete` because the Response is returned before
  * the stream finishes.
  */
+/**
+ * Connection-layer core, extracted from `withEphemeralConnection` so the
+ * public `/v1/*` adapters can reuse the exact same authorize -> connect -> run
+ * pipeline against a body they synthesize from path params, then format the
+ * result/error into the public envelope themselves. Takes an already-read
+ * `rawBody`, runs `fn` against the live manager, and returns the raw result (or
+ * throws a `WebRouteError`). It does NOT touch the HTTP response — callers own
+ * success/error formatting (internal `webError` vs the v1 envelope).
+ */
+export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
+  c: any,
+  rawBody: Record<string, unknown>,
+  schema: S,
+  fn: (
+    manager: InstanceType<typeof MCPClientManager>,
+    body: z.infer<S>
+  ) => Promise<T>,
+  options?: {
+    timeoutMs?: number;
+    guestUnsupportedMessage?: string;
+    rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+  }
+): Promise<T> {
+  // Both guest and signed-in actors flow through the same Convex
+  // authorization path: the bearer token (guest JWT or WorkOS bearer) is
+  // forwarded to /web/authorize-batch, which dispatches to the right
+  // authorize* query based on the JWT issuer. Routes that legitimately
+  // gate guests out (e.g. evals) opt in via `guestUnsupportedMessage`.
+  if (options?.guestUnsupportedMessage && c.get("guestId")) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FEATURE_NOT_SUPPORTED,
+      options.guestUnsupportedMessage
+    );
+  }
+
+  const bearerToken = assertBearerToken(c);
+  const body = parseWithSchema(schema, rawBody);
+  // Cast for internal plumbing — all web schemas include projectId + serverId(s).
+  // The strongly-typed `body` is passed through to `fn` unchanged.
+  const raw = body as Record<string, unknown>;
+  const { serverIds, oauthTokens, serverNames } = resolveConnectionParams(raw);
+  const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+  const accessScope =
+    raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
+      ? raw.accessScope
+      : undefined;
+  const chatboxId =
+    typeof raw.chatboxId === "string" && raw.chatboxId.trim()
+      ? raw.chatboxId
+      : undefined;
+  const accessVersion =
+    typeof raw.accessVersion === "number" && Number.isFinite(raw.accessVersion)
+      ? raw.accessVersion
+      : undefined;
+  const { initializePins, mcpProtocolVersionsByServerId } =
+    extractMcpInitializeOptions(raw);
+
+  return await withManager(
+    createAuthorizedManager(
+      c,
+      bearerToken,
+      raw.projectId as string,
+      serverIds,
+      timeoutMs,
+      oauthTokens,
+      (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+        undefined,
+      {
+        accessScope,
+        chatboxId,
+        accessVersion,
+        rpcLogger: options?.rpcLogger,
+        serverNames,
+        initializePins,
+        mcpProtocolVersionsByServerId,
+      }
+    ),
+    (manager) => fn(manager, body as z.infer<S>)
+  );
+}
+
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
@@ -1014,65 +1171,11 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
 
-    // Both guest and signed-in actors flow through the same Convex
-    // authorization path: the bearer token (guest JWT or WorkOS bearer) is
-    // forwarded to /web/authorize-batch, which dispatches to the right
-    // authorize* query based on the JWT issuer. Routes that legitimately
-    // gate guests out (e.g. evals) opt in via `guestUnsupportedMessage`.
-    if (options?.guestUnsupportedMessage && c.get("guestId")) {
-      throw new WebRouteError(
-        403,
-        ErrorCode.FEATURE_NOT_SUPPORTED,
-        options.guestUnsupportedMessage
-      );
-    }
-
-    const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(schema, rawBody);
-    // Cast for internal plumbing — all web schemas include projectId + serverId(s).
-    // The strongly-typed `body` is passed through to `fn` unchanged.
-    const raw = body as Record<string, unknown>;
-    const { serverIds, oauthTokens, serverNames } =
-      resolveConnectionParams(raw);
-    const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-    const accessScope =
-      raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
-        ? raw.accessScope
-        : undefined;
-    const chatboxId =
-      typeof raw.chatboxId === "string" && raw.chatboxId.trim()
-        ? raw.chatboxId
-        : undefined;
-    const accessVersion =
-      typeof raw.accessVersion === "number" &&
-      Number.isFinite(raw.accessVersion)
-        ? raw.accessVersion
-        : undefined;
-    const { initializePins, mcpProtocolVersionsByServerId } =
-      extractMcpInitializeOptions(raw);
-
-    const result = await withManager(
-      createAuthorizedManager(
-        c,
-        bearerToken,
-        raw.projectId as string,
-        serverIds,
-        timeoutMs,
-        oauthTokens,
-        (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-          undefined,
-        {
-          accessScope,
-          chatboxId,
-          accessVersion,
-          rpcLogger: rpcCollector?.rpcLogger,
-          serverNames,
-          initializePins,
-          mcpProtocolVersionsByServerId,
-        }
-      ),
-      (manager) => fn(manager, body as z.infer<S>)
-    );
+    const result = await runEphemeralConnection(c, rawBody, schema, fn, {
+      timeoutMs: options?.timeoutMs,
+      guestUnsupportedMessage: options?.guestUnsupportedMessage,
+      rpcLogger: rpcCollector?.rpcLogger,
+    });
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {

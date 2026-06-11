@@ -94,7 +94,10 @@ export type RequestEventMap = {
   "chat.session.persist.failed": {
     failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
     statusCode?: number;
-    sourceType?: "chatbox" | "direct";
+    sourceType?: "chatbox" | "direct" | "eval";
+    // Product-surface discriminator carried alongside sourceType so PostHog
+    // can pivot persist failures by surface without rejoining to chatSessions.
+    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval";
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";
@@ -117,6 +120,13 @@ export type RequestEventMap = {
   "mcp.tool.execution.failed": {
     toolName: string;
     serverId?: string;
+    errorCode: string;
+  };
+  // Project Computers terminal bridge (routes/web/computer-terminal.ts): the
+  // PTY could not be brought up after a successful token handshake (sandbox
+  // resume failed, envd unreachable, PTY create error, ...).
+  "computer.terminal.pty_open_failed": {
+    computerId: string;
     errorCode: string;
   };
 };
@@ -158,7 +168,7 @@ export function resolveEnvironment(): Environment {
     if (!warnedMissingEnv) {
       warnedMissingEnv = true;
       process.stderr.write(
-        "[logging] ENVIRONMENT not set in production; defaulting to 'prod'\n",
+        "[logging] ENVIRONMENT not set in production; defaulting to 'prod'\n"
       );
     }
     return "prod";
@@ -167,9 +177,5 @@ export function resolveEnvironment(): Environment {
 }
 
 export function resolveRelease(): string | null {
-  return (
-    process.env.RAILWAY_GIT_COMMIT_SHA ??
-    process.env.GIT_SHA ??
-    null
-  );
+  return process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_SHA ?? null;
 }

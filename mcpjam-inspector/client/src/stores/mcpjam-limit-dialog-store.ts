@@ -9,6 +9,7 @@ export type MCPJamLimitIntent = "guest" | "topup";
 
 export interface MCPJamLimitNotifyInput {
   limitKind?: MCPJamLimitKind;
+  organizationId?: string;
 }
 
 interface MCPJamLimitDialogState {
@@ -16,6 +17,7 @@ interface MCPJamLimitDialogState {
   hasPendingLimit: boolean;
   authStatus: MCPJamLimitAuthStatus;
   intent: MCPJamLimitIntent | null;
+  organizationId: string | null;
   /** Stash the full notify input rather than just a boolean: future fields
    * on the limit signal should be forwarded to setAuthStatus's deferred
    * resolve without each addition needing a store change. */
@@ -40,6 +42,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     hasPendingLimit: false,
     authStatus: "loading",
     intent: null,
+    organizationId: null,
     pendingInput: null,
     notifyLimitHit: (input = {}) =>
       set((state) => {
@@ -52,6 +55,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           hasPendingLimit: false,
           isOpen: true,
           intent,
+          organizationId: input.organizationId ?? null,
           pendingInput: null,
         };
       }),
@@ -70,6 +74,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           hasPendingLimit: false,
           isOpen: true,
           intent,
+          organizationId: input.organizationId ?? null,
           pendingInput: null,
         };
       }),
@@ -78,6 +83,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         isOpen: false,
         hasPendingLimit: false,
         intent: null,
+        organizationId: null,
         pendingInput: null,
       }),
   }),

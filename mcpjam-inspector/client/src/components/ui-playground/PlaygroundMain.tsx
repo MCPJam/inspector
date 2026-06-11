@@ -568,8 +568,8 @@ export function PlaygroundMain({
   // chatUiOverride, and the model id via localStorage). The fields
   // re-seeded here live inside `useChatSession`'s own state, so they
   // need imperative setters.
-  // Match the global host picker / ClientsTab / useAppState scope: prefer
-  // the shared project id (what `GlobalClientBar` and `ClientsTab` write),
+  // Match the global host picker / HostsTab / useAppState scope: prefer
+  // the shared project id (what `GlobalHostBar` and `HostsTab` write),
   // falling back to `activeProjectId` for CLI / no-cloud-sync flows where
   // `convexProjectId` is null. Reading only from `activeProjectId` here
   // silently disabled the reseed in authed projects because the writer
@@ -639,6 +639,11 @@ export function PlaygroundMain({
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
+    // Same live-source pattern: built-in tool attachments flow from the
+    // previewed host's hostConfig. The server re-resolves via the shared
+    // execution-context helper, so this also flows through chatbox sessions
+    // (where the persisted host config wins via the runtime-config fetch).
+    builtInToolIds: previewedHost?.config?.builtInToolIds,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -3068,7 +3073,7 @@ export function PlaygroundMain({
             // Phase 2: playground-scoped multi-host picker. Persists the
             // multi-host array + toggle to localStorage but does NOT yet
             // change the playground render path (that lands in Phase 4).
-            // The global `GlobalClientBar` remains the host pill for other
+            // The global `GlobalHostBar` remains the host pill for other
             // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
             isSharedSession ? null : (
               <PlaygroundHostPicker
@@ -3323,6 +3328,8 @@ export function PlaygroundMain({
                               previewedHost?.config?.progressiveToolDiscovery,
                             respectToolVisibility:
                               previewedHost?.config?.respectToolVisibility,
+                            builtInToolIds:
+                              previewedHost?.config?.builtInToolIds,
                           }}
                           hostedContext={{
                             projectId: convexProjectId,

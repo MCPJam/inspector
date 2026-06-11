@@ -2,15 +2,24 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import { CheckCircle, Info, ExternalLink, Clock3 } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
+import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { ErrorCard } from "@/components/ui/error-card";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
-import { navigateApp } from "@/lib/app-navigation";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 interface ResultsPanelProps {
   error: string;
+  /**
+   * Rich describe-error block accompanying `error` when the source
+   * surfaced one (server-side `jsonError` in /api/mcp/tools/execute
+   * always populates it now). Falls back to `describeError(error)`
+   * inside the ErrorCard when absent.
+   */
+  normalizedError?: NormalizedError | null;
   result: CallToolResult | null;
   structuredContentValid: boolean | undefined;
   toolMeta?: Record<string, any>;
@@ -18,7 +27,7 @@ interface ResultsPanelProps {
   /**
    * Name of the server this panel is showing results for. Passed into
    * the host caps resolver so per-server `clientCapabilities` overrides
-   * are honored — keeps the "Use the App Builder" affordance gated on
+   * are honored — keeps the "Use the Chat" affordance gated on
    * the same effective capabilities as `initialize`.
    */
   serverName?: string;
@@ -26,6 +35,7 @@ interface ResultsPanelProps {
 
 export function ResultsPanel({
   error,
+  normalizedError,
   result,
   structuredContentValid,
   toolMeta,
@@ -42,7 +52,7 @@ export function ResultsPanel({
   const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
   // Same gate as the chat thread (PartSwitch/WidgetReplay): suppress the
-  // "Use the App Builder" affordance when the active host (resolved
+  // "Use the Chat" affordance when the active host (resolved
   // against this server's per-server cap overrides) doesn't advertise
   // the MCP UI extension. Codex etc. won't render the widget in the chat
   // surface either, so pointing the user there is misleading.
@@ -90,9 +100,7 @@ export function ResultsPanel({
       {/* Content - fills remaining space */}
       {error ? (
         <div className="flex-1 p-4">
-          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {error}
-          </div>
+          <ErrorCard error={normalizedError ?? error} defaultOpen />
         </div>
       ) : rawResult ? (
         <div className="flex-1 min-h-0 p-4 flex flex-col gap-4">
@@ -105,7 +113,7 @@ export function ResultsPanel({
                   {hasMCPAppsComponent
                     ? "with MCP Apps extension"
                     : "with OpenAI Apps SDK"}
-                  . Use the <strong>Playground</strong>.
+                  . Use the <strong>Chat</strong>.
                 </span>
               </div>
               <Button
@@ -113,11 +121,11 @@ export function ResultsPanel({
                 size="sm"
                 className="h-6 text-xs px-2"
                 onClick={() => {
-                  navigateApp("/playground");
+                  navigateApp(routePaths.playground);
                 }}
               >
                 <ExternalLink className="h-3 w-3 mr-1" />
-                Playground
+                Chat
               </Button>
             </div>
           )}

@@ -42,6 +42,8 @@ import {
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { isNormalizedError } from "@mcpjam/sdk/browser";
+import { WebApiError } from "@/lib/apis/web/base";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import type { ConnectionStatus } from "@/state/app-types";
@@ -110,6 +112,9 @@ export function ToolsTab({
   const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
+  const [normalizedError, setNormalizedError] = useState<
+    import("@mcpjam/sdk/browser").NormalizedError | null
+  >(null);
   const [responseDurationMs, setResponseDurationMs] = useState<number | null>(
     null,
   );
@@ -218,6 +223,7 @@ export function ToolsTab({
     setResult(null);
     setStructuredContentValid(undefined);
     setError("");
+    setNormalizedError(null);
     setResponseDurationMs(null);
     setActiveElicitation(null);
     if (clearTaskCapabilities) {
@@ -324,6 +330,7 @@ export function ToolsTab({
     }
 
     setError("");
+    setNormalizedError(null);
     setFetchingTools(true);
     if (reset) {
       resetLoadedToolState({
@@ -356,6 +363,15 @@ export function ToolsTab({
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Failed to fetch tools", { error: message });
       setError(message);
+      // Preserve the backend-attached `normalized` block when listTools
+      // threw a WebApiError, but shape-validate first. Partial payloads
+      // would otherwise shadow the real `error` string at render
+      // (ResultsPanel prefers normalizedError over error).
+      setNormalizedError(
+        err instanceof WebApiError && isNormalizedError(err.normalized)
+          ? err.normalized
+          : null,
+      );
     } finally {
       if (fetchVersion === toolFetchVersionRef.current) {
         setFetchingTools(false);
@@ -466,6 +482,16 @@ export function ToolsTab({
     if ("error" in response && response.error) {
       setResponseDurationMs(durationMs);
       setError(response.error as string);
+      // Preserve the rich describer block when the response carried one
+      // (server-side `jsonError` always populates `normalized`), but
+      // shape-validate first — a partial `{}` would otherwise shadow the
+      // real `error` string at render. ResultsPanel prefers
+      // normalizedError over error, so an invalid block hides the API's
+      // actual message and yields a generic "Unknown error" ErrorCard.
+      const maybeNormalized = (response as { normalized?: unknown }).normalized;
+      setNormalizedError(
+        isNormalizedError(maybeNormalized) ? maybeNormalized : null,
+      );
     }
   };
 
@@ -484,11 +510,13 @@ export function ToolsTab({
         connectionStatus: serverConnectionStatus,
       });
       setError("Connect this server before running tools.");
+      setNormalizedError(null);
       return;
     }
 
     setLoadingExecuteTool(true);
     setError("");
+    setNormalizedError(null);
     setResult(null);
     setStructuredContentValid(undefined);
     setResponseDurationMs(null);
@@ -711,6 +739,7 @@ export function ToolsTab({
   const centerContent = selectedTool ? (
     <ResultsPanel
       error={error}
+      normalizedError={normalizedError}
       result={result}
       structuredContentValid={structuredContentValid}
       toolMeta={getToolMeta(lastToolName)}

@@ -45,7 +45,6 @@ import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
   prepareSingleTestCaseRun,
-  projectHostConfigRunOverride,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
 } from "./single-test-case-runner";
@@ -61,7 +60,11 @@ import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
   resolveMatchOptions,
   type EvalMatchOptions,
+  type CasePredicates,
+  type Predicate,
 } from "@/shared/eval-matching";
+import { areAllChecksValid } from "./checks-section";
+import { CasePassCriteriaSection } from "./case-pass-criteria-section";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
@@ -71,8 +74,6 @@ import {
 import { cn } from "@/lib/utils";
 import { getEffectiveSuiteServers } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
-import { ValidatorsSection } from "./validators-section";
-import { RunValidatorsPopover } from "./run-validators-popover";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
@@ -104,8 +105,6 @@ import {
   hasUnavailableServers,
   normalizeSuiteServerRefs,
 } from "./use-eval-handlers";
-import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
-import type { ModelProvider } from "@/shared/types";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import {
   reduceEvalStreamEvent,
@@ -121,7 +120,6 @@ import {
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { TestCaseClientHeader } from "./TestCaseClientHeader";
 
 interface TestTemplate {
   title: string;
@@ -130,6 +128,8 @@ interface TestTemplate {
   promptTurns: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
   matchOptions?: EvalMatchOptions;
+  /** Case-level predicate gate override; undefined ⇒ inherit suite defaults. */
+  predicates?: CasePredicates;
 }
 
 interface TestTemplateEditorProps {
@@ -138,11 +138,20 @@ interface TestTemplateEditorProps {
   connectedServerNames: Set<string>;
   projectId: string | null;
   availableModels: ModelDefinition[];
+  /**
+   * Iterations for the entire suite, already subscribed by the parent via
+   * `getAllTestCasesAndIterationsBySuite`. We filter to the current case
+   * locally instead of opening a second `listTestIterations` subscription
+   * for data the parent already has — one reactive subscription instead
+   * of two, and no spinner when the user drills into the Runs tab.
+   */
+  suiteIterations: EvalIteration[];
   onBackToList?: () => void;
-  onOpenLastRun?: (iteration: EvalIteration) => void;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
-  /** Deep link: open compare run surface once iteration data is ready (same as View results). */
+  /** Route-driven tab switch. Editor reflects {@link openCompareFromRoute} after the URL changes. */
+  onSelectTab?: (tab: "edit" | "runs") => void;
+  /** Deep link: open compare run surface once iteration data is ready (same as the Runs tab). */
   openCompareFromRoute?: boolean;
   /** Deep link: exact iteration to anchor compare hydration to. */
   openCompareIterationId?: string | null;
@@ -323,16 +332,67 @@ function readCompareRunIdFromIteration(
     : null;
 }
 
+type CaseEditorTab = "edit" | "runs";
+
+/** Underline Edit / Runs section nav: drives the URL via onSelect; mirrors the last-run status as a dot on Runs. */
+function CaseEditorTabs({
+  active,
+  onSelect,
+  runsDotClass,
+  runsAriaLabel,
+}: {
+  active: CaseEditorTab;
+  onSelect: (tab: CaseEditorTab) => void;
+  /** When provided, shown to the left of the Runs label. */
+  runsDotClass?: string;
+  runsAriaLabel?: string;
+}) {
+  const baseClass =
+    "inline-flex h-9 items-center gap-1.5 -mb-px border-b-2 px-1 text-sm font-medium transition-colors";
+  const inactiveClass =
+    "border-transparent text-muted-foreground hover:text-foreground";
+  const activeClass = "border-foreground text-foreground";
+  return (
+    <div
+      role="tablist"
+      aria-label="Case view"
+      className="flex items-center gap-6 border-b border-border/60"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === "edit"}
+        className={cn(baseClass, active === "edit" ? activeClass : inactiveClass)}
+        onClick={() => onSelect("edit")}
+      >
+        Edit
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === "runs"}
+        aria-label={runsAriaLabel}
+        className={cn(baseClass, active === "runs" ? activeClass : inactiveClass)}
+        onClick={() => onSelect("runs")}
+      >
+        Runs
+        {runsDotClass ? <span className={runsDotClass} aria-hidden /> : null}
+      </button>
+    </div>
+  );
+}
+
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
   connectedServerNames,
   projectId,
   availableModels,
+  suiteIterations,
   onBackToList,
-  onOpenLastRun,
   onExportDraft,
   onContinueInChat,
+  onSelectTab,
   openCompareFromRoute = false,
   openCompareIterationId = null,
   isDirectGuest = false,
@@ -341,16 +401,6 @@ export function TestTemplateEditor({
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
-  const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
-    EvalMatchOptions | undefined
-  >(undefined);
-  /**
-   * Per-case in-place tweak to the suite's hostConfig. `null` = no tweak,
-   * the suite baseline is used as-is. Mirrors `runMatchOptionsOverride`:
-   * never persists, resets on case switch, consumed by the next Run.
-   */
-  const [hostConfigOverride, setHostConfigOverride] =
-    useState<HostConfigInputV2 | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
@@ -433,20 +483,23 @@ export function TestTemplateEditor({
       : "skip"
   ) as EvalIteration | undefined;
 
-  const recentIterations = useQuery(
-    "testSuites:listTestIterations" as any,
-    currentTestCase?._id
-      ? ({ testCaseId: currentTestCase._id, limit: 200 } as any)
-      : "skip"
-  ) as EvalIteration[] | undefined;
+  // Iterations for the currently-selected case, filtered from the suite-wide
+  // list the parent already subscribes to. Cap matches the old per-case
+  // `listTestIterations({ limit: 200 })` so downstream consumers see the same
+  // bounded slice they did before.
+  const recentIterations = useMemo<EvalIteration[]>(() => {
+    if (!selectedTestCaseId) return [];
+    return suiteIterations
+      .filter((iteration) => iteration.testCaseId === selectedTestCaseId)
+      .slice(0, 200);
+  }, [suiteIterations, selectedTestCaseId]);
 
   const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
 
   /**
    * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
    * uses — single source of truth for model / system / temperature /
-   * hostContext / capabilities / style at the suite level. Per-case Run
-   * tweaks are layered on top as `hostConfigOverride` (added in Phase 2).
+   * hostContext / capabilities / style at the suite level.
    */
   const suiteHostConfigDto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
@@ -482,8 +535,6 @@ export function TestTemplateEditor({
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
-    // Per-case ephemeral tweak; switching cases starts fresh.
-    setHostConfigOverride(null);
   }, [openCompareFromRoute, selectedTestCaseId]);
 
   useEffect(() => {
@@ -524,6 +575,7 @@ export function TestTemplateEditor({
       promptTurns,
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
       matchOptions: currentTestCase.matchOptions,
+      predicates: currentTestCase.predicates,
     });
     setExpandedPromptTurnIds(promptTurns.map((turn) => turn.id));
     // Seed the transient picker from the persisted runs so a user who saved
@@ -654,6 +706,12 @@ export function TestTemplateEditor({
     const normalizedCurrentMatchOptions = JSON.stringify(
       normalizeForComparison(currentTestCase.matchOptions ?? null)
     );
+    const normalizedPredicates = JSON.stringify(
+      normalizeForComparison(editForm.predicates ?? null),
+    );
+    const normalizedCurrentPredicates = JSON.stringify(
+      normalizeForComparison(currentTestCase.predicates ?? null),
+    );
 
     return (
       editForm.title !== currentTestCase.title ||
@@ -662,6 +720,7 @@ export function TestTemplateEditor({
       normalizedPromptTurns !== normalizedCurrentPromptTurns ||
       normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
       normalizedMatchOptions !== normalizedCurrentMatchOptions ||
+      normalizedPredicates !== normalizedCurrentPredicates ||
       serverNegativeFlagMismatch
     );
   }, [editForm, currentAdvancedConfig, currentPromptTurns, currentTestCase]);
@@ -671,7 +730,20 @@ export function TestTemplateEditor({
     return validatePromptTurns(editForm.promptTurns);
   }, [editForm]);
 
-  const savePrimaryDisabled = !arePromptTurnsValid || isRunningCompare;
+  const arePredicatesValid = useMemo(() => {
+    if (!editForm?.predicates) return true;
+    // In `inherit` mode the case's `list` is semantically ignored by the
+    // runner — only suite defaults gate the run. The setMode("inherit")
+    // handler preserves non-empty lists for UX convenience (so the user
+    // can flip back to replace/extend without losing their work), which
+    // means stale invalid rows from a previous mode are reachable. Don't
+    // let those block the Save button.
+    if (editForm.predicates.mode === "inherit") return true;
+    return areAllChecksValid(editForm.predicates.list);
+  }, [editForm?.predicates]);
+
+  const savePrimaryDisabled =
+    !arePromptTurnsValid || !arePredicatesValid || isRunningCompare;
 
   const saveDisabledTooltip = useMemo(() => {
     if (!savePrimaryDisabled) {
@@ -683,8 +755,17 @@ export function TestTemplateEditor({
     if (!arePromptTurnsValid && editForm) {
       return getPromptTurnBlockReason(editForm.promptTurns);
     }
+    if (!arePredicatesValid) {
+      return "Fix invalid checks before saving.";
+    }
     return null;
-  }, [savePrimaryDisabled, isRunningCompare, arePromptTurnsValid, editForm]);
+  }, [
+    savePrimaryDisabled,
+    isRunningCompare,
+    arePromptTurnsValid,
+    arePredicatesValid,
+    editForm,
+  ]);
 
   const runPrimaryDisabled =
     selectedModelValues.length === 0 ||
@@ -816,6 +897,19 @@ export function TestTemplateEditor({
       : form.promptTurns;
     const legacy = deriveLegacyPromptFields(normalizedPromptTurns);
 
+    // Normalize the predicate envelope before it crosses the wire. The
+    // in-memory editForm keeps a draft `list` in `inherit` mode so the
+    // user can flip back to `replace`/`extend` without losing their work,
+    // but the persisted envelope must carry an empty list there — the
+    // runner ignores it AND `casePredicatesSchema` still validates each
+    // row with `predicateSchema` regardless of mode, so a stale invalid
+    // row would be rejected downstream even though the case is "safe".
+    const normalizedPredicates = form.predicates
+      ? form.predicates.mode === "inherit"
+        ? { ...form.predicates, list: [] }
+        : form.predicates
+      : form.predicates;
+
     return {
       title: form.title,
       runs: form.runs,
@@ -827,6 +921,7 @@ export function TestTemplateEditor({
       isNegativeTest,
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
+      predicates: normalizedPredicates,
     };
   };
 
@@ -869,6 +964,19 @@ export function TestTemplateEditor({
         // Pass `null` (not undefined) so the mutation knows to clear a
         // previously-persisted case-level override when the user resets it.
         matchOptions: savePayload.matchOptions ?? null,
+        // Same null-clears-the-field convention for the predicate override.
+        predicates: savePayload.predicates ?? null,
+      });
+      posthog.capture("eval_test_case_edited", {
+        location: "test_template_editor",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: suiteId ?? null,
+        test_case_id: currentTestCase._id,
+        num_models: currentTestCase.models?.length ?? 0,
+        num_prompt_turns: editForm.promptTurns?.length ?? 0,
+        has_match_options: savePayload.matchOptions != null,
+        has_predicates: savePayload.predicates != null,
       });
       toast.success("Changes saved");
     } catch (error) {
@@ -922,6 +1030,7 @@ export function TestTemplateEditor({
             // null (not undefined) signals "clear" — required to wipe a
             // previously-persisted case-level matchOptions override.
             matchOptions: savePayload.matchOptions ?? null,
+            predicates: savePayload.predicates ?? null,
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -929,7 +1038,7 @@ export function TestTemplateEditor({
   };
 
   const latestHistoricalCompareRunId = useMemo(
-    () => resolveLatestCompareRunId(recentIterations ?? []),
+    () => resolveLatestCompareRunId(recentIterations),
     [recentIterations]
   );
   const routeCompareAnchorModelValue = useMemo(
@@ -958,48 +1067,6 @@ export function TestTemplateEditor({
       ),
     [modelOptions]
   );
-
-  const modelDefinitionsForSelector = useMemo<ModelDefinition[]>(
-    () =>
-      modelOptions.map((option) => ({
-        id: option.model,
-        name: option.label,
-        provider: option.provider as ModelProvider,
-        ...(option.customProviderName
-          ? { customProviderName: option.customProviderName }
-          : {}),
-      })),
-    [modelOptions],
-  );
-
-  const modelDefinitionByValue = useMemo(
-    () =>
-      new Map<string, ModelDefinition>(
-        modelDefinitionsForSelector.map((model) => [
-          `${model.provider}/${String(model.id)}`,
-          model,
-        ]),
-      ),
-    [modelDefinitionsForSelector],
-  );
-
-  const selectedModelDefinitions = useMemo<ModelDefinition[]>(
-    () =>
-      selectedModelValues
-        .map((value) => modelDefinitionByValue.get(value))
-        .filter((model): model is ModelDefinition => !!model),
-    [selectedModelValues, modelDefinitionByValue],
-  );
-
-  const leadSelectedModel: ModelDefinition | null =
-    selectedModelDefinitions[0] ?? modelDefinitionsForSelector[0] ?? null;
-
-  const [multiModelEnabled, setMultiModelEnabled] = useState(false);
-  useEffect(() => {
-    if (selectedModelValues.length > 1) {
-      setMultiModelEnabled(true);
-    }
-  }, [selectedModelValues.length]);
 
   useEffect(() => {
     if (!currentTestCase?._id) {
@@ -1067,7 +1134,6 @@ export function TestTemplateEditor({
   useEffect(() => {
     if (
       !currentTestCase ||
-      !recentIterations ||
       selectedModelValues.length === 0 ||
       (routeCompareAnchorIterationId &&
         routeCompareAnchorIteration === undefined)
@@ -1147,16 +1213,11 @@ export function TestTemplateEditor({
     [compareRunRecords, modelLabelByValue, selectedModelValues]
   );
 
-  const hasRunViewContent = selectedCompareRecords.some(
-    (record) =>
-      record.iteration != null ||
-      record.status === "running" ||
-      Boolean(record.error)
-  );
 
   const openRunView = useCallback(
     (source: "run_compare" | "config_toggle") => {
       setEditorMode("run");
+      onSelectTab?.("runs");
       setMobileVisibleModelValue((current) =>
         current && selectedModelValues.includes(current)
           ? current
@@ -1172,26 +1233,8 @@ export function TestTemplateEditor({
         models: selectedModelValues,
       });
     },
-    [currentTestCase?._id, selectedModelValues, suiteId]
+    [currentTestCase?._id, onSelectTab, selectedModelValues, suiteId]
   );
-
-  const modelDefToValue = (model: ModelDefinition) =>
-    `${model.provider}/${String(model.id)}`;
-
-  const handleSingleModelChange = (model: ModelDefinition) => {
-    setSelectedModelValues([modelDefToValue(model)]);
-  };
-
-  const handleSelectedModelsChange = (models: ModelDefinition[]) => {
-    setSelectedModelValues(models.map(modelDefToValue).slice(0, 3));
-  };
-
-  const handleMultiModelEnabledChange = (enabled: boolean) => {
-    setMultiModelEnabled(enabled);
-    if (!enabled) {
-      setSelectedModelValues((previous) => previous.slice(0, 1));
-    }
-  };
 
   const handleStopCompare = useCallback(() => {
     compareRunUserStoppedRef.current = true;
@@ -1329,10 +1372,6 @@ export function TestTemplateEditor({
             advancedConfig,
             matchOptions: savePayload.matchOptions,
           },
-          matchOptionsOverride: runMatchOptionsOverride,
-          hostConfigOverride: hostConfigOverride
-            ? projectHostConfigRunOverride(hostConfigOverride)
-            : undefined,
         });
 
         return {
@@ -1762,7 +1801,6 @@ export function TestTemplateEditor({
     (testCases === undefined ||
       (currentTestCase?._id != null &&
         initializedSelectionCaseRef.current !== currentTestCase._id) ||
-      (currentTestCase?._id != null && recentIterations === undefined) ||
       (routeCompareAnchorIterationId != null &&
         routeCompareAnchorIteration === undefined));
 
@@ -1788,7 +1826,7 @@ export function TestTemplateEditor({
       : "lg:grid-cols-3";
   const latestAvailableIteration =
     routeCompareAnchorIteration ??
-    recentIterations?.[0] ??
+    recentIterations[0] ??
     lastSavedIteration ??
     null;
   const latestAvailableResult = latestAvailableIteration
@@ -1799,46 +1837,34 @@ export function TestTemplateEditor({
     latestAvailableResult === "failed"
       ? {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-rose-500 dark:bg-rose-400",
-          buttonTextClass: "text-rose-700 dark:text-rose-300",
+            "size-1.5 shrink-0 rounded-full bg-destructive/50",
+          buttonTextClass: "text-destructive",
           ariaResults: "View results, last run failed",
           ariaOpen: "Open last run, failed",
         }
       : latestAvailableResult === "passed"
       ? {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400",
-          buttonTextClass: "text-emerald-700 dark:text-emerald-300",
+            "size-1.5 shrink-0 rounded-full bg-success/50",
+          buttonTextClass: "text-success",
           ariaResults: "View results, last run passed",
           ariaOpen: "Open last run passed",
         }
       : latestAvailableResult === "cancelled"
       ? {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400",
-          buttonTextClass: "text-amber-800 dark:text-amber-200",
+            "size-1.5 shrink-0 rounded-full bg-warning/50",
+          buttonTextClass: "text-warning",
           ariaResults: "View results, last run stopped",
           ariaOpen: "Open last run stopped",
         }
       : {
           dotClass:
-            "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse motion-reduce:animate-none",
-          buttonTextClass: "text-amber-800 dark:text-amber-200",
+            "size-1.5 shrink-0 rounded-full bg-warning/50 animate-pulse motion-reduce:animate-none",
+          buttonTextClass: "text-warning",
           ariaResults: "View results, run in progress",
           ariaOpen: "Open last run, in progress",
         };
-  const latestAvailableIsSaved =
-    Boolean(latestAvailableIteration?._id) &&
-    latestAvailableIteration?._id === currentTestCase.lastMessageRun;
-  const canOpenLastRun =
-    Boolean(onOpenLastRun) &&
-    Boolean(lastSavedIteration?.suiteRunId) &&
-    Boolean(lastSavedIteration?._id);
-
-  if (editorMode === "run" && isCompareRouteLoading) {
-    return compareRouteLoadingState;
-  }
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
@@ -1891,42 +1917,6 @@ export function TestTemplateEditor({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {latestAvailableIteration ? (
-                  hasRunViewContent ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className={cn(
-                        "h-8 gap-1.5 px-2 text-xs",
-                        latestRunNavCue.buttonTextClass
-                      )}
-                      aria-label={latestRunNavCue.ariaResults}
-                      onClick={() => openRunView("config_toggle")}
-                    >
-                      <span className={latestRunNavCue.dotClass} aria-hidden />
-                      View results
-                    </Button>
-                  ) : canOpenLastRun ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className={cn(
-                        "h-8 gap-1.5 px-2 text-xs",
-                        latestRunNavCue.buttonTextClass
-                      )}
-                      aria-label={latestRunNavCue.ariaOpen}
-                      onClick={() =>
-                        lastSavedIteration &&
-                        onOpenLastRun?.(lastSavedIteration)
-                      }
-                    >
-                      <span className={latestRunNavCue.dotClass} aria-hidden />
-                      Open last run
-                    </Button>
-                  ) : null
-                ) : null}
                 {onExportDraft ? (
                   <Button
                     type="button"
@@ -1998,16 +1988,6 @@ export function TestTemplateEditor({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="inline-flex items-center gap-2">
-                        <RunValidatorsPopover
-                          persistedEffective={resolveMatchOptions(
-                            suite?.defaultMatchOptions,
-                            editForm?.matchOptions ?? currentTestCase?.matchOptions,
-                          )}
-                          runOverride={runMatchOptionsOverride}
-                          onChange={setRunMatchOptionsOverride}
-                          variant="icon"
-                          disabled={isRunningCompare}
-                        />
                         <Button
                           type="button"
                           size="sm"
@@ -2049,16 +2029,6 @@ export function TestTemplateEditor({
                   </Tooltip>
                 ) : (
                   <span className="inline-flex items-center gap-2">
-                    <RunValidatorsPopover
-                      persistedEffective={resolveMatchOptions(
-                        suite?.defaultMatchOptions,
-                        editForm?.matchOptions ?? currentTestCase?.matchOptions,
-                      )}
-                      runOverride={runMatchOptionsOverride}
-                      onChange={setRunMatchOptionsOverride}
-                      variant="icon"
-                      disabled={isRunningCompare}
-                    />
                     <Button
                       type="button"
                       size="sm"
@@ -2096,6 +2066,22 @@ export function TestTemplateEditor({
                 )}
               </div>
             </div>
+            <CaseEditorTabs
+              active="edit"
+              onSelect={(tab) => {
+                if (tab === "runs") {
+                  openRunView("config_toggle");
+                }
+              }}
+              runsDotClass={
+                latestAvailableIteration ? latestRunNavCue.dotClass : undefined
+              }
+              runsAriaLabel={
+                latestAvailableIteration
+                  ? latestRunNavCue.ariaResults
+                  : "Runs (no runs yet)"
+              }
+            />
             {runPrimaryDisabled && !isRunningCompare && runDisabledTooltip ? (
               <p
                 className="text-xs leading-snug text-muted-foreground sm:text-right"
@@ -2103,68 +2089,6 @@ export function TestTemplateEditor({
               >
                 {runDisabledTooltip}
               </p>
-            ) : null}
-
-            <div>
-              <div
-                data-testid="test-template-model-bar"
-                className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10"
-                title={
-                  !latestAvailableIsSaved &&
-                  currentTestCase.lastMessageRun &&
-                  latestAvailableIteration
-                    ? "The saved latest result is older than this run."
-                    : undefined
-                }
-              >
-                <div className="flex min-h-9 items-center gap-2 px-4">
-                  {!latestAvailableIteration ? (
-                    <span className="shrink-0 text-[13px] font-normal text-[#777777] dark:text-muted-foreground">
-                      Add model
-                    </span>
-                  ) : null}
-
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    {modelDefinitionsForSelector.length === 0 ||
-                    !leadSelectedModel ? (
-                      <span className="text-[13px] text-muted-foreground">
-                        No models
-                      </span>
-                    ) : (
-                      <ModelSelector
-                        currentModel={leadSelectedModel}
-                        availableModels={modelDefinitionsForSelector}
-                        onModelChange={handleSingleModelChange}
-                        enableMultiModel
-                        multiModelEnabled={multiModelEnabled}
-                        selectedModels={
-                          selectedModelDefinitions.length > 0
-                            ? selectedModelDefinitions
-                            : [leadSelectedModel]
-                        }
-                        onSelectedModelsChange={handleSelectedModelsChange}
-                        onMultiModelEnabledChange={
-                          handleMultiModelEnabledChange
-                        }
-                        maxSelectedModels={3}
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {hostConfigBaseline ? (
-              <div
-                data-testid="test-template-host-header-row"
-                className="px-1 pt-2"
-              >
-                <TestCaseClientHeader
-                  baseline={hostConfigBaseline}
-                  value={hostConfigOverride}
-                  onChange={setHostConfigOverride}
-                />
-              </div>
             ) : null}
 
             <div className="space-y-4 pt-1">
@@ -2183,26 +2107,40 @@ export function TestTemplateEditor({
                   removePromptTurn={removePromptTurn}
                   movePromptTurn={movePromptTurn}
                   togglePromptTurnExpanded={togglePromptTurnExpanded}
+                  // Phase 3: thread the effective argumentMatching mode
+                  // (suite default merged with case override) so the
+                  // per-leaf placeholder picker offers the right options
+                  // and disables itself in `ignore` mode.
+                  argumentMatching={
+                    resolveMatchOptions(
+                      suite?.defaultMatchOptions,
+                      editForm.matchOptions,
+                    ).argumentMatching
+                  }
                 />
               ) : null}
             </div>
 
             {editForm ? (
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
-                <ValidatorsSection
-                  title="Validators"
-                  description="Validator settings for this case. Reset to follow the suite default."
-                  value={editForm.matchOptions}
-                  inheritedFrom={resolveMatchOptions(
-                    suite?.defaultMatchOptions,
-                  )}
-                  onChange={(next) =>
-                    setEditForm((current) =>
-                      current ? { ...current, matchOptions: next } : current
-                    )
-                  }
-                />
-              </div>
+              <CasePassCriteriaSection
+                matchOptions={editForm.matchOptions}
+                onMatchOptionsChange={(next) =>
+                  setEditForm((current) =>
+                    current ? { ...current, matchOptions: next } : current,
+                  )
+                }
+                suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                predicates={editForm.predicates}
+                onPredicatesChange={(next: CasePredicates | undefined) =>
+                  setEditForm((current) =>
+                    current ? { ...current, predicates: next } : current,
+                  )
+                }
+                suiteDefaultPredicates={
+                  (suite?.defaultPredicates ?? []) as Predicate[]
+                }
+                availableTools={availableTools.map((t) => t.name)}
+              />
             ) : null}
 
             {currentTestCase.lastMessageRun ? (
@@ -2221,7 +2159,7 @@ export function TestTemplateEditor({
 
             <TestCaseIterationsTable
               testCase={currentTestCase}
-              iterations={recentIterations ?? []}
+              iterations={recentIterations}
               serverNames={effectiveSuiteServers}
               label="Iteration history"
               emptyState="No iterations yet — run this case to see results here."
@@ -2334,6 +2272,28 @@ export function TestTemplateEditor({
               ) : null}
             </div>
 
+            <div className="mt-3">
+              <CaseEditorTabs
+                active="runs"
+                onSelect={(tab) => {
+                  if (tab === "edit") {
+                    setEditorMode("config");
+                    onSelectTab?.("edit");
+                  }
+                }}
+                runsDotClass={
+                  latestAvailableIteration
+                    ? latestRunNavCue.dotClass
+                    : undefined
+                }
+                runsAriaLabel={
+                  latestAvailableIteration
+                    ? latestRunNavCue.ariaResults
+                    : "Runs"
+                }
+              />
+            </div>
+
             {selectedCompareRecords.length > 1 ? (
               <div className="mt-4 flex gap-2 overflow-x-auto lg:hidden">
                 {selectedCompareRecords.map((record) => (
@@ -2359,13 +2319,15 @@ export function TestTemplateEditor({
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6">
-            {selectedCompareRecords.length === 0 ? (
+            {isCompareRouteLoading ? (
+              compareRouteLoadingState
+            ) : selectedCompareRecords.length === 0 ? (
               <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
                 <div>
-                  <div className="text-sm font-medium">No compare run yet</div>
+                  <div className="text-sm font-medium">No runs yet</div>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Choose at least one model and run compare from the prompt
-                    editor.
+                    Switch back to Edit and click Run to create your first
+                    iteration.
                   </p>
                 </div>
               </div>
@@ -2416,7 +2378,6 @@ export function TestTemplateEditor({
                           })
                         }
                         baselineHostStyle={hostConfigBaseline?.hostStyle}
-                        liveOverrideHostStyle={hostConfigOverride?.hostStyle}
                       />
                     </div>
                   );
@@ -2442,7 +2403,6 @@ function RunColumn({
   onTabChange,
   onRetry,
   baselineHostStyle,
-  liveOverrideHostStyle,
 }: {
   record: CompareRunRecord;
   allRecords: CompareRunRecord[];
@@ -2460,14 +2420,6 @@ function RunColumn({
    * override. May be undefined when the suite hostConfig hasn't loaded.
    */
   baselineHostStyle: string | undefined;
-  /**
-   * The transient per-case hostStyle override that was passed to the
-   * current run. Used as the streaming fallback so the chrome matches the
-   * actual run-time style until the iteration snapshot lands and takes
-   * over. Without this, the first run after tweaking host chrome briefly
-   * renders with the wrong shell.
-   */
-  liveOverrideHostStyle: string | undefined;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const globalPreferenceHostStyle = usePreferencesStore(
@@ -2477,11 +2429,8 @@ function RunColumn({
    * Effective hostStyle for this iteration's result chrome:
    *   1. iteration snapshot's per-Run override (authoritative — what
    *      the run actually ran with);
-   *   2. live per-case override (what we just dispatched to the server
-   *      for the in-flight run — matches the chrome until the snapshot
-   *      catches up);
-   *   3. suite baseline (the suite's saved default);
-   *   4. global preference (last resort — old leaky behavior, kept
+   *   2. suite baseline (the suite's saved default);
+   *   3. global preference (last resort — old leaky behavior, kept
    *      so multi-pane views still have a value while data loads).
    *
    * Index into the snapshot is loose (`any`) because the schema treats
@@ -2493,7 +2442,6 @@ function RunColumn({
       ?.hostConfigOverride?.hostStyle;
   const hostStyle =
     snapshotHostStyle ??
-    liveOverrideHostStyle ??
     baselineHostStyle ??
     globalPreferenceHostStyle;
   const { toolsMetadata, toolServerMap, connectedServerIds } =
@@ -2777,9 +2725,9 @@ function RunColumn({
       </div>
     )
   ) : record.status === "cancelled" && !record.iteration ? (
-    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/5 px-6 py-10">
+    <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-warning/50 bg-warning/50 px-6 py-10">
       <div className="max-w-sm text-center">
-        <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
+        <div className="text-sm font-medium text-foreground">
           {record.modelLabel} stopped
         </div>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -2851,16 +2799,6 @@ function RunColumn({
               Retry
             </Button>
           </>
-        }
-        footerNote={
-          record.metrics.mismatchCount != null &&
-          record.metrics.mismatchCount > 0 ? (
-            <>
-              {record.metrics.mismatchCount} mismatch
-              {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
-              tool calls.
-            </>
-          ) : null
         }
       />
 

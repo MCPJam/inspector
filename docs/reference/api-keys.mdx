@@ -1,0 +1,66 @@
+---
+title: "API keys"
+description: "Which 'API key' is which in MCPJam — and the one you need to call the MCPJam API."
+icon: "key"
+---
+
+"API key" gets used for a few different things in MCPJam. The short version:
+
+- To call the **[MCPJam API](/reference/public-api)**, you want the **MCPJam API key** (`sk_…`) — the first one below.
+- Two others here are **third-party secrets you supply**, not keys MCPJam issues — they're listed only because the name collides.
+- One older key (`mcpjam_…`) is **deprecated**.
+
+## MCPJam API key (`sk_…`)
+
+The key for the **[MCPJam API](/reference/public-api)** — programmatic access to live MCP server diagnostics at `https://app.mcpjam.com/api/v1/...`. This is the one to reach for whenever you mean "the MCPJam API key."
+
+**Where it lives:** [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys) in the hosted app — that link takes you straight to key creation (sign in if prompted; you'll land back on the page). Shown **exactly once** at creation — store it in your own secret manager or an environment variable.
+
+**When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots.
+
+**Errors you might see**
+- `401 UNAUTHORIZED` → invalid or revoked key.
+- `401` with `details.reason: "ORPHANED_KEY"` → the key lost its organization binding; create a new one from Settings.
+- `403 FORBIDDEN` ("API keys cannot manage other API keys") → you pointed an `sk_…` key at the key-management endpoints; key management is UI-only.
+- `429 RATE_LIMITED` → per-key rate limit (60/min, burst 10); honor `Retry-After`.
+
+Full surface in the [MCPJam API reference](/reference/public-api).
+
+## LLM provider key — not an MCPJam key
+
+A secret from an LLM provider (OpenAI, Anthropic, Google, xAI, Groq, Mistral, ...). MCPJam never issues this — it just uses the key you paste in to call that provider on your behalf.
+
+**Where it lives:** **Settings → LLM Providers**.
+
+**When it's used:** Every Playground chat against a provider model that isn't MCPJam's free hosted model.
+
+**Errors:** "Invalid API key for OpenAI / Anthropic / ..." → wrong, expired, or for a different project. ("MCPJam model limit reached" is a [different problem](/troubleshooting/common-errors#mcpjam-model-limit-reached).)
+
+You don't need one to run inspector probes (Tools, Resources, Prompts, OAuth Debugger, conformance) — those only talk to MCP servers.
+
+## Playground BYOK — not an MCPJam key
+
+A per-server bearer token for an HTTP MCP server that requires `Authorization: Bearer ...`. MCPJam forwards it to that one server only; it never authenticates you to MCPJam.
+
+**Where it lives:** **Servers card → Headers field**, or `config.json` under `mcpServers.<name>.headers.Authorization` (e.g. `"Authorization": "Bearer ${MY_SERVER_TOKEN}"`).
+
+**When it's used:** Every request the inspector makes to that MCP server.
+
+**Errors:** [`auth/http_401`](/troubleshooting/error-codes#unauthorized-401), [`auth/http_403`](/troubleshooting/error-codes#forbidden-403) — the target server rejected the token.
+
+## Project API Key (`mcpjam_…`)
+
+<Warning>
+**Deprecated.** Being retired in favor of the **MCPJam API key (`sk_…`)** and the [MCPJam API](/reference/public-api) — don't build new integrations on it. It is currently still what the `@mcpjam/sdk` eval-reporting flow uses to save results to MCPJam.
+</Warning>
+
+A project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, generated under **Settings → Project API Key** and read from the `MCPJAM_API_KEY` environment variable.
+
+## Quick reference
+
+| Key | Format | Issued by | Use it for |
+| --- | --- | --- | --- |
+| **MCPJam API key** | `sk_…` | [Settings → API keys](https://app.mcpjam.com/settings/api-keys) | The [MCPJam API](/reference/public-api) (`/api/v1/*`) |
+| LLM provider key | provider-specific | the LLM provider | Playground chat — *third-party* |
+| Playground BYOK | server-specific | your MCP server | Authenticating to one MCP server — *third-party* |
+| Project API Key | `mcpjam_…` | Settings (legacy) | **Deprecated** — `@mcpjam/sdk` / CLI |

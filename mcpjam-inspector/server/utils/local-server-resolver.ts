@@ -1,6 +1,10 @@
 import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
-import { isKnownProtocolVersion, type McpProtocolVersion } from "@mcpjam/sdk";
+import {
+  describeError,
+  isKnownProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk";
 import {
   ErrorCode,
   WebRouteError,
@@ -11,6 +15,9 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import { exportSingleServerForInspection } from "./export-helpers.js";
+import { ConvexHttpClient } from "convex/browser";
+import { getInspectorClientRuntimeConfig } from "../env.js";
 import { setRequestLogContext } from "./request-logger.js";
 import {
   type InternalLogContext,
@@ -756,11 +763,13 @@ export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
   if (error.details?.oauthRequired === true) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
+  const normalized = error.normalized ?? describeError(error);
   return c.json(
     {
       success: false,
       error: error.message,
       ...(error.details ?? {}),
+      normalized,
     },
     error.status as any
   );
@@ -831,6 +840,7 @@ export async function executeLocalServerConnect(
         success: false,
         error: "Failed to resolve server config",
         details: error instanceof Error ? error.message : "Unknown error",
+        normalized: describeError(error),
       },
       500
     );
@@ -874,12 +884,56 @@ export async function executeLocalServerConnect(
           error instanceof Error ? error.message : "Unknown error"
         }`,
         details: error instanceof Error ? error.message : "Unknown error",
+        normalized: describeError(error),
       },
       500
     );
   }
 
+  // Capture the inspection snapshot synchronously so a fast follow-up
+  // disconnect/reconnect on the same server can't tear down the manager
+  // mid-`listTools`. Only the Convex write is fire-and-forget — failures
+  // there never affect the connect response (the connect succeeded
+  // regardless). Port of PR #1731's `use-inspection-coordinator`; mirrors
+  // the hosted `/web/servers/validate` path.
+  const inspectionSnapshot = await exportSingleServerForInspection(
+    mcpClientManager,
+    serverDisplayName,
+    serverId,
+    { logPrefix: "connect-inspection" },
+  );
+  void persistConnectInspection({
+    convexBearer: bearer,
+    projectId,
+    snapshot: inspectionSnapshot,
+  }).catch((error) => {
+    logger.debug("Failed to persist connect-time inspection", {
+      serverId: serverDisplayName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
   return c.json(
     buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName)
   );
+}
+
+async function persistConnectInspection(args: {
+  convexBearer: string | undefined;
+  projectId: string;
+  snapshot: Awaited<ReturnType<typeof exportSingleServerForInspection>>;
+}): Promise<void> {
+  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
+  // derived from it (suffix swap) by the runtime config helper so that
+  // production env (which sets only CONVEX_HTTP_URL) works.
+  const { convexUrl } = getInspectorClientRuntimeConfig();
+  if (!convexUrl || !args.convexBearer) {
+    return;
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(args.convexBearer);
+  await client.mutation("serverInspections:recordFromConnect" as any, {
+    projectId: args.projectId,
+    snapshot: args.snapshot,
+  });
 }

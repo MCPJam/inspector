@@ -1,7 +1,7 @@
 import { EvalSuite } from "../src/EvalSuite";
 import { EvalTest } from "../src/EvalTest";
 import { PromptResult } from "../src/PromptResult";
-import type { TestAgent } from "../src/TestAgent";
+import type { HostRunner } from "../src/HostRunner";
 
 // Mock PromptResult factory
 function createMockPromptResult(options: {
@@ -35,14 +35,14 @@ function createMockPromptResult(options: {
   });
 }
 
-// Create a mock TestAgent with prompt history tracking
+// Create a mock HostRunner with prompt history tracking
 function createMockAgent(
   promptFn: (message: string) => Promise<PromptResult>
-): TestAgent {
-  const createAgent = (): TestAgent => {
+): HostRunner {
+  const createAgent = (): HostRunner => {
     let promptHistory: PromptResult[] = [];
     return {
-      prompt: async (message: string) => {
+      run: async (message: string) => {
         const result = await promptFn(message);
         promptHistory.push(result);
         return result;
@@ -52,7 +52,7 @@ function createMockAgent(
       },
       getPromptHistory: () => [...promptHistory],
       withOptions: () => createAgent(),
-    } as unknown as TestAgent;
+    } as unknown as HostRunner;
   };
   return createAgent();
 }
@@ -76,14 +76,14 @@ describe("EvalSuite", () => {
       const test1 = new EvalTest({
         name: "addition",
         test: async (agent) => {
-          const r = await agent.prompt("Add 2+3");
+          const r = await agent.run("Add 2+3");
           return r.hasToolCall("add");
         },
       });
       const test2 = new EvalTest({
         name: "multiply",
         test: async (agent) => {
-          const r = await agent.prompt("Multiply 4*5");
+          const r = await agent.run("Multiply 4*5");
           return r.hasToolCall("multiply");
         },
       });
@@ -102,7 +102,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test",
           test: async (agent) => {
-            await agent.prompt("Prompt 1");
+            await agent.run("Prompt 1");
             return true;
           },
         })
@@ -113,7 +113,7 @@ describe("EvalSuite", () => {
           new EvalTest({
             name: "test",
             test: async (agent) => {
-              await agent.prompt("Prompt 2");
+              await agent.run("Prompt 2");
               return true;
             },
           })
@@ -126,14 +126,14 @@ describe("EvalSuite", () => {
       const test1 = new EvalTest({
         name: "test1",
         test: async (agent) => {
-          await agent.prompt("Prompt 1");
+          await agent.run("Prompt 1");
           return true;
         },
       });
       const test2 = new EvalTest({
         name: "test2",
         test: async (agent) => {
-          await agent.prompt("Prompt 2");
+          await agent.run("Prompt 2");
           return true;
         },
       });
@@ -155,7 +155,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test1",
           test: async (agent) => {
-            await agent.prompt("Prompt 1");
+            await agent.run("Prompt 1");
             return true;
           },
         })
@@ -166,7 +166,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test2",
           test: async (agent) => {
-            await agent.prompt("Prompt 2");
+            await agent.run("Prompt 2");
             return true;
           },
         })
@@ -189,7 +189,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "addition",
           test: async (agent) => {
-            const r = await agent.prompt("Add 2+3");
+            const r = await agent.run("Add 2+3");
             return r.hasToolCall("add");
           },
         })
@@ -198,7 +198,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "multiply",
           test: async (agent) => {
-            const r = await agent.prompt("Multiply 4*5");
+            const r = await agent.run("Multiply 4*5");
             return r.hasToolCall("multiply");
           },
         })
@@ -226,7 +226,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "addition",
           test: async (agent) => {
-            const r = await agent.prompt("Add 2+3");
+            const r = await agent.run("Add 2+3");
             return r.hasToolCall("add");
           },
         })
@@ -235,7 +235,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "multiply",
           test: async (agent) => {
-            const r = await agent.prompt("Multiply 4*5");
+            const r = await agent.run("Multiply 4*5");
             return r.hasToolCall("multiply");
           },
         })
@@ -266,7 +266,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test1",
           test: async (agent) => {
-            await agent.prompt("Prompt 1");
+            await agent.run("Prompt 1");
             return true;
           },
         })
@@ -275,7 +275,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test2",
           test: async (agent) => {
-            await agent.prompt("Prompt 2");
+            await agent.run("Prompt 2");
             return true;
           },
         })
@@ -305,7 +305,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test1",
           test: async (agent) => {
-            await agent.prompt("Prompt 1");
+            await agent.run("Prompt 1");
             return true;
           },
         })
@@ -314,7 +314,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test2",
           test: async (agent) => {
-            await agent.prompt("Prompt 2");
+            await agent.run("Prompt 2");
             return true;
           },
         })
@@ -347,7 +347,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test1",
           test: async (agent) => {
-            await agent.prompt("Prompt 1");
+            await agent.run("Prompt 1");
             return true;
           },
         })
@@ -356,7 +356,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test2",
           test: async (agent) => {
-            await agent.prompt("Prompt 2");
+            await agent.run("Prompt 2");
             return true;
           },
         })
@@ -382,7 +382,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test",
           test: async (agent) => {
-            await agent.prompt("Prompt");
+            await agent.run("Prompt");
             return true;
           },
         })
@@ -421,7 +421,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test",
           test: async (agent) => {
-            const r = await agent.prompt("Prompt");
+            const r = await agent.run("Prompt");
             return r.hasToolCall("tool");
           },
         })
@@ -442,7 +442,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test",
           test: async (agent) => {
-            const r = await agent.prompt("Prompt");
+            const r = await agent.run("Prompt");
             return r.hasToolCall("tool"); // Will all fail
           },
         })
@@ -463,7 +463,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test1",
           test: async (agent) => {
-            await agent.prompt("Prompt 1");
+            await agent.run("Prompt 1");
             return true;
           },
         })
@@ -472,7 +472,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test2",
           test: async (agent) => {
-            await agent.prompt("Prompt 2");
+            await agent.run("Prompt 2");
             return true;
           },
         })
@@ -493,7 +493,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test",
           test: async (agent) => {
-            await agent.prompt("Prompt");
+            await agent.run("Prompt");
             return true;
           },
         })
@@ -511,7 +511,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test1",
           test: async (agent) => {
-            await agent.prompt("Prompt 1");
+            await agent.run("Prompt 1");
             return true;
           },
         })
@@ -520,7 +520,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "test2",
           test: async (agent) => {
-            await agent.prompt("Prompt 2");
+            await agent.run("Prompt 2");
             return true;
           },
         })
@@ -552,7 +552,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "addition",
           test: async (agent) => {
-            const r = await agent.prompt("Add 2+3");
+            const r = await agent.run("Add 2+3");
             return r.hasToolCall("add");
           },
         })
@@ -561,7 +561,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "multiply",
           test: async (agent) => {
-            const r = await agent.prompt("Multiply 4*5");
+            const r = await agent.run("Multiply 4*5");
             return r.hasToolCall("multiply");
           },
         })
@@ -585,7 +585,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "with-expected",
           test: async (agent) => {
-            await agent.prompt("Search");
+            await agent.run("Search");
             return true;
           },
           expectedToolCalls: expected,
@@ -595,7 +595,7 @@ describe("EvalSuite", () => {
         new EvalTest({
           name: "without-expected",
           test: async (agent) => {
-            await agent.prompt("Other");
+            await agent.run("Other");
             return true;
           },
         })

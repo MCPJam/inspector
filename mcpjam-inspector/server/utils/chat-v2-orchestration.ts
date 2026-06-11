@@ -18,7 +18,7 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { isToolVisibilityAppOnly } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { filterAppOnlyTools } from "@mcpjam/sdk/host-config/internal";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -45,40 +45,11 @@ import { createProgressiveMetaTools } from "./progressive-tool-meta-tools.js";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
-/**
- * Mutates `tools` in place, removing entries whose source MCP tool
- * declares SEP-1865 `_meta.ui.visibility` as exactly `["app"]`.
- *
- * The visibility array defaults to `["model", "app"]` per SEP-1865, so a
- * tool with no visibility metadata is treated as visible to both.
- */
-function filterAppOnlyTools(
-  tools: ToolSet,
-  manager: InstanceType<typeof MCPClientManager>
-): void {
-  // Cache per-server metadata maps so we don't repeatedly clone them.
-  const metaByServer = new Map<string, Record<string, Record<string, any>>>();
-  const getMeta = (serverId: string) => {
-    let cached = metaByServer.get(serverId);
-    if (!cached) {
-      cached = manager.getAllToolsMetadata(serverId);
-      metaByServer.set(serverId, cached);
-    }
-    return cached;
-  };
-
-  for (const [name, tool] of Object.entries(tools)) {
-    const serverId = (tool as { _serverId?: unknown })._serverId;
-    if (typeof serverId !== "string") continue;
-    const meta = getMeta(serverId)[name];
-    // SDK helper takes a tool-shaped object with `_meta`; wrap the per-tool
-    // metadata to match its expected shape. Returns true iff `_meta.ui.visibility`
-    // is exactly `["app"]`.
-    if (isToolVisibilityAppOnly({ _meta: meta })) {
-      delete tools[name];
-    }
-  }
-}
+// `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
+// eval runtime can apply it without reaching into this file. Re-exported here
+// so existing importers (web/mcp routes, tests) continue to work without
+// churning their import paths.
+export { filterAppOnlyTools };
 
 /**
  * SEP-1865 App-Provided Tool descriptor as accepted by `prepareChatV2`,
@@ -467,6 +438,8 @@ export interface PrepareChatV2Options {
    */
   priorMessages?: ReadonlyArray<ModelMessage>;
   appTools?: AppToolEntry[];
+  /** Server-side built-in tools (e.g. web_search) with their own execute. */
+  builtInTools?: ToolSet;
 }
 
 /**
@@ -532,6 +505,7 @@ export async function prepareChatV2(
     respectToolVisibility,
     customProviders,
     appTools,
+    builtInTools,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -594,10 +568,28 @@ export async function prepareChatV2(
   // before skills so an app alias never collides with either (the
   // `app_<8hex>` namespace is opaque and disjoint from both).
   const appToolEntries = buildAppTools(appTools);
+  const builtInToolEntries = builtInTools ?? {};
+  // Collision guard: a built-in tool must not shadow — or be shadowed by — an
+  // MCP, app, or skill tool. Fail closed before streaming so `web_search` never
+  // silently resolves to a different tool (or vice versa).
+  for (const name of Object.keys(builtInToolEntries)) {
+    if (
+      Object.prototype.hasOwnProperty.call(mcpTools, name) ||
+      Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(finalSkillTools, name)
+    ) {
+      throw new Error(
+        `Built-in tool '${name}' collides with an existing MCP, app, or skill tool.`,
+      );
+    }
+  }
+  // Built-ins merge last so an explicit built-in wins, but the guard above
+  // means there is never actually a collision to resolve.
   const realTools = {
     ...mcpTools,
     ...appToolEntries,
     ...finalSkillTools,
+    ...builtInToolEntries,
   } as ToolSet;
 
   // 2. Decide whether progressive discovery applies, then mint meta-tools if

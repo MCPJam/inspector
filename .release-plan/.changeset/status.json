@@ -3,23 +3,41 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Inspector updates:\n\n- Show refund and dispute status badges in the credit purchase history, with a hover detail for partial refunds",
-      "id": "payment-history-status-badges"
+      "summary": "Add `builtInToolIds` as a HostConfig v2 dimension. Host configs can now carry an opaque list of built-in tool catalog ids (a peer dimension to `serverIds`). The canonicalizer validates wire shape (array of non-empty strings), then dedupes and sorts; an absent or empty list is omitted from the canonical JSON, so every existing host config keeps a byte-identical `configHash`. IDs remain opaque to the SDK — existence and org-scope are enforced by the backend catalog, not an SDK enum.",
+      "id": "built-in-tool-ids-host-config"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add `computer` as a HostConfig v2 dimension. A host config can now declare a personal cloud workstation (the chat `bash` tool + a web terminal) via `computer?: null | { kind: \"personal\"; toolset: \"bash\"; workdir?: string }`. The canonicalizer collapses `null` and an absent value to the same \"no computer\" shape (key omitted), so every existing host config keeps a byte-identical `configHash`; it validates the `kind`/`toolset` literals, rejects unknown keys, and trims `workdir`. The field is stripped from the SDK→backend eval wire config, because a personal computer is mutable per-user state that an eval can't reproduce. Part of Project Computers (plan: mcpjam-backend `docs/project-computers.md`).",
+      "id": "project-computers-host-config"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.8.0",
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.14.0",
       "changesets": [
-        "payment-history-status-badges"
+        "built-in-tool-ids-host-config",
+        "project-computers-host-config"
       ],
-      "newVersion": "2.8.1"
+      "newVersion": "1.15.0"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }

@@ -405,6 +405,17 @@ vi.mock("../components/oauth/OAuthDebugCallback", () => ({
 }));
 vi.mock("../components/mcp-sidebar", () => ({
   MCPSidebar: (props: unknown) => mockMCPSidebar(props),
+  // App.tsx imports this helper to gate the Connect/Clients route on
+  // desktop. Tests run in jsdom (hosted-mode = true is the default but
+  // we still want the helper to behave correctly), so return the real
+  // semantic: hosted defers to PostHog, desktop default-on.
+  computeHostsHubFlagEnabled: ({
+    hostsFlag,
+    hostedMode,
+  }: {
+    hostsFlag: unknown;
+    hostedMode: boolean;
+  }) => (hostedMode ? hostsFlag === true : true),
 }));
 vi.mock("../components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children?: ReactNode }) => (
@@ -413,6 +424,7 @@ vi.mock("../components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
+  useSidebar: () => ({ isMobile: false }),
 }));
 vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
@@ -423,8 +435,8 @@ vi.mock("../stores/preferences/preferences-provider", () => ({
 // Reconciler is App-internal plumbing; mock it out so the test doesn't
 // have to thread shared-app-state + preferences mocks deep enough to
 // satisfy `useAutoConnectProjectServers`.
-vi.mock("../components/ActiveClientServerReconciler", () => ({
-  ActiveClientServerReconciler: () => null,
+vi.mock("../components/ActiveHostServerReconciler", () => ({
+  ActiveHostServerReconciler: () => null,
 }));
 vi.mock("@mcpjam/design-system/sonner", () => ({
   Toaster: () => <div />,
@@ -433,7 +445,7 @@ vi.mock("../state/app-state-context", () => ({
   AppStateProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  // ActiveClientServerReconciler reads this via useAutoConnectProjectServers
+  // ActiveHostServerReconciler reads this via useAutoConnectProjectServers
   // to compute connected/excess servers. Return an empty servers map so
   // the reconciler's reconciliation logic is a no-op in App-level tests.
   useSharedAppState: () => ({ servers: {} }),
@@ -1375,7 +1387,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("disables sidebar project creation when the routed org is free and at cap", async () => {
+  it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/organizations/org-3");
@@ -1450,12 +1462,12 @@ describe("App hosted OAuth callback handling", () => {
               gateKey: "maxProjects",
               kind: "limit",
               scope: "organization",
-              canAccess: false,
-              shouldShowUpsell: true,
-              upgradePlan: "team",
-              reason: "limit_reached",
+              canAccess: true,
+              shouldShowUpsell: false,
+              upgradePlan: null,
+              reason: "within_limit",
               currentValue: 1,
-              allowedValue: 1,
+              allowedValue: null,
             },
           ],
         };
@@ -1472,11 +1484,8 @@ describe("App hosted OAuth callback handling", () => {
 
     const lastCall =
       mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
-    expect(lastCall?.[0]).toMatchObject({
-      isCreateProjectDisabled: true,
-      createProjectDisabledReason:
-        "This organization has reached its project limit (1). Upgrade to create more projects.",
-    });
+    expect(lastCall?.[0].isCreateProjectDisabled).toBe(false);
+    expect(lastCall?.[0].createProjectDisabledReason).toBeUndefined();
   });
 
   it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {
@@ -2556,13 +2565,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("keeps Playground available when evaluate-runs is disabled", async () => {
+  it("keeps Playground available when evaluate-ci is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      (flag: string) =>
+        flag === "playground-enabled" || flag === "evaluate-ui"
     );
 
     render(<App />);
@@ -2575,7 +2585,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("waits on ci-evals while the evaluate-runs flag is still loading", async () => {
+  it("waits on ci-evals while the evaluate-ci flag is still loading", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2586,7 +2596,7 @@ describe("App hosted OAuth callback handling", () => {
     };
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs"
+      flag === "evaluate-ci"
         ? evaluateRunsState.value
         : flag === "playground-enabled"
     );
@@ -2611,7 +2621,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
   });
 
-  it("redirects ci-evals to evals when evaluate-runs is disabled", async () => {
+  it("redirects ci-evals to evals when evaluate-ci is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2619,7 +2629,9 @@ describe("App hosted OAuth callback handling", () => {
 
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : flag === "playground-enabled"
+      flag === "evaluate-ci"
+        ? undefined
+        : flag === "playground-enabled" || flag === "evaluate-ui"
     );
 
     render(<App />);
@@ -2639,14 +2651,16 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("redirects nested ci-evals routes to evals when evaluate-runs is disabled", async () => {
+  it("redirects nested ci-evals routes to evals when evaluate-ci is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals/suite/s_123?view=runs");
     mockHandleOAuthCallback.mockReset();
 
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : flag === "playground-enabled"
+      flag === "evaluate-ci"
+        ? undefined
+        : flag === "playground-enabled" || flag === "evaluate-ui"
     );
 
     render(<App />);
@@ -2840,7 +2854,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("still applies the CI billing redirect when evaluate-runs is enabled", async () => {
+  it("still applies the CI billing redirect when evaluate-ci is enabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/ci-evals");
@@ -2862,7 +2876,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) =>
-        flag === "billing-entitlements-ui" || flag === "evaluate-runs"
+        flag === "billing-entitlements-ui" || flag === "evaluate-ci"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {

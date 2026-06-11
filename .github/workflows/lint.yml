@@ -8,6 +8,9 @@ on:
 
 env:
   NODE_VERSION: "24.14.0"
+  # This workflow typechecks, builds, and boots the server in Node — it never
+  # launches Electron, so skip the (occasionally flaky) Electron binary download.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
 jobs:
   build:
@@ -26,6 +29,9 @@ jobs:
 
       - name: Install workspace dependencies
         run: npm ci --legacy-peer-deps
+
+      - name: Verify docs tokens are in sync with design system
+        run: npm run docs:check-tokens
 
       - name: Typecheck releasable packages
         run: npm run typecheck

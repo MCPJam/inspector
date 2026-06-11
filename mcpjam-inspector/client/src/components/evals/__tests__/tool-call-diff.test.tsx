@@ -29,14 +29,20 @@ describe("ToolCallDiff", () => {
     expect(screen.getByText("b")).toBeInTheDocument();
   });
 
-  it("renders Out of order section under strict order", () => {
+  it("reports reversed actuals as Missing under strict order", () => {
+    // After the trajectory-mode refactor, `strict` is index-aligned: it
+    // never pairs expected[i] with actual[j] when i ≠ j, so reversed
+    // actuals appear as missing (the canonical "this call did not happen
+    // at the right step") rather than out-of-order pairings. The
+    // outOfOrder result field stays empty by construction.
     const result = evaluateToolCalls(
       [tc("a"), tc("b")],
       [tc("b"), tc("a")],
       { toolCallOrder: "strict" },
     );
+    expect(result.outOfOrder).toEqual([]);
     render(<ToolCallDiff result={result} />);
-    expect(screen.getByText("Out of order")).toBeInTheDocument();
+    expect(screen.getByText("Missing")).toBeInTheDocument();
   });
 
   it("renders Arg mismatch with side-by-side expected vs actual", () => {

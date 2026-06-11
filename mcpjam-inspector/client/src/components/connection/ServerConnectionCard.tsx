@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
+import { ErrorCard } from "@/components/ui/error-card";
 import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
@@ -804,32 +805,26 @@ export function ServerConnectionCard({
 
           {hasError && (
             <div
-              className="mt-3 rounded-md border border-red-300/40 bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300"
+              className="mt-3"
               onClick={(e) => e.stopPropagation()}
             >
               {oauthFailureStep ? (
-                <div className="mb-1 font-medium">
+                <div className="mb-1 text-xs font-medium text-red-700 dark:text-red-300">
                   OAuth failed during {oauthFailureStep.title}
                 </div>
               ) : null}
-              <div className="break-all">
-                {isErrorExpanded
-                  ? server.lastError
-                  : server.lastError!.length > 140
-                  ? `${server.lastError!.substring(0, 140)}...`
-                  : server.lastError}
-              </div>
-              {server.lastError!.length > 140 && (
-                <button
-                  data-server-card-context-menu-exempt
-                  onClick={() => setIsErrorExpanded((prev) => !prev)}
-                  className="mt-1 underline cursor-pointer"
-                >
-                  {isErrorExpanded ? "Show less" : "Show more"}
-                </button>
-              )}
+              <ErrorCard
+                // Prefer the rich block; fall back to the message string
+                // (the card calls `describeError` internally when needed).
+                error={server.lastNormalizedError ?? server.lastError ?? ""}
+                // Controlled — the Error badge above toggles
+                // `isErrorExpanded`; the card must reflect that on every
+                // change, not just at mount.
+                open={isErrorExpanded}
+                onOpenChange={setIsErrorExpanded}
+              />
               {server.retryCount > 0 && (
-                <div className="mt-1 opacity-80">
+                <div className="mt-1 text-xs text-muted-foreground">
                   {server.retryCount} retry attempt
                   {server.retryCount !== 1 ? "s" : ""}
                 </div>

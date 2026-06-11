@@ -1,12 +1,17 @@
-import { useEffect, useMemo } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useCallback, useMemo, type ReactNode } from "react";
+import { useQuery } from "convex/react";
+import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
+import { usePostHog } from "posthog-js/react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
-import { RecommendedClients } from "./home/RecommendedClients";
-import { ProductUpdatesFeed } from "./home/ProductUpdatesFeed";
+import { RecommendedHosts } from "./home/RecommendedHosts";
+import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
+import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
+import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
 
 interface HomeTabProps {
   organizationId: string | null;
@@ -34,8 +39,158 @@ function deriveFirstName(opts: {
   return "there";
 }
 
+function McpjamAgentTakeoverFrame({
+  onBack,
+  onNewChat,
+  children,
+}: {
+  onBack: () => void;
+  onNewChat: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex items-center justify-between border-b border-border/40 px-4 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          aria-label="Back to home"
+          className="h-8 w-8 rounded-full p-0 text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onNewChat}
+          className="h-8 gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden />
+          <span>New chat</span>
+        </Button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// Mirrors the key handleSessionStart writes and McpjamAgentThread's autosubmit
+// effect removes; lives here so the takeover Back / New chat handlers can
+// clean up unconsumed payloads when the thread unmounts before its effect
+// runs.
+function clearPendingForSession(sessionId: string | null | undefined) {
+  if (!sessionId || typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(`mcpjam:agent-pending:${sessionId}`);
+  } catch {
+    // Quota/disabled storage — stale entry will be a no-op unless the user
+    // returns to this session, and even then the duplicate-send is the only
+    // visible regression. Not worth surfacing.
+  }
+}
+
 export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const navigate = useAppNavigate();
+  const posthog = usePostHog();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sessionParam = searchParams.get("session");
+  const composeParam = searchParams.get("compose") === "1";
+
+  const handleSessionStart = useCallback(
+    (id: string, firstMessage: string) => {
+      // Stash the typed prompt so the inline thread can autosubmit it on
+      // mount — without this, the hero would lose the message in the
+      // hero-to-thread swap. sessionStorage (not localStorage) so a stale
+      // pending message can't leak across browser sessions.
+      //
+      // The `fresh: true` flag distinguishes "user just minted this id and
+      // hit submit" from "user landed on /home?session=<id> via the Recent
+      // Chat pill". Without it, the thread can't tell the two apart and
+      // would replay the prompt against an already-hydrated transcript if
+      // hydration hadn't committed yet on the first effect pass.
+      try {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(
+            `mcpjam:agent-pending:${id}`,
+            JSON.stringify({ text: firstMessage, fresh: true })
+          );
+        }
+      } catch {
+        // Ignore quota/disabled storage — worst case the user retypes.
+      }
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("session", id);
+          next.delete("compose");
+          return next;
+        },
+        { replace: false }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const handleResumeSession = useCallback(
+    (id: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("session", id);
+          next.delete("compose");
+          return next;
+        },
+        { replace: false }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const handleBackToHome = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        // Drop any unconsumed pending payload for the session we're leaving;
+        // otherwise a later resume of the same id replays the prompt and
+        // re-renders the optimistic bubble over the hydrated transcript.
+        clearPendingForSession(prev.get("session"));
+        posthog?.capture("mcpjam_agent_back", {
+          surface: "home",
+          had_session: Boolean(prev.get("session")),
+        });
+        const next = new URLSearchParams(prev);
+        next.delete("session");
+        next.delete("compose");
+        return next;
+      },
+      { replace: false }
+    );
+  }, [posthog, setSearchParams]);
+
+  // "New chat" inside the takeover keeps the user on the agent surface and
+  // swaps the thread for an empty composer (Hero). A session id is minted
+  // only when they actually submit, mirroring the chatbox "Clear chat"
+  // affordance — fresh slate without bouncing back to the greeting.
+  const handleNewChat = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        // Same rationale as handleBackToHome — drop the leaving session's
+        // unconsumed pending payload so a later resume doesn't double-send.
+        clearPendingForSession(prev.get("session"));
+        posthog?.capture("mcpjam_agent_new_chat", {
+          surface: "home",
+          had_session: Boolean(prev.get("session")),
+        });
+        const next = new URLSearchParams(prev);
+        next.delete("session");
+        next.set("compose", "1");
+        return next;
+      },
+      { replace: false }
+    );
+  }, [posthog, setSearchParams]);
   const { user } = useAuth();
   const convexUser = useQuery("users:getCurrentUser" as any) as
     | { name?: string }
@@ -78,20 +233,6 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
       : "skip"
   ) as OrgMetricResult;
 
-  const ensureMetricFresh = useMutation(
-    "orgMetrics:ensureOrgMetricFresh" as any
-  );
-  useEffect(() => {
-    if (!organizationId) return;
-    const args = { organizationId } as { organizationId: string };
-    Promise.all([
-      ensureMetricFresh({ ...args, metric: "tool_executions_30d" } as any),
-      ensureMetricFresh({ ...args, metric: "messages_sent_30d" } as any),
-    ]).catch(() => {
-      // Soft-fail: cache stays stale, UI shows last known value (or 0).
-    });
-  }, [organizationId, ensureMetricFresh]);
-
   const fullName =
     convexUser?.name ||
     [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
@@ -102,15 +243,6 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
     email: user?.email,
   });
   const greeting = useMemo(() => getGreeting(new Date()), []);
-  const dateLabel = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
 
   if (!organizationId) {
     return (
@@ -127,44 +259,76 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
 
   const isLoading = data === undefined;
 
+  // PostHog/Attio-style chat takeover: when a session is active OR the user
+  // chose "New chat" from inside the takeover, the entire home screen *becomes*
+  // the conversation surface. The greeting, stats, and recommended cards drop
+  // out until the user clicks Back.
+  if (sessionParam || composeParam) {
+    return (
+      <McpjamAgentTakeoverFrame
+        onBack={handleBackToHome}
+        onNewChat={handleNewChat}
+      >
+        {sessionParam ? (
+          <McpjamAgentThread
+            key={sessionParam}
+            sessionId={sessionParam}
+            projectId={projectId}
+            organizationId={organizationId}
+            surface="home"
+            variant="full"
+            className="flex-1 min-h-0"
+          />
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 pb-20 pt-16">
+              <McpjamAgentHero
+                surface="home"
+                onSessionStart={handleSessionStart}
+                onResumeSession={handleResumeSession}
+                ready={Boolean(projectId)}
+              />
+            </div>
+          </div>
+        )}
+      </McpjamAgentTakeoverFrame>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-8 pb-20 pt-14">
-        {/* Greeting */}
-        <header className="flex flex-col gap-2">
-          <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            {dateLabel}
-          </p>
-          <h1 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[40px]">
-            {greeting},{" "}
-            <span className="font-semibold text-muted-foreground">
-              {firstName}
-            </span>
+      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8 sm:px-8">
+        <header className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
+            {greeting}, {firstName}
           </h1>
+          <OrgStatsStrip
+            memberCount={isLoading ? null : data!.memberCount}
+            projectCount={isLoading ? null : data!.projects.length}
+            totalServerCount={isLoading ? null : data!.totalServerCount}
+            evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
+            toolExecutionCount={toolExecutionCount?.value ?? null}
+            toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
+            messagesSentCount={messagesSentCount?.value ?? null}
+            messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
+          />
         </header>
 
-        {/* Slim stats — pills with dot separators */}
-        <OrgStatsStrip
-          memberCount={isLoading ? null : data!.memberCount}
-          projectCount={isLoading ? null : data!.projects.length}
-          totalServerCount={isLoading ? null : data!.totalServerCount}
-          evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
-          toolExecutionCount={toolExecutionCount?.value ?? null}
-          toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
-          messagesSentCount={messagesSentCount?.value ?? null}
-          messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
+        <McpjamAgentHero
+          surface="home"
+          onSessionStart={handleSessionStart}
+          onResumeSession={handleResumeSession}
+          ready={Boolean(projectId)}
         />
 
-        {/* Hero card */}
-        <RecommendedServers
-          servers={data?.recommendedServers}
-          projectId={projectId}
-        />
+        <ProductUpdatesRow />
 
-        {/* Secondary cards */}
-        <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
-          <RecommendedClients projectId={projectId} />
-          <ProductUpdatesFeed />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <RecommendedServers
+            servers={data?.recommendedServers}
+            projectId={projectId}
+          />
+          <RecommendedHosts projectId={projectId} />
         </div>
       </div>
     </div>

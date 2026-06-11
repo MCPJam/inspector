@@ -94,6 +94,183 @@ export type EvalTraceWidgetSnapshot = {
   };
 };
 
+// PR 6b: browser-rendered MCP App eval — render observations + interaction
+// steps. Runner records carry base64 screenshots until `finalizeEvalIteration`
+// uploads them via `chatSessions:generateSnapshotUploadUrl`; serialized records
+// replace that field with `screenshotBlobId`. These never enter
+// `EvalTraceBlobV1` — they fan out to the sibling `widgetRenderObservations` /
+// `browserInteractionSteps` Convex tables via `appendEvalTurnTrace`, which has
+// its own server-side validators, so no Zod mirror lives here.
+
+export type EvalTraceWidgetRenderStatus =
+  | "rendered"
+  | "no_ui_resource"
+  | "resource_read_failed"
+  | "mount_failed"
+  | "bridge_timeout"
+  | "render_error"
+  | "blank_screenshot"
+  | "screenshot_failed"
+  | "browser_unavailable";
+
+export type EvalTraceBrowserAction =
+  | "screenshot"
+  | "left_click"
+  | "double_click"
+  | "right_click"
+  | "mouse_move"
+  | "type"
+  | "key"
+  | "scroll"
+  | "wait";
+
+export type EvalTraceBrowserStepNote =
+  | "no_rendered_widget"
+  | "step_budget_exceeded"
+  | "screenshot_budget_exceeded";
+
+const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
+  "no_rendered_widget",
+  "step_budget_exceeded",
+  "screenshot_budget_exceeded",
+]);
+
+/**
+ * The harness types `BrowserActionResult.note` as an open `string`, but the
+ * backend step validator is a CLOSED union and rejects the whole turn write on
+ * an unknown literal. The runner narrows through this guard so a future harness
+ * note can never cost an entire turn's worth of steps — keep the step, drop the
+ * unrecognized note.
+ */
+export function isEvalTraceBrowserStepNote(
+  value: unknown,
+): value is EvalTraceBrowserStepNote {
+  return typeof value === "string" && EVAL_TRACE_BROWSER_STEP_NOTES.has(value);
+}
+
+export type EvalTraceWidgetToolCall = {
+  name: string;
+  args: unknown; // sanitized at the boundary; sanitizer handles `$`-keys
+  ok: boolean;
+  error?: string;
+  elapsedMs: number;
+};
+
+/**
+ * Runner-local render observation: carries `promptIndex` (stamped by the runner)
+ * plus the transient base64 screenshot until finalize uploads it.
+ */
+export type RunnerWidgetRenderObservation = {
+  toolCallId: string;
+  toolName: string;
+  serverId: string; // friendly MCP server name; backend resolves to Id<'servers'>
+  status: EvalTraceWidgetRenderStatus;
+  resourceUri?: string;
+  bridgeInitialized?: boolean;
+  screenshotBase64?: string; // transient; uploaded in finalizeEvalIteration
+  consoleErrors?: string[];
+  blockedRequests?: string[];
+  elapsedMs: number;
+  ts: number;
+  promptIndex: number; // stamped by the runner
+};
+
+/**
+ * Runner-local interaction step: carries `promptIndex` + `stepIndex` (both
+ * stamped by the runner) plus the transient base64 screenshot until finalize
+ * uploads it.
+ */
+export type RunnerBrowserInteractionStep = {
+  toolCallId: string;
+  stepIndex: number; // monotonic per (toolCallId), stamped by the runner
+  promptIndex: number; // stamped by the runner
+  action: EvalTraceBrowserAction;
+  coordinateX?: number;
+  coordinateY?: number;
+  text?: string;
+  scrollDirection?: "up" | "down" | "left" | "right";
+  scrollAmount?: number;
+  duration?: number;
+  screenshotBase64?: string; // transient; uploaded in finalizeEvalIteration
+  widgetToolCalls?: EvalTraceWidgetToolCall[];
+  elapsedMs: number;
+  note?: EvalTraceBrowserStepNote;
+  ts: number;
+};
+
+/**
+ * Serialized render observation: screenshot already uploaded
+ * (`screenshotBase64` → `screenshotBlobId`), `promptIndex` retained so the W2
+ * fanout can bucket per turn.
+ */
+export type SerializedWidgetRenderObservation = Omit<
+  RunnerWidgetRenderObservation,
+  "screenshotBase64"
+> & {
+  screenshotBlobId?: string;
+};
+
+/** Serialized interaction step — same screenshot-upload swap as above. */
+export type SerializedBrowserInteractionStep = Omit<
+  RunnerBrowserInteractionStep,
+  "screenshotBase64"
+> & {
+  screenshotBlobId?: string;
+};
+
+// Payloads sent inside one `appendEvalTurnTrace` turn. These deliberately OMIT
+// `promptIndex`: the backend stamps it from `turn.promptIndex` server-side.
+export type WidgetRenderObservationPayload = Omit<
+  SerializedWidgetRenderObservation,
+  "promptIndex"
+>;
+
+export type BrowserInteractionStepPayload = Omit<
+  SerializedBrowserInteractionStep,
+  "promptIndex"
+>;
+
+// PR 7: shapes the backend trace envelope returns to the replay UI. The
+// backend (`getEvalTraceFromChatSession` + `addBrowserArtifactUrls`) collects
+// the PR 6b tables, keeps `promptIndex`, and resolves `screenshotBlobId` →
+// `screenshotUrl` (null when no blob). `serverId` arrives as the resolved
+// Convex doc id; the UI keys on `toolName` / `toolCallId` for display.
+
+export type EvalTraceWidgetRenderObservationView = {
+  toolCallId: string;
+  toolName: string;
+  serverId?: string;
+  promptIndex: number;
+  status: EvalTraceWidgetRenderStatus;
+  resourceUri?: string;
+  bridgeInitialized?: boolean;
+  screenshotBlobId?: string;
+  screenshotUrl?: string | null;
+  consoleErrors?: string[];
+  blockedRequests?: string[];
+  elapsedMs: number;
+  ts: number;
+};
+
+export type EvalTraceBrowserInteractionStepView = {
+  toolCallId: string;
+  stepIndex: number;
+  promptIndex: number;
+  action: EvalTraceBrowserAction;
+  coordinateX?: number;
+  coordinateY?: number;
+  text?: string;
+  scrollDirection?: "up" | "down" | "left" | "right";
+  scrollAmount?: number;
+  duration?: number;
+  screenshotBlobId?: string;
+  screenshotUrl?: string | null;
+  widgetToolCalls?: EvalTraceWidgetToolCall[];
+  elapsedMs: number;
+  note?: EvalTraceBrowserStepNote;
+  ts: number;
+};
+
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
 export type EvalTraceBlobV1 = {
   traceVersion: 1;

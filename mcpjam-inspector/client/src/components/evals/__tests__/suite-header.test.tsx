@@ -4,6 +4,11 @@ import { SuiteHeader } from "../suite-header";
 
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
 }));
 
 const mockIsHostedMode = vi.fn(() => false);
@@ -83,9 +88,29 @@ describe("SuiteHeader", () => {
           ...baseRun,
           summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
         }}
-      />,
+      />
     );
     expect(screen.getByText(/1 passed · 1 failed · 50%/)).toBeInTheDocument();
+  });
+
+  it("omits run identity when consolidated into the accuracy hero band", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+        }}
+        omitRunDetailIdentity
+      />
+    );
+    expect(
+      screen.queryByRole("heading", { name: /Run run-1/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/1 passed · 1 failed/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Replay this run" })
+    ).toBeInTheDocument();
   });
 
   it("hides compact run stats when the KPI strip is shown", () => {
@@ -97,10 +122,10 @@ describe("SuiteHeader", () => {
           summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
         }}
         runDetailKpiStrip={<div data-testid="run-kpi-strip">kpis</div>}
-      />,
+      />
     );
     expect(
-      screen.queryByText(/1 passed · 1 failed · 50%/),
+      screen.queryByText(/1 passed · 1 failed · 50%/)
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("run-kpi-strip")).toBeInTheDocument();
   });
@@ -113,7 +138,7 @@ describe("SuiteHeader", () => {
           ...baseRun,
           replayedFromRunId: "n573zfck8sdhjg7by2s31ex2yx83m6sh",
         }}
-      />,
+      />
     );
 
     expect(screen.getByText("Replay of")).toBeTruthy();
@@ -141,7 +166,7 @@ describe("SuiteHeader", () => {
     renderWithProviders(<SuiteHeader {...baseProps} hideRunActions />);
 
     expect(
-      screen.queryByRole("button", { name: "Replay this run" }),
+      screen.queryByRole("button", { name: "Replay this run" })
     ).toBeNull();
   });
 
@@ -151,11 +176,11 @@ describe("SuiteHeader", () => {
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "Replay latest run" }),
+      screen.getByRole("button", { name: "Replay latest run" })
     ).toBeTruthy();
   });
 
@@ -168,7 +193,7 @@ describe("SuiteHeader", () => {
         selectedRunDetails={null}
         suite={{ ...baseSuite, name: longName }}
         readOnlyConfig
-      />,
+      />
     );
 
     const heading = screen.getByRole("heading", { level: 2, name: longName });
@@ -183,11 +208,11 @@ describe("SuiteHeader", () => {
         viewMode="overview"
         selectedRunDetails={null}
         hideRunActions
-      />,
+      />
     );
 
     expect(
-      screen.queryByRole("button", { name: "Replay latest run" }),
+      screen.queryByRole("button", { name: "Replay latest run" })
     ).toBeNull();
   });
 
@@ -203,7 +228,7 @@ describe("SuiteHeader", () => {
         runsViewMode="runs"
         casesSidebarHidden
         onShowCasesSidebar={onShowCasesSidebar}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: "Cases" }));
@@ -221,7 +246,7 @@ describe("SuiteHeader", () => {
         viewMode="overview"
         selectedRunDetails={null}
         onOpenExportSuite={onOpenExportSuite}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: "Setup SDK" }));
@@ -239,7 +264,7 @@ describe("SuiteHeader", () => {
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
         isGeneratingTestCases
-      />,
+      />
     );
 
     const generateBtn = screen.getByRole("button", { name: /generate/i });
@@ -263,14 +288,14 @@ describe("SuiteHeader", () => {
         onCreateTestCase={onCreate}
         onGenerateTestCases={onGenerate}
         canGenerateTestCases
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "New case" }),
+      screen.getByRole("button", { name: "New case" })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /generate/i }),
+      screen.getByRole("button", { name: /generate/i })
     ).toBeInTheDocument();
   });
 
@@ -291,10 +316,13 @@ describe("SuiteHeader", () => {
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
         testCases={[
-          { _id: "c1", models: [{ provider: "openai", model: "gpt-4" }] } as any,
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
         ]}
         connectedServerNames={new Set(["asana"])}
-      />,
+      />
     );
 
     const runAll = screen.getByRole("button", {
@@ -322,18 +350,20 @@ describe("SuiteHeader", () => {
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
         testCases={[
-          { _id: "c1", models: [{ provider: "openai", model: "gpt-4" }] } as any,
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
         ]}
         connectedServerNames={new Set(["asana"])}
         iterationOverride={3}
-      />,
+      />
     );
 
     await user.click(
-      screen.getByRole("button", { name: /Run all cases in this suite/i }),
+      screen.getByRole("button", { name: /Run all cases in this suite/i })
     );
 
     expect(onRerun).toHaveBeenCalledWith(baseSuite, { iterationOverride: 3 });
   });
-
 });

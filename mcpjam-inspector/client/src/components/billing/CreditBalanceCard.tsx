@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Info } from "lucide-react";
+import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -13,7 +14,17 @@ import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTop
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
-import { formatCreditResetText } from "@/lib/credit-usage";
+import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
+import {
+  formatEvalIterationResetTime,
+  getEvalIterationQuotaLabel,
+} from "@/lib/eval-iteration-quota";
+import {
+  formatCreditResetText,
+  formatMonthlyResetText,
+} from "@/lib/credit-usage";
+import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
+import { useTeamCreditsUiEnabled } from "@/lib/team-credits-flag";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
 /** Pulls the limit-modal redirect flag out of the current URL and clears it
@@ -29,7 +40,7 @@ function consumeTopupFlag(): boolean {
     window.history.replaceState(
       null,
       "",
-      `${window.location.pathname}${nextSearch}`,
+      `${window.location.pathname}${nextSearch}`
     );
     return true;
   }
@@ -38,29 +49,59 @@ function consumeTopupFlag(): boolean {
 }
 
 interface CreditBalanceCardProps {
+  organizationId?: string | null;
+  canManageCredits?: boolean;
   /** Optional override for the chat session id used by the top-up flow. */
   chatSessionId?: string;
 }
 
 export function CreditBalanceCard({
+  organizationId,
+  canManageCredits = false,
   chatSessionId,
 }: CreditBalanceCardProps = {}) {
-  const { balance, isLoading } = useCreditBalance();
+  const creditTopupsUiEnabled = useCreditTopupsUiEnabled();
+  const teamCreditsUiEnabled = useTeamCreditsUiEnabled();
+  const { balance, isLoading } = useCreditBalance({
+    organizationId,
+    enabled: creditTopupsUiEnabled,
+  });
+  const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
+    useEvalIterationQuota({
+      organizationId,
+      enabled: creditTopupsUiEnabled && Boolean(organizationId),
+    });
   const [isTopupOpen, setIsTopupOpen] = useState(false);
   const [topupSource, setTopupSource] =
     useState<CreditTopupSource>("billing_page");
+  // Whether the user landed here from the global limit modal (`?topup=open`).
+  // Captured once on mount, then acted on once we know whether they can
+  // manage credits — `canManageCredits` can arrive a render late while the
+  // org role resolves.
+  const [arrivedFromLimitModal, setArrivedFromLimitModal] = useState(false);
 
-  // Auto-open the topup dialog when the user is redirected here from the
-  // global limit modal (`/organizations/{id}/billing?topup=open`). One-shot:
-  // the flag is consumed from the URL so a subsequent reload doesn't reopen.
-  // Source is recorded as `limit_modal` so the funnel can attribute the
-  // top-up back to the limit-hit that triggered the redirect.
+  // One-shot: consume the redirect flag from the URL so a reload doesn't
+  // reopen the dialog. Source is recorded as `limit_modal` so the funnel can
+  // attribute the top-up back to the limit-hit that triggered the redirect.
   useEffect(() => {
+    if (!creditTopupsUiEnabled) return;
     if (consumeTopupFlag()) {
+      setArrivedFromLimitModal(true);
+    }
+  }, [creditTopupsUiEnabled]);
+
+  // Open the dialog only once we know the user can manage credits. A member
+  // who can't top up keeps `arrivedFromLimitModal` true and instead sees the
+  // "ask an admin" hint below — not a silent dead-end where the flag was
+  // consumed but nothing happened.
+  useEffect(() => {
+    if (!creditTopupsUiEnabled) return;
+    if (arrivedFromLimitModal && canManageCredits) {
       setTopupSource("limit_modal");
       setIsTopupOpen(true);
+      setArrivedFromLimitModal(false);
     }
-  }, []);
+  }, [arrivedFromLimitModal, canManageCredits, creditTopupsUiEnabled]);
 
   const handleManualTopup = () => {
     setTopupSource("billing_page");
@@ -68,10 +109,25 @@ export function CreditBalanceCard({
   };
 
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
-  const paidPercentUsed =
-    balance?.paidPercentRemaining != null
-      ? 100 - balance.paidPercentRemaining
-      : 0;
+
+  // Team-plan orgs bill against a monthly per-seat allowance instead of the
+  // daily free bucket. Paid top-ups are shown separately and spent only after
+  // the allowance runs out.
+  const showMonthly =
+    teamCreditsUiEnabled && balance?.billingModel === "monthly_per_seat";
+  const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
+  const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const paidRemaining = balance?.paidCreditsRemaining ?? 0;
+  const monthlyExhausted =
+    showMonthly && monthlyRemaining <= 0 && paidRemaining <= 0;
+  const showEvalIterationUsage =
+    isEvalIterationQuotaLoading ||
+    (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
+  const evalIterationLabel = getEvalIterationQuotaLabel(
+    evalIterationQuota?.windowKind
+  );
+
+  if (!creditTopupsUiEnabled) return null;
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">
@@ -79,59 +135,170 @@ export function CreditBalanceCard({
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-              Credit usage
+              Usage
             </p>
             <p className="mt-1 text-sm font-semibold leading-snug">
-              Your model credits
+              Organization usage
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Credits are linked to your user, not the organization.
+              Model credits and eval iterations are shared across this
+              organization.
             </p>
           </div>
-          <ErrorBoundary fallback={null}>
-            <TopupActionButton onClick={handleManualTopup} />
-          </ErrorBoundary>
+          {canManageCredits ? (
+            <ErrorBoundary fallback={null}>
+              <TopupActionButton onClick={handleManualTopup} />
+            </ErrorBoundary>
+          ) : (
+            <span
+              className="self-center text-xs text-muted-foreground"
+              data-testid="usage-ask-admin"
+            >
+              Ask org admin to top up credits
+            </span>
+          )}
         </div>
 
-        <ErrorBoundary fallback={null}>
-          <PendingCreditTopupsBanner />
-        </ErrorBoundary>
+        {canManageCredits ? (
+          <ErrorBoundary fallback={null}>
+            <PendingCreditTopupsBanner organizationId={organizationId} />
+          </ErrorBoundary>
+        ) : null}
 
-        <UsageRow
-          label="Free daily credits"
-          rightText={
-            isLoading || !balance
-              ? null
-              : `${Math.round(balance.freeDailyPercentUsed)}% used · ${formatCreditResetText(balance.freeDailyResetAt)}`
-          }
-          fillPercent={
-            isLoading || !balance ? 0 : balance.freeDailyPercentUsed
-          }
-          isLoading={isLoading}
-          testId="usage-daily"
-        />
-
-        {!isLoading && hasPaidHistory && balance && (
+        {showMonthly ? (
           <UsageRow
-            label="Paid credits"
+            label="Monthly team credits"
+            tooltip="Refreshes each billing cycle. Unused credits don't roll over."
             rightText={
-              balance.paidPercentRemaining != null
-                ? `${Math.round(100 - balance.paidPercentRemaining)}% used`
-                : null
+              isLoading || !balance
+                ? null
+                : `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()} · ${formatMonthlyResetText(
+                    balance.monthlyResetAt
+                  )}`
             }
-            fillPercent={paidPercentUsed}
-            isLoading={false}
-            testId="usage-paid"
-            tooltip="Used only after your free daily credits run out."
+            fillPercent={
+              isLoading || monthlyTotal <= 0
+                ? 0
+                : (monthlyRemaining / monthlyTotal) * 100
+            }
+            ariaLabel="Monthly team credits remaining"
+            ariaValueText={`${monthlyRemaining.toLocaleString()} of ${monthlyTotal.toLocaleString()} monthly credits remaining`}
+            isLoading={isLoading}
+            showCoin
+            testId="usage-monthly"
+          />
+        ) : (
+          <UsageRow
+            label="Free daily credits"
+            rightText={
+              isLoading || !balance
+                ? null
+                : `${(
+                    balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining
+                  ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()} · ${formatCreditResetText(
+                    balance.freeDailyResetAt
+                  )}`
+            }
+            // "spent / total": count and bar both grow as credits are used —
+            // 0/300 empty when fresh, 300/300 full when drained. Matches the
+            // sidebar usage strip.
+            fillPercent={
+              isLoading || !balance || balance.freeDailyCreditsTotal <= 0
+                ? 0
+                : ((balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining) /
+                    balance.freeDailyCreditsTotal) *
+                  100
+            }
+            isLoading={isLoading}
+            showCoin
+            testId="usage-daily"
           />
         )}
+
+        {monthlyExhausted ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="usage-monthly-exhausted"
+          >
+            Monthly credits used.{" "}
+            {formatMonthlyResetText(balance?.monthlyResetAt)}
+            {canManageCredits ? " — or top up to keep going." : "."}
+          </p>
+        ) : null}
+
+        {showEvalIterationUsage ? (
+          <UsageRow
+            label={evalIterationLabel}
+            tooltip={
+              evalIterationQuota
+                ? `Resets ${formatEvalIterationResetTime(
+                    evalIterationQuota.resetsAt
+                  )}`
+                : undefined
+            }
+            rightText={
+              isEvalIterationQuotaLoading ||
+              !evalIterationQuota ||
+              evalIterationQuota.allowed === null
+                ? null
+                : `${evalIterationQuota.used.toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()}`
+            }
+            fillPercent={
+              isEvalIterationQuotaLoading ||
+              !evalIterationQuota ||
+              !evalIterationQuota.allowed
+                ? 0
+                : Math.min(
+                    100,
+                    (evalIterationQuota.used / evalIterationQuota.allowed) * 100
+                  )
+            }
+            ariaLabel={`${evalIterationLabel} used`}
+            ariaValueText={
+              evalIterationQuota && evalIterationQuota.allowed !== null
+                ? `${evalIterationQuota.used.toLocaleString()} of ${evalIterationQuota.allowed.toLocaleString()} eval iterations used`
+                : undefined
+            }
+            isLoading={isEvalIterationQuotaLoading}
+            testId="usage-eval-iterations"
+          />
+        ) : null}
+
+        {!isLoading && hasPaidHistory && balance && (
+          <div
+            className="flex items-center justify-between gap-2"
+            data-testid="usage-paid"
+          >
+            <span className="text-xs font-medium">Shared paid credits</span>
+            <span className="flex items-center gap-1 text-xs font-medium">
+              <CoinStackIcon aria-hidden="true" className="size-3" />
+              {paidRemaining.toLocaleString()} credits
+            </span>
+          </div>
+        )}
+
+        {/* Wallet-lock notice is independent of purchase history: a wallet can
+            be locked (chargeback/dispute) with no completed purchase on
+            record, and that's exactly when the user needs to know spending is
+            paused. Gating it on hasPaidHistory would hide it in that case. */}
+        {!isLoading && balance?.walletLocked ? (
+          <p
+            className="text-xs text-destructive"
+            data-testid="usage-wallet-locked"
+          >
+            Credit spending is paused pending review.
+          </p>
+        ) : null}
       </CardContent>
-      {isTopupOpen && (
+      {isTopupOpen && canManageCredits && (
         <CreditTopupDialog
           open
           onOpenChange={setIsTopupOpen}
           chatSessionId={chatSessionId ?? ""}
           lastUserMessage=""
+          organizationId={organizationId}
           source={topupSource}
         />
       )}
@@ -145,8 +312,14 @@ interface UsageRowProps {
   fillPercent: number;
   isLoading: boolean;
   testId?: string;
+  /** Prefix the value with a coin icon — matches the credit-amount rows. */
+  showCoin?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
+  /** Accessible label for the progress bar. Defaults to the daily usage label. */
+  ariaLabel?: string;
+  /** Human-readable progress value for screen readers (e.g. "X of Y remaining"). */
+  ariaValueText?: string;
 }
 
 function UsageRow({
@@ -155,7 +328,10 @@ function UsageRow({
   fillPercent,
   isLoading,
   testId,
+  showCoin = false,
   tooltip,
+  ariaLabel,
+  ariaValueText,
 }: UsageRowProps) {
   return (
     <div className="flex flex-col gap-2" data-testid={testId}>
@@ -181,18 +357,27 @@ function UsageRow({
             </Tooltip>
           ) : null}
         </span>
-        <span className="text-muted-foreground">
+        <span className="flex items-center gap-1 text-muted-foreground">
           {isLoading || rightText == null ? (
             <Skeleton className="h-3 w-24" />
           ) : (
-            rightText
+            <>
+              {showCoin ? (
+                <CoinStackIcon aria-hidden="true" className="size-3" />
+              ) : null}
+              {rightText}
+            </>
           )}
         </span>
       </div>
       {isLoading ? (
         <Skeleton className="h-2 w-full rounded-full" />
       ) : (
-        <Progress value={fillPercent} />
+        <Progress
+          value={fillPercent}
+          aria-label={ariaLabel ?? `${label} used`}
+          aria-valuetext={ariaValueText}
+        />
       )}
     </div>
   );

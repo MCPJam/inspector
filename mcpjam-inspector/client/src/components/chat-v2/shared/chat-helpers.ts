@@ -381,7 +381,7 @@ const formatMCPJamModelLimit = (
   code: extras?.code ?? MCPJAM_RATE_LIMIT_CODE,
   message: retryPhrase
     ? `Add your own API key in Settings > LLM Providers to keep chatting now, or ${retryPhrase}.`
-    : "Add your own API key in Settings > LLM Providers to keep chatting now, or wait until your free daily credits reset.",
+    : "Add your own API key in Settings > LLM Providers to keep chatting now, or add credits from Billing.",
   isRetryable: false,
   isMCPJamPlatformError: true,
   ...(extras?.canTopUp !== undefined ? { canTopUp: extras.canTopUp } : {}),

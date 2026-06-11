@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,36 @@ vi.mock("../use-run-insights", () => ({
   useRunInsights: vi.fn(),
 }));
 
+vi.mock("../use-server-quality", () => ({
+  useServerQuality: vi.fn(() => ({
+    result: null,
+    pending: false,
+    requested: false,
+    failedGeneration: false,
+    error: null,
+    requestServerQuality: vi.fn(),
+    unavailable: true,
+  })),
+}));
+
+// Stub the goal-completion judge hook so the rail stays empty in view tests
+// that aren't about the judge panel. Matches the `unavailable: true` shape
+// used for useServerQuality above so callers see no rendered card.
+vi.mock("../use-goal-completion", () => ({
+  useGoalCompletion: vi.fn(() => ({
+    result: null,
+    pending: false,
+    requested: false,
+    failedGeneration: false,
+    error: null,
+    canRequest: false,
+    requestGoalCompletion: vi.fn(),
+    cancelGoalCompletion: vi.fn(),
+    summary: null,
+    unavailable: true,
+  })),
+}));
+
 import { useRunInsights } from "../use-run-insights";
 import { RunDetailView, RunIterationsSidebar } from "../run-detail-view";
 
@@ -14,6 +45,36 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
   useQuery: () => undefined,
   useAction: () => vi.fn().mockResolvedValue(undefined),
+  useConvexAuth: () => ({ isLoading: false, isAuthenticated: false }),
+}));
+
+// The goal-completion judge panel pulls the model catalog; stub it so the view
+// test stays isolated from the provider chain (auth / provider keys / ollama).
+vi.mock("@/hooks/use-available-eval-models", () => ({
+  useAvailableEvalModels: () => ({ availableModels: [] }),
+}));
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({
+    children,
+    className,
+  }: {
+    children: ReactNode;
+    className?: string;
+  }) => (
+    <div data-testid="run-detail-resizable-group" className={className}>
+      {children}
+    </div>
+  ),
+  ResizablePanel: ({ children }: { children: ReactNode }) => (
+    <div data-testid="run-detail-resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="run-detail-resizable-handle" />,
+}));
+
+// The panel derives the judge's org scope from shared app state.
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({ projects: {}, activeProjectId: null }),
 }));
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
@@ -57,26 +118,6 @@ function makeIteration(overrides: Partial<EvalIteration> = {}): EvalIteration {
   };
 }
 
-const chartDataUsable = {
-  donutData: [{ name: "passed", value: 1, fill: "green" }],
-  durationData: [
-    {
-      name: "Short name",
-      duration: 5000,
-      durationSeconds: 5,
-    },
-  ],
-  tokensData: [{ name: "Short name", tokens: 1200 }],
-  modelData: [],
-};
-
-const emptyChartData = {
-  donutData: [],
-  durationData: [],
-  tokensData: [],
-  modelData: [],
-};
-
 function defaultRunInsightsReturn() {
   return {
     summary: null as string | null,
@@ -94,15 +135,54 @@ function defaultRunInsightsReturn() {
 describe("RunDetailView", () => {
   beforeEach(() => {
     vi.mocked(useRunInsights).mockReturnValue(defaultRunInsightsReturn());
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
   });
 
-  it("places single-row KPI dashboard above breakdown charts", () => {
+  it("uses a vertically scrollable root so expanded triage can exceed the viewport", () => {
+    const { container } = render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        omitIterationList
+      />,
+    );
+
+    const root = container.firstElementChild;
+    expect(root).toHaveClass("overflow-y-auto");
+    expect(root).not.toHaveClass("overflow-hidden");
+  });
+
+  it("places body KPI strip below the run hero band and above the resizable group", () => {
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: query.includes("min-width: 1024px"),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
     render(
       <RunDetailView
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -110,37 +190,29 @@ describe("RunDetailView", () => {
       />,
     );
 
-    const durationChartHeading = screen.getByRole("heading", {
-      name: "Avg duration by test",
-    });
-    const accuracyLabel = screen.getByText("Accuracy");
-    const passRateCard = accuracyLabel.parentElement;
-    expect(passRateCard).not.toBeNull();
+    const kpiStrip = screen.getByText("Passed").closest(".mb-4");
+    expect(kpiStrip).not.toBeNull();
+    const kpi = within(kpiStrip as HTMLElement);
+    expect(kpi.getByText("Passed")).toBeInTheDocument();
+    expect(kpi.getByText("Failed")).toBeInTheDocument();
+    expect(kpi.getByText("Total")).toBeInTheDocument();
+    expect(kpi.getByText("Duration")).toBeInTheDocument();
+    expect(screen.getByText(/^100$/)).toBeInTheDocument();
+
+    const runHeading = screen.getByRole("heading", { name: /Run run-1/i });
+    const panelGroup = screen.getByTestId("run-detail-resizable-group");
     expect(
-      within(passRateCard as HTMLElement).getByText("100%"),
-    ).toBeInTheDocument();
-    const kpiBlock = accuracyLabel.closest(".space-y-6");
-    expect(kpiBlock).not.toBeNull();
-    expect(
-      within(kpiBlock as HTMLElement).getByText("Passed"),
-    ).toBeInTheDocument();
-    expect(
-      within(kpiBlock as HTMLElement).getByText("Failed"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Total")).toBeInTheDocument();
-    expect(screen.getByText("Duration")).toBeInTheDocument();
-    expect(
-      accuracyLabel.compareDocumentPosition(durationChartHeading) &
+      runHeading.compareDocumentPosition(panelGroup) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
-    expect(durationChartHeading).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Avg tokens by test" }),
-    ).toBeVisible();
+      screen.queryByRole("heading", { name: "Latency by test (p50 / p95)" }),
+    ).not.toBeInTheDocument();
     expect(
-      document.querySelectorAll('[data-slot="chart"]').length,
-    ).toBeGreaterThanOrEqual(2);
+      screen.queryByRole("heading", { name: "Tokens by test (p50 / p95)" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
   it("does not render compact run stats in a duplicate page header", () => {
@@ -149,7 +221,6 @@ describe("RunDetailView", () => {
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -160,13 +231,23 @@ describe("RunDetailView", () => {
     expect(screen.queryByText(/1 passed · 0 failed · 100%/)).not.toBeInTheDocument();
   });
 
-  it("keeps run-level KPIs and bar charts visible above the iteration list", () => {
+  it("keeps run-level KPIs visible with the iteration list in a resizable two-column layout", () => {
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: query.includes("min-width: 1024px"),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
     render(
       <RunDetailView
         selectedRunDetails={makeRun()}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={chartDataUsable}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -174,40 +255,15 @@ describe("RunDetailView", () => {
       />,
     );
 
-    const accuracyKpi = screen.getByText("Accuracy");
+    expect(screen.getByText("Passed")).toBeInTheDocument();
+    expect(screen.getByText(/Test cases/)).toBeInTheDocument();
+    expect(screen.getByText("P50")).toBeInTheDocument();
+    expect(screen.getByText("Fail")).toBeInTheDocument();
     expect(
-      within(accuracyKpi.parentElement as HTMLElement).getByText("100%"),
+      screen.getByTestId("run-detail-resizable-group"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Avg duration by test" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Avg tokens by test" }),
-    ).toBeInTheDocument();
-  });
-
-  it("hides chart section when there is no duration or token data", () => {
-    render(
-      <RunDetailView
-        selectedRunDetails={makeRun()}
-        caseGroupsForSelectedRun={[makeIteration()]}
-        source="ui"
-        selectedRunChartData={{
-          donutData: [{ name: "passed", value: 1, fill: "green" }],
-          durationData: [],
-          tokensData: [{ name: "x", tokens: 0 }],
-          modelData: [],
-        }}
-        runDetailSortBy="test"
-        onSortChange={() => {}}
-        selectedIterationId={null}
-        onSelectIteration={() => {}}
-      />,
-    );
-
-    expect(
-      screen.queryByRole("button", { name: /Duration and token charts/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("run-detail-resizable-panel")).toHaveLength(2);
+    expect(screen.getByTestId("run-detail-resizable-handle")).toBeInTheDocument();
   });
 
   it("does not surface per-iteration case insight captions in the run view (open a test from the list to inspect a case)", () => {
@@ -244,7 +300,6 @@ describe("RunDetailView", () => {
           }),
         ]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId="iter-case"
@@ -307,18 +362,21 @@ describe("RunDetailView", () => {
     expect(onSortChange).toHaveBeenCalledWith("result");
   });
 
-  it("uses the same “Last run” column label as the suite cases table in the iteration sidebar", () => {
+  it("shows grouped case metric columns in the iteration sidebar", () => {
     render(
       <RunIterationsSidebar
-        caseGroupsForSelectedRun={[makeIteration()]}
+        caseGroupsForSelectedRun={[
+          makeIteration({ testCaseId: "tc-1", startedAt: 0, updatedAt: 1500 }),
+        ]}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
         onSelectIteration={() => {}}
       />,
     );
-    expect(screen.getByText("Case name")).toBeInTheDocument();
-    expect(screen.getByText("Last run")).toBeInTheDocument();
+    expect(screen.getByText("Case")).toBeInTheDocument();
+    expect(screen.getByText("P50")).toBeInTheDocument();
+    expect(screen.getByText("P95")).toBeInTheDocument();
   });
 
   it("keeps the main run list aligned with the suite cases table: no Overview row, sort in the header row", () => {
@@ -329,7 +387,6 @@ describe("RunDetailView", () => {
         })}
         caseGroupsForSelectedRun={[makeIteration()]}
         source="ui"
-        selectedRunChartData={emptyChartData}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -347,10 +404,12 @@ describe("RunDetailView", () => {
     ).toBeInTheDocument();
   });
 
-  it("exposes view-iteration aria-label on the full iteration row button", () => {
+  it("exposes view-case aria-label on grouped case row button", () => {
     render(
       <RunIterationsSidebar
-        caseGroupsForSelectedRun={[makeIteration()]}
+        caseGroupsForSelectedRun={[
+          makeIteration({ testCaseId: "tc-1", result: "passed" }),
+        ]}
         runDetailSortBy="test"
         onSortChange={() => {}}
         selectedIterationId={null}
@@ -360,7 +419,7 @@ describe("RunDetailView", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "View iteration details: Test A, Passed, gpt-4",
+        name: "View Test A: 1 of 1 passed",
       }),
     ).toBeInTheDocument();
   });

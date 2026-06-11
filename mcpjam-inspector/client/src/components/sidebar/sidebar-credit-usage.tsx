@@ -6,12 +6,19 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
-import { formatCreditResetText } from "@/lib/credit-usage";
+import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
+import { useTeamCreditsUiEnabled } from "@/lib/team-credits-flag";
+import {
+  formatCreditResetText,
+  formatMonthlyResetText,
+} from "@/lib/credit-usage";
 import { cn } from "@/lib/utils";
 
 interface SidebarCreditUsageProps {
   className?: string;
+  organizationId?: string | null;
   includeGuests?: boolean;
   variant?: "strip" | "full";
   onClick?: () => void;
@@ -19,39 +26,51 @@ interface SidebarCreditUsageProps {
 
 export function SidebarCreditUsage({
   className,
+  organizationId,
   includeGuests = false,
   variant = "strip",
   onClick,
 }: SidebarCreditUsageProps = {}) {
+  const creditTopupsUiEnabled = useCreditTopupsUiEnabled();
+  const teamCreditsUiEnabled = useTeamCreditsUiEnabled();
   const { balance, isLoading, hasWorkOsUser } = useCreditBalance({
+    organizationId,
     includeGuests,
+    enabled: creditTopupsUiEnabled,
   });
+
+  if (!creditTopupsUiEnabled) {
+    return null;
+  }
 
   if (!isLoading && !balance) {
     return null;
   }
 
-  const dailyPercentUsed = balance
-    ? Math.round(balance.freeDailyPercentUsed)
-    : 0;
+  const showMonthly =
+    teamCreditsUiEnabled && balance?.billingModel === "monthly_per_seat";
+  const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
+  const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
+  const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const resetText = balance
-    ? formatCreditResetText(balance.freeDailyResetAt)
+    ? showMonthly
+      ? formatMonthlyResetText(balance.monthlyResetAt, {
+          // Sidebar (both strip and full) drops the absolute date — only the
+          // billing card shows it.
+          withDate: false,
+        })
+      : formatCreditResetText(balance.freeDailyResetAt)
     : null;
-  const paidPercentUsed =
-    balance?.paidPercentRemaining != null
-      ? Math.round(100 - balance.paidPercentRemaining)
-      : 0;
   const hasPaidHistory = balance?.hasPurchaseHistory === true;
   const showGuestUpgradeHint =
-    variant === "strip" && includeGuests && !hasWorkOsUser && !isLoading;
+    !showMonthly &&
+    variant === "strip" &&
+    includeGuests &&
+    !hasWorkOsUser &&
+    !isLoading;
 
   const innerContent = (
     <div className={cn("px-2 py-1.5", variant === "full" && "px-2.5 py-2")}>
-      {variant === "full" ? (
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Credit usage
-        </p>
-      ) : null}
       <div
         className={cn(
           "flex flex-col",
@@ -59,27 +78,57 @@ export function SidebarCreditUsage({
         )}
       >
         <SidebarUsageRow
-          label="Free daily credits"
-          percentText={`${dailyPercentUsed}%${
-            variant === "full" ? " used" : ""
-          }`}
+          label={showMonthly ? "Monthly team credits" : "Free daily credits"}
+          percentText={
+            balance
+              ? showMonthly
+                ? `${monthlyRemaining.toLocaleString()} / ${monthlyTotal.toLocaleString()}`
+                : `${(
+                    balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining
+                  ).toLocaleString()} / ${balance.freeDailyCreditsTotal.toLocaleString()}`
+              : ""
+          }
           eyebrowText={
-            showGuestUpgradeHint ? "Sign in for 15× the credits" : null
+            showGuestUpgradeHint ? "Sign in for 10× the credits" : null
           }
           helperText={resetText}
-          fillPercent={balance ? balance.freeDailyPercentUsed : 0}
+          fillPercent={
+            balance
+              ? showMonthly
+                ? monthlyTotal > 0
+                  ? (monthlyRemaining / monthlyTotal) * 100
+                  : 0
+                : balance.freeDailyCreditsTotal > 0
+                ? ((balance.freeDailyCreditsTotal -
+                    balance.freeDailyCreditsRemaining) /
+                    balance.freeDailyCreditsTotal) *
+                  100
+                : 0
+              : 0
+          }
           isLoading={isLoading}
-          testId="sidebar-usage-daily"
+          // Signed-in only — guests don't get the coin accent.
+          showCoin={hasWorkOsUser}
+          testId={showMonthly ? "sidebar-usage-monthly" : "sidebar-usage-daily"}
         />
         {variant === "full" && !isLoading && hasPaidHistory && balance ? (
           <SidebarUsageRow
             label="Paid credits"
-            percentText={`${paidPercentUsed}% used`}
+            percentText={`${paidRemaining.toLocaleString()}`}
             helperText={null}
-            fillPercent={paidPercentUsed}
+            // Absolute credit count, not a percentage — render no progress
+            // bar (a permanently 0%-filled bar reads as a bug).
+            showBar={false}
+            showCoin
+            fillPercent={0}
             isLoading={false}
             testId="sidebar-usage-paid"
-            tooltip="Used only after your free daily credits run out."
+            tooltip={
+              showMonthly
+                ? "Shared across your organization. Spent after monthly team credits run out."
+                : "Shared across your organization. Spent after the free daily credits run out."
+            }
           />
         ) : null}
       </div>
@@ -132,6 +181,10 @@ interface SidebarUsageRowProps {
   fillPercent: number;
   isLoading: boolean;
   testId: string;
+  /** Render the progress bar. Off for absolute counts with no denominator. */
+  showBar?: boolean;
+  /** Prefix the value with a coin icon — used for credit-balance amounts. */
+  showCoin?: boolean;
   /** Optional explainer surfaced via an info icon next to the label. */
   tooltip?: string;
 }
@@ -144,6 +197,8 @@ function SidebarUsageRow({
   fillPercent,
   isLoading,
   testId,
+  showBar = true,
+  showCoin = false,
   tooltip,
 }: SidebarUsageRowProps) {
   return (
@@ -176,15 +231,26 @@ function SidebarUsageRow({
             </Tooltip>
           ) : null}
         </span>
-        <span className="shrink-0 text-muted-foreground">
-          {isLoading ? <Skeleton className="h-3 w-12" /> : percentText}
+        <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+          {isLoading ? (
+            <Skeleton className="h-3 w-12" />
+          ) : (
+            <>
+              {showCoin ? (
+                <CoinStackIcon aria-hidden="true" className="size-3 shrink-0" />
+              ) : null}
+              {percentText}
+            </>
+          )}
         </span>
       </div>
-      {isLoading ? (
-        <Skeleton className="h-1.5 w-full rounded-full" />
-      ) : (
-        <Progress className="h-1.5 bg-primary/15" value={fillPercent} />
-      )}
+      {showBar ? (
+        isLoading ? (
+          <Skeleton className="h-1.5 w-full rounded-full" />
+        ) : (
+          <Progress className="h-1.5 bg-primary/15" value={fillPercent} />
+        )
+      ) : null}
       {helperText && !isLoading ? (
         <span className="truncate text-[10px] leading-none text-muted-foreground">
           {helperText}

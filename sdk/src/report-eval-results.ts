@@ -7,6 +7,13 @@ import type {
 import { EvalReportingError } from "./errors.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
+import { resolveSdkEvalsCapabilities } from "./sdk-evals-capability.js";
+import {
+  buildSdkEvalsWireHostConfig,
+  type SdkEvalsWireHostConfig,
+} from "./sdk-evals-wire-host-config.js";
+import { resolveRunLevelHostSnapshot } from "./sdk-evals-host-config-source.js";
+import type { HostJson } from "./host-config/public-types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
@@ -42,6 +49,11 @@ type BackendEnvelope<T> = {
   ok?: boolean;
   error?: string;
 } & T;
+
+type NormalizedReportingError = {
+  message: string;
+  isBillingLimitReached: boolean;
+};
 
 type EvalArtifactUploadUrlResponse = {
   uploadUrl: string;
@@ -91,11 +103,14 @@ function toEvalReportingError(
     return error;
   }
 
-  const message = error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const { message, isBillingLimitReached } =
+    normalizeReportingErrorMessage(rawMessage);
   return new EvalReportingError(message, {
     attemptCount,
     cause: error,
     endpoint,
+    isBillingLimitReached,
     statusCode,
   });
 }
@@ -119,6 +134,121 @@ function jitter(base: number): number {
 
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
+}
+
+function extractFirstJsonObject(value: string): Record<string, unknown> | null {
+  const start = value.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index++) {
+    const char = value[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth++;
+      continue;
+    }
+    if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(value.slice(start, index + 1)) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function formatResetTime(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return new Date(value).toISOString();
+}
+
+function normalizeBillingLimitMessage(
+  payload: Record<string, unknown>
+): string | null {
+  if (payload.code !== "billing_limit_reached") {
+    return null;
+  }
+
+  const limit = payload.limit ?? payload.gateKey;
+  const resetsAt = formatResetTime(payload.resetsAt);
+  if (limit === "maxEvalIterationsPerMonth") {
+    if (resetsAt) {
+      return `Eval iteration limit reached. Resets at ${resetsAt}.`;
+    }
+
+    const currentValue = payload.currentValue;
+    const allowedValue = payload.allowedValue;
+    if (typeof currentValue === "number" && typeof allowedValue === "number") {
+      return `Eval iteration limit reached. This run would use ${currentValue}/${allowedValue} iterations.`;
+    }
+
+    return "Eval iteration limit reached.";
+  }
+
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return payload.message;
+  }
+  return "Billing limit reached.";
+}
+
+function normalizeReportingErrorMessage(
+  rawMessage: string
+): NormalizedReportingError {
+  if (!rawMessage.includes("billing_limit_reached")) {
+    return { message: rawMessage, isBillingLimitReached: false };
+  }
+
+  const payload = extractFirstJsonObject(rawMessage);
+  const billingMessage = payload ? normalizeBillingLimitMessage(payload) : null;
+  return {
+    message: billingMessage ?? "Billing limit reached.",
+    isBillingLimitReached: true,
+  };
+}
+
+function isBillingLimitReachedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (
+    error instanceof EvalReportingError &&
+    error.isBillingLimitReached
+  ) {
+    return true;
+  }
+  return (
+    error.message.startsWith("Eval iteration limit reached.") ||
+    normalizeReportingErrorMessage(error.message).isBillingLimitReached
+  );
 }
 
 function generateExternalRunId(): string {
@@ -222,16 +352,26 @@ async function requestWithRetry<T>(
 
       if (response.ok) {
         if (responseBody && responseBody.ok === false) {
-          const message = responseBody.error ?? "Unknown SDK evals error";
-          throw new Error(message);
+          const rawMessage = responseBody.error ?? "Unknown SDK evals error";
+          const { message, isBillingLimitReached } =
+            normalizeReportingErrorMessage(rawMessage);
+          throw new EvalReportingError(message, {
+            attemptCount: attempt + 1,
+            endpoint: path,
+            isBillingLimitReached,
+            statusCode: response.status,
+          });
         }
         return (responseBody ?? {}) as T;
       }
 
-      const message =
+      const rawMessage =
         responseBody?.error ??
         `Request failed with status ${response.status}: ${response.statusText}`;
+      const { message, isBillingLimitReached } =
+        normalizeReportingErrorMessage(rawMessage);
       if (
+        !isBillingLimitReached &&
         isRetryableStatus(response.status) &&
         attempt < config.retryDelaysMs.length
       ) {
@@ -242,6 +382,7 @@ async function requestWithRetry<T>(
       throw new EvalReportingError(message, {
         attemptCount: attempt + 1,
         endpoint: path,
+        isBillingLimitReached,
         statusCode: response.status,
       });
     } catch (error) {
@@ -253,12 +394,13 @@ async function requestWithRetry<T>(
       const errorStatusCode =
         error instanceof EvalReportingError ? error.statusCode : undefined;
       const shouldRetry =
-        isAbortError ||
-        error instanceof TypeError ||
-        (typeof errorStatusCode === "number" &&
-          isRetryableStatus(errorStatusCode)) ||
-        (error instanceof Error &&
-          /network|fetch|timeout|429|5\d\d/i.test(error.message));
+        !isBillingLimitReachedError(error) &&
+        (isAbortError ||
+          error instanceof TypeError ||
+          (typeof errorStatusCode === "number" &&
+            isRetryableStatus(errorStatusCode)) ||
+          (error instanceof Error &&
+            /network|fetch|timeout|429|5\d\d/i.test(error.message)));
 
       if (shouldRetry && attempt < config.retryDelaysMs.length) {
         await sleep(jitter(config.retryDelaysMs[attempt]));
@@ -281,6 +423,13 @@ async function startEvalRun(
   payload: Omit<ReportEvalResultsInput, "results" | "strict"> & {
     externalRunId: string;
     synthesizedTests?: unknown[];
+    /**
+     * Stage 5 Step 3 wire host-config pair. Sent only when the backend
+     * advertises capability `evalsHostConfig` AND a usable, homogeneous
+     * snapshot was resolved. Backend rejects partial pairs with 400.
+     */
+    hostConfig?: SdkEvalsWireHostConfig["hostConfig"];
+    hostConfigHash?: SdkEvalsWireHostConfig["hostConfigHash"];
   }
 ): Promise<StartRunResponse> {
   return await requestWithRetry<StartRunResponse>(
@@ -492,6 +641,75 @@ function shouldUseOneShotUpload(
   return bytes <= CHUNK_TARGET_BYTES && config.baseUrl.length >= 0;
 }
 
+/**
+ * Cheap check for whether ANY snapshot source could possibly contribute
+ * to the run-level wire pair. When false, we skip the capability probe
+ * entirely — there's nothing to ship even if the backend supports it,
+ * and we don't want a wasted `GET /sdk/v1/info` round-trip for legacy
+ * callers that never supply host info.
+ */
+function hasAnyHostSnapshotSource(input: ReportEvalResultsInput): boolean {
+  if (input.host) return true;
+  if (input.executor?.getHostSnapshot) return true;
+  for (const result of input.results) {
+    if ((result as { hostSnapshot?: unknown }).hostSnapshot) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve the per-run wire pair {hostConfig, hostConfigHash} when the
+ * backend advertises capability `evalsHostConfig`. Returns `null` when
+ * the capability is absent OR no usable snapshot source exists OR
+ * iteration snapshots are heterogeneous (pass-1 omit).
+ *
+ * The wire pair is per-RUN: it is injected only into one-shot `/report`
+ * and chunked `/runs/start` bodies, never into `/runs/iterations` or
+ * `/runs/finalize`.
+ */
+async function resolveWireHostConfigForRun(
+  input: ReportEvalResultsInput,
+  config: RuntimeConfig
+): Promise<SdkEvalsWireHostConfig | null> {
+  // Skip the probe when we have nothing to ship. This keeps legacy callers
+  // (no host, no executor, no per-iteration snapshot) on the original
+  // single-request flow — important for fetch-mock counts in existing
+  // tests and for avoiding a wasted probe round-trip.
+  if (!hasAnyHostSnapshotSource(input)) return null;
+
+  const capability = await resolveSdkEvalsCapabilities(config.baseUrl);
+  if (capability.evalsHostConfig < 1) return null;
+
+  // `input.results` are `EvalResultInput`s; the homogeneity gate treats
+  // each as a potential carrier of `hostSnapshot`. Today `EvalResultInput`
+  // does not carry that field, so this list is effectively snapshot-less
+  // and the resolver falls through to executor → explicitHost. Cast keeps
+  // the type surface forward-compatible for when per-iteration
+  // `hostSnapshot` is wired through `EvalResultInput`.
+  const iterations = input.results as readonly {
+    hostSnapshot?: HostJson | undefined;
+  }[];
+
+  // Fail-safe: a malformed hostSnapshot, unexpected executor return, or
+  // non-canonicalizable host JSON must NOT fail the whole eval upload.
+  // Match the capability-probe fail-safe pattern — log + omit the wire pair.
+  try {
+    const snapshot = await resolveRunLevelHostSnapshot({
+      iterations,
+      executor: input.executor,
+      explicitHost: input.host,
+    });
+    if (!snapshot) return null;
+    return await buildSdkEvalsWireHostConfig(snapshot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[mcpjam/sdk] eval reporting: omitting hostConfig wire pair (${message})`
+    );
+    return null;
+  }
+}
+
 async function reportEvalResultsInternal(
   input: ReportEvalResultsInput
 ): Promise<ReportEvalResultsOutput> {
@@ -510,6 +728,16 @@ async function reportEvalResultsInternal(
     uploadedResults,
     externalRunId
   );
+
+  // Resolved once per `reportEvalResultsInternal` call so both code paths
+  // (one-shot and chunked-start) attach the same byte-stable pair.
+  const wireHostConfig = await resolveWireHostConfigForRun(input, config);
+  const wireHostConfigBody = wireHostConfig
+    ? {
+        hostConfig: wireHostConfig.hostConfig,
+        hostConfigHash: wireHostConfig.hostConfigHash,
+      }
+    : {};
 
   if (
     shouldUseOneShotUpload(
@@ -538,6 +766,7 @@ async function reportEvalResultsInternal(
         expectedIterations: input.expectedIterations,
         tags: input.tags,
         results: resultsWithIterationIds,
+        ...wireHostConfigBody,
       }
     );
   }
@@ -554,6 +783,7 @@ async function reportEvalResultsInternal(
     ci: input.ci,
     expectedIterations: input.expectedIterations,
     tags: input.tags,
+    ...wireHostConfigBody,
   });
 
   if (
