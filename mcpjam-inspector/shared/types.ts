@@ -766,11 +766,13 @@ const BEDROCK_BARE_MODEL_ID_PATTERN =
 /**
  * True when a model id is recognizably Amazon Bedrock: a bare model /
  * inference-profile id, or a Bedrock ARN (e.g.
- * "arn:aws:bedrock:us-east-1:123456789012:inference-profile/...").
+ * "arn:aws:bedrock:us-east-1:123456789012:inference-profile/..."). The ARN
+ * check is partition-agnostic so GovCloud/China ARNs (arn:aws-us-gov:...,
+ * arn:aws-cn:...) match too.
  */
 export const isBedrockModelId = (modelId: string): boolean => {
   return (
-    modelId.startsWith("arn:aws:bedrock:") ||
+    /^arn:aws(?:-[a-z0-9-]+)?:bedrock:/i.test(modelId) ||
     BEDROCK_BARE_MODEL_ID_PATTERN.test(modelId)
   );
 };

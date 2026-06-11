@@ -140,10 +140,15 @@ describe("buildSyntheticModelDefinition", () => {
     expect(
       buildSyntheticModelDefinition("amazon.titan-tg1-large").provider,
     ).toBe("bedrock");
-    // Bedrock ARNs (inference profiles, imported models)
+    // Bedrock ARNs (inference profiles, imported models) — any AWS partition
     expect(
       buildSyntheticModelDefinition(
         "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.amazon.nova-pro-v1:0",
+      ).provider,
+    ).toBe("bedrock");
+    expect(
+      buildSyntheticModelDefinition(
+        "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/us-gov.anthropic.claude-3-5-haiku-20241022-v1:0",
       ).provider,
     ).toBe("bedrock");
   });
