@@ -1187,8 +1187,12 @@ export function ServersRedirectRoute() {
 }
 
 export function HomeRoute() {
-  const { activeOrganizationId, activeProjectId, activeProject } =
-    useAppRouteContext();
+  const {
+    activeOrganizationId,
+    activeProjectId,
+    activeProject,
+    isHomeContextResolving,
+  } = useAppRouteContext();
   const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
   if (!homeEnabled) return <ServersRoute />;
   return (
@@ -1202,6 +1206,7 @@ export function HomeRoute() {
         activeOrganizationId ?? activeProject?.organizationId ?? null
       }
       projectId={activeProjectId ?? null}
+      isContextLoading={Boolean(isHomeContextResolving)}
     />
   );
 }
@@ -3004,11 +3009,25 @@ export default function App() {
         }
       : undefined;
 
+  // The home route has no org segment, so its org is resolved from the active
+  // project (see HomeRoute). Until auth, the db user, the org list, and the
+  // project list have all settled, that org is transiently null — which must
+  // read as "loading", not as the empty "no organization" state. Bounded:
+  // every signal here resolves once its query/bootstrap completes.
+  const isHomeContextResolving =
+    isAuthLoading ||
+    (isAuthenticated &&
+      (isEnsuringUser ||
+        !isUserReady ||
+        isLoadingOrganizations ||
+        isLoadingRemoteProjects));
+
   const routeContext: AppRouteContext = {
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,
     activeProject,
+    isHomeContextResolving,
     activeProjectBillingOrganizationId,
     activeProjectId,
     activeTabBillingFeature,

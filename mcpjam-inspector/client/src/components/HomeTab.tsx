@@ -16,6 +16,32 @@ import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
 interface HomeTabProps {
   organizationId: string | null;
   projectId: string | null;
+  /**
+   * True while auth / db user / org list / project list are still settling.
+   * On `/home` the org is derived from the active project, so it is
+   * transiently null during that window — render a skeleton, not the empty
+   * "no organization" state, so the welcome card doesn't flash for users who
+   * actually have an org.
+   */
+  isContextLoading?: boolean;
+}
+
+// Mirrors the real home's header layout (greeting + stats strip) so the
+// loading state previews the page that's about to render rather than showing
+// a bare spinner or the misleading empty state.
+function HomeContextSkeleton() {
+  return (
+    <div className="h-full overflow-y-auto bg-background">
+      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8 sm:px-8">
+        <header className="space-y-3">
+          <div className="h-7 w-52 animate-pulse rounded-md bg-muted" />
+          <div className="h-3.5 w-72 animate-pulse rounded-sm bg-muted/70" />
+        </header>
+        <div className="h-32 w-full animate-pulse rounded-xl bg-muted/50" />
+        <div className="h-20 w-full animate-pulse rounded-xl bg-muted/30" />
+      </div>
+    </div>
+  );
 }
 
 function getGreeting(d: Date): string {
@@ -31,7 +57,8 @@ function deriveFirstName(opts: {
   fullName: string;
   email: string | null | undefined;
 }): string {
-  if (opts.workosFirst && opts.workosFirst.trim()) return opts.workosFirst.trim();
+  if (opts.workosFirst && opts.workosFirst.trim())
+    return opts.workosFirst.trim();
   const fromFull = opts.fullName.split(" ")[0]?.trim();
   if (fromFull && fromFull.length > 1) return fromFull;
   const fromEmail = opts.email?.split("@")[0]?.trim();
@@ -92,7 +119,11 @@ function clearPendingForSession(sessionId: string | null | undefined) {
   }
 }
 
-export function HomeTab({ organizationId, projectId }: HomeTabProps) {
+export function HomeTab({
+  organizationId,
+  projectId,
+  isContextLoading = false,
+}: HomeTabProps) {
   const navigate = useAppNavigate();
   const posthog = usePostHog();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -211,7 +242,12 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
           description: string;
           category: string;
         }[];
-        members: { _id: string; name: string; imageUrl: string | null; email: string }[];
+        members: {
+          _id: string;
+          name: string;
+          imageUrl: string | null;
+          email: string;
+        }[];
       }
     | undefined;
 
@@ -245,12 +281,15 @@ export function HomeTab({ organizationId, projectId }: HomeTabProps) {
   const greeting = useMemo(() => getGreeting(new Date()), []);
 
   if (!organizationId) {
+    if (isContextLoading) {
+      return <HomeContextSkeleton />;
+    }
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8 text-center">
         <p className="text-lg font-medium">Welcome to MCPJam</p>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Join or create an organization to see your team&apos;s activity, connected
-          servers, and projects in one place.
+          Join or create an organization to see your team&apos;s activity,
+          connected servers, and projects in one place.
         </p>
         <Button onClick={() => navigate("/organizations")}>Get started</Button>
       </div>
