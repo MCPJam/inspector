@@ -31,6 +31,9 @@ without opening the UI.
 
 What you can do with it today:
 
+- **Discover your resources** — list your projects, their servers, eval
+  suites, and chat sessions, so every ID the other routes need is
+  self-serve
 - **Validate a server** — connect, initialize, and capture a capability snapshot
 - **Run the doctor** — the probe → connect → initialize → capabilities workflow
 - **Check OAuth requirements** — does this server need an OAuth grant?
@@ -117,8 +120,9 @@ from [Settings](https://app.mcpjam.com/settings/api-keys).
 ## Conventions
 
 **Requests.** Operations on servers are `POST` with a JSON body (most accept
-an empty `{}`). Eval-run **reads** are `GET` and take their options
-(`cursor`, `limit`) as query parameters.
+an empty `{}`). **Reads** — the catalog listings and eval-run polling — are
+`GET` and take their options (`cursor`, `limit`, filters) as query
+parameters.
 
 **Responses.** Three envelope shapes, used consistently:
 
@@ -137,11 +141,11 @@ synchronously, then detaches execution and responds `202` with a `runId`.
 Poll `GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
 `cancelled`.
 
-**IDs.** `projectId` and `serverId` are the identifiers the hosted inspector
-itself uses. While the API is in preview there is no listing endpoint for them
-yet: the quickest way to grab them is your browser's dev tools — any inspector
-request to `/api/web/...` carries both — and key-accessible listing endpoints
-are planned.
+**IDs.** Every identifier the API takes is discoverable through the API
+itself: `GET /projects` lists your projects, `GET /projects/{projectId}/servers`
+lists each project's servers, and `GET /projects/{projectId}/eval-suites`
+lists its eval suites. Start from `GET /me` to confirm which account a key
+acts as.
 
 ## Errors
 
@@ -185,6 +189,16 @@ to be tuned during the preview.
 
 Each endpoint is fully documented — request and response schemas, examples,
 and an interactive playground — under **Endpoints** in the sidebar.
+
+**Catalog** — discover the IDs everything else takes:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /me` | The account behind the key |
+| `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
+| `GET /projects/{projectId}/servers` | The project's saved MCP servers |
+| `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |
+| `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
 
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 
@@ -264,7 +278,6 @@ and refresh it server-side.
 To set expectations while in preview, these are **not** available over the API
 today (most exist in the hosted inspector UI):
 
-- Listing your projects and servers (planned; see [IDs](#conventions))
 - Creating or revoking API keys (UI-only by design — see [Authentication](#authentication))
 - Chat and conformance suites
 - Browser-based OAuth flows initiated by the API (use
