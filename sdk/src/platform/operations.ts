@@ -368,7 +368,7 @@ const runEvalSuiteInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project server names or IDs to run against. Defaults to every enabled HTTP server in the project. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted."
+      "Project server names or IDs to override the suite's saved server selection. When omitted, the platform connects exactly the servers the suite was configured with. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted."
     ),
 });
 
@@ -377,7 +377,8 @@ export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInput>;
 export type RunEvalSuiteResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
-  servers: Array<{ id: string; name: string }>;
+  /** The servers the run connects to; names are included when known. */
+  servers: Array<{ id: string; name?: string }>;
   runId: string;
   status: string;
   caseUpsert: PlatformEvalRunCreated["caseUpsert"];
@@ -390,7 +391,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite against MCP servers saved in the project. Returns a runId immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
+    "Start an asynchronous rerun of an existing eval suite. By default the run connects the suite's saved server selection, resolved by the platform; pass servers only to override it. Returns a runId immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
   readOnly: false,
   inputSchema: runEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -400,26 +401,37 @@ export const runEvalSuiteOperation: PlatformOperation<
       signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
-    const servers = await resolveRunServers(
-      client,
-      project,
-      input.servers,
-      signal
-    );
+    // No client-side server default: the platform derives the suite's saved
+    // selection when serverIds is omitted — the exact set the run snapshot
+    // references, which a project-wide guess here could miss.
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
     const created = await client.createEvalRun(
       {
         projectId: project.id,
         body: {
           suiteId: suite.id,
-          serverIds: servers.map((server) => server.id),
+          ...(overrideServers
+            ? { serverIds: overrideServers.map((server) => server.id) }
+            : {}),
         },
       },
       { signal }
     );
+    const servers =
+      overrideServers?.map((server) => ({
+        id: server.id,
+        name: server.name,
+      })) ??
+      (created.servers ?? []).map((server) => ({
+        id: server.id,
+        ...(server.name ? { name: server.name } : {}),
+      }));
     return {
       project: toSelectedProjectInfo(project),
       suite: { id: suite.id, name: suite.name },
-      servers: servers.map((server) => ({ id: server.id, name: server.name })),
+      servers,
       runId: created.runId,
       status: created.status,
       caseUpsert: created.caseUpsert,
@@ -598,18 +610,18 @@ async function resolveSuite(
 }
 
 /**
- * Resolve the servers a run connects to. Explicit selectors resolve by id or
+ * Resolve an explicit server override for a run. Selectors resolve by id or
  * unique name (deduplicated) and must be hosted-runnable HTTP servers;
  * disabled servers stay selectable, since naming one is an explicit choice.
  * That mirrors what the platform itself permits: eval-run authorization is
  * project-membership-based and does not consult the `enabled` toggle, which
- * only controls the default connection set. With no selectors, every enabled
- * HTTP server in the project is used — stdio servers can't run hosted.
+ * only controls default connection sets. The no-override default lives
+ * server-side: the platform connects the suite's saved selection.
  */
 async function resolveRunServers(
   client: PlatformApiClient,
   project: PlatformProject,
-  selectors: string[] | undefined,
+  selectors: string[],
   signal: AbortSignal | undefined
 ): Promise<PlatformProjectServer[]> {
   const page = await client.listProjectServers(
@@ -617,40 +629,28 @@ async function resolveRunServers(
     { signal }
   );
 
-  if (selectors && selectors.length > 0) {
-    const resolved = new Map<string, PlatformProjectServer>();
-    for (const selector of selectors) {
-      const server = resolveByIdOrName(
-        page.items,
-        selector,
-        "Server",
-        `project "${project.name}"`
-      );
-      // Fail deterministically here rather than downstream at run creation:
-      // the hosted runner can never connect to these.
-      if (server.transportType === "stdio" || !server.url) {
-        throw resolutionError(
-          `Server "${selector.trim()}" can't run hosted evals: ${
-            server.transportType === "stdio"
-              ? "stdio servers are not supported on the hosted platform"
-              : "it has no URL"
-          }. Select an HTTP server instead.`
-        );
-      }
-      resolved.set(server.id, server);
-    }
-    return [...resolved.values()];
-  }
-
-  const defaults = page.items.filter(
-    (server) => server.enabled && server.transportType !== "stdio" && server.url
-  );
-  if (defaults.length === 0) {
-    throw resolutionError(
-      `Project "${project.name}" has no enabled HTTP servers to run against. Pass servers explicitly or add one in the hosted inspector.`
+  const resolved = new Map<string, PlatformProjectServer>();
+  for (const selector of selectors) {
+    const server = resolveByIdOrName(
+      page.items,
+      selector,
+      "Server",
+      `project "${project.name}"`
     );
+    // Fail deterministically here rather than downstream at run creation:
+    // the hosted runner can never connect to these.
+    if (server.transportType === "stdio" || !server.url) {
+      throw resolutionError(
+        `Server "${selector.trim()}" can't run hosted evals: ${
+          server.transportType === "stdio"
+            ? "stdio servers are not supported on the hosted platform"
+            : "it has no URL"
+        }. Select an HTTP server instead.`
+      );
+    }
+    resolved.set(server.id, server);
   }
-  return defaults;
+  return [...resolved.values()];
 }
 
 // ── Chat operations ──────────────────────────────────────────────────

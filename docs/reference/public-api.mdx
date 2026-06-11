@@ -223,7 +223,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 
 | Endpoint | What it does |
 | --- | --- |
-| `POST .../eval-runs` | Create a run from a `suiteId` (rerun) or `suiteName` + inline `tests` (new suite); responds `202` + `runId` |
+| `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite); responds `202` + `runId` |
 | `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
@@ -279,10 +279,14 @@ the key in `modelApiKeys`. A model the API can't execute is rejected at
 create time with `VALIDATION_ERROR`; `details.hostedModels` lists the valid
 hosted ids for that provider.
 
-Reruns are even shorter: `{ "suiteId": "...", "serverIds": ["..."] }` reruns
-the suite exactly as configured. Per-organization concurrency is capped
-(default **2** concurrent runs); exceeding it returns `429` with
-`details.reason: "CONCURRENT_RUN_LIMIT"` — wait for an active run to finish.
+Reruns are even shorter: `{ "suiteId": "..." }` reruns the suite exactly as
+configured, connecting the suite's saved server selection (the `202` response
+lists the resolved `servers`). Pass `serverIds` to override the selection; a
+suite with no saved selection requires it (`VALIDATION_ERROR` with
+`details.reason: "NO_SAVED_SERVER_SELECTION"` otherwise). Per-organization
+concurrency is capped (default **2** concurrent runs); exceeding it returns
+`429` with `details.reason: "CONCURRENT_RUN_LIMIT"` — wait for an active run
+to finish.
 
 If a server answers `401 OAUTH_REQUIRED`, complete the OAuth flow yourself
 (the SDK's `runOAuthLogin` handles interactive, headless, and

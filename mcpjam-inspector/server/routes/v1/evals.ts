@@ -18,11 +18,7 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
-import {
-  parseWithSchema,
-  ErrorCode,
-  WebRouteError,
-} from "../web/errors.js";
+import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager } from "../web/auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -60,9 +56,17 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     // Inline tests are optional on the public surface: a bare `suiteId`
     // rerun is the simplest possible call.
     tests: RunEvalsRequestSchema.shape.tests.max(MAX_V1_TESTS).default([]),
+    // Optional on reruns: when omitted with a `suiteId`, the route derives
+    // the suite's saved server selection (the set the run snapshot will
+    // reference) via `testSuites:getSuiteRunServerSelection`, so the
+    // manager connects exactly what the run needs.
+    serverIds: RunEvalsRequestSchema.shape.serverIds.optional(),
   })
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
+  })
+  .refine((body) => body.suiteId || (body.serverIds?.length ?? 0) > 0, {
+    message: "serverIds are required when creating a new suite",
   });
 
 // ── Model validation ─────────────────────────────────────────────────
@@ -208,6 +212,62 @@ function requireProjectMatch(
   }
 }
 
+/**
+ * The server set a fresh run of the suite will snapshot — what the manager
+ * must connect for a rerun that omits `serverIds`. Mirrors the resolution
+ * `startTestSuiteRun` performs (suite attachments / host config /
+ * environment bindings); the backend query owns that logic so this surface
+ * can never drift from what the run actually references.
+ */
+async function fetchSuiteRunServerSelection(
+  convexAuthToken: string,
+  suiteId: string,
+  namedHostId: string | undefined
+): Promise<{ serverIds: string[]; serverNames: string[] }> {
+  const convex = createConvexReadClient(convexAuthToken);
+  let selection: {
+    serverIds?: unknown;
+    serverNames?: unknown;
+  } | null;
+  try {
+    selection = await convex.query(
+      "testSuites:getSuiteRunServerSelection" as any,
+      { suiteId, ...(namedHostId ? { namedHostId } : {}) }
+    );
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval suite not found");
+    }
+    // Deploy-order skew: a backend without the query yet. Keep the surface
+    // usable with the explicit-serverIds escape hatch instead of a 500.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/could not find public function/i.test(message)) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "This deployment cannot derive the suite's saved servers yet. Pass serverIds explicitly."
+      );
+    }
+    throw error;
+  }
+
+  const serverIds = Array.isArray(selection?.serverIds)
+    ? selection.serverIds.map(String)
+    : [];
+  const serverNames = Array.isArray(selection?.serverNames)
+    ? selection.serverNames.map(String)
+    : [];
+  if (serverIds.length === 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Suite has no saved server selection to rerun against. Pass serverIds explicitly.",
+      { suiteId, reason: "NO_SAVED_SERVER_SELECTION" }
+    );
+  }
+  return { serverIds, serverNames };
+}
+
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 /**
@@ -306,11 +366,34 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   const suiteRerun =
     Boolean(body.suiteId) && body.tests.length === 0
       ? true
-      : (body.suiteRerun ?? false);
+      : body.suiteRerun ?? false;
 
   // Fail unknown models now, with a pointer to valid ids, rather than
   // letting the detached run die later with an opaque stream error.
   assertInlineTestModelsValid(body.tests, body.modelApiKeys);
+
+  // Resolved once, synchronously: the background task captures this token
+  // in its closure (its TTL covers a capped run; see v1-convex-token.ts).
+  // It is ALSO the bearer handed to the manager: the manager's
+  // bearer-forwarding paths (hosted OAuth force-refresh, secret reveal)
+  // hit Convex's JWT-only surfaces, where an `sk_` API key is useless —
+  // same swap `runEphemeralConnection` does for the synchronous routes.
+  const convexAuthToken = await getConvexBearerForRequest(c);
+
+  // Omitted serverIds on a rerun (the schema guarantees suiteId here):
+  // connect the suite's saved server selection — the exact set the run
+  // snapshot will reference — instead of making the caller guess it.
+  let serverIds = body.serverIds ?? [];
+  let serverNames = body.serverNames;
+  if (serverIds.length === 0) {
+    const selection = await fetchSuiteRunServerSelection(
+      convexAuthToken,
+      body.suiteId!,
+      body.namedHostId
+    );
+    serverIds = selection.serverIds;
+    serverNames = selection.serverNames;
+  }
 
   const slotKey = orgConcurrencyKey(c);
   if (!tryAcquireRunSlot(slotKey)) {
@@ -334,29 +417,23 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   };
 
   try {
-    // Resolved once, synchronously: the background task captures this token
-    // in its closure (its TTL covers a capped run; see v1-convex-token.ts).
-    // It is ALSO the bearer handed to the manager: the manager's
-    // bearer-forwarding paths (hosted OAuth force-refresh, secret reveal)
-    // hit Convex's JWT-only surfaces, where an `sk_` API key is useless —
-    // same swap `runEphemeralConnection` does for the synchronous routes.
-    const convexAuthToken = await getConvexBearerForRequest(c);
-
     const { manager } = await createAuthorizedManager(
       c,
       convexAuthToken,
       projectId,
-      body.serverIds,
+      serverIds,
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames: body.serverNames }
+      { serverNames }
     );
 
     let prepared: PreparedEvalRun;
     try {
       prepared = await prepareEvalRun(manager, {
         ...body,
+        serverIds,
+        serverNames,
         projectId,
         suiteRerun,
         convexAuthToken,
@@ -405,6 +482,14 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         suiteId: prepared.suiteId,
         status: "running",
         caseUpsert: prepared.caseUpsert,
+        // The servers the run connects to — explicit or derived from the
+        // suite's saved selection — so callers that omitted serverIds can
+        // see what the run targets. Names are present when known (always,
+        // on the derived path).
+        servers: serverIds.map((serverId, index) => ({
+          id: serverId,
+          ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
+        })),
       },
       202
     );
@@ -452,10 +537,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
   try {
     run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
     requireProjectMatch(run, projectId, "Eval run");
-    page = await convex.query(
-      "testSuites:listTestSuiteRunIterations" as any,
-      { runId, paginationOpts: { numItems: limit, cursor } }
-    );
+    page = await convex.query("testSuites:listTestSuiteRunIterations" as any, {
+      runId,
+      paginationOpts: { numItems: limit, cursor },
+    });
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");

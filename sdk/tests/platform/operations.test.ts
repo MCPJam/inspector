@@ -213,12 +213,20 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-runs$/.test(path)) {
       expect(init?.method).toBe("POST");
+      const requestBody = JSON.parse(String(init?.body)) as {
+        serverIds?: string[];
+      };
       return Response.json(
         {
           runId: "run-9",
           suiteId: "suite-1",
           status: "running",
           caseUpsert: { committed: [], failed: [] },
+          // Mirrors the API: explicit serverIds echo back; an omitted set
+          // resolves server-side to the suite's saved selection.
+          servers: requestBody.serverIds
+            ? requestBody.serverIds.map((id) => ({ id }))
+            : [{ id: "server-saved", name: "Saved" }],
         },
         { status: 202 }
       );
@@ -376,7 +384,7 @@ describe("listEvalSuiteRunsOperation", () => {
 });
 
 describe("runEvalSuiteOperation", () => {
-  it("defaults servers to the project's enabled HTTP servers", async () => {
+  it("omits serverIds so the platform connects the suite's saved selection", async () => {
     const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
 
     const result = await runEvalSuiteOperation.execute(
@@ -387,16 +395,17 @@ describe("runEvalSuiteOperation", () => {
     expect(result.runId).toBe("run-9");
     expect(result.status).toBe("running");
     expect(result.suite).toEqual({ id: "suite-1", name: "Smoke" });
-    // Disabled and stdio servers are excluded from the default selection.
-    expect(result.servers).toEqual([{ id: "server-http", name: "Echo" }]);
+    // The resolved set comes from the API response, not a client guess.
+    expect(result.servers).toEqual([{ id: "server-saved", name: "Saved" }]);
 
     const createCall = fetchMock.mock.calls.find(([target]) =>
       String(target).endsWith("/eval-runs")
     );
     expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
       suiteId: "suite-1",
-      serverIds: ["server-http"],
     });
+    // No project-server listing is needed when nothing is overridden.
+    expect(callsTo(fetchMock, "/servers")).toHaveLength(0);
   });
 
   it("resolves explicit server selectors by name or id and deduplicates", async () => {
@@ -451,19 +460,6 @@ describe("runEvalSuiteOperation", () => {
       'Server "ghost" was not found'
     );
     expect((error as PlatformApiError).message).toContain("Echo");
-  });
-
-  it("fails actionably when the project has no enabled HTTP servers", async () => {
-    const { client } = makeClient(); // stdio-only default fixture
-
-    const error = await runEvalSuiteOperation
-      .execute({ suite: "Smoke" }, { client })
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(PlatformApiError);
-    expect((error as PlatformApiError).message).toContain(
-      "no enabled HTTP servers"
-    );
   });
 
   it("rejects ambiguous suite names with the candidate ids", async () => {

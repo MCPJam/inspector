@@ -123,6 +123,12 @@ export interface PlatformEvalRunCreated {
     committed?: Array<{ id?: string; name?: string }>;
     failed?: Array<{ id?: string; name?: string; error?: string }>;
   };
+  /**
+   * The servers the run connects to — explicit, or derived server-side from
+   * the suite's saved selection when the request omitted serverIds. Absent
+   * on older API deployments.
+   */
+  servers?: Array<{ id: string; name?: string }>;
 }
 
 export interface PlatformEvalIteration {
