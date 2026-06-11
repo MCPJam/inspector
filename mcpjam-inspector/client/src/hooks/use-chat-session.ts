@@ -130,7 +130,7 @@ function resolveSystemPrompt(value: string | null | undefined): string {
     : DEFAULT_SYSTEM_PROMPT;
 }
 
-function applyGuestModelLocks(
+export function applyGuestModelLocks(
   models: ModelDefinition[],
   isAuthenticated: boolean
 ): ModelDefinition[] {
@@ -150,7 +150,7 @@ function applyGuestModelLocks(
   });
 }
 
-function appendDetectedLocalOllamaModels(
+export function appendDetectedLocalOllamaModels(
   models: ModelDefinition[],
   isOllamaRunning: boolean,
   ollamaModels: ModelDefinition[]

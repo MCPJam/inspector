@@ -8,6 +8,26 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
   useBuiltInToolCatalog: () => [],
 }));
 
+// BehaviorTab's model picker reuses the Playground ModelSelector fed by the
+// shared app-state + Convex model hooks; stub them so the tab renders
+// without providers.
+vi.mock("@/hooks/use-host-agent-models", () => ({
+  useHostAgentModels: () => ({
+    availableModels: [
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+    ],
+  }),
+}));
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+  useFeatureFlagEnabled: () => false,
+}));
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: ({ provider }: { provider: string }) => (
+    <span aria-hidden="true">{provider}</span>
+  ),
+}));
+
 import { BehaviorTab } from "../BehaviorTab";
 
 /**
