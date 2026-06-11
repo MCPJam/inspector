@@ -68,7 +68,18 @@ async function proxyIngest(c: Context, suffix: string): Promise<Response> {
   }
   let payload: Record<string, unknown>;
   try {
-    payload = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    // `null`, numbers, strings, and arrays are valid JSON but not valid
+    // ingest bodies — and mutating projectId on them below would throw
+    // (strict mode), turning a client error into a 500.
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return v1Error(c, "VALIDATION_ERROR", "JSON body must be an object");
+    }
+    payload = parsed as Record<string, unknown>;
   } catch {
     return v1Error(c, "VALIDATION_ERROR", "Invalid JSON body");
   }

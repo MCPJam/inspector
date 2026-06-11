@@ -167,6 +167,24 @@ describe("v1 eval-ingest proxies", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects valid non-object JSON bodies before touching the backend", async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as never;
+
+    for (const body of ["null", "1", '"x"', "[]"]) {
+      const res = await request(
+        makeApp(),
+        "/api/v1/projects/default/eval-ingest/report",
+        body
+      );
+      expect(res.status, body).toBe(400);
+      expect(((await res.json()) as { code?: string }).code, body).toBe(
+        "VALIDATION_ERROR"
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("covers every ingest suffix the SDK reporter calls", async () => {
     const fetchMock = vi
       .fn()

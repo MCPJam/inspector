@@ -277,6 +277,7 @@ export async function captureEvalReportingFailure(
       buffered_count: context.bufferedCount,
       framework: context.framework,
       has_api_key: Boolean(context.apiKey),
+      project: context.project,
       result_count: context.resultCount,
       runId: context.runId ?? undefined,
     },

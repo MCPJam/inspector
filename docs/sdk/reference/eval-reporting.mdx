@@ -368,10 +368,10 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 
 ### Run-level host snapshot
 
-When the inspector backend advertises the `evalsHostConfig` capability at `GET /sdk/v1/info`, the reporter additionally includes a normalized + content-hashed host config alongside the run body:
+When a usable host snapshot is available, the reporter includes a normalized + content-hashed host config alongside the run body (the v1 ingest surface always accepts the pair — the old per-`baseUrl` capability probe is gone):
 
 ```jsonc
-POST /sdk/v1/evals/runs/start
+POST /api/v1/projects/{projectId}/eval-ingest/runs/start
 {
   "suiteName": "...",
   "results": [...],
@@ -388,7 +388,7 @@ POST /sdk/v1/evals/runs/start
 
 **Pass-1 homogeneity gate.** The reporter only sends a run-level `{ hostConfig, hostConfigHash }` when all available iteration snapshots canonicalize to the same hash. Heterogeneous runs (e.g. mutating the bound `Host` between iterations) omit the run-level field — per-iteration wire support is a later stage.
 
-**Fail-safe to "no capability".** The lazy capability probe (`GET /sdk/v1/info`, cached per `baseUrl`) treats any error — network failure, 404, timeout, malformed JSON — as "no capability". The reporter then omits `hostConfig` rather than failing the eval upload. Old backends without the capability are unaffected; the body shape stays the same.
+**Fail-safe omission.** Any error while resolving or canonicalizing the snapshot — malformed `hostSnapshot`, an executor that throws, non-canonicalizable host JSON — logs a warning and omits the wire pair rather than failing the eval upload. The body shape stays the same without it.
 
 **Server-id normalization.** Runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) are stripped by `normalizeSdkEvalHostConfigForWire` on both ends so SDK runtime ids like `"everything"` never reach the backend's `validateServerScope` as `Id<'servers'>`. The persisted `hostConfigsV2` row's hash will differ from the wire `hostConfigHash` because suite-resolved Convex server ids are layered on top at storage time — the wire hash is a transport-integrity check, not the storage id.
 

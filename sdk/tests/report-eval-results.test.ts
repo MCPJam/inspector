@@ -110,6 +110,7 @@ describe("reportEvalResults", () => {
 
   it("falls back to MCPJAM_PROJECT_ID from the environment", async () => {
     delete process.env.MCPJAM_BASE_URL;
+    const prevProjectId = process.env.MCPJAM_PROJECT_ID;
     process.env.MCPJAM_PROJECT_ID = "jd7envproj";
 
     const fetchMock = vi.fn().mockResolvedValue(
@@ -130,7 +131,11 @@ describe("reportEvalResults", () => {
         results: [{ caseTitle: "happy-path", passed: true }],
       });
     } finally {
-      delete process.env.MCPJAM_PROJECT_ID;
+      if (prevProjectId === undefined) {
+        delete process.env.MCPJAM_PROJECT_ID;
+      } else {
+        process.env.MCPJAM_PROJECT_ID = prevProjectId;
+      }
     }
 
     expect(fetchMock.mock.calls[0][0]).toBe(
