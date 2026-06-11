@@ -509,6 +509,38 @@ export function ToolPart({
       </div>
     ) : null;
 
+  // Device-flow login URLs surfaced by the computer `bash` tool (e.g. from
+  // `gh auth login`). The tool lifts them into a structured `authUrls` field
+  // so the user can click instead of hunting through scrollback.
+  const renderAuthUrls = () => {
+    const authUrls: unknown = (outputData as { authUrls?: unknown })?.authUrls;
+    const urls = Array.isArray(authUrls)
+      ? authUrls.filter((u): u is string => typeof u === "string")
+      : [];
+    if (urls.length === 0) return null;
+    return (
+      <div className="space-y-1" data-testid="tool-part-auth-urls">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+          Sign-in {urls.length > 1 ? "links" : "link"}
+        </div>
+        <ul className="space-y-1">
+          {urls.map((url) => (
+            <li key={url}>
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-primary underline underline-offset-2 break-all"
+              >
+                {url}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
   const renderToolError = () =>
     hasError ? (
       <div className="space-y-1">
@@ -534,6 +566,7 @@ export function ToolPart({
       <div className="space-y-4">
         {renderToolInput()}
         {renderAttachedTraceDisplay()}
+        {renderAuthUrls()}
         {renderToolResult()}
         {renderToolError()}
       </div>

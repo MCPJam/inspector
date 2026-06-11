@@ -124,7 +124,7 @@ export function ClientConfigEditor({
     (patch: Partial<HostConfigInputV2>) => {
       onChange({ ...value, ...patch });
     },
-    [value, onChange],
+    [value, onChange]
   );
 
   const updateConnection = useCallback(
@@ -134,7 +134,7 @@ export function ClientConfigEditor({
         connectionDefaults: { ...value.connectionDefaults, ...patch },
       });
     },
-    [value, onChange],
+    [value, onChange]
   );
 
   const showExecutionSection = owner !== "connection-only";
@@ -158,6 +158,12 @@ export function ClientConfigEditor({
   const builtInToolCatalog = useBuiltInToolCatalog();
   const showBuiltInToolsSection =
     owner !== "connection-only" && (builtInToolCatalog?.length ?? 0) > 0;
+  // The personal-computer toggle only appears once the deployment exposes a
+  // computer-backed tool in the catalog (the `bash` row ships disabled until
+  // launch, so this stays hidden until then — no dead toggle pre-launch).
+  const showComputerToggle =
+    showBuiltInToolsSection &&
+    (builtInToolCatalog ?? []).some((t) => t.requiresComputer);
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
 
@@ -231,11 +237,10 @@ export function ClientConfigEditor({
                 <p className="text-xs text-muted-foreground">
                   Expose <code>search_mcp_tools</code> and{" "}
                   <code>load_mcp_tools</code> meta-tools instead of sending
-                  every MCP tool definition every turn.{" "}
-                  <strong>Auto</strong> lets the orchestrator decide based on
-                  catalog size and context budget; <strong>On</strong> forces
-                  it for this host; <strong>Off</strong> opts out even on
-                  large catalogs.
+                  every MCP tool definition every turn. <strong>Auto</strong>{" "}
+                  lets the orchestrator decide based on catalog size and context
+                  budget; <strong>On</strong> forces it for this host;{" "}
+                  <strong>Off</strong> opts out even on large catalogs.
                 </p>
               </div>
               <ToggleGroup
@@ -252,8 +257,8 @@ export function ClientConfigEditor({
                   value.progressiveToolDiscovery === true
                     ? "on"
                     : value.progressiveToolDiscovery === false
-                      ? "off"
-                      : "auto"
+                    ? "off"
+                    : "auto"
                 }
                 onValueChange={(next) => {
                   if (!next) return;
@@ -320,7 +325,7 @@ export function ClientConfigEditor({
                 update({
                   serverIds,
                   optionalServerIds: value.optionalServerIds.filter((id) =>
-                    requiredSet.has(id),
+                    requiredSet.has(id)
                   ),
                 });
               }}
@@ -329,7 +334,7 @@ export function ClientConfigEditor({
               label="Optional servers"
               selected={value.optionalServerIds}
               available={(availableServers ?? []).filter((srv) =>
-                value.serverIds.includes(srv.id),
+                value.serverIds.includes(srv.id)
               )}
               onChange={(optionalServerIds) => {
                 // Editing the optional list should never add a server
@@ -339,7 +344,7 @@ export function ClientConfigEditor({
                 const requiredSet = new Set(value.serverIds);
                 update({
                   optionalServerIds: optionalServerIds.filter((id) =>
-                    requiredSet.has(id),
+                    requiredSet.has(id)
                   ),
                 });
               }}
@@ -353,10 +358,48 @@ export function ClientConfigEditor({
       {showBuiltInToolsSection ? (
         <>
           <section className="space-y-4">
+            {showComputerToggle ? (
+              <div className="flex items-start justify-between gap-4">
+                <div className="grid gap-0.5">
+                  <Label htmlFor={`${reactId}-computer`}>
+                    Personal computer
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Attach a per-member cloud workstation (a persistent Linux
+                    sandbox). Required by computer-backed tools like Bash.
+                  </p>
+                </div>
+                <Switch
+                  id={`${reactId}-computer`}
+                  checked={value.computer !== undefined}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      update({ computer: { kind: "personal" } });
+                    } else {
+                      // Detaching the resource must also drop any
+                      // computer-backed ids, or the save would fail the
+                      // backend's requiresComputer invariant.
+                      const computerBacked = new Set(
+                        (builtInToolCatalog ?? [])
+                          .filter((t) => t.requiresComputer)
+                          .map((t) => t.id)
+                      );
+                      update({
+                        computer: undefined,
+                        builtInToolIds: value.builtInToolIds.filter(
+                          (id) => !computerBacked.has(id)
+                        ),
+                      });
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
             <BuiltInToolCheckboxList
               label="Built-in tools"
               selected={value.builtInToolIds}
               available={builtInToolCatalog ?? []}
+              computerAttached={value.computer !== undefined}
               onChange={(builtInToolIds) => update({ builtInToolIds })}
             />
           </section>
@@ -404,9 +447,7 @@ export function ClientConfigEditor({
           <Label>Client capabilities (JSON)</Label>
           <JsonRecordEditor
             value={value.clientCapabilities}
-            onChange={(clientCapabilities) =>
-              update({ clientCapabilities })
-            }
+            onChange={(clientCapabilities) => update({ clientCapabilities })}
             onErrorChange={setCapsError}
             placeholder="{}"
           />
@@ -493,7 +534,10 @@ function McpProfileSection({
     version: string;
     title: string;
   }>(() => ({
-    name: typeof persistedClientInfo?.name === "string" ? persistedClientInfo.name : "",
+    name:
+      typeof persistedClientInfo?.name === "string"
+        ? persistedClientInfo.name
+        : "",
     version:
       typeof persistedClientInfo?.version === "string"
         ? persistedClientInfo.version
@@ -528,7 +572,7 @@ function McpProfileSection({
     profile?.initialize?.supportedProtocolVersions ?? []
   ).join("\n");
   const [protocolVersionsDraft, setProtocolVersionsDraft] = useState<string>(
-    persistedProtocolVersionsText,
+    persistedProtocolVersionsText
   );
   const protocolVersionsDraftRef = useRef(protocolVersionsDraft);
   useEffect(() => {
@@ -583,7 +627,9 @@ function McpProfileSection({
       draftWouldFlush &&
       persistedName === draftName &&
       persistedVersion === draftVersion &&
-      (draftTitle === "" ? persistedTitle === "" : persistedTitle === draftTitle)
+      (draftTitle === ""
+        ? persistedTitle === ""
+        : persistedTitle === draftTitle)
     ) {
       return;
     }
@@ -631,9 +677,7 @@ function McpProfileSection({
   }, [onChange]);
 
   const updateInitialize = useCallback(
-    (
-      patch: Partial<NonNullable<HostConfigMcpProfileV1["initialize"]>>,
-    ) => {
+    (patch: Partial<NonNullable<HostConfigMcpProfileV1["initialize"]>>) => {
       const base: HostConfigMcpProfileV1 = profile ?? { profileVersion: 1 };
       const nextInitialize = {
         ...(base.initialize ?? {}),
@@ -651,7 +695,7 @@ function McpProfileSection({
         initialize: hasInitFields ? nextInitialize : undefined,
       });
     },
-    [profile, onChange],
+    [profile, onChange]
   );
 
   const updateClientInfo = useCallback(
@@ -704,7 +748,7 @@ function McpProfileSection({
         updateInitialize({ clientInfo: undefined });
       }
     },
-    [profile, updateInitialize],
+    [profile, updateInitialize]
   );
 
   const updateProtocolVersions = useCallback(
@@ -725,7 +769,7 @@ function McpProfileSection({
         supportedProtocolVersions: versions.length > 0 ? versions : undefined,
       });
     },
-    [updateInitialize],
+    [updateInitialize]
   );
 
   if (!enabled) {
@@ -738,9 +782,9 @@ function McpProfileSection({
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Pin the `clientInfo`, supported protocol versions, and sandbox
-          policy this host config advertises in MCP `initialize`. Leave
-          disabled to use SDK defaults — recommended for normal use.
+          Pin the `clientInfo`, supported protocol versions, and sandbox policy
+          this host config advertises in MCP `initialize`. Leave disabled to use
+          SDK defaults — recommended for normal use.
         </p>
       </div>
     );
@@ -780,7 +824,10 @@ function McpProfileSection({
       {expanded ? (
         <>
           <div className="grid gap-2">
-            <Label className="text-xs font-medium" htmlFor="mcp-profile-client-name">
+            <Label
+              className="text-xs font-medium"
+              htmlFor="mcp-profile-client-name"
+            >
               Client identity
             </Label>
             <div className="grid grid-cols-2 gap-2">
@@ -805,8 +852,8 @@ function McpProfileSection({
               onChange={(e) => updateClientInfo({ title: e.target.value })}
             />
             <p className="text-xs text-muted-foreground">
-              Both name and version are required when client identity is
-              set. Saved verbatim to MCP `initialize.params.clientInfo`.
+              Both name and version are required when client identity is set.
+              Saved verbatim to MCP `initialize.params.clientInfo`.
             </p>
           </div>
 
@@ -833,10 +880,7 @@ function McpProfileSection({
             </p>
           </div>
 
-          <McpProfileSandboxEditor
-            profile={profile}
-            onChange={onChange}
-          />
+          <McpProfileSandboxEditor profile={profile} onChange={onChange} />
         </>
       ) : null}
     </div>
@@ -860,7 +904,7 @@ function McpProfileSandboxEditor({
     (
       patch: Partial<
         NonNullable<NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]>
-      >,
+      >
     ) => {
       const base: HostConfigMcpProfileV1 = profile ?? { profileVersion: 1 };
       const nextSandbox = {
@@ -882,7 +926,7 @@ function McpProfileSandboxEditor({
         apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
       });
     },
-    [profile, onChange],
+    [profile, onChange]
   );
 
   const csp = profile?.apps?.sandbox?.csp;
@@ -919,12 +963,12 @@ function McpProfileSandboxEditor({
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          restrictTo is optional and empty by default. Only set it if you
-          want to narrow the view's declared CSP further than the view
-          itself asks for. Per SEP-1865 it's allowlist-only and intersects
-          the view's declaration — adding origins here can only block
-          what the view would otherwise reach, never make a view more
-          compatible. Leave empty to honor the view's declaration as-is.
+          restrictTo is optional and empty by default. Only set it if you want
+          to narrow the view's declared CSP further than the view itself asks
+          for. Per SEP-1865 it's allowlist-only and intersects the view's
+          declaration — adding origins here can only block what the view would
+          otherwise reach, never make a view more compatible. Leave empty to
+          honor the view's declaration as-is.
         </p>
       </div>
 
@@ -1025,15 +1069,12 @@ function McpProfileCspDirectivesEditor({
   value: Record<string, string[]> | undefined;
   onChange: (next: Record<string, string[]> | undefined) => void;
 }) {
-  const fromValue = useCallback(
-    (v: Record<string, string[]> | undefined) => {
-      if (!v) return [] as Array<{ name: string; tokens: string }>;
-      return Object.keys(v)
-        .sort()
-        .map((k) => ({ name: k, tokens: (v[k] ?? []).join(", ") }));
-    },
-    [],
-  );
+  const fromValue = useCallback((v: Record<string, string[]> | undefined) => {
+    if (!v) return [] as Array<{ name: string; tokens: string }>;
+    return Object.keys(v)
+      .sort()
+      .map((k) => ({ name: k, tokens: (v[k] ?? []).join(", ") }));
+  }, []);
 
   // Local draft state including in-progress blank rows the user has
   // added but not yet filled in. `commit` filters blanks out before
@@ -1055,7 +1096,7 @@ function McpProfileCspDirectivesEditor({
       const fromVal = fromValue(value);
       // Preserve any blank/in-progress rows the user is still editing.
       const blanks = prev.filter(
-        (r) => r.name.trim() === "" || r.tokens.trim() === "",
+        (r) => r.name.trim() === "" || r.tokens.trim() === ""
       );
       return [...fromVal, ...blanks];
     });
@@ -1078,12 +1119,12 @@ function McpProfileCspDirectivesEditor({
       lastSyncedKeyRef.current = JSON.stringify(built ?? null);
       onChange(built);
     },
-    [onChange],
+    [onChange]
   );
 
   const updateRow = (
     idx: number,
-    patch: Partial<{ name: string; tokens: string }>,
+    patch: Partial<{ name: string; tokens: string }>
   ) => {
     const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
     setDraftRows(next);
@@ -1255,7 +1296,8 @@ function McpProfileSandboxAttrsEditor({
   // Anything in value that isn't in the known list — surface as a chip too
   // so the user can see it and remove it.
   const unknownTokens = Array.from(active).filter(
-    (t) => !KNOWN_SANDBOX_TOKENS.includes(t as (typeof KNOWN_SANDBOX_TOKENS)[number]),
+    (t) =>
+      !KNOWN_SANDBOX_TOKENS.includes(t as (typeof KNOWN_SANDBOX_TOKENS)[number])
   );
 
   return (
@@ -1279,7 +1321,9 @@ function McpProfileSandboxAttrsEditor({
           : "Using the inspector's legacy permissive sandbox default. Toggle on to model the real host's emitted sandbox= tokens — empty = spec minimum only."}
       </p>
       <div
-        className={`flex flex-wrap gap-1 ${isEnabled ? "" : "opacity-50 pointer-events-none"}`}
+        className={`flex flex-wrap gap-1 ${
+          isEnabled ? "" : "opacity-50 pointer-events-none"
+        }`}
       >
         {KNOWN_SANDBOX_TOKENS.map((token) => {
           const isMandatory = MANDATORY_SANDBOX_TOKENS.has(token);
@@ -1294,7 +1338,9 @@ function McpProfileSandboxAttrsEditor({
                 isActive
                   ? "border-primary bg-primary/10 text-foreground"
                   : "border-border/40 text-muted-foreground hover:bg-muted/40"
-              } ${isMandatory ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+              } ${
+                isMandatory ? "cursor-not-allowed opacity-70" : "cursor-pointer"
+              }`}
               title={isMandatory ? "Spec-mandated (always on)" : token}
             >
               {token}
@@ -1315,7 +1361,9 @@ function McpProfileSandboxAttrsEditor({
         ))}
       </div>
       <div
-        className={`flex gap-2 ${isEnabled ? "" : "opacity-50 pointer-events-none"}`}
+        className={`flex gap-2 ${
+          isEnabled ? "" : "opacity-50 pointer-events-none"
+        }`}
       >
         <Input
           value={customDraft}
@@ -1362,18 +1410,15 @@ function McpProfileAllowFeaturesEditor({
 }) {
   const specFeatures = useMemo(
     () => new Set<string>(SEP_1865_PERMISSION_FEATURES),
-    [],
+    []
   );
 
-  const fromValue = useCallback(
-    (v: Record<string, string> | undefined) => {
-      if (!v) return [] as Array<{ key: string; allowlist: string }>;
-      return Object.keys(v)
-        .sort()
-        .map((k) => ({ key: k, allowlist: v[k] ?? "" }));
-    },
-    [],
-  );
+  const fromValue = useCallback((v: Record<string, string> | undefined) => {
+    if (!v) return [] as Array<{ key: string; allowlist: string }>;
+    return Object.keys(v)
+      .sort()
+      .map((k) => ({ key: k, allowlist: v[k] ?? "" }));
+  }, []);
 
   // Local draft state including in-progress blanks. `commit` filters
   // blank/spec-feature rows out before calling onChange, so without a
@@ -1398,7 +1443,7 @@ function McpProfileAllowFeaturesEditor({
         (r) =>
           r.key.trim() === "" ||
           r.allowlist.trim() === "" ||
-          specFeatures.has(r.key.trim()),
+          specFeatures.has(r.key.trim())
       );
       return [...fromVal, ...inProgress];
     });
@@ -1432,7 +1477,7 @@ function McpProfileAllowFeaturesEditor({
       lastSyncedKeyRef.current = JSON.stringify(out);
       onChange(out);
     },
-    [onChange, specFeatures],
+    [onChange, specFeatures]
   );
 
   const setEnabled = (enabled: boolean) => {
@@ -1447,7 +1492,7 @@ function McpProfileAllowFeaturesEditor({
 
   const updateRow = (
     idx: number,
-    patch: Partial<{ key: string; allowlist: string }>,
+    patch: Partial<{ key: string; allowlist: string }>
   ) => {
     if (!isEnabled) return;
     const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
@@ -1579,9 +1624,7 @@ function McpProfilePermissionsAllowEditor({
 }: {
   mode: "resource-declared" | "deny-all" | "custom";
   allow: Record<string, boolean> | undefined;
-  onChange: (next: {
-    allow: Record<string, boolean> | undefined;
-  }) => void;
+  onChange: (next: { allow: Record<string, boolean> | undefined }) => void;
 }) {
   const PERMISSION_KEYS: ReadonlyArray<{ key: string; label: string }> = [
     { key: "camera", label: "Camera" },
@@ -1639,8 +1682,8 @@ function McpProfilePermissionsAllowEditor({
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        Resource declaration is the ceiling — toggling Allow for a
-        permission the resource didn't request has no runtime effect.
+        Resource declaration is the ceiling — toggling Allow for a permission
+        the resource didn't request has no runtime effect.
       </p>
     </div>
   );
@@ -1693,7 +1736,7 @@ function PermissionRow({
  */
 function useNewlineListDraft(
   persistedList: ReadonlyArray<string>,
-  onPersistedChange: (next: string[]) => void,
+  onPersistedChange: (next: string[]) => void
 ) {
   const persistedJoined = persistedList.join("\n");
   const [draft, setDraft] = useState<string>(persistedJoined);
@@ -1725,7 +1768,7 @@ function useNewlineListDraft(
         .filter((line) => line !== "");
       onPersistedChange(next);
     },
-    [onPersistedChange],
+    [onPersistedChange]
   );
 
   return { value: draft, onChange };
@@ -1748,7 +1791,14 @@ function McpProfileCspDomainSetEditor({
   onChange,
 }: {
   label: string;
-  value: { connectDomains?: string[]; resourceDomains?: string[]; frameDomains?: string[]; baseUriDomains?: string[] } | undefined;
+  value:
+    | {
+        connectDomains?: string[];
+        resourceDomains?: string[];
+        frameDomains?: string[];
+        baseUriDomains?: string[];
+      }
+    | undefined;
   onChange: (
     next:
       | {
@@ -1757,11 +1807,15 @@ function McpProfileCspDomainSetEditor({
           frameDomains?: string[];
           baseUriDomains?: string[];
         }
-      | undefined,
+      | undefined
   ) => void;
 }) {
   const directives: Array<{
-    key: "connectDomains" | "resourceDomains" | "frameDomains" | "baseUriDomains";
+    key:
+      | "connectDomains"
+      | "resourceDomains"
+      | "frameDomains"
+      | "baseUriDomains";
     placeholder: string;
     /** Human-readable label used for the directive's accessible name. */
     directiveLabel: string;
@@ -1796,10 +1850,7 @@ function McpProfileCspDomainSetEditor({
    * would silently bump the hostConfig hash and create a duplicate row.
    */
   const commitDirective = useCallback(
-    (
-      key: typeof directives[number]["key"],
-      items: string[],
-    ) => {
+    (key: (typeof directives)[number]["key"], items: string[]) => {
       const nextValue = { ...(value ?? {}) };
       if (items.length === 0) {
         delete nextValue[key];
@@ -1814,7 +1865,7 @@ function McpProfileCspDomainSetEditor({
     },
     // `directives` is a module-local stable array literal; safe to omit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [value, onChange],
+    [value, onChange]
   );
 
   return (
@@ -1868,7 +1919,7 @@ function McpProfileCspDirectiveTextarea({
 }) {
   const { value, onChange } = useNewlineListDraft(
     persistedList,
-    onPersistedChange,
+    onPersistedChange
   );
   return (
     <div className="grid gap-1">
@@ -1918,16 +1969,18 @@ function HostCapabilitiesOverrideSection({
 }) {
   const profilePreset = useMemo(
     () => getHostCapabilitiesForStyle(hostStyle),
-    [hostStyle],
+    [hostStyle]
   );
   const profilePresetJson = useMemo(
     () => JSON.stringify(profilePreset, null, 2),
-    [profilePreset],
+    [profilePreset]
   );
   const isOverriding = override !== undefined;
   // When the user hasn't set an override, seed the editor with the profile
   // preset (writeable copy) so they have a visible starting point for edits.
-  const editorValue = isOverriding ? override : (profilePreset as Record<string, unknown>);
+  const editorValue = isOverriding
+    ? override
+    : (profilePreset as Record<string, unknown>);
 
   return (
     <div className="grid gap-2">
@@ -1978,7 +2031,7 @@ function HostCapabilitiesOverrideSection({
  *     persist a credential-bearing default.
  */
 function coerceHeadersToStringRecord(
-  raw: Record<string, unknown>,
+  raw: Record<string, unknown>
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, val] of Object.entries(raw)) {
@@ -2010,7 +2063,7 @@ function ServerCheckboxList({
       else next.add(id);
       onChange(Array.from(next));
     },
-    [selectedSet, onChange],
+    [selectedSet, onChange]
   );
 
   if (available.length === 0) {
@@ -2089,7 +2142,7 @@ function JsonRecordEditor({
       setErrorState(next);
       onErrorChange?.(next);
     },
-    [onErrorChange],
+    [onErrorChange]
   );
 
   // Re-sync local text whenever:
@@ -2131,11 +2184,7 @@ function JsonRecordEditor({
     (next: string) => {
       try {
         const parsed = JSON.parse(next || "{}");
-        if (
-          !parsed ||
-          typeof parsed !== "object" ||
-          Array.isArray(parsed)
-        ) {
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
           setError("Must be a JSON object");
           return;
         }
@@ -2146,14 +2195,14 @@ function JsonRecordEditor({
         lastEmittedRef.current = JSON.stringify(
           parsed as Record<string, unknown>,
           null,
-          2,
+          2
         );
         onChange(parsed as Record<string, unknown>);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Invalid JSON");
       }
     },
-    [onChange, setError],
+    [onChange, setError]
   );
 
   return (
@@ -2168,9 +2217,7 @@ function JsonRecordEditor({
         }}
         placeholder={placeholder}
       />
-      {error ? (
-        <p className="text-xs text-destructive">{error}</p>
-      ) : null}
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }

@@ -73,6 +73,19 @@ export type {
 export type HostStyleId = ChatboxHostStyle;
 
 /**
+ * Personal cloud workstation attached to a host (Project Computers). The
+ * resource attachment only; capabilities (e.g. `bash`) ride `builtInToolIds`.
+ * Mirrors the SDK's resource shape — the legacy `toolset` key is dropped from
+ * the client model (the backend still persists it vestigially while pinned to
+ * the published SDK, and strips it on read into this shape).
+ */
+export type HostConfigComputerV2 = {
+  kind: "personal";
+  /** Optional initial working directory for shell/terminal sessions. */
+  workdir?: string;
+};
+
+/**
  * Mutable input shape. All fields are required at write time so the editor
  * can't accidentally erase a section.
  *
@@ -121,6 +134,14 @@ export type HostConfigInputV2 = {
    * validated against the backend `builtInTools` catalog on save.
    */
   builtInToolIds: string[];
+  /**
+   * Personal cloud workstation attached to this host (Project Computers).
+   * The RESOURCE only — the capabilities the model gets on it (e.g. the
+   * `bash` built-in tool) ride `builtInToolIds`, gated by the catalog's
+   * `requiresComputer` flag. Absent ⇒ no computer. `{ kind: "personal" }`
+   * is the only shape; `workdir` optionally pins the initial shell cwd.
+   */
+  computer?: HostConfigComputerV2;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -155,17 +176,20 @@ export type HostConfigInputV2 = {
    * connectionDefaults for that specific server. Included in the canonical
    * hash so hosts that differ only in overrides get distinct rows.
    */
-  serverConnectionOverrides?: Record<string, {
-    headersOverride?: Record<string, string>;
-    requestTimeoutOverride?: number;
-    /**
-     * Per-server override of the outbound MCP wire mode. Wins over
-     * `mcpProfile.mcpProtocolVersion`. Mirror of the execution-plane field
-     * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
-     * `fanOutProjectServerConfigToHosts`.
-     */
-    mcpProtocolVersionOverride?: McpProtocolVersion;
-  }>;
+  serverConnectionOverrides?: Record<
+    string,
+    {
+      headersOverride?: Record<string, string>;
+      requestTimeoutOverride?: number;
+      /**
+       * Per-server override of the outbound MCP wire mode. Wins over
+       * `mcpProfile.mcpProtocolVersion`. Mirror of the execution-plane field
+       * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
+       * `fanOutProjectServerConfigToHosts`.
+       */
+      mcpProtocolVersionOverride?: McpProtocolVersion;
+    }
+  >;
 };
 
 /**
@@ -196,6 +220,12 @@ export type HostConfigDtoV2 = {
    * `undefined` to [].
    */
   builtInToolIds?: string[];
+  /**
+   * Personal computer attachment (see HostConfigInputV2.computer). Optional;
+   * absent ⇒ no computer. The backend may carry a vestigial `toolset` on the
+   * wire — `hostConfigDtoToInput` reads only `kind`/`workdir`.
+   */
+  computer?: HostConfigComputerV2 & { toolset?: string };
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -210,17 +240,20 @@ export type HostConfigDtoV2 = {
    */
   mcpProfile?: HostConfigMcpProfileV1;
   /** Per-server connection overrides hydrated from hostConfigServerRefs. */
-  serverConnectionOverrides?: Record<string, {
-    headersOverride?: Record<string, string>;
-    requestTimeoutOverride?: number;
-    mcpProtocolVersionOverride?: McpProtocolVersion;
-  }>;
+  serverConnectionOverrides?: Record<
+    string,
+    {
+      headersOverride?: Record<string, string>;
+      requestTimeoutOverride?: number;
+      mcpProtocolVersionOverride?: McpProtocolVersion;
+    }
+  >;
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 
 export function emptyHostConfigInputV2(
-  partial: Partial<HostConfigInputV2> = {},
+  partial: Partial<HostConfigInputV2> = {}
 ): HostConfigInputV2 {
   // Clone every caller-provided array/record so the returned config can
   // be mutated freely without aliasing the input. Matches the cloning
@@ -248,6 +281,14 @@ export function emptyHostConfigInputV2(
       ? [...partial.optionalServerIds]
       : [],
     builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
+    computer: partial.computer
+      ? {
+          kind: "personal",
+          ...(partial.computer.workdir
+            ? { workdir: partial.computer.workdir }
+            : {}),
+        }
+      : undefined,
     connectionDefaults: {
       headers: partial.connectionDefaults?.headers
         ? { ...partial.connectionDefaults.headers }
@@ -270,7 +311,7 @@ export function emptyHostConfigInputV2(
     clientCapabilities: partial.clientCapabilities
       ? deepCloneJsonRecord(partial.clientCapabilities)
       : deepCloneJsonRecord(
-          getDefaultClientCapabilities() as Record<string, unknown>,
+          getDefaultClientCapabilities() as Record<string, unknown>
         ),
     hostContext: partial.hostContext
       ? deepCloneJsonRecord(partial.hostContext)
@@ -303,15 +344,13 @@ export function emptyHostConfigInputV2(
                 ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
                 : {}),
             },
-          ]),
+          ])
         )
       : undefined,
   };
 }
 
-export function hostConfigDtoToInput(
-  dto: HostConfigDtoV2,
-): HostConfigInputV2 {
+export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // Deep-clone the JSON record fields. clientCapabilities and
   // hostContext can be nested (e.g. the SDK's default capabilities
   // include an `extensions` object with arrays). A shallow spread
@@ -331,6 +370,14 @@ export function hostConfigDtoToInput(
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
+    // Read only the resource shape; the backend may carry a vestigial
+    // `toolset` on the wire (legacy key) which the client model omits.
+    computer: dto.computer
+      ? {
+          kind: "personal",
+          ...(dto.computer.workdir ? { workdir: dto.computer.workdir } : {}),
+        }
+      : undefined,
     connectionDefaults: {
       headers: { ...dto.connectionDefaults.headers },
       requestTimeout: dto.connectionDefaults.requestTimeout,
@@ -445,7 +492,7 @@ export function resolveEffectiveHostCapabilities(args: {
  * stays one-grep-able.
  */
 export function resolveClientInfo(
-  profile: HostConfigMcpProfileV1 | undefined,
+  profile: HostConfigMcpProfileV1 | undefined
 ): Record<string, unknown> | undefined {
   return profile?.initialize?.clientInfo;
 }
@@ -459,7 +506,7 @@ export function resolveClientInfo(
  * callers never see it here.
  */
 export function resolveSupportedProtocolVersions(
-  profile: HostConfigMcpProfileV1 | undefined,
+  profile: HostConfigMcpProfileV1 | undefined
 ): string[] | undefined {
   return profile?.initialize?.supportedProtocolVersions;
 }
@@ -474,7 +521,7 @@ export function resolveSupportedProtocolVersions(
  * layer (base-protocol `initialize` vs. MCP Apps `ui/initialize`).
  */
 export function resolveHostInfo(
-  profile: HostConfigMcpProfileV1 | undefined,
+  profile: HostConfigMcpProfileV1 | undefined
 ): Record<string, unknown> | undefined {
   return profile?.apps?.uiInitialize?.hostInfo;
 }
@@ -528,7 +575,7 @@ export function resolveEffectiveCompatRuntime(args: {
     injected: true,
     capabilities: mergeOpenAiAppsCapabilities(
       baseCapabilities,
-      override?.openaiAppsOverrides,
+      override?.openaiAppsOverrides
     ),
   };
 }
@@ -545,7 +592,7 @@ export function resolveEffectiveCompatRuntime(args: {
  */
 export function mergeOpenAiAppsCapabilities(
   base: ResolvedOpenAiAppsCapabilities,
-  override: OpenAiAppsCapabilities | undefined,
+  override: OpenAiAppsCapabilities | undefined
 ): ResolvedOpenAiAppsCapabilities {
   if (!override) return base;
   return {
@@ -553,8 +600,7 @@ export function mergeOpenAiAppsCapabilities(
     sendFollowUpMessage:
       override.sendFollowUpMessage ?? base.sendFollowUpMessage,
     setWidgetState: override.setWidgetState ?? base.setWidgetState,
-    requestDisplayMode:
-      override.requestDisplayMode ?? base.requestDisplayMode,
+    requestDisplayMode: override.requestDisplayMode ?? base.requestDisplayMode,
     notifyIntrinsicHeight:
       override.notifyIntrinsicHeight ?? base.notifyIntrinsicHeight,
     openExternal: override.openExternal ?? base.openExternal,
@@ -562,8 +608,7 @@ export function mergeOpenAiAppsCapabilities(
     requestModal: override.requestModal ?? base.requestModal,
     uploadFile: override.uploadFile ?? base.uploadFile,
     selectFiles: override.selectFiles ?? base.selectFiles,
-    getFileDownloadUrl:
-      override.getFileDownloadUrl ?? base.getFileDownloadUrl,
+    getFileDownloadUrl: override.getFileDownloadUrl ?? base.getFileDownloadUrl,
     requestCheckout: override.requestCheckout ?? base.requestCheckout,
     requestClose: override.requestClose ?? base.requestClose,
   };
@@ -583,7 +628,7 @@ export function mergeOpenAiAppsCapabilities(
  */
 export function mergeMcpAppsCapabilities(
   base: ResolvedMcpAppsCapabilities,
-  override: McpAppsCapabilities | undefined,
+  override: McpAppsCapabilities | undefined
 ): ResolvedMcpAppsCapabilities {
   if (!override) return base;
   const modesOverride = override.availableDisplayModes;
@@ -597,22 +642,18 @@ export function mergeMcpAppsCapabilities(
     availableDisplayModes,
     toolInputPartial: override.toolInputPartial ?? base.toolInputPartial,
     toolCancelled: override.toolCancelled ?? base.toolCancelled,
-    hostContextChanged:
-      override.hostContextChanged ?? base.hostContextChanged,
+    hostContextChanged: override.hostContextChanged ?? base.hostContextChanged,
     resourceTeardown: override.resourceTeardown ?? base.resourceTeardown,
     toolInfo: override.toolInfo ?? base.toolInfo,
     openLinks: override.openLinks ?? base.openLinks,
     serverTools: override.serverTools ?? base.serverTools,
     serverResources: override.serverResources ?? base.serverResources,
     logging: override.logging ?? base.logging,
-    updateModelContext:
-      override.updateModelContext ?? base.updateModelContext,
+    updateModelContext: override.updateModelContext ?? base.updateModelContext,
     message: override.message ?? base.message,
-    sandboxPermissions:
-      override.sandboxPermissions ?? base.sandboxPermissions,
+    sandboxPermissions: override.sandboxPermissions ?? base.sandboxPermissions,
     cspFrameDomains: override.cspFrameDomains ?? base.cspFrameDomains,
-    cspBaseUriDomains:
-      override.cspBaseUriDomains ?? base.cspBaseUriDomains,
+    cspBaseUriDomains: override.cspBaseUriDomains ?? base.cspBaseUriDomains,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
@@ -687,7 +728,7 @@ export function resolveEffectiveMcpAppsCapabilities(args: {
  * `resolveEffectiveHostCapabilities`.
  */
 export function hostCapabilitiesOverrideToMatrix(
-  legacy: Record<string, unknown> | undefined,
+  legacy: Record<string, unknown> | undefined
 ): McpAppsCapabilities | undefined {
   if (legacy === undefined) return undefined;
   return {
@@ -707,7 +748,7 @@ export function hostCapabilitiesOverrideToMatrix(
  * `HostConfigMcpProfileV1` type at the boundary.
  */
 function cloneMcpProfile(
-  profile: HostConfigMcpProfileV1,
+  profile: HostConfigMcpProfileV1
 ): HostConfigMcpProfileV1 {
   return deepCloneJsonValue(profile) as HostConfigMcpProfileV1;
 }
@@ -723,7 +764,7 @@ function cloneChatUiOverride(override: ChatUiOverride): ChatUiOverride {
 }
 
 function deepCloneJsonRecord(
-  value: Record<string, unknown>,
+  value: Record<string, unknown>
 ): Record<string, unknown> {
   return deepCloneJsonValue(value) as Record<string, unknown>;
 }
@@ -753,7 +794,7 @@ function deepCloneJsonValue(value: unknown): unknown {
  */
 export function hostConfigInputsEqual(
   a: HostConfigInputV2,
-  b: HostConfigInputV2,
+  b: HostConfigInputV2
 ): boolean {
   if (a.hostStyle !== b.hostStyle) return false;
   if (a.modelId !== b.modelId) return false;
@@ -770,16 +811,26 @@ export function hostConfigInputsEqual(
   // Order-insensitive, same semantics as server ids — toggling a built-in
   // marks the draft dirty in the host/project/eval editors.
   if (!stringArrayEq(a.builtInToolIds, b.builtInToolIds)) return false;
+  // Personal computer: presence + workdir (kind is always 'personal').
+  // Attaching/detaching or changing the workdir marks the draft dirty.
+  if ((a.computer === undefined) !== (b.computer === undefined)) return false;
+  if (a.computer && b.computer && a.computer.workdir !== b.computer.workdir) {
+    return false;
+  }
   if (
-    a.connectionDefaults.requestTimeout !==
-    b.connectionDefaults.requestTimeout
+    a.connectionDefaults.requestTimeout !== b.connectionDefaults.requestTimeout
   )
     return false;
   if (!jsonRecordEq(a.connectionDefaults.headers, b.connectionDefaults.headers))
     return false;
   if (!jsonRecordEq(a.clientCapabilities, b.clientCapabilities)) return false;
   if (!jsonRecordEq(a.hostContext, b.hostContext)) return false;
-  if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
+  if (
+    !optionalJsonRecordEq(
+      a.hostCapabilitiesOverride,
+      b.hostCapabilitiesOverride
+    )
+  )
     return false;
   if (!optionalChatUiOverrideEq(a.chatUiOverride, b.chatUiOverride))
     return false;
@@ -787,7 +838,7 @@ export function hostConfigInputsEqual(
   if (
     !serverConnectionOverridesEqual(
       a.serverConnectionOverrides,
-      b.serverConnectionOverrides,
+      b.serverConnectionOverrides
     )
   )
     return false;
@@ -801,13 +852,27 @@ export function hostConfigInputsEqual(
  */
 export function serverConnectionOverridesEqual(
   a: HostConfigInputV2["serverConnectionOverrides"],
-  b: HostConfigInputV2["serverConnectionOverrides"],
+  b: HostConfigInputV2["serverConnectionOverrides"]
 ): boolean {
   const normalize = (
-    overrides: HostConfigInputV2["serverConnectionOverrides"],
-  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> => {
+    overrides: HostConfigInputV2["serverConnectionOverrides"]
+  ): Record<
+    string,
+    {
+      headersOverride?: Record<string, string>;
+      requestTimeoutOverride?: number;
+      mcpProtocolVersionOverride?: McpProtocolVersion;
+    }
+  > => {
     if (!overrides) return {};
-    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> = {};
+    const result: Record<
+      string,
+      {
+        headersOverride?: Record<string, string>;
+        requestTimeoutOverride?: number;
+        mcpProtocolVersionOverride?: McpProtocolVersion;
+      }
+    > = {};
     for (const [key, entry] of Object.entries(overrides)) {
       if (!entry) continue;
       const hasHeaders =
@@ -818,19 +883,25 @@ export function serverConnectionOverridesEqual(
       if (hasHeaders || hasTimeout || hasWireMode) {
         result[key] = {
           ...(hasHeaders ? { headersOverride: entry.headersOverride } : {}),
-          ...(hasTimeout ? { requestTimeoutOverride: entry.requestTimeoutOverride } : {}),
-          ...(hasWireMode ? { mcpProtocolVersionOverride: entry.mcpProtocolVersionOverride } : {}),
+          ...(hasTimeout
+            ? { requestTimeoutOverride: entry.requestTimeoutOverride }
+            : {}),
+          ...(hasWireMode
+            ? { mcpProtocolVersionOverride: entry.mcpProtocolVersionOverride }
+            : {}),
         };
       }
     }
     return result;
   };
-  return stableStringifyJson(normalize(a)) === stableStringifyJson(normalize(b));
+  return (
+    stableStringifyJson(normalize(a)) === stableStringifyJson(normalize(b))
+  );
 }
 
 function optionalMcpProfileEq(
   a: HostConfigMcpProfileV1 | undefined,
-  b: HostConfigMcpProfileV1 | undefined,
+  b: HostConfigMcpProfileV1 | undefined
 ): boolean {
   // Same undefined-vs-empty rule as optionalJsonRecordEq: backend hashes
   // `undefined` and `{ profileVersion: 1 }` distinctly, so flipping
@@ -846,7 +917,7 @@ function optionalMcpProfileEq(
 
 function optionalJsonRecordEq(
   a: Record<string, unknown> | undefined,
-  b: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined
 ): boolean {
   // Treat `undefined` (use profile preset) and `{}` (explicit empty override)
   // as distinct values — flipping between them changes the resolved blob and
@@ -864,7 +935,7 @@ function optionalJsonRecordEq(
  */
 function optionalChatUiOverrideEq(
   a: ChatUiOverride | undefined,
-  b: ChatUiOverride | undefined,
+  b: ChatUiOverride | undefined
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -883,7 +954,7 @@ function stringArrayEq(a: string[], b: string[]): boolean {
 
 function jsonRecordEq(
   a: Record<string, unknown>,
-  b: Record<string, unknown>,
+  b: Record<string, unknown>
 ): boolean {
   // Use the shared canonicalizer so nested object key order doesn't make
   // semantically equal records compare unequal — e.g.
