@@ -228,7 +228,9 @@ describe("ShareUsageThreadDetail", () => {
     expect(
       screen.queryByRole("button", { name: "Browser" }),
     ).not.toBeInTheDocument();
-    // Chat content renders instead of a blank panel.
-    expect(screen.getByTestId("message-view")).toBeInTheDocument();
+    // Chat content renders instead of a blank panel. findBy: the messages
+    // blob re-fetch on thread switch is async — don't depend on the previous
+    // thread's messages state being retained (CodeRabbit, PR 2610).
+    expect(await screen.findByTestId("message-view")).toBeInTheDocument();
   });
 });
