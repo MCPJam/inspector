@@ -111,9 +111,10 @@ from [Settings](https://app.mcpjam.com/settings/api-keys).
 
 ## Conventions
 
-**Requests.** All v1 endpoints are `POST` and accept a JSON body. Most accept
-an empty body (`{}`); list endpoints take an optional `cursor`, and
-`resources/read` requires a `uri`.
+**Requests.** Most v1 endpoints are `POST` and accept a JSON body. Read
+endpoints for eval runs and iterations use `GET` with query parameters. List
+endpoints take an optional `cursor`; `resources/read` requires a `uri`; write
+endpoints require their specific fields (see [Endpoints](#endpoints)).
 
 **Responses.** Three envelope shapes, used consistently:
 
