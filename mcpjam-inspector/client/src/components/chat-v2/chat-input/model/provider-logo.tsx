@@ -22,6 +22,12 @@ export function ProviderLogo({
   const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const logoSrc = getProviderLogoFromProvider(provider, resolvedThemeMode);
 
+  // No provider at all (e.g. a placeholder model while config loads):
+  // render nothing rather than a misleading badge.
+  if (!provider) {
+    return null;
+  }
+
   if (!logoSrc) {
     // Custom providers: first-letter badge matching the Settings tab style
     if (provider === "custom") {

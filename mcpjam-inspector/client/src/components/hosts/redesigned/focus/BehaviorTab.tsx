@@ -87,13 +87,13 @@ export function BehaviorTab({
   const currentModel = useMemo<ModelDefinition>(() => {
     const match = availableModels.find((m) => String(m.id) === draft.modelId);
     if (match) return match;
-    // Stale or org-revoked id (or an empty draft): keep the raw id visible
-    // in the trigger instead of silently coercing to an available model.
+    // Stale or org-revoked id (or an empty/still-loading draft): keep the
+    // raw id visible in the trigger instead of silently coercing to an
+    // available model. Empty provider → ProviderLogo renders no icon.
     return {
       id: draft.modelId,
       name: draft.modelId || "Select model",
-      provider: "custom",
-      customProviderName: draft.modelId || undefined,
+      provider: "" as ModelDefinition["provider"],
     };
   }, [availableModels, draft.modelId]);
 
