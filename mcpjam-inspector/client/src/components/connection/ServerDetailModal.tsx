@@ -39,6 +39,7 @@ import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent
 import { EditServerFormContent } from "./EditServerFormContent";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
+import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import type {
   ProjectServerConfigDto,
@@ -54,6 +55,7 @@ export type ServerDetailTab =
   | "overview"
   | "configuration"
   | "tools-metadata"
+  | "compatibility"
   | "history";
 
 interface ServerDetailModalProps {
@@ -599,8 +601,8 @@ export function ServerDetailModal({
   };
 
   const tabGridClass = showHistory
-    ? "grid w-full grid-cols-4"
-    : "grid w-full grid-cols-3";
+    ? "grid w-full grid-cols-5"
+    : "grid w-full grid-cols-4";
   const isConfigurationTab = activeTab === "configuration";
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -715,6 +717,7 @@ export function ServerDetailModal({
               <TabsTrigger value="configuration">Configuration</TabsTrigger>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="tools-metadata">Tools Metadata</TabsTrigger>
+              <TabsTrigger value="compatibility">Compatibility</TabsTrigger>
               {showHistory && (
                 <TabsTrigger value="history">History</TabsTrigger>
               )}
@@ -835,6 +838,17 @@ export function ServerDetailModal({
                   ) : (
                     <ServerInfoToolsMetadataContent toolsData={toolsData} />
                   )}
+                </div>
+              </TabsContent>
+
+              {/* Compatibility: per-host static compat report; degrades
+                  gracefully while disconnected (transport/auth facts only) */}
+              <TabsContent
+                value="compatibility"
+                className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+              >
+                <div className="pl-1 pr-6">
+                  <HostCompatContent server={server} toolsData={toolsData} />
                 </div>
               </TabsContent>
 
