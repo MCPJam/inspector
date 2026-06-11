@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { tunnelManager } from "../../services/tunnel-manager";
+import { withTunnelLock } from "../../services/tunnel-locks";
 import {
   clearTunnelRequests,
   getTunnelRequests,
@@ -231,64 +232,71 @@ async function reportTunnelClosure(
 tunnels.post("/create", async (c) => {
   const authHeader = c.req.header("authorization");
 
-  try {
-    // Check if tunnel already exists
-    const existingUrl = tunnelManager.getTunnelUrl();
-    if (existingUrl) {
+  // Serialized per tunnel id: the existence check below must observe any
+  // concurrent create's listener instead of double-provisioning.
+  return withTunnelLock("shared", async () => {
+    try {
+      // Check if tunnel already exists
+      const existingUrl = tunnelManager.getTunnelUrl();
+      if (existingUrl) {
+        getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
+          tunnelKind: "shared",
+          tunnelDomain: safeHostname(existingUrl),
+          existed: true,
+        });
+        return c.json({
+          url: existingUrl,
+          existed: true,
+        });
+      }
+
+      const { token, credentialId, domain, domainId } = await fetchNgrokToken(
+        authHeader
+      );
+      const url = await tunnelManager.createTunnel("shared", {
+        localAddr: LOCAL_SERVER_ADDR,
+        ngrokToken: token,
+        credentialId,
+        domainId,
+        domain,
+      });
+      await recordTunnel(
+        "shared",
+        url,
+        credentialId,
+        domainId,
+        domain,
+        authHeader,
+        c
+      );
+
       getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
         tunnelKind: "shared",
-        tunnelDomain: safeHostname(existingUrl),
-        existed: true,
+        tunnelDomain: domain,
+        existed: false,
+        credentialIdPresent: !!credentialId,
       });
       return c.json({
-        url: existingUrl,
-        existed: true,
+        url,
+        existed: false,
       });
+    } catch (error: any) {
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.creation_failed",
+        {
+          tunnelKind: "shared",
+          errorCode: classifyTunnelError(error),
+        }
+      );
+      logger.error("Error creating tunnel", error);
+      return c.json(
+        {
+          error: error.message || "Failed to create tunnel",
+        },
+        500
+      );
     }
-
-    const { token, credentialId, domain, domainId } = await fetchNgrokToken(
-      authHeader
-    );
-    const url = await tunnelManager.createTunnel("shared", {
-      localAddr: LOCAL_SERVER_ADDR,
-      ngrokToken: token,
-      credentialId,
-      domainId,
-      domain,
-    });
-    await recordTunnel(
-      "shared",
-      url,
-      credentialId,
-      domainId,
-      domain,
-      authHeader,
-      c
-    );
-
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
-      tunnelKind: "shared",
-      tunnelDomain: domain,
-      existed: false,
-      credentialIdPresent: !!credentialId,
-    });
-    return c.json({
-      url,
-      existed: false,
-    });
-  } catch (error: any) {
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.creation_failed", {
-      tunnelKind: "shared",
-      errorCode: classifyTunnelError(error),
-    });
-    logger.error("Error creating tunnel", error);
-    return c.json(
-      {
-        error: error.message || "Failed to create tunnel",
-      },
-      500
-    );
-  }
+  });
 });
 
 // Create a server-specific tunnel, secured at the ngrok edge: the bearer
@@ -298,74 +306,85 @@ tunnels.post("/create/:serverId", async (c) => {
   const authHeader = c.req.header("authorization");
   const serverId = c.req.param("serverId");
 
-  try {
-    const existingUrl = tunnelManager.getServerTunnelUrl(serverId);
-    if (existingUrl) {
+  // Serialized per server: token minting revokes the previous credential
+  // and listening binds a fresh secret, so overlapping creates would leave
+  // the listener and persistence on different secrets. Inside the lock the
+  // existence check observes any concurrent create's finished listener.
+  return withTunnelLock(serverId, async () => {
+    try {
+      const existingUrl = tunnelManager.getServerTunnelUrl(serverId);
+      if (existingUrl) {
+        getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
+          tunnelKind: "server",
+          tunnelDomain: safeHostname(existingUrl),
+          existed: true,
+        });
+        return c.json({
+          url: existingUrl,
+          existed: true,
+        });
+      }
+
+      const data = await fetchNgrokToken(authHeader, serverId);
+      const baseUrl = await tunnelManager.createTunnel(serverId, {
+        localAddr: LOCAL_SERVER_ADDR,
+        ngrokToken: data.token,
+        credentialId: data.credentialId,
+        domainId: data.domainId,
+        domain: data.domain,
+        trafficPolicy: data.trafficPolicy,
+        publicUrl: data.url,
+        secretVersion: data.secretVersion,
+      });
+      await recordTunnel(
+        serverId,
+        data.url ?? baseUrl,
+        data.credentialId,
+        data.domainId,
+        data.domain,
+        authHeader,
+        c,
+        data.secretHash,
+        data.secretVersion
+      );
+
+      const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
+      if (!serverTunnelUrl) {
+        throw new Error("Failed to build server tunnel URL");
+      }
+
       getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
         tunnelKind: "server",
-        tunnelDomain: safeHostname(existingUrl),
-        existed: true,
+        tunnelDomain: data.domain,
+        existed: false,
+        credentialIdPresent: !!data.credentialId,
       });
       return c.json({
-        url: existingUrl,
-        existed: true,
+        url: serverTunnelUrl,
+        serverId,
+        domain: data.domain,
+        secretVersion: data.secretVersion,
+        existed: false,
       });
+    } catch (error: any) {
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.creation_failed",
+        {
+          tunnelKind: "server",
+          errorCode: classifyTunnelError(error),
+        }
+      );
+      logger.error("Error creating server-specific tunnel", error, {
+        serverId,
+      });
+      return c.json(
+        {
+          error: error.message || "Failed to create server-specific tunnel",
+        },
+        500
+      );
     }
-
-    const data = await fetchNgrokToken(authHeader, serverId);
-    const baseUrl = await tunnelManager.createTunnel(serverId, {
-      localAddr: LOCAL_SERVER_ADDR,
-      ngrokToken: data.token,
-      credentialId: data.credentialId,
-      domainId: data.domainId,
-      domain: data.domain,
-      trafficPolicy: data.trafficPolicy,
-      publicUrl: data.url,
-      secretVersion: data.secretVersion,
-    });
-    await recordTunnel(
-      serverId,
-      data.url ?? baseUrl,
-      data.credentialId,
-      data.domainId,
-      data.domain,
-      authHeader,
-      c,
-      data.secretHash,
-      data.secretVersion
-    );
-
-    const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
-    if (!serverTunnelUrl) {
-      throw new Error("Failed to build server tunnel URL");
-    }
-
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.created", {
-      tunnelKind: "server",
-      tunnelDomain: data.domain,
-      existed: false,
-      credentialIdPresent: !!data.credentialId,
-    });
-    return c.json({
-      url: serverTunnelUrl,
-      serverId,
-      domain: data.domain,
-      secretVersion: data.secretVersion,
-      existed: false,
-    });
-  } catch (error: any) {
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.creation_failed", {
-      tunnelKind: "server",
-      errorCode: classifyTunnelError(error),
-    });
-    logger.error("Error creating server-specific tunnel", error, { serverId });
-    return c.json(
-      {
-        error: error.message || "Failed to create server-specific tunnel",
-      },
-      500
-    );
-  }
+  });
 });
 
 // Rotate a server tunnel's bearer secret (two-phase). The base domain is
@@ -381,76 +400,86 @@ tunnels.post("/rotate/:serverId", async (c) => {
     full = body?.full === true;
   } catch {}
 
-  let data: NgrokTokenResponse;
-  try {
-    // Phase A: backend mints the new secret/credential as PENDING state.
-    data = await stageRotation(serverId, full, authHeader);
-  } catch (error: any) {
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.rotation_failed", {
-      tunnelKind: "server",
-      errorCode: classifyTunnelError(error),
-    });
-    logger.error("Error staging tunnel rotation", error, { serverId });
-    return c.json({ error: error.message || "Failed to rotate tunnel" }, 500);
-  }
+  // Serialized with create/close for this server so a rotation can never
+  // interleave with another lifecycle operation's mint/listen steps.
+  return withTunnelLock(serverId, async () => {
+    let data: NgrokTokenResponse;
+    try {
+      // Phase A: backend mints the new secret/credential as PENDING state.
+      data = await stageRotation(serverId, full, authHeader);
+    } catch (error: any) {
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.rotation_failed",
+        {
+          tunnelKind: "server",
+          errorCode: classifyTunnelError(error),
+        }
+      );
+      logger.error("Error staging tunnel rotation", error, { serverId });
+      return c.json({ error: error.message || "Failed to rotate tunnel" }, 500);
+    }
 
-  try {
-    // Re-listen with the new authtoken + traffic policy. The old secret
-    // dies here: the previous listener is closed before the new one binds.
-    await tunnelManager.rotateTunnel(serverId, {
-      localAddr: LOCAL_SERVER_ADDR,
-      ngrokToken: data.token,
-      credentialId: data.credentialId,
-      domainId: data.domainId,
+    try {
+      // Re-listen with the new authtoken + traffic policy. The old secret
+      // dies here: the previous listener is closed before the new one binds.
+      await tunnelManager.rotateTunnel(serverId, {
+        localAddr: LOCAL_SERVER_ADDR,
+        ngrokToken: data.token,
+        credentialId: data.credentialId,
+        domainId: data.domainId,
+        domain: data.domain,
+        trafficPolicy: data.trafficPolicy,
+        publicUrl: data.url,
+        secretVersion: data.secretVersion,
+      });
+    } catch (error: any) {
+      // Phase B (abort): land in an explicit error state; the backend
+      // revokes the pending credential.
+      await reportRotationFailed(
+        serverId,
+        error?.message || "Failed to re-establish tunnel listener",
+        authHeader
+      );
+      getRequestLogger(c, "routes.mcp.tunnels").event(
+        "tunnel.rotation_failed",
+        {
+          tunnelKind: "server",
+          errorCode: classifyTunnelError(error),
+          tunnelDomain: data.domain,
+        }
+      );
+      logger.error("Error re-establishing rotated tunnel", error, { serverId });
+      return c.json(
+        { error: error.message || "Failed to re-establish rotated tunnel" },
+        500
+      );
+    }
+
+    // Phase B (commit): promote the pending secret/credential to active;
+    // the backend revokes the superseded credential.
+    await recordTunnel(
+      serverId,
+      data.url ?? `https://${data.domain}`,
+      data.credentialId,
+      data.domainId,
+      data.domain,
+      authHeader,
+      c,
+      data.secretHash,
+      data.secretVersion
+    );
+
+    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.rotated", {
+      tunnelKind: "server",
+      tunnelDomain: data.domain,
+      full,
+    });
+    return c.json({
+      url: tunnelManager.getServerTunnelUrl(serverId) ?? data.url,
+      serverId,
       domain: data.domain,
-      trafficPolicy: data.trafficPolicy,
-      publicUrl: data.url,
       secretVersion: data.secretVersion,
     });
-  } catch (error: any) {
-    // Phase B (abort): land in an explicit error state; the backend
-    // revokes the pending credential.
-    await reportRotationFailed(
-      serverId,
-      error?.message || "Failed to re-establish tunnel listener",
-      authHeader
-    );
-    getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.rotation_failed", {
-      tunnelKind: "server",
-      errorCode: classifyTunnelError(error),
-      tunnelDomain: data.domain,
-    });
-    logger.error("Error re-establishing rotated tunnel", error, { serverId });
-    return c.json(
-      { error: error.message || "Failed to re-establish rotated tunnel" },
-      500
-    );
-  }
-
-  // Phase B (commit): promote the pending secret/credential to active;
-  // the backend revokes the superseded credential.
-  await recordTunnel(
-    serverId,
-    data.url ?? `https://${data.domain}`,
-    data.credentialId,
-    data.domainId,
-    data.domain,
-    authHeader,
-    c,
-    data.secretHash,
-    data.secretVersion
-  );
-
-  getRequestLogger(c, "routes.mcp.tunnels").event("tunnel.rotated", {
-    tunnelKind: "server",
-    tunnelDomain: data.domain,
-    full,
-  });
-  return c.json({
-    url: tunnelManager.getServerTunnelUrl(serverId) ?? data.url,
-    serverId,
-    domain: data.domain,
-    secretVersion: data.secretVersion,
   });
 });
 
@@ -490,21 +519,23 @@ tunnels.get("/requests/:serverId", async (c) => {
 tunnels.delete("/", async (c) => {
   const authHeader = c.req.header("authorization");
 
-  try {
-    await tunnelManager.closeTunnel("shared");
-    // Backend revokes the tunnel's credentials; the domain is kept.
-    await reportTunnelClosure("shared", authHeader);
-    tunnelManager.clearCredentials("shared");
-    return c.json({ success: true });
-  } catch (error: any) {
-    logger.error("Error closing tunnel", error);
-    return c.json(
-      {
-        error: error.message || "Failed to close tunnel",
-      },
-      500
-    );
-  }
+  return withTunnelLock("shared", async () => {
+    try {
+      await tunnelManager.closeTunnel("shared");
+      // Backend revokes the tunnel's credentials; the domain is kept.
+      await reportTunnelClosure("shared", authHeader);
+      tunnelManager.clearCredentials("shared");
+      return c.json({ success: true });
+    } catch (error: any) {
+      logger.error("Error closing tunnel", error);
+      return c.json(
+        {
+          error: error.message || "Failed to close tunnel",
+        },
+        500
+      );
+    }
+  });
 });
 
 // Close a server-specific tunnel
@@ -512,25 +543,27 @@ tunnels.delete("/server/:serverId", async (c) => {
   const authHeader = c.req.header("authorization");
   const serverId = c.req.param("serverId");
 
-  try {
-    await tunnelManager.closeTunnel(serverId);
-    // Backend revokes the tunnel's credentials; the domain is kept so the
-    // URL stays stable when the tunnel is recreated.
-    await reportTunnelClosure(serverId, authHeader);
-    tunnelManager.clearCredentials(serverId);
-    // The observability panel describes the closed listener — drop it so a
-    // future tunnel for this server starts with a clean history.
-    clearTunnelRequests(serverId);
-    return c.json({ success: true, serverId });
-  } catch (error: any) {
-    logger.error("Error closing server-specific tunnel", error, { serverId });
-    return c.json(
-      {
-        error: error.message || "Failed to close server-specific tunnel",
-      },
-      500
-    );
-  }
+  return withTunnelLock(serverId, async () => {
+    try {
+      await tunnelManager.closeTunnel(serverId);
+      // Backend revokes the tunnel's credentials; the domain is kept so the
+      // URL stays stable when the tunnel is recreated.
+      await reportTunnelClosure(serverId, authHeader);
+      tunnelManager.clearCredentials(serverId);
+      // The observability panel describes the closed listener — drop it so a
+      // future tunnel for this server starts with a clean history.
+      clearTunnelRequests(serverId);
+      return c.json({ success: true, serverId });
+    } catch (error: any) {
+      logger.error("Error closing server-specific tunnel", error, { serverId });
+      return c.json(
+        {
+          error: error.message || "Failed to close server-specific tunnel",
+        },
+        500
+      );
+    }
+  });
 });
 
 export default tunnels;
