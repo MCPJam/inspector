@@ -39,7 +39,7 @@ import type {
   HostConfigMcpProfileV1,
 } from "./types.js";
 import type {
-  HostComputer,
+  HostComputerInput,
   HostConnectionDefaults,
   HostInit,
   HostJson,
@@ -94,7 +94,7 @@ function isEmptyHostMcp(mcp: HostMcp | undefined): boolean {
 
 /** Map a public per-server override to the internal field names. */
 function serverOverrideToInternal(
-  override: HostServerOverride,
+  override: HostServerOverride
 ): NonNullable<HostConfigInputV2["serverConnectionOverrides"]>[string] {
   const out: NonNullable<
     HostConfigInputV2["serverConnectionOverrides"]
@@ -110,7 +110,7 @@ function serverOverrideToInternal(
 }
 
 function serverOverridesToInternal(
-  overrides: Record<string, HostServerOverride>,
+  overrides: Record<string, HostServerOverride>
 ): HostConfigInputV2["serverConnectionOverrides"] {
   if (Object.keys(overrides).length === 0) return undefined;
   const out: NonNullable<HostConfigInputV2["serverConnectionOverrides"]> = {};
@@ -133,7 +133,7 @@ function profileToHostMcp(profile: HostConfigMcpProfileV1): HostMcp {
 }
 
 function serverOverridesToPublic(
-  overrides: NonNullable<CanonicalHostConfigV2["serverConnectionOverrides"]>,
+  overrides: NonNullable<CanonicalHostConfigV2["serverConnectionOverrides"]>
 ): Record<string, HostServerOverride> {
   const out: Record<string, HostServerOverride> = {};
   for (const [id, ov] of Object.entries(overrides)) {
@@ -251,7 +251,7 @@ export class Host {
    * no computer — both serialize identically, so a cleared field hashes
    * the same as one never set.
    */
-  computer?: HostComputer | null;
+  computer?: HostComputerInput | null;
 
   /** Required servers. Mutable — `requireServer`/`removeRequiredServer` are sugar. */
   servers: ServerId[];
@@ -389,12 +389,10 @@ export class Host {
   }
 
   /**
-   * Attach a personal computer (defaults to the only MVP shape), or pass
-   * `null` to detach.
+   * Attach a personal computer (the resource; grant capabilities on it via
+   * `builtInToolIds`, e.g. `"bash"`), or pass `null` to detach.
    */
-  setComputer(
-    computer: HostComputer | null = { kind: "personal", toolset: "bash" },
-  ): this {
+  setComputer(computer: HostComputerInput | null = { kind: "personal" }): this {
     this.computer = computer;
     return this;
   }
@@ -466,14 +464,14 @@ export class Host {
   private requireConfigured(): void {
     if (!this.style) {
       throw new Error(
-        "Host requires a `style` (e.g. \"mcpjam\", \"claude\", \"chatgpt\"). " +
-          'Pass it to the constructor (`new Host({ style: "..." })`) or assign `host.style = "..."`.',
+        'Host requires a `style` (e.g. "mcpjam", "claude", "chatgpt"). ' +
+          'Pass it to the constructor (`new Host({ style: "..." })`) or assign `host.style = "..."`.'
       );
     }
     if (!this.model) {
       throw new Error(
-        "Host requires a `model` (e.g. \"anthropic/claude-sonnet-4-6\"). " +
-          'Pass it to the constructor (`new Host({ model: "..." })`) or assign `host.model = "..."`.',
+        'Host requires a `model` (e.g. "anthropic/claude-sonnet-4-6"). ' +
+          'Pass it to the constructor (`new Host({ model: "..." })`) or assign `host.model = "..."`.'
       );
     }
   }
@@ -571,7 +569,7 @@ export class Host {
    */
   withManager(
     manager: HostRuntimeManager,
-    defaults: HostRuntimeDefaults,
+    defaults: HostRuntimeDefaults
   ): HostRuntime {
     return new HostRuntime(this, manager, defaults);
   }
@@ -586,7 +584,7 @@ export class Host {
    */
   async run(
     input: string,
-    runtime: HostRuntimeDefaults & { mcpClientManager: HostRuntimeManager },
+    runtime: HostRuntimeDefaults & { mcpClientManager: HostRuntimeManager }
   ): Promise<import("../PromptResult.js").PromptResult> {
     const { mcpClientManager, ...defaults } = runtime;
     return this.withManager(mcpClientManager, defaults).run(input);
@@ -680,7 +678,7 @@ export type HostServerRegistry = {
  */
 export function assertHostServersKnown(
   host: HostJson,
-  registry: HostServerRegistry,
+  registry: HostServerRegistry
 ): void {
   const missing = host.servers.filter((id) => !registry.hasServer(id));
   if (missing.length === 0) return;
@@ -689,8 +687,8 @@ export function assertHostServersKnown(
     known && known.length > 0 ? ` Known servers: ${known.join(", ")}.` : "";
   throw new Error(
     `Host requires server id(s) not registered with the manager: ${missing.join(
-      ", ",
-    )}.${knownSuffix}`,
+      ", "
+    )}.${knownSuffix}`
   );
 }
 
@@ -701,7 +699,7 @@ export function assertHostServersKnown(
  */
 export function resolveKnownServerIds(
   host: HostJson,
-  registry: HostServerRegistry,
+  registry: HostServerRegistry
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];

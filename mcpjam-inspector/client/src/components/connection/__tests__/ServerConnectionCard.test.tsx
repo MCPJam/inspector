@@ -72,7 +72,7 @@ Object.assign(navigator, { clipboard: mockClipboard });
 
 describe("ServerConnectionCard", () => {
   const createServer = (
-    overrides: Partial<ServerWithName> = {},
+    overrides: Partial<ServerWithName> = {}
   ): ServerWithName => ({
     name: "test-server",
     lastConnectionTime: new Date(),
@@ -106,7 +106,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           projectId="ws_abc"
           {...defaultProps}
-        />,
+        />
       );
       expect(prefetch).toHaveBeenCalledWith("ws_abc", server, undefined);
     });
@@ -116,6 +116,52 @@ describe("ServerConnectionCard", () => {
       const server = createServer();
       render(<ServerConnectionCard server={server} {...defaultProps} />);
       expect(prefetch).toHaveBeenCalledWith(null, server, undefined);
+    });
+
+    it("shows move targets in the actions menu and calls the move handler", async () => {
+      const onMoveToProject = vi.fn();
+      render(
+        <ServerConnectionCard
+          server={createServer()}
+          {...defaultProps}
+          moveTargets={[{ id: "project-2", name: "Target project" }]}
+          onMoveToProject={onMoveToProject}
+        />
+      );
+
+      fireEvent.pointerDown(
+        screen.getByRole("button", {
+          name: "Open actions menu for test-server",
+        }),
+        { button: 0, ctrlKey: false }
+      );
+      const moveTrigger = await screen.findByText("Move to project");
+      fireEvent.keyDown(moveTrigger, { key: "ArrowRight" });
+
+      const target = await screen.findByText("Target project");
+      fireEvent.click(target);
+
+      expect(onMoveToProject).toHaveBeenCalledWith("test-server", "project-2");
+    });
+
+    it("hides the move action when there are no target projects", () => {
+      render(
+        <ServerConnectionCard
+          server={createServer()}
+          {...defaultProps}
+          moveTargets={[]}
+          onMoveToProject={vi.fn()}
+        />
+      );
+
+      fireEvent.pointerDown(
+        screen.getByRole("button", {
+          name: "Open actions menu for test-server",
+        }),
+        { button: 0, ctrlKey: false }
+      );
+
+      expect(screen.queryByText("Move to project")).not.toBeInTheDocument();
     });
 
     it("renders server name", () => {
@@ -188,8 +234,8 @@ describe("ServerConnectionCard", () => {
       expect(screen.getByText("Authorizing in browser...")).toBeInTheDocument();
       expect(
         screen.getByText(
-          "Complete sign-in in the browser. Inspector will resume automatically.",
-        ),
+          "Complete sign-in in the browser. Inspector will resume automatically."
+        )
       ).toBeInTheDocument();
     });
 
@@ -211,15 +257,15 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           needsReconnect
-        />,
+        />
       );
 
       expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
       expect(
-        screen.queryByLabelText("Reconnect needed"),
+        screen.queryByLabelText("Reconnect needed")
       ).not.toBeInTheDocument();
       expect(
-        screen.getByLabelText("Connection settings changed"),
+        screen.getByLabelText("Connection settings changed")
       ).toBeInTheDocument();
     });
 
@@ -228,7 +274,7 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(
-        screen.queryByLabelText("Connection settings changed"),
+        screen.queryByLabelText("Connection settings changed")
       ).not.toBeInTheDocument();
     });
   });
@@ -258,7 +304,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onDisconnect={onDisconnect}
-        />,
+        />
       );
 
       const toggle = screen.getByRole("switch");
@@ -275,7 +321,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onReconnect={onReconnect}
-        />,
+        />
       );
 
       const toggle = screen.getByRole("switch");
@@ -298,7 +344,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onReconnect={onReconnect}
-        />,
+        />
       );
 
       fireEvent.click(screen.getByRole("switch"));
@@ -314,7 +360,7 @@ describe("ServerConnectionCard", () => {
         () =>
           new Promise<void>((_resolve, reject) => {
             setTimeout(() => reject(new Error("reconnect failed")), 20);
-          }),
+          })
       );
 
       render(
@@ -322,7 +368,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onReconnect={onReconnect}
-        />,
+        />
       );
 
       const toggle = screen.getByRole("switch");
@@ -384,7 +430,7 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Copy server command" }),
+        screen.getByRole("button", { name: "Copy server command" })
       );
 
       await waitFor(() => {
@@ -394,11 +440,11 @@ describe("ServerConnectionCard", () => {
 
     it("does not open the actions menu when right-clicking the copy button", () => {
       render(
-        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+        <ServerConnectionCard server={createServer()} {...defaultProps} />
       );
 
       fireEvent.contextMenu(
-        screen.getByRole("button", { name: "Copy server command" }),
+        screen.getByRole("button", { name: "Copy server command" })
       );
 
       expect(screen.queryByText("Configure")).not.toBeInTheDocument();
@@ -448,14 +494,14 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           onOpenDetailModal={onOpenDetailModal}
-        />,
+        />
       );
 
       const card = container.querySelector("[data-slot='card']");
       fireEvent.click(card!);
       expect(onOpenDetailModal).toHaveBeenCalledWith(
         expect.objectContaining({ name: "test-server" }),
-        "configuration",
+        "configuration"
       );
     });
   });
@@ -468,7 +514,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           serverTunnelUrl="https://tunnel.example.com"
-        />,
+        />
       );
 
       expect(screen.getByText("Copy ngrok URL")).toBeInTheDocument();
@@ -481,7 +527,7 @@ describe("ServerConnectionCard", () => {
           server={server}
           {...defaultProps}
           serverTunnelUrl="https://tunnel.example.com"
-        />,
+        />
       );
 
       expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();

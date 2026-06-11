@@ -46,6 +46,7 @@ import type {
   ProjectServerOverrideEntry,
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
+import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
@@ -503,9 +504,41 @@ export function ServerDetailModal({
       environment: detectEnvironment(),
     });
 
-    const finalFormData = formState.buildFormData();
     setIsSaving(true);
     try {
+      // Saving an auth or header change replaces the whole stored header
+      // set. When that set is hidden, fetch it first so e.g. rotating a
+      // bearer token doesn't wipe the other saved headers.
+      let revealedHeaders: Record<string, string> | undefined;
+      if (formState.needsStoredHeaderReveal) {
+        if (!projectId || !hostedServerId) {
+          toast.error(
+            "Reveal saved headers before changing authentication so existing hidden headers aren't lost."
+          );
+          return;
+        }
+        try {
+          const secrets = await fetchServerSecrets({
+            projectId,
+            serverId: hostedServerId,
+          });
+          // A null headers payload means the stored set couldn't be read;
+          // merging against it would wipe the saved headers, so fail closed.
+          if (!secrets.headers) {
+            throw new Error("Stored headers missing from reveal response");
+          }
+          revealedHeaders = secrets.headers;
+        } catch {
+          toast.error(
+            "Couldn't load this server's saved headers to apply this change. Reveal saved headers in Advanced settings and try again."
+          );
+          return;
+        }
+      }
+
+      const finalFormData = formState.buildFormData(
+        revealedHeaders ? { revealedHeaders } : undefined
+      );
       await onSubmit(finalFormData, server.name);
     } finally {
       setIsSaving(false);
