@@ -1,4 +1,4 @@
-import { useId, useMemo } from "react";
+import { useMemo } from "react";
 import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -17,7 +17,9 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
-import { SUPPORTED_MODELS } from "@/shared/types";
+import type { ModelDefinition } from "@/shared/types";
+import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import { useHostAgentModels } from "@/hooks/use-host-agent-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
@@ -77,19 +79,23 @@ export function BehaviorTab({
   readOnly = false,
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
-  const reactId = useId();
 
-  // Group models by provider for the model dropdown — kept simple and
-  // non-virtualized; SUPPORTED_MODELS is on the order of dozens.
-  const modelsByProvider = useMemo(() => {
-    const map = new Map<string, typeof SUPPORTED_MODELS>();
-    for (const m of SUPPORTED_MODELS) {
-      const list = map.get(m.provider) ?? [];
-      list.push(m);
-      map.set(m.provider, list);
-    }
-    return Array.from(map.entries());
-  }, []);
+  // Same model source as the Playground picker (org providers in hosted
+  // mode, local keys otherwise) so org-only providers like Bedrock and
+  // OpenRouter are selectable here too.
+  const { availableModels } = useHostAgentModels();
+  const currentModel = useMemo<ModelDefinition>(() => {
+    const match = availableModels.find((m) => String(m.id) === draft.modelId);
+    if (match) return match;
+    // Stale or org-revoked id (or an empty/still-loading draft): keep the
+    // raw id visible in the trigger instead of silently coercing to an
+    // available model. Empty provider → ProviderLogo renders no icon.
+    return {
+      id: draft.modelId,
+      name: draft.modelId || "Select model",
+      provider: "" as ModelDefinition["provider"],
+    };
+  }, [availableModels, draft.modelId]);
 
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
@@ -137,27 +143,21 @@ export function BehaviorTab({
           label={fModel.label}
           description={fModel.description}
           control={
-            <select
-              id={`${reactId}-model`}
-              value={draft.modelId}
-              onChange={(e) => update({ modelId: e.target.value })}
-              disabled={readOnly}
+            <div
               className={
-                "h-8 w-[260px] rounded-md border border-input bg-background px-2 text-[12px] disabled:cursor-not-allowed disabled:opacity-60 " +
-                (issues.has("modelId") ? "border-amber-500" : "")
+                issues.has("modelId")
+                  ? "rounded-full ring-1 ring-amber-500"
+                  : undefined
               }
             >
-              <option value="">— Select model —</option>
-              {modelsByProvider.map(([provider, models]) => (
-                <optgroup key={provider} label={provider}>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+              <ModelSelector
+                currentModel={currentModel}
+                availableModels={availableModels}
+                onModelChange={(model) => update({ modelId: String(model.id) })}
+                disabled={readOnly}
+                align="end"
+              />
+            </div>
           }
         />
 
