@@ -379,6 +379,39 @@ Stop the local Inspector if it is running.
 
 ---
 
+## `projects` commands
+
+All `projects` commands accept `--api-key` and `--api-url` in addition to the global flags.
+
+### Shared platform flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--api-key <key>` | | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL |
+
+### `projects list`
+
+No additional flags beyond shared platform flags.
+
+### `projects servers`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--project <id-or-name>` | Most recently updated project | Project name or ID |
+
+Plus shared platform flags.
+
+### `projects status`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--project <id-or-name>` | Most recently updated project | Project name or ID |
+
+Plus shared platform flags.
+
+---
+
 ## `telemetry` commands
 
 Telemetry commands inspect and configure anonymous CLI telemetry. They never emit telemetry events themselves.
