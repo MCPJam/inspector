@@ -3,10 +3,12 @@
  *
  * `bash` is a computer-backed CATALOG id: it's advertised for a turn only
  * when the host's `builtInToolIds` carries `"bash"` AND the host attaches a
- * `computer` resource AND the acting user is a signed-in member — all three
- * gates live in `registry.ts`'s `resolveHostTools`, the single construction
- * path for host tools. Same shape pattern as `exa-web-search.ts`: the
- * inspector defines the tool; authorization and durable state live in Convex.
+ * `computer` resource — both gates live in `registry.ts`'s
+ * `resolveHostTools`, the single construction path for host tools. Guests
+ * are included: Convex accepts guest bearers on `/computers/reserve` and
+ * contains cost via the guest daily start cap + idle-delete sweep. Same
+ * shape pattern as `exa-web-search.ts`: the inspector defines the tool;
+ * authorization and durable state live in Convex.
  *
  * Execute flow (see mcpjam-backend docs/project-computers.md):
  *   1. `ensureComputerReady` — POST /computers/reserve with the user's bearer

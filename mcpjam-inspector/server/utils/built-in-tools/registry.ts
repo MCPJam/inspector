@@ -144,13 +144,9 @@ export function resolveHostTools(
         );
         continue;
       }
-      if (ctx.isGuest) {
-        logger.debug(
-          "[built-in-tools] bash not advertised to guest actor; skipping",
-          { projectId: ctx.projectId }
-        );
-        continue;
-      }
+      // Guests get bash too: the backend accepts guest bearers on
+      // /computers/reserve and contains cost via the guest daily start cap
+      // and the idle-delete sweep.
       out[BASH_TOOL_NAME] = buildBashTool({
         authHeader,
         projectId: ctx.projectId,
