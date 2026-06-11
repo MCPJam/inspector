@@ -3,6 +3,8 @@ import { build } from "esbuild";
 import {
   McpAppBrowserHarness,
   ChromiumNotInstalledError,
+  cspSourceMatchesUrl,
+  injectCspMeta,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
 
@@ -67,14 +69,14 @@ beforeAll(async () => {
 
 const harnesses: McpAppBrowserHarness[] = [];
 function makeHarness(
-  overrides: Partial<McpAppBrowserHarnessOptions> = {},
+  overrides: Partial<McpAppBrowserHarnessOptions> = {}
 ): McpAppBrowserHarness & { calls: Array<{ name: string }> } {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const callTool = vi.fn(
     async (_serverId: string, name: string, args: Record<string, unknown>) => {
       calls.push({ name, args });
       return { content: [{ type: "text", text: "ok" }] };
-    },
+    }
   );
   const h = new McpAppBrowserHarness({
     callTool,
@@ -133,7 +135,7 @@ describe("McpAppBrowserHarness — render classification", () => {
     expect(obs.status).toBe("rendered");
     expect(obs.bridgeInitialized).toBe(true);
     expect(obs.screenshotBase64 && obs.screenshotBase64.length).toBeGreaterThan(
-      0,
+      0
     );
     // screenshot within the byte budget (256 KiB default).
     const bytes = Buffer.from(obs.screenshotBase64!, "base64").byteLength;
@@ -233,10 +235,13 @@ describe("McpAppBrowserHarness — interaction", () => {
     });
 
     expect(result.widgetToolCalls.length).toBe(1);
-    expect(result.widgetToolCalls[0]).toMatchObject({ name: "reserve", ok: true });
-    expect(result.screenshotBase64 && result.screenshotBase64.length).toBeGreaterThan(
-      0,
-    );
+    expect(result.widgetToolCalls[0]).toMatchObject({
+      name: "reserve",
+      ok: true,
+    });
+    expect(
+      result.screenshotBase64 && result.screenshotBase64.length
+    ).toBeGreaterThan(0);
     // dispatched through the injected callTool with the widget's serverId.
     expect(h.calls).toEqual([{ name: "reserve", args: { seat: 12 } }]);
   }, 30_000);
@@ -329,4 +334,291 @@ describe("McpAppBrowserHarness — interaction", () => {
     });
     expect(third.note).toBe("no_rendered_widget");
   }, 30_000);
+});
+
+describe("McpAppBrowserHarness — unmount network-allowance lifecycle", () => {
+  const sourcesOf = (h: McpAppBrowserHarness) =>
+    (h as unknown as { widgetCspSources: string[] }).widgetCspSources;
+
+  it("keeps the live widget's declared origins when a STALE tool-call is dismissed", async () => {
+    const h = makeHarness();
+    await h.renderWidget({
+      toolCallId: "live-1",
+      toolName: "show",
+      serverId: "srv",
+      html: buttonHtml,
+      cspMeta: { connect_domains: ["https://api.allowed.invalid"] },
+      keepMounted: true,
+    });
+    expect(h.getMountedWidgetId()).toBe("live-1");
+    expect(sourcesOf(h)).toContain("https://api.allowed.invalid");
+
+    // Dismissing a tool-call that is NOT the live mount (e.g. a carried id that
+    // was already replaced) must not strip the current widget's allowances —
+    // otherwise its subsequent subresource fetches abort at the route gate.
+    await h.dismissWidget("stale-never-mounted");
+    expect(h.getMountedWidgetId()).toBe("live-1");
+    expect(sourcesOf(h)).toContain("https://api.allowed.invalid");
+
+    // Dismissing the actual live widget DOES clear them (fail closed).
+    await h.dismissWidget("live-1");
+    expect(h.getMountedWidgetId()).toBeNull();
+    expect(sourcesOf(h)).toEqual([]);
+  }, 30_000);
+});
+
+describe("cspSourceMatchesUrl — CSP host-source matching", () => {
+  const u = (s: string) => new URL(s);
+
+  it("matches exact origins and rejects scheme/host mismatches", () => {
+    expect(
+      cspSourceMatchesUrl("https://esm.sh", u("https://esm.sh/react"))
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl("https://esm.sh", u("http://esm.sh/react"))
+    ).toBe(false);
+    expect(
+      cspSourceMatchesUrl("https://esm.sh", u("https://evil.sh/react"))
+    ).toBe(false);
+  });
+
+  it("matches wildcard subdomains but not the bare apex", () => {
+    const src = "https://*.excalidraw.com";
+    expect(
+      cspSourceMatchesUrl(src, u("https://cdn.excalidraw.com/a.woff2"))
+    ).toBe(true);
+    expect(cspSourceMatchesUrl(src, u("https://a.b.excalidraw.com/x"))).toBe(
+      true
+    );
+    expect(cspSourceMatchesUrl(src, u("https://excalidraw.com/x"))).toBe(false);
+    expect(cspSourceMatchesUrl(src, u("https://notexcalidraw.com/x"))).toBe(
+      false
+    );
+  });
+
+  it("scheme-less host-sources match http(s)/ws(s) on that host only", () => {
+    expect(cspSourceMatchesUrl("esm.sh", u("https://esm.sh/x"))).toBe(true);
+    expect(cspSourceMatchesUrl("esm.sh", u("http://esm.sh/x"))).toBe(true);
+    expect(cspSourceMatchesUrl("esm.sh", u("wss://esm.sh/socket"))).toBe(true);
+    expect(cspSourceMatchesUrl("esm.sh", u("ftp://esm.sh/x"))).toBe(false);
+    expect(cspSourceMatchesUrl("esm.sh", u("https://other.sh/x"))).toBe(false);
+  });
+
+  it("scheme-only sources allow any host on that scheme", () => {
+    expect(cspSourceMatchesUrl("https:", u("https://anything.example/x"))).toBe(
+      true
+    );
+    expect(cspSourceMatchesUrl("https:", u("http://anything.example/x"))).toBe(
+      false
+    );
+  });
+
+  it("honors ports (explicit, wildcard, and scheme defaults)", () => {
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:8443", u("https://cdn.x.io:8443/a"))
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:8443", u("https://cdn.x.io/a"))
+    ).toBe(false);
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:443", u("https://cdn.x.io/a"))
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl("https://cdn.x.io:*", u("https://cdn.x.io:9999/a"))
+    ).toBe(true);
+  });
+
+  it("treats an omitted source port as the scheme default only (not any port)", () => {
+    // CSP: a source without a port matches only the URL scheme's default port.
+    expect(
+      cspSourceMatchesUrl(
+        "https://api.example.com",
+        u("https://api.example.com/x")
+      )
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl(
+        "https://api.example.com",
+        u("https://api.example.com:443/x")
+      )
+    ).toBe(true);
+    expect(
+      cspSourceMatchesUrl(
+        "https://api.example.com",
+        u("https://api.example.com:8443/x")
+      )
+    ).toBe(false);
+    // http default is 80.
+    expect(cspSourceMatchesUrl("http://h.io", u("http://h.io/x"))).toBe(true);
+    expect(cspSourceMatchesUrl("http://h.io", u("http://h.io:8080/x"))).toBe(
+      false
+    );
+  });
+
+  it("ignores paths in host-sources (origin-granular gate)", () => {
+    expect(
+      cspSourceMatchesUrl(
+        "https://cdn.x.io/assets/",
+        u("https://cdn.x.io/other/file.js")
+      )
+    ).toBe(true);
+  });
+
+  it("never matches quoted keywords or empty sources", () => {
+    expect(cspSourceMatchesUrl("'self'", u("https://esm.sh/x"))).toBe(false);
+    expect(cspSourceMatchesUrl("'unsafe-inline'", u("https://esm.sh/x"))).toBe(
+      false
+    );
+    expect(cspSourceMatchesUrl("", u("https://esm.sh/x"))).toBe(false);
+  });
+});
+
+describe("injectCspMeta", () => {
+  it("inserts the policy as the first child of <head>", () => {
+    const out = injectCspMeta(
+      "<!doctype html><html><head><title>x</title></head><body></body></html>",
+      "default-src 'self'"
+    );
+    expect(out).toContain(
+      `<head><meta http-equiv="Content-Security-Policy" content="default-src 'self'">`
+    );
+    // Must precede any resource-bearing tag it governs.
+    expect(out.indexOf("Content-Security-Policy")).toBeLessThan(
+      out.indexOf("<title>")
+    );
+  });
+
+  it("synthesizes a <head> when the document omits one", () => {
+    expect(
+      injectCspMeta("<html><body>x</body></html>", "default-src 'none'")
+    ).toContain(
+      `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head>`
+    );
+    // No <html> at all: prepend so document.write still parses it first.
+    expect(injectCspMeta("<p>x</p>", "default-src 'none'")).toBe(
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'"><p>x</p>`
+    );
+  });
+
+  it("escapes attribute-breaking chars so widget metadata can't corrupt the policy", () => {
+    // A `"` in widget-derived CSP content must not break out of content="…"
+    // and truncate/disable the injected policy (or inject sibling markup).
+    const out = injectCspMeta(
+      "<!doctype html><html><head></head><body></body></html>",
+      `connect-src 'self' https://x"></head><script>alert(1)</script>`
+    );
+    expect(out).not.toContain(`x"></head>`); // no real breakout
+    expect(out).not.toContain("<script>alert(1)</script>"); // not injected as markup
+    expect(out).toContain("&quot;");
+    expect(out).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    // Single quotes are valid inside a double-quoted attribute -> left as-is.
+    expect(out).toContain("connect-src 'self'");
+  });
+});
+
+describe("McpAppBrowserHarness — widget-declared CSP enforcement", () => {
+  // Guest that probes three origins via fetch (a connect-src concern) the
+  // instant it parses — before the bridge — so the injected <meta> CSP (first
+  // in <head>) governs them. `.invalid` is a reserved TLD (RFC 2606): a
+  // CSP-allowed probe leaves the machine and merely fails DNS, while a
+  // CSP-blocked probe never makes a network attempt and logs a violation.
+  const PROBE_GUEST_SRC = `
+fetch("https://conn-ok.invalid/a").catch(() => {});
+fetch("https://res-only.invalid/b").catch(() => {});
+fetch("https://nope.invalid/c").catch(() => {});
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-csp", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const d = document.createElement("div");
+  d.textContent = "csp fixture";
+  d.style.cssText = "font-size:32px;padding:40px";
+  document.body.appendChild(d);
+})();
+`;
+
+  // Single-origin probe used for the undeclared-default and reset cases.
+  const ONE_PROBE_GUEST_SRC = `
+fetch("https://anywhere.invalid/x").catch(() => {});
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-csp1", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const d = document.createElement("div");
+  d.textContent = "csp1 fixture";
+  d.style.cssText = "font-size:32px;padding:40px";
+  document.body.appendChild(d);
+})();
+`;
+
+  let probeHtml = "";
+  let oneProbeHtml = "";
+  beforeAll(async () => {
+    probeHtml = guestHtml(await bundleGuest(PROBE_GUEST_SRC));
+    oneProbeHtml = guestHtml(await bundleGuest(ONE_PROBE_GUEST_SRC));
+  }, 60_000);
+
+  it("enforces directive separation: fetch obeys connect_domains, not resource_domains", async () => {
+    const h = makeHarness();
+    const obs = await h.renderWidget({
+      toolCallId: "csp-1",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: probeHtml,
+      cspMeta: {
+        connect_domains: ["https://conn-ok.invalid"],
+        resource_domains: ["https://res-only.invalid"],
+      },
+    });
+    expect(obs.status).toBe("rendered");
+    const errs = (obs.consoleErrors ?? []).join("\n");
+    // The "Refused to connect to '<url>'" prefix names the BLOCKED url itself
+    // (so it can't be confused with conn-ok appearing in the echoed directive).
+    expect(errs).toMatch(/Connecting to 'https:\/\/res-only\.invalid/);
+    expect(errs).toMatch(/Connecting to 'https:\/\/nope\.invalid/);
+    // connect_domains origin is permitted by connect-src -> no CSP violation.
+    expect(errs).not.toMatch(/Connecting to 'https:\/\/conn-ok\.invalid/);
+  }, 30_000);
+
+  it("policies undeclared widgets with the SEP restrictive default", async () => {
+    const h = makeHarness();
+    const obs = await h.renderWidget({
+      toolCallId: "csp-default",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: oneProbeHtml,
+      // no cspMeta -> widget-declared default: connect-src 'self' + loopback.
+    });
+    expect(obs.status).toBe("rendered");
+    const errs = (obs.consoleErrors ?? []).join("\n");
+    expect(errs).toMatch(/Connecting to 'https:\/\/anywhere\.invalid/);
+  }, 30_000);
+
+  it("re-derives the policy per widget: a later undeclared widget loses the grant", async () => {
+    const h = makeHarness();
+    const first = await h.renderWidget({
+      toolCallId: "csp-2a",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: oneProbeHtml,
+      cspMeta: { connect_domains: ["https://anywhere.invalid"] },
+    });
+    expect(first.status).toBe("rendered");
+    expect((first.consoleErrors ?? []).join("\n")).not.toMatch(
+      /Connecting to 'https:\/\/anywhere\.invalid/
+    );
+
+    // Same harness, same probe — but THIS widget declares nothing, so the
+    // injected CSP reverts to the restrictive default and blocks the fetch.
+    const second = await h.renderWidget({
+      toolCallId: "csp-2b",
+      toolName: "show_widget",
+      serverId: "srv",
+      html: oneProbeHtml,
+    });
+    expect(second.status).toBe("rendered");
+    expect((second.consoleErrors ?? []).join("\n")).toMatch(
+      /Connecting to 'https:\/\/anywhere\.invalid/
+    );
+  }, 45_000);
 });

@@ -24,6 +24,10 @@
 
 import { existsSync } from "fs";
 import type { Browser, BrowserContext, Page } from "playwright";
+import {
+  buildSandboxProxyWidgetCsp,
+  sanitizeProxyDomain,
+} from "./sandbox-proxy-csp";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
 
 /* ------------------------------------------------------------------ *
@@ -144,6 +148,21 @@ export interface RenderWidgetInput {
   permissions?: Record<string, unknown>;
   sandboxAttrs?: string[];
   allowFeatures?: Record<string, string>;
+  /**
+   * Widget-declared CSP (normalized from the UI resource's `_meta.ui.csp` /
+   * legacy `_meta["openai/widgetCSP"]`, same shape as the SDK's
+   * `WidgetCspMeta`). Enforced two ways for this widget's mount lifetime: the
+   * harness injects the production sandbox proxy's exact widget-declared policy
+   * as an in-iframe `<meta>` CSP (directive-precise — fetch vs script/font/img
+   * vs frame; see {@link buildSandboxProxyWidgetCsp}), and the network route
+   * additionally treats these origins as a coarse "may egress" allowlist.
+   * Omitted/empty yields the SEP restrictive default (`default-src 'none'`).
+   */
+  cspMeta?: {
+    connect_domains?: string[];
+    resource_domains?: string[];
+    frame_domains?: string[];
+  };
   /** Keep the widget mounted for subsequent executeAction calls. */
   keepMounted?: boolean;
 }
@@ -153,7 +172,7 @@ export interface McpAppBrowserHarnessOptions {
   callTool: (
     serverId: string,
     name: string,
-    args: Record<string, unknown>,
+    args: Record<string, unknown>
   ) => Promise<unknown>;
   /** Host capabilities advertised in ui/initialize. Sensible default below. */
   hostCapabilities?: Record<string, unknown>;
@@ -162,6 +181,105 @@ export interface McpAppBrowserHarnessOptions {
   budgets?: Partial<HarnessBudgets>;
   /** Extra http(s) origins to allow through the default-deny network route. */
   allowOrigins?: string[];
+}
+
+/**
+ * Match a URL against one CSP host-source expression, at origin granularity:
+ * scheme (when given), host (with `*.` wildcard subdomains), and port. Paths
+ * in host-sources are deliberately ignored — the real CSP inside the widget
+ * iframe still enforces them; this gate only decides whether the request may
+ * leave the harness at all. Quoted keywords (`'self'`, `'unsafe-inline'`, …)
+ * never match: "self" for a srcdoc widget is the loopback host page, which
+ * the gate's standing rules already cover.
+ *
+ * Scheme handling mirrors CSP: a scheme-only source (`https:`) allows any
+ * host on that scheme; a scheme-less host-source matches http(s)/ws(s).
+ */
+export function cspSourceMatchesUrl(source: string, url: URL): boolean {
+  const src = source.trim();
+  if (!src || src.startsWith("'")) return false;
+
+  // Scheme-only source, e.g. "https:".
+  if (/^[a-z][a-z0-9+.-]*:$/i.test(src)) {
+    return url.protocol.toLowerCase() === src.toLowerCase();
+  }
+
+  let scheme: string | undefined;
+  let rest = src;
+  const schemeMatch = /^([a-z][a-z0-9+.-]*):\/\//i.exec(src);
+  if (schemeMatch) {
+    scheme = `${schemeMatch[1].toLowerCase()}:`;
+    rest = src.slice(schemeMatch[0].length);
+  }
+  const slash = rest.indexOf("/");
+  if (slash !== -1) rest = rest.slice(0, slash);
+  if (!rest) return false;
+
+  let port: string | undefined;
+  let hostPattern = rest;
+  const portMatch = /^(.+):(\d+|\*)$/.exec(rest);
+  if (portMatch) {
+    hostPattern = portMatch[1];
+    port = portMatch[2];
+  }
+
+  if (scheme) {
+    if (url.protocol.toLowerCase() !== scheme) return false;
+  } else if (!/^(https?:|wss?:)$/.test(url.protocol)) {
+    return false;
+  }
+
+  // Port matching (CSP semantics): `*` = any port; an explicit port must equal
+  // the URL's port; an OMITTED source port matches only the scheme's default
+  // port (so `https://api.example.com` matches `:443`/default but not `:8443`).
+  if (port !== "*") {
+    const defaultPort =
+      url.protocol === "https:" || url.protocol === "wss:" ? "443" : "80";
+    const urlPort = url.port || defaultPort;
+    if (urlPort !== (port ?? defaultPort)) return false;
+  }
+
+  const host = url.hostname.toLowerCase();
+  const pattern = hostPattern.toLowerCase();
+  if (pattern === "*") return true;
+  if (pattern.startsWith("*.")) return host.endsWith(pattern.slice(1));
+  return host === pattern;
+}
+
+/**
+ * Inject a `<meta http-equiv="Content-Security-Policy">` as the FIRST child of
+ * `<head>` so the browser enforces the widget's declared policy at directive
+ * granularity inside the iframe — the headless analog of the sandbox proxy's
+ * CSP injection. First-in-head matters: a meta CSP only governs resources
+ * parsed after it, and `guestDoc.write(html)` parses top-down.
+ *
+ * Falls back to creating a `<head>` (or prepending) when the document omits
+ * one, so even minimal widget HTML is governed rather than running unpoliced.
+ *
+ * `cspContent` is derived from widget-controlled metadata (the declared domain
+ * arrays are joined verbatim into the policy), so it is HTML-attribute-escaped
+ * before interpolation: a stray `"` must not be able to break out of
+ * `content="…"` and truncate or disable the policy we are injecting. A
+ * well-formed CSP never contains `&"<>`, so this is a no-op for real policies.
+ */
+export function injectCspMeta(html: string, cspContent: string): string {
+  const escaped = cspContent
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const tag = `<meta http-equiv="Content-Security-Policy" content="${escaped}">`;
+  const headOpen = /<head\b[^>]*>/i.exec(html);
+  if (headOpen) {
+    const at = headOpen.index + headOpen[0].length;
+    return html.slice(0, at) + tag + html.slice(at);
+  }
+  const htmlOpen = /<html\b[^>]*>/i.exec(html);
+  if (htmlOpen) {
+    const at = htmlOpen.index + htmlOpen[0].length;
+    return html.slice(0, at) + `<head>${tag}</head>` + html.slice(at);
+  }
+  return tag + html;
 }
 
 // SEP-1865 host capabilities are declared as OBJECTS (an empty `{}` means
@@ -193,6 +311,14 @@ export class McpAppBrowserHarness {
   private page: Page | null = null;
 
   private readonly mounted = new Map<string, MountedWidget>();
+  /**
+   * CSP sources declared by the CURRENTLY mounted widget (renderWidget sets,
+   * unmount/dispose clear). Lives on the instance — not closed over at launch —
+   * because the network route outlives any single widget while the allowlist
+   * must follow the widget. Fail-closed: between widgets this is empty and the
+   * gate falls back to loopback + configured `allowOrigins` only.
+   */
+  private widgetCspSources: string[] = [];
   private consoleErrors: string[] = [];
   private blockedRequests: string[] = [];
   private toolCallBuffer: WidgetToolCall[] = [];
@@ -231,10 +357,7 @@ export class McpAppBrowserHarness {
   // `playwright-core` (present transitively).
   protected async loadChromium(): Promise<{
     executablePath: () => string;
-    launch: (opts: {
-      headless: boolean;
-      args?: string[];
-    }) => Promise<Browser>;
+    launch: (opts: { headless: boolean; args?: string[] }) => Promise<Browser>;
   }> {
     try {
       return (await import("playwright")).chromium;
@@ -255,7 +378,7 @@ export class McpAppBrowserHarness {
     }
     if (!executablePath || !existsSync(executablePath)) {
       throw new ChromiumNotInstalledError(
-        "Chromium is not installed for Playwright. Run `npx playwright install chromium`.",
+        "Chromium is not installed for Playwright. Run `npx playwright install chromium`."
       );
     }
 
@@ -286,8 +409,13 @@ export class McpAppBrowserHarness {
       permissions: [],
     });
 
-    // Default-deny network with a small allowlist (loopback + configured
-    // origins). Non-network schemes (data:, blob:, about:) pass through.
+    // COARSE default-deny egress backstop: loopback + configured origins
+    // (static for the harness lifetime) + the mounted widget's declared CSP
+    // origins as one flat union (per-widget, see `widgetCspSources`). This is
+    // intentionally directive-blind — the injected in-iframe `<meta>` CSP does
+    // the connect/resource/frame separation; the route just decides whether a
+    // request may leave the machine, and records the rest. Non-network schemes
+    // (data:, blob:, about:) pass through.
     const allowOrigins = new Set(this.opts.allowOrigins ?? []);
     await this.context.route("**/*", (route) => {
       const url = route.request().url();
@@ -299,11 +427,17 @@ export class McpAppBrowserHarness {
         return route.continue();
       }
       try {
-        const origin = new URL(url).origin;
-        const host = new URL(url).hostname;
+        const parsed = new URL(url);
+        const host = parsed.hostname;
         const isLoopback =
           host === "127.0.0.1" || host === "localhost" || host === "[::1]";
-        if (isLoopback || allowOrigins.has(origin)) return route.continue();
+        if (
+          isLoopback ||
+          allowOrigins.has(parsed.origin) ||
+          this.widgetCspSources.some((s) => cspSourceMatchesUrl(s, parsed))
+        ) {
+          return route.continue();
+        }
       } catch {
         /* fall through to abort */
       }
@@ -334,7 +468,7 @@ export class McpAppBrowserHarness {
           widgetId: string;
           name: string;
           args: Record<string, unknown>;
-        },
+        }
       ) => {
         const widget = this.mounted.get(payload.widgetId);
         // Fail closed: a tools/call from a widget that isn't (or is no longer)
@@ -353,7 +487,7 @@ export class McpAppBrowserHarness {
           const result = await this.opts.callTool(
             serverId,
             payload.name,
-            payload.args,
+            payload.args
           );
           this.toolCallBuffer.push({
             name: payload.name,
@@ -375,11 +509,11 @@ export class McpAppBrowserHarness {
         } finally {
           this.pendingRpcCount -= 1;
         }
-      },
+      }
     );
 
     await this.page.setContent(
-      "<!doctype html><html><head><meta charset='utf-8'></head><body></body></html>",
+      "<!doctype html><html><head><meta charset='utf-8'></head><body></body></html>"
     );
     await this.page.addScriptTag({ content: HARNESS_PAGE_BUNDLE });
   }
@@ -387,7 +521,7 @@ export class McpAppBrowserHarness {
   /* ---- render ---- */
 
   async renderWidget(
-    input: RenderWidgetInput,
+    input: RenderWidgetInput
   ): Promise<WidgetRenderObservation> {
     const ts = Date.now();
     const started = ts;
@@ -414,7 +548,11 @@ export class McpAppBrowserHarness {
     const page = this.page!;
 
     if (!input.html || input.html.trim().length === 0) {
-      return { ...base, status: "no_ui_resource", elapsedMs: Date.now() - started };
+      return {
+        ...base,
+        status: "no_ui_resource",
+        elapsedMs: Date.now() - started,
+      };
     }
 
     // Capture only this render's console errors + blocked requests (otherwise
@@ -431,6 +569,31 @@ export class McpAppBrowserHarness {
       serverId: input.serverId,
       actionCount: 0,
     });
+    // Arm the network route's COARSE egress backstop with this widget's
+    // declared origins (union of all directives) BEFORE the in-page mount. The
+    // route only decides "may a request leave the machine at all"; the injected
+    // in-iframe CSP below does the directive-precise enforcement (connect vs
+    // resource vs frame). Set before mount so first subresource fetches are
+    // judged against the widget's own policy, not aborted into a blank paint.
+    this.widgetCspSources = [
+      ...(input.cspMeta?.connect_domains ?? []),
+      ...(input.cspMeta?.resource_domains ?? []),
+      ...(input.cspMeta?.frame_domains ?? []),
+    ]
+      .map(sanitizeProxyDomain)
+      .filter(Boolean);
+
+    // Enforce the widget's declared CSP IN the iframe with the SAME policy the
+    // production sandbox proxy injects (see sandbox-proxy-csp.ts, pinned to
+    // sandbox-proxy.html by a parity test). A more permissive policy would make
+    // render observations false positives — a widget needing eval()/<object>/
+    // base-uri or 'self' egress could "render" here yet be blocked by the real
+    // sandbox. The browser then applies real directive semantics: a `fetch()`
+    // only reaches a `connect_domains` origin, a script/font/img only a
+    // `resource_domains` origin; an undeclared widget gets the SEP restrictive
+    // default (`default-src 'none'`) instead of running open.
+    const cspContent = buildSandboxProxyWidgetCsp(input.cspMeta);
+    const policedHtml = injectCspMeta(input.html, cspContent);
 
     let pageResult: {
       mounted: boolean;
@@ -446,7 +609,7 @@ export class McpAppBrowserHarness {
           ).__mcpjamHarness.renderWidget(opts),
         {
           widgetId: input.toolCallId,
-          html: input.html,
+          html: policedHtml,
           hostCapabilities:
             this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES,
           hostInfo: this.opts.hostInfo ?? {
@@ -459,7 +622,7 @@ export class McpAppBrowserHarness {
           toolInput: input.toolInput,
           toolOutput: input.toolOutput,
           renderTimeoutMs: this.budgets.renderTimeoutMs,
-        },
+        }
       );
     } catch (err) {
       await this.unmount(input.toolCallId);
@@ -634,7 +797,7 @@ export class McpAppBrowserHarness {
       }
       case "wait":
         await page.waitForTimeout(
-          Math.min(action.duration ?? 250, this.budgets.settleTimeoutMs),
+          Math.min(action.duration ?? 250, this.budgets.settleTimeoutMs)
         );
         break;
       case "screenshot":
@@ -645,7 +808,9 @@ export class McpAppBrowserHarness {
   private async settle(): Promise<void> {
     const page = this.page!;
     await page
-      .waitForLoadState("networkidle", { timeout: this.budgets.settleTimeoutMs })
+      .waitForLoadState("networkidle", {
+        timeout: this.budgets.settleTimeoutMs,
+      })
       .catch(() => {});
     await page.waitForTimeout(50);
   }
@@ -691,7 +856,7 @@ export class McpAppBrowserHarness {
     const jpeg = await page.screenshot({ type: "jpeg", quality: 20 });
     throw new Error(
       `screenshot exceeds byte budget after re-encoding ` +
-        `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`,
+        `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`
     );
   }
 
@@ -711,11 +876,20 @@ export class McpAppBrowserHarness {
             (
               globalThis as unknown as { __mcpjamHarness: HarnessPageApi }
             ).__mcpjamHarness.dismissWidget(id),
-          toolCallId,
+          toolCallId
         )
         .catch(() => {});
     }
     this.mounted.delete(toolCallId);
+    // Only drop network allowances once NO widget remains mounted. Clearing
+    // them whenever unmount runs — even for a stale tool-call id that was never
+    // (or is no longer) the live mount — would strip the CURRENT widget's
+    // declared origins out from under it, so its in-flight/subsequent
+    // subresource fetches abort at the route gate (net::ERR_FAILED) until
+    // teardown. Fail closed only when the page truly has no live widget.
+    if (this.mounted.size === 0) {
+      this.widgetCspSources = [];
+    }
   }
 
   async dispose(): Promise<void> {
@@ -733,6 +907,7 @@ export class McpAppBrowserHarness {
     this.browser = null;
     this.page = null;
     this.mounted.clear();
+    this.widgetCspSources = [];
   }
 }
 
