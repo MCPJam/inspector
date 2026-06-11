@@ -15,6 +15,7 @@ import {
   type TraceWidgetSnapshot,
 } from "@/components/evals/trace-viewer-adapter";
 import { TraceViewer } from "@/components/evals/trace-viewer";
+import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
 import {
   ChatTraceViewModeHeaderBar,
   type TraceViewMode,
@@ -23,6 +24,7 @@ import {
   useSharedChatThread,
   useSharedChatWidgetSnapshots,
   useSharedChatTurnTraces,
+  useSessionBrowserArtifacts,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 
@@ -68,10 +70,16 @@ export function ShareUsageThreadDetail({
   const { thread } = useSharedChatThread({ threadId });
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
+  const { artifacts: browserArtifacts } = useSessionBrowserArtifacts({
+    threadId,
+  });
   const [messages, setMessages] = useState<unknown[] | null>(null);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
+  // The eval-only "browser" mode lives outside the shared TraceViewMode union
+  // (see trace-view-mode-tabs.tsx) — widen locally, mirroring TraceViewer's
+  // own internal state.
+  const [viewMode, setViewMode] = useState<TraceViewMode | "browser">("chat");
   const [hydratedSpans, setHydratedSpans] = useState<EvalTraceSpan[]>([]);
 
   // Fetch messages from blob URL
@@ -141,15 +149,29 @@ export function ShareUsageThreadDetail({
     return snapshotsToTraceWidgetSnapshots(snapshots);
   }, [snapshots, thread]);
 
-  // Build a TraceEnvelope for the TraceViewer (timeline + raw)
+  // Browser-rendered MCP App artifacts (synthetic sessions). Tab visibility =
+  // artifact presence, the same heuristic the eval trace viewer uses.
+  const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
+  const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
+  const hasBrowserArtifacts =
+    renderObservations.length > 0 || interactionSteps.length > 0;
+
+  // Build a TraceEnvelope for the TraceViewer (timeline + raw). Browser
+  // artifacts ride the envelope so the Raw view includes them.
   const traceEnvelope: TraceEnvelope | null = useMemo(() => {
     if (!messages) return null;
     return {
       messages: messages as any,
       widgetSnapshots,
       spans: hydratedSpans,
+      ...(renderObservations.length > 0
+        ? { widgetRenderObservations: renderObservations }
+        : {}),
+      ...(interactionSteps.length > 0
+        ? { browserInteractionSteps: interactionSteps }
+        : {}),
     };
-  }, [messages, widgetSnapshots, hydratedSpans]);
+  }, [messages, widgetSnapshots, hydratedSpans, renderObservations, interactionSteps]);
 
   // Adapt trace to UI messages for the chat view
   const adaptedTrace = useMemo(() => {
@@ -307,16 +329,28 @@ export function ShareUsageThreadDetail({
         </div>
       </div>
 
-      {/* Trace / Chat / Raw tabs */}
+      {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
+          session carries browser-rendered MCP App artifacts (synthetic runs);
+          its active mode lives outside the shared TraceViewMode union. */}
       <ChatTraceViewModeHeaderBar
-        mode={viewMode}
+        mode={viewMode === "browser" ? "chat" : viewMode}
         onModeChange={setViewMode}
+        showBrowserTab={hasBrowserArtifacts}
+        browserActive={viewMode === "browser"}
+        onSelectBrowser={() => setViewMode("browser")}
       />
 
       {/* Content area: must be a flex column so TraceViewer (fillContent) is a flex item; otherwise
           nested flex-1 / min-h-0 inside TraceTimeline collapses and the timeline paints empty. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {viewMode === "chat" ? (
+        {viewMode === "browser" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+            <BrowserArtifactsView
+              observations={renderObservations}
+              steps={interactionSteps}
+            />
+          </div>
+        ) : viewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
             <ChatboxSurfaceProvider value={isChatboxThread}>
               <TranscriptThread
