@@ -33,6 +33,7 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
+import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
 import {
   resolveSandboxCsp,
@@ -718,6 +719,13 @@ export function MCPAppsRendererSurface({
   // under strict CSP — surprising and inconsistent with the published
   // chatbox runtime when opened in a top-level window.
   const isChatboxSurface = useIsChatboxSurface();
+  // Redeemed chatbox sessions resolve servers via Convex on every
+  // platform; widget-content fetches and bridge resource/prompt calls
+  // must take the hosted API branch even on local builds. Mirrored into
+  // a ref because the bridge handlers close over long-lived callbacks.
+  const webManagedServers = useWebManagedServers();
+  const webManagedServersRef = useRef(webManagedServers);
+  webManagedServersRef.current = webManagedServers;
   // Surface-derived cspMode: read from the WidgetSurfaceContext set by
   // PlaygroundMain, NOT from `isPlaygroundActive` in the store. The
   // store flag was set in a passive `useEffect`, so descendants
@@ -1519,6 +1527,7 @@ export function MCPAppsRendererSurface({
           serverInjectedOpenAiCompatCapabilities,
       } = await fetchMcpAppsWidgetContent({
         serverId,
+        forceWebEndpoint: webManagedServersRef.current,
         resourceUri,
         toolInput: toolInputRef.current,
         toolOutput: toolOutputRef.current,
@@ -2837,17 +2846,20 @@ export function MCPAppsRendererSurface({
             onAppToolInvocationChangeRef.current?.(update);
           },
           onReadResource: async (uri) => {
-            const result = await readResource(serverIdRef.current, uri);
+            const result = await readResource(serverIdRef.current, uri, {
+              forceHosted: webManagedServersRef.current,
+            });
             return result.content;
           },
           onListResources: async (params) => {
             return listResources(
               serverIdRef.current,
               (params as { cursor?: string } | undefined)?.cursor,
+              { forceHosted: webManagedServersRef.current },
             );
           },
           onListResourceTemplates: async () => {
-            if (HOSTED_MODE) {
+            if (HOSTED_MODE || webManagedServersRef.current) {
               throw new Error(
                 "Resource templates are not supported in hosted mode",
               );
@@ -2870,7 +2882,9 @@ export function MCPAppsRendererSurface({
             return response.json();
           },
           onListPrompts: async () => {
-            const prompts = await listPrompts(serverIdRef.current);
+            const prompts = await listPrompts(serverIdRef.current, {
+              forceHosted: webManagedServersRef.current,
+            });
             return { prompts };
           },
           onLoggingMessage: ({ level, data, logger }) => {

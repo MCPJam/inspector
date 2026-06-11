@@ -1202,24 +1202,23 @@ export default function App() {
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip"
   );
+  // Keyed off the stored callback context rather than the platform: the
+  // chatbox runtime (and its OAuth flows) runs on local/desktop builds too,
+  // and the completion effect below is already context-gated.
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
-    if (!HOSTED_MODE) {
-      return false;
-    }
-
     const callbackContext = getHostedOAuthCallbackContext();
     return callbackContext != null && callbackContext.surface !== "project";
   });
   const [exitedChatboxChat, setExitedChatboxChat] = useState(false);
-  const chatboxPathToken = HOSTED_MODE
-    ? getChatboxPathTokenFromLocation()
-    : null;
-  const chatboxSession = HOSTED_MODE ? readChatboxSession() : null;
+  // The published-chatbox runtime route (`/chatbox/<slug>/<token>`, plus the
+  // sessionStorage fallback that survives the post-redeem token strip) is
+  // platform-uniform: it resolves on hosted, local, and desktop builds
+  // alike. Capability gating happens downstream — redeem failures surface
+  // through ChatboxChatPage's error states — so local dev gets the same
+  // share-link and Preview-pane behavior as production.
+  const chatboxPathToken = getChatboxPathTokenFromLocation();
+  const chatboxSession = readChatboxSession();
   const hostedRouteKind = useMemo(() => {
-    if (!HOSTED_MODE) {
-      return null;
-    }
-
     if (chatboxPathToken) {
       return "chatbox" as const;
     }
@@ -1231,7 +1230,7 @@ export default function App() {
     return null;
   }, [chatboxPathToken, chatboxSession]);
   const isChatboxChatRoute =
-    HOSTED_MODE && !exitedChatboxChat && hostedRouteKind === "chatbox";
+    !exitedChatboxChat && hostedRouteKind === "chatbox";
 
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);

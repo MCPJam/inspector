@@ -1110,6 +1110,10 @@ export function useChatSession(
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  // Published-chatbox runtime sessions must use the org-aware web engine
+  // on every platform — their servers resolve by Convex id, which the
+  // local /api/mcp engine can't connect. See HostedRuntimeContext.
+  const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
   const requestRefreshAccessVersion =
     hostedContext?.requestRefreshAccessVersion;
   const initialModelId = executionConfig?.modelId;
@@ -1420,18 +1424,22 @@ export function useChatSession(
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const response = HOSTED_MODE
+      // authFetch owns auth resolution (WorkOS bearer / guest bearer via
+      // the chatbox-installed apiContext) wherever the web engine is in
+      // play — hosted builds, and chatbox runtime sessions on any platform.
+      const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
+      const response = useAuthedFetch
         ? await authFetch(input, init)
         : await fetch(input, init);
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
-        if (HOSTED_MODE) {
+        if (useAuthedFetch) {
           await ingestHostedRpcLogsFromResponse(response);
         }
       }
       return response;
     },
-    []
+    [hostedRequiresWebChatApi]
   );
 
   const handleChatError = useCallback((chatError: Error) => {
@@ -1462,7 +1470,8 @@ export function useChatSession(
   >(undefined);
 
   const transport = useMemo(() => {
-    const shouldUseOrgAwareChatApi = HOSTED_MODE || selectedModelUsesOrgRuntime;
+    const shouldUseOrgAwareChatApi =
+      HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -1481,11 +1490,14 @@ export function useChatSession(
       string,
       string
     >;
-    const transportHeaders = HOSTED_MODE
-      ? undefined
-      : Object.keys(mergedHeaders).length > 0
-      ? mergedHeaders
-      : undefined;
+    // When authFetch carries the request (hosted builds, chatbox runtime
+    // sessions), it owns the Authorization header — don't double-attach.
+    const transportHeaders =
+      HOSTED_MODE || hostedRequiresWebChatApi
+        ? undefined
+        : Object.keys(mergedHeaders).length > 0
+        ? mergedHeaders
+        : undefined;
 
     const chatApi = shouldUseOrgAwareChatApi
       ? "/api/web/chat-v2"
@@ -1637,6 +1649,7 @@ export function useChatSession(
     customProviders,
     authHeaders,
     selectedModelUsesOrgRuntime,
+    hostedRequiresWebChatApi,
     temperature,
     systemPrompt,
     selectedServers,
@@ -2047,7 +2060,9 @@ export function useChatSession(
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && isAuthenticated,
+    // Chatbox runtime sessions persist server-side on every platform, so
+    // their widget capture follows the session kind, not the build.
+    enabled: (HOSTED_MODE || hostedRequiresWebChatApi) && isAuthenticated,
     readyToPersist: status === "ready",
     chatSessionId,
     hostedChatboxId,
@@ -2643,7 +2658,7 @@ export function useChatSession(
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const hostedContextNotReady =
-    (HOSTED_MODE || selectedModelUsesOrgRuntime) &&
+    (HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi) &&
     (!hostedProjectId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

@@ -43,6 +43,7 @@ import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-clie
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
+import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
@@ -259,15 +260,24 @@ export function ChatboxChatPage({
     }
   }, []);
 
+  // The embedded Preview iframe is same-origin, so it shares the tab's
+  // sessionStorage with the outer dashboard. Reading or writing the chatbox
+  // session from inside the embed would leak it into (or pick it up from)
+  // the host app — the outer App treats a stored session as "render the
+  // chatbox runtime", hijacking the dashboard on the next reload. The embed
+  // never needs the fallback anyway: its URL keeps the share token (the
+  // post-redeem strip only runs standalone), so a reload re-redeems.
   const readCurrentSession = useCallback(() => {
-    return playgroundParams
-      ? readPlaygroundSession(playgroundParams.playgroundId)
-      : readChatboxSession();
+    if (playgroundParams) {
+      return readPlaygroundSession(playgroundParams.playgroundId);
+    }
+
+    return isEmbeddedPreview() ? null : readChatboxSession();
   }, [playgroundParams]);
 
   const writeCurrentSession = useCallback(
     (nextSession: ChatboxSession) => {
-      if (playgroundParams) {
+      if (playgroundParams || isEmbeddedPreview()) {
         return;
       }
 
@@ -277,7 +287,7 @@ export function ChatboxChatPage({
   );
 
   const clearCurrentSession = useCallback(() => {
-    if (playgroundParams) {
+    if (playgroundParams || isEmbeddedPreview()) {
       return;
     }
 
@@ -884,6 +894,10 @@ export function ChatboxChatPage({
               (server) => server.serverId
             ),
             requestRefreshAccessVersion,
+            // Redeemed sessions carry Convex-resolved server ids; only the
+            // web chat engine can connect them. Playground previews keep
+            // the platform default (local engine + builder connections).
+            requiresWebChatApi: !playgroundParams,
           }}
           executionConfig={{
             modelId: session.payload.modelId,
@@ -929,6 +943,12 @@ export function ChatboxChatPage({
               hostStyle={hostStyle}
             >
               <ChatboxSurfaceProvider value={true}>
+                {/* Redeemed sessions: servers are Convex-resolved, so MCP
+                    Apps widget fetches and bridge resource/prompt calls
+                    must take the hosted API branch on every platform.
+                    Playground previews keep platform routing (local
+                    builds reuse the builder's local connections). */}
+                <WebManagedServersProvider value={!playgroundParams}>
                 <div
                   className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
                   data-host-style={hostStyle}
@@ -970,6 +990,7 @@ export function ChatboxChatPage({
 
                   {renderContent()}
                 </div>
+                </WebManagedServersProvider>
               </ChatboxSurfaceProvider>
             </ActiveHostCapsResolverScope>
           </ActiveMcpProfileProvider>
