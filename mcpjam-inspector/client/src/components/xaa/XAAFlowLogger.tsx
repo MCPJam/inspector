@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Circle,
   KeyRound,
+  Lightbulb,
   Loader2,
   Pencil,
   RotateCcw,
@@ -28,9 +29,12 @@ import { HTTPHistoryEntry } from "@/components/oauth/HTTPHistoryEntry";
 import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import { IdJagInspector } from "./IdJagInspector";
 import {
+  getXAAPhaseNumber,
   getXAAStepInfo,
   getXAAStepIndex,
+  XAA_PHASES,
   XAA_STEP_ORDER,
+  type XAAPhaseKey,
 } from "@/lib/xaa/step-metadata";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
 import {
@@ -73,11 +77,7 @@ interface XAAFlowLoggerProps {
   };
 }
 
-function CompatibilityBanner({
-  report,
-}: {
-  report: XAACompatibilityReport;
-}) {
+function CompatibilityBanner({ report }: { report: XAACompatibilityReport }) {
   const [expanded, setExpanded] = useState(report.overall !== "pass");
   useEffect(() => {
     setExpanded(report.overall !== "pass");
@@ -93,27 +93,27 @@ function CompatibilityBanner({
           title: "Authorization server looks XAA-ready",
         }
       : report.overall === "warn"
-        ? {
-            Icon: AlertTriangle,
-            iconClass: "text-amber-500",
-            borderClass: "border-amber-500/40",
-            bgClass: "bg-amber-500/5",
-            title: "Authorization server capabilities are ambiguous",
-          }
-        : {
-            Icon: ShieldAlert,
-            iconClass: "text-red-500",
-            borderClass: "border-red-500/40",
-            bgClass: "bg-red-500/5",
-            title: "Authorization server isn't XAA-ready",
-          };
+      ? {
+          Icon: AlertTriangle,
+          iconClass: "text-amber-500",
+          borderClass: "border-amber-500/40",
+          bgClass: "bg-amber-500/5",
+          title: "Authorization server capabilities are ambiguous",
+        }
+      : {
+          Icon: ShieldAlert,
+          iconClass: "text-red-500",
+          borderClass: "border-red-500/40",
+          bgClass: "bg-red-500/5",
+          title: "Authorization server isn't XAA-ready",
+        };
 
   const checkStatusClass = (status: XAACheckStatus) =>
     status === "pass"
       ? "text-green-600 dark:text-green-400"
       : status === "fail"
-        ? "text-red-500"
-        : "text-amber-500";
+      ? "text-red-500"
+      : "text-amber-500";
 
   const checkStatusSymbol = (status: XAACheckStatus) =>
     status === "pass" ? "✓" : status === "fail" ? "✗" : "?";
@@ -123,7 +123,7 @@ function CompatibilityBanner({
       className={cn(
         "rounded-md border px-3 py-2.5 text-xs",
         tone.borderClass,
-        tone.bgClass,
+        tone.bgClass
       )}
     >
       <button
@@ -153,7 +153,7 @@ function CompatibilityBanner({
               <span
                 className={cn(
                   "font-mono shrink-0 w-3",
-                  checkStatusClass(check.status),
+                  checkStatusClass(check.status)
                 )}
                 aria-hidden
               >
@@ -242,6 +242,64 @@ function GuidanceCallout({
   );
 }
 
+/**
+ * Section header for one phase of the flow. Phases 1–4 are the numbered steps
+ * of draft-ietf-oauth-identity-assertion-authz-grant; Phase 0 is MCP
+ * discovery, which the spec doesn't define — labelling it as bootstrap keeps
+ * the grant itself from looking like it starts at the MCP server.
+ */
+function PhaseHeader({
+  phase,
+  skipped,
+}: {
+  phase: XAAPhaseKey;
+  skipped?: boolean;
+}) {
+  const info = XAA_PHASES[phase];
+  const number = getXAAPhaseNumber(phase);
+  return (
+    <div className="pt-2 first:pt-0" data-testid={`xaa-phase-${phase}`}>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Phase {number} · {info.title}
+        </span>
+        {info.specStep === null ? (
+          <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+            not part of the XAA grant
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+            spec step {info.specStep}
+          </Badge>
+        )}
+        {skipped && (
+          <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+            skipped — auth server pre-configured
+          </Badge>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">{info.blurb}</p>
+    </div>
+  );
+}
+
+/** A "Tip" callout — visually distinct from diagnostics so static teaching
+ * copy can't be mistaken for an error explanation. */
+function TeachableMoments({ moments }: { moments: string[] }) {
+  return (
+    <div className="space-y-1.5 border-l-2 border-blue-400/40 pl-3">
+      {moments.map((moment) => (
+        <p
+          key={moment}
+          className="flex items-start gap-1.5 text-xs text-muted-foreground"
+        >
+          <Lightbulb className="h-3.5 w-3.5 mt-px shrink-0 text-blue-400" />
+          <span>{moment}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
 
 export function XAAFlowLogger({
   flowState,
@@ -252,7 +310,7 @@ export function XAAFlowLogger({
   summary,
 }: XAAFlowLoggerProps) {
   const [expandedSteps, setExpandedSteps] = useState<Set<XAAFlowStep>>(
-    new Set(),
+    new Set()
   );
 
   useEffect(() => {
@@ -290,9 +348,27 @@ export function XAAFlowLogger({
     });
 
     return Array.from(steps.values()).sort(
-      (a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step),
+      (a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step)
     );
   }, [flowState.httpHistory, flowState.infoLogs]);
+
+  // Bucket consecutive step groups by phase so each phase renders one header.
+  const phasedGroups = useMemo(() => {
+    const sections: {
+      phase: XAAPhaseKey | undefined;
+      groups: typeof groups;
+    }[] = [];
+    for (const group of groups) {
+      const phase = getXAAStepInfo(group.step).phase;
+      const last = sections[sections.length - 1];
+      if (last && last.phase === phase) {
+        last.groups.push(group);
+      } else {
+        sections.push({ phase, groups: [group] });
+      }
+    }
+    return sections;
+  }, [groups]);
 
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
   const focusedStep = activeStep ?? flowState.currentStep;
@@ -321,7 +397,10 @@ export function XAAFlowLogger({
       };
     }
 
-    if (index < currentStepIndex || (!flowState.isBusy && index <= currentStepIndex)) {
+    if (
+      index < currentStepIndex ||
+      (!flowState.isBusy && index <= currentStepIndex)
+    ) {
       return {
         icon: CheckCircle2,
         className: "h-4 w-4 text-green-600 dark:text-green-400",
@@ -391,7 +470,7 @@ export function XAAFlowLogger({
                   value={summary.negativeTestMode}
                   onValueChange={(nextValue) =>
                     actions.onChangeNegativeTestMode?.(
-                      nextValue as NegativeTestMode,
+                      nextValue as NegativeTestMode
                     )
                   }
                   disabled={!actions.onChangeNegativeTestMode}
@@ -401,11 +480,7 @@ export function XAAFlowLogger({
                   </SelectTrigger>
                   <SelectContent>
                     {NEGATIVE_TEST_MODES.map((mode) => (
-                      <SelectItem
-                        key={mode}
-                        value={mode}
-                        className="text-xs"
-                      >
+                      <SelectItem key={mode} value={mode} className="text-xs">
                         {NEGATIVE_TEST_MODE_DETAILS[mode].label}
                       </SelectItem>
                     ))}
@@ -450,10 +525,10 @@ export function XAAFlowLogger({
 
         {(() => {
           const currentStepHttpEntries = (flowState.httpHistory || []).filter(
-            (entry) => entry.step === flowState.currentStep,
+            (entry) => entry.step === flowState.currentStep
           );
           const currentStepErroredEntry = latestErroredHttpEntry(
-            currentStepHttpEntries,
+            currentStepHttpEntries
           );
           if (!flowState.error && !currentStepErroredEntry) return null;
           const guidance = getXAAErrorGuidance({
@@ -501,10 +576,12 @@ export function XAAFlowLogger({
 
         {!hasProfile ? (
           <div className="bg-background border border-border rounded-lg p-6 space-y-3">
-            <h3 className="text-base font-semibold">Welcome to the XAA Debugger</h3>
+            <h3 className="text-base font-semibold">
+              Welcome to the XAA Debugger
+            </h3>
             <p className="text-sm text-muted-foreground">
-              Configure an MCP server, target authorization server, and client ID
-              to step through the full enterprise authorization flow.
+              Configure an MCP server, target authorization server, and client
+              ID to step through the full enterprise authorization flow.
             </p>
             <Button onClick={actions.onConfigure}>Configure Target</Button>
           </div>
@@ -513,156 +590,175 @@ export function XAAFlowLogger({
             No activity yet. Click &quot;{actions.continueLabel}&quot; to begin.
           </div>
         ) : (
-          groups.map((group, index) => {
-            const stepInfo = getXAAStepInfo(group.step);
-            const status = getStatus(group.step);
-            const StatusIcon = status.icon;
-            const entryCount =
-              group.infoEntries.length + group.httpEntries.length;
-            const hasError = group.httpEntries.some((entry) => entry.error);
+          phasedGroups.map((section) => (
+            <div key={section.phase ?? "no-phase"} className="space-y-3">
+              {section.phase && (
+                <PhaseHeader
+                  phase={section.phase}
+                  skipped={
+                    section.phase === "bootstrap" &&
+                    Boolean(summary.authzServerIssuer) &&
+                    section.groups.every(
+                      (group) => group.httpEntries.length === 0
+                    )
+                  }
+                />
+              )}
+              {section.groups.map((group, indexInPhase) => {
+                const stepInfo = getXAAStepInfo(group.step);
+                const status = getStatus(group.step);
+                const StatusIcon = status.icon;
+                const entryCount =
+                  group.infoEntries.length + group.httpEntries.length;
+                const hasError = group.httpEntries.some((entry) => entry.error);
+                const stepLabel = section.phase
+                  ? `${getXAAPhaseNumber(section.phase)}.${indexInPhase + 1} ${
+                      stepInfo.title
+                    }`
+                  : stepInfo.title;
 
-            return (
-              <div
-                key={group.step}
-                className={cn(
-                  "bg-background border rounded-lg shadow-sm",
-                  focusedStep === group.step
-                    ? "border-blue-400 ring-1 ring-blue-400/20"
-                    : "border-border",
-                )}
-              >
-                <button
-                  onClick={() => toggleStep(group.step)}
-                  className="w-full px-4 py-3 flex items-start gap-3 text-left hover:bg-muted/40 rounded-t-lg"
-                >
-                  <div className="flex-shrink-0 mt-0.5">
-                    {expandedSteps.has(group.step) ? (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                return (
+                  <div
+                    key={group.step}
+                    className={cn(
+                      "bg-background border rounded-lg shadow-sm",
+                      focusedStep === group.step
+                        ? "border-blue-400 ring-1 ring-blue-400/20"
+                        : "border-border"
+                    )}
+                  >
+                    <button
+                      onClick={() => toggleStep(group.step)}
+                      className="w-full px-4 py-3 flex items-start gap-3 text-left hover:bg-muted/40 rounded-t-lg"
+                    >
+                      <div className="flex-shrink-0 mt-0.5">
+                        {expandedSteps.has(group.step) ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </div>
+                      <StatusIcon className={status.className} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-semibold">
+                            {stepLabel}
+                          </span>
+                          <Badge
+                            variant="secondary"
+                            className="text-[10px] h-4 px-1.5"
+                          >
+                            {entryCount}
+                          </Badge>
+                          {hasError && (
+                            <Badge
+                              variant="destructive"
+                              className="text-[10px] h-4 px-1.5"
+                            >
+                              Error
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {stepInfo.summary}
+                        </p>
+                      </div>
+                      {onFocusStep && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onFocusStep(group.step);
+                          }}
+                        >
+                          Focus
+                        </Button>
+                      )}
+                    </button>
+
+                    {expandedSteps.has(group.step) && (
+                      <div className="border-t bg-muted/20 p-4 space-y-3">
+                        {(() => {
+                          if (group.step === flowState.currentStep) {
+                            // Top-level callout covers the current step.
+                            return null;
+                          }
+                          const erroredEntry = latestErroredHttpEntry(
+                            group.httpEntries
+                          );
+                          if (!erroredEntry) return null;
+                          const guidance = getXAAErrorGuidance({
+                            step: group.step,
+                            httpEntry: erroredEntry,
+                          });
+                          if (!guidance) return null;
+                          return (
+                            <GuidanceCallout
+                              guidance={guidance}
+                              onConfigure={actions.onConfigure}
+                              onShowBootstrap={actions.onShowBootstrap}
+                              onReset={actions.onReset}
+                            />
+                          );
+                        })()}
+
+                        {group.infoEntries.map((entry) => (
+                          <InfoLogEntry
+                            key={entry.id}
+                            label={entry.label}
+                            timestamp={entry.timestamp}
+                            data={entry.data}
+                            level={entry.level}
+                            error={entry.error}
+                          />
+                        ))}
+
+                        {group.httpEntries.map((entry) => (
+                          <HTTPHistoryEntry
+                            key={`${entry.timestamp}-${entry.request.url}`}
+                            method={entry.request.method}
+                            url={entry.request.url}
+                            status={entry.response?.status}
+                            statusText={entry.response?.statusText}
+                            duration={entry.duration}
+                            requestHeaders={entry.request.headers}
+                            requestBody={entry.request.body}
+                            responseHeaders={entry.response?.headers}
+                            responseBody={entry.response?.body}
+                            error={entry.error}
+                            step={entry.step}
+                          />
+                        ))}
+
+                        {stepInfo.teachableMoments?.length ? (
+                          <TeachableMoments
+                            moments={stepInfo.teachableMoments}
+                          />
+                        ) : null}
+                      </div>
                     )}
                   </div>
-                  <StatusIcon className={status.className} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-semibold">
-                        {index + 1}. {stepInfo.title}
-                      </span>
-                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-                        {entryCount}
-                      </Badge>
-                      {hasError && (
-                        <Badge
-                          variant="destructive"
-                          className="text-[10px] h-4 px-1.5"
-                        >
-                          Error
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {stepInfo.summary}
-                    </p>
-                  </div>
-                  {onFocusStep && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onFocusStep(group.step);
-                      }}
-                    >
-                      Focus
-                    </Button>
-                  )}
-                </button>
-
-                {expandedSteps.has(group.step) && (
-                  <div className="border-t bg-muted/20 p-4 space-y-3">
-                    {stepInfo.teachableMoments?.length ? (
-                      <div className="space-y-1">
-                        {stepInfo.teachableMoments.map((moment) => (
-                          <p
-                            key={moment}
-                            className="text-xs text-muted-foreground"
-                          >
-                            {moment}
-                          </p>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    {(() => {
-                      if (group.step === flowState.currentStep) {
-                        // Top-level callout covers the current step.
-                        return null;
-                      }
-                      const erroredEntry = latestErroredHttpEntry(
-                        group.httpEntries,
-                      );
-                      if (!erroredEntry) return null;
-                      const guidance = getXAAErrorGuidance({
-                        step: group.step,
-                        httpEntry: erroredEntry,
-                      });
-                      if (!guidance) return null;
-                      return (
-                        <GuidanceCallout
-                          guidance={guidance}
-                          onConfigure={actions.onConfigure}
-                          onShowBootstrap={actions.onShowBootstrap}
-                          onReset={actions.onReset}
-                        />
-                      );
-                    })()}
-
-                    {group.infoEntries.map((entry) => (
-                      <InfoLogEntry
-                        key={entry.id}
-                        label={entry.label}
-                        timestamp={entry.timestamp}
-                        data={entry.data}
-                        level={entry.level}
-                        error={entry.error}
-                      />
-                    ))}
-
-                    {group.httpEntries.map((entry) => (
-                      <HTTPHistoryEntry
-                        key={`${entry.timestamp}-${entry.request.url}`}
-                        method={entry.request.method}
-                        url={entry.request.url}
-                        status={entry.response?.status}
-                        statusText={entry.response?.statusText}
-                        duration={entry.duration}
-                        requestHeaders={entry.request.headers}
-                        requestBody={entry.request.body}
-                        responseHeaders={entry.response?.headers}
-                        responseBody={entry.response?.body}
-                        error={entry.error}
-                        step={entry.step}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })
+                );
+              })}
+            </div>
+          ))
         )}
 
-        {hasProfile && groups.length > 0 && flowState.currentStep !== "complete" && (
-          <div className="text-xs text-muted-foreground">
-            Remaining steps:{" "}
-            {
-              XAA_STEP_ORDER.filter(
-                (step) => getXAAStepIndex(step) > currentStepIndex,
-              ).length
-            }
-          </div>
-        )}
+        {hasProfile &&
+          groups.length > 0 &&
+          flowState.currentStep !== "complete" && (
+            <div className="text-xs text-muted-foreground">
+              Remaining steps:{" "}
+              {
+                XAA_STEP_ORDER.filter(
+                  (step) => getXAAStepIndex(step) > currentStepIndex
+                ).length
+              }
+            </div>
+          )}
       </div>
     </div>
   );
