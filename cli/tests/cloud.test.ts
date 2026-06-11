@@ -177,7 +177,7 @@ async function startCloudFixture(): Promise<{
     res.setHeader("content-type", "application/json");
 
     if (url.pathname === "/api/v1/projects") {
-      res.end(JSON.stringify({ items: PROJECTS }));
+      res.end(JSON.stringify({ items: PROJECTS, nextCursor: "cursor-1" }));
       return;
     }
     if (url.pathname === "/api/v1/projects/proj-alpha/servers") {
@@ -313,6 +313,57 @@ test("cloud commands honor the global timeout option", async () => {
   }
 });
 
+test("command-level deadline spanning multiple requests still reports TIMEOUT", async () => {
+  // Each request stays under the per-request budget; the OVERALL command
+  // deadline fires during the second one. The command controller's armed
+  // PlatformApiError must surface (not a bare AbortError -> INTERNAL_ERROR).
+  const server: Server = createServer((req, res) => {
+    setTimeout(() => {
+      if (!res.destroyed) {
+        const url = new URL(req.url ?? "/", "http://fixture");
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify(
+            url.pathname === "/api/v1/projects"
+              ? { items: PROJECTS }
+              : { items: [] },
+          ),
+        );
+      }
+    }, 100);
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fixture server has no address");
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...cloudArgv(baseUrl, "servers", "status"),
+          "--timeout",
+          "150",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stderr);
+    assert.equal(payload.error.code, "TIMEOUT");
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("cloud projects list emits items as JSON and a table as human output", async () => {
   const fixture = await startCloudFixture();
   try {
@@ -331,6 +382,8 @@ test("cloud projects list emits items as JSON and a table as human output", asyn
       payload.items.map((project: { id: string }) => project.id),
       ["proj-alpha", "proj-beta"],
     );
+    // Operation payload passthrough: pagination fields are preserved.
+    assert.equal(payload.nextCursor, "cursor-1");
     assert.equal(fixture.authHeaders[0], "Bearer sk_test");
 
     const humanRun = await captureProcessOutput(() =>

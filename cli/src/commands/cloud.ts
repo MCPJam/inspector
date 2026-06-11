@@ -55,6 +55,15 @@ async function runCloudCommand<TOutput>(
     const { client } = buildPlatformClient({ ...options, timeoutMs });
     return await execute({ client, signal: controller.signal });
   } catch (error) {
+    // When OUR deadline fired, surface the armed TIMEOUT error: depending
+    // on the fetch implementation, the rejection may be a bare AbortError
+    // that would otherwise map to INTERNAL_ERROR.
+    if (
+      controller.signal.aborted &&
+      controller.signal.reason instanceof PlatformApiError
+    ) {
+      throw toCliError(controller.signal.reason);
+    }
     throw toCliError(error);
   } finally {
     clearTimeout(timeoutHandle);
@@ -86,7 +95,9 @@ export function registerCloudCommands(program: Command): void {
     if (globalOptions.format === "human") {
       process.stdout.write(`${formatProjectsHuman(result.items)}\n`);
     } else {
-      writeResult({ items: result.items }, globalOptions.format);
+      // Operation payload verbatim — keeps pagination fields like
+      // nextCursor, matching the sibling commands and the MCP tool.
+      writeResult(result, globalOptions.format);
     }
   });
 
