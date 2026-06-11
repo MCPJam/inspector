@@ -95,12 +95,12 @@ describe("resolveHostTools — computer-backed bash", () => {
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("skips bash for guest actors (advertise-time gate)", () => {
+  it("advertises bash to guest actors too (cost is contained backend-side)", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
       { ...ctx, isGuest: true }
     );
-    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+    expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
   });
 
   it("does NOT advertise bash off the computer alone — the id must be granted", () => {

@@ -20,7 +20,8 @@ export type BillingLimitName =
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
-  | "insightsPerDay";
+  | "insightsPerDay"
+  | "computerStartsPerDay";
 
 /** Mirrors backend premiumness gate keys exactly. */
 export type PremiumnessGateKey =

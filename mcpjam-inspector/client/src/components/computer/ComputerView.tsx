@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -9,7 +10,11 @@ import {
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
-import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  getBillingErrorMessage,
+  isComputerStartLimitError,
+} from "@/lib/billing-entitlements";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { ComputerStatusChip } from "./ComputerStatusChip";
 import { ComputerTerminal } from "./ComputerTerminal";
 
@@ -30,6 +35,7 @@ export function ComputerView({
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
   const mintTerminalToken = useMintTerminalToken();
+  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const terminalTheme = themeMode === "dark" ? "dark" : "light";
 
@@ -56,6 +62,9 @@ export function ComputerView({
 
   const openTerminal = useCallback(async () => {
     if (!effectiveProjectId) return;
+    posthog?.capture("computer_terminal_opened", {
+      computer_status: liveStatus ?? "none",
+    });
     setTerminalOpen(true);
     if (liveStatus !== "ready") {
       // Provision-on-first-use / wake; the live status query then drives the
@@ -65,14 +74,21 @@ export function ComputerView({
         await reserve({ projectId: effectiveProjectId });
       } catch (err) {
         setTerminalOpen(false);
-        toast.error(
-          getBillingErrorMessage(err, "Could not start the computer.")
-        );
+        if (isComputerStartLimitError(err)) {
+          // Daily start cap — the limit dialog carries the conversion CTA
+          // (sign-in for guests, top-up for signed-in users).
+          posthog?.capture("computer_start_limit_hit");
+          useMCPJamLimitDialogStore.getState().notifyLimitHit();
+        } else {
+          toast.error(
+            getBillingErrorMessage(err, "Could not start the computer.")
+          );
+        }
       } finally {
         setStarting(false);
       }
     }
-  }, [effectiveProjectId, liveStatus, reserve]);
+  }, [effectiveProjectId, liveStatus, posthog, reserve]);
 
   const onDelete = useCallback(async () => {
     if (!effectiveProjectId) return;
