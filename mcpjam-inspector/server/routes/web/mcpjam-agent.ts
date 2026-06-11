@@ -22,13 +22,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { MCPClientManager, type HttpServerConfig } from "@mcpjam/sdk";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import {
-  WEB_STREAM_TIMEOUT_MS,
-} from "../../config.js";
+import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
-import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
+import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import {
   assertBearerToken,
   readJsonBody,
@@ -107,11 +105,14 @@ mcpjamAgent.post("/", async (c) => {
       // like chat-v2 / eval surfaces, so the id list is fixed here.
       const authHeader = c.req.header("authorization");
       const builtInTools = authHeader
-        ? safeResolveBuiltInTools([WEB_SEARCH_TOOL_NAME], {
-            authHeader,
-            projectId: body.projectId,
-            chatSessionId: body.chatSessionId,
-          })
+        ? resolveHostTools(
+            { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
+            {
+              authHeader,
+              projectId: body.projectId,
+              chatSessionId: body.chatSessionId,
+            }
+          )
         : undefined;
 
       return await streamWebChatTurn({

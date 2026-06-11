@@ -22,7 +22,7 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
-import { safeResolveBuiltInTools } from "../../utils/built-in-tools/registry.js";
+import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import {
   persistChatSessionToConvex,
   type PersistedTurnTrace,
@@ -58,8 +58,14 @@ async function tryUpdateRunWithRetry(
   projectId: string,
   runId: string,
   delta: { succeeded?: number; failed?: number; rateLimited?: number },
-  status: "running" | "completed" | "partial" | "failed" | "rate_limited" | undefined,
-  context: string,
+  status:
+    | "running"
+    | "completed"
+    | "partial"
+    | "failed"
+    | "rate_limited"
+    | undefined,
+  context: string
 ): Promise<void> {
   try {
     await updateRun(
@@ -68,7 +74,7 @@ async function tryUpdateRunWithRetry(
       projectId,
       runId,
       delta,
-      status,
+      status
     );
     return;
   } catch (err) {
@@ -78,7 +84,9 @@ async function tryUpdateRunWithRetry(
       error: err instanceof Error ? err.message : String(err),
     });
   }
-  await new Promise((resolve) => setTimeout(resolve, UPDATE_RUN_RETRY_DELAY_MS));
+  await new Promise((resolve) =>
+    setTimeout(resolve, UPDATE_RUN_RETRY_DELAY_MS)
+  );
   try {
     await updateRun(
       convexHttpUrl,
@@ -86,7 +94,7 @@ async function tryUpdateRunWithRetry(
       projectId,
       runId,
       delta,
-      status,
+      status
     );
   } catch (err) {
     logger.error("[sessionSimulation.runner] updateRun failed after retry", {
@@ -192,14 +200,14 @@ export function getRunningSimulationCount(): number {
  * "running" run.
  */
 export async function shutdownRunningSimulations(
-  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS
 ): Promise<void> {
   const handles = Array.from(runningRuns.entries());
   for (const [, handle] of handles) {
     handle.abort();
   }
   const timeoutPromise = new Promise<void>((resolve) =>
-    setTimeout(resolve, timeoutMs),
+    setTimeout(resolve, timeoutMs)
   );
   await Promise.race([
     Promise.allSettled(handles.map(([, h]) => h.done)),
@@ -217,9 +225,9 @@ export async function shutdownRunningSimulations(
         runId,
         {},
         "failed",
-        "shutdown-straggler",
-      ),
-    ),
+        "shutdown-straggler"
+      )
+    )
   );
 }
 
@@ -227,7 +235,7 @@ export async function startSimulation(
   partial: Omit<RunSimulationOptions, "runId"> & {
     /** Returned by backend `createRun`. */
     runId: string;
-  },
+  }
 ): Promise<void> {
   const controller = new AbortController();
   const composed = composeAbortSignals(partial.abortSignal, controller.signal);
@@ -260,11 +268,9 @@ function composeAbortSignals(
       controller.abort(signal.reason);
       return controller.signal;
     }
-    signal.addEventListener(
-      "abort",
-      () => controller.abort(signal.reason),
-      { once: true },
-    );
+    signal.addEventListener("abort", () => controller.abort(signal.reason), {
+      once: true,
+    });
   }
   return controller.signal;
 }
@@ -311,7 +317,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
           runId,
           error: err instanceof Error ? err.message : String(err),
         });
-      },
+      }
     );
   }, HEARTBEAT_INTERVAL_MS);
 
@@ -356,7 +362,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
             rateLimited: outcome === "rate_limited" ? 1 : 0,
           },
           undefined,
-          "per-session-progress",
+          "per-session-progress"
         );
 
         if (outcome === "rate_limited") {
@@ -374,10 +380,10 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       totalSucceeded === total
         ? "completed"
         : totalSucceeded === 0 && totalFailed === 0 && totalRateLimited > 0
-          ? "rate_limited"
-          : totalSucceeded === 0
-            ? "failed"
-            : "partial";
+        ? "rate_limited"
+        : totalSucceeded === 0
+        ? "failed"
+        : "partial";
     await tryUpdateRunWithRetry(
       convexHttpUrl,
       convexAuthToken,
@@ -385,7 +391,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       runId,
       {},
       status,
-      "final-status",
+      "final-status"
     );
   } catch (error) {
     logger.error("[sessionSimulation.runner] run failed", {
@@ -399,7 +405,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       runId,
       {},
       "failed",
-      "run-failed",
+      "run-failed"
     );
   } finally {
     clearInterval(heartbeat);
@@ -482,11 +488,14 @@ async function runOneSession(args: {
     // Built-in tools from the chatbox host config (e.g. web_search) resolve
     // the same way a real visitor's chat-v2 turn would: billed via Convex
     // against this project, namespaced under the synthetic session id.
-    const builtInTools = safeResolveBuiltInTools(builtInToolIds, {
-      authHeader,
-      projectId,
-      chatSessionId,
-    });
+    const builtInTools = resolveHostTools(
+      { builtInToolIds },
+      {
+        authHeader,
+        projectId,
+        chatSessionId,
+      }
+    );
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -525,7 +534,7 @@ async function runOneSession(args: {
         projectId,
         runId,
         persona.id,
-        lastTranscript,
+        lastTranscript
       );
 
       if (next.endSession) break;
@@ -594,11 +603,12 @@ async function runOneSession(args: {
             ? selectedServerIds.filter((id) => liveManager.hasServer(id))
             : selectedServerIds;
         if (knownIds.length > 0) {
-          toolSnapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
-            liveManager,
-            knownIds,
-            { logPrefix: "sessionSimulation.persist" },
-          );
+          toolSnapshot =
+            await exportConnectedServerToolSnapshotForEvalAuthoring(
+              liveManager,
+              knownIds,
+              { logPrefix: "sessionSimulation.persist" }
+            );
         }
       } catch {
         toolSnapshot = undefined;
@@ -762,7 +772,7 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
   if (!convexUrl) {
     logger.warn(
       "[sessionSimulation.runner] CONVEX_URL not set; skipping widget snapshot capture",
-      { chatSessionId, chatboxId },
+      { chatSessionId, chatboxId }
     );
     return;
   }
@@ -820,19 +830,16 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
             ...(accessVersion !== undefined ? { accessVersion } : {}),
             chatSessionId,
             ...sanitized,
-          },
+          }
         );
       } catch (err) {
-        logger.warn(
-          "[sessionSimulation.runner] createWidgetSnapshot failed",
-          {
-            chatSessionId,
-            toolCallId: snap.toolCallId,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        );
+        logger.warn("[sessionSimulation.runner] createWidgetSnapshot failed", {
+          chatSessionId,
+          toolCallId: snap.toolCallId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    }),
+    })
   );
 }
 
@@ -864,13 +871,16 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
  * the consumer to read the stream before `onFinish` runs).
  */
 export async function drainAssistantTurn(
-  args: Omit<MCPJamHandlerOptions, "onConversationComplete" | "onStreamComplete"> & {
+  args: Omit<
+    MCPJamHandlerOptions,
+    "onConversationComplete" | "onStreamComplete"
+  > & {
     chatSessionId: string;
     /** Resolved provider info for org-BYOK dispatch. Falls back to lookup. */
     modelDefinition: ModelDefinition;
     /** Synthesis run id — stamped onto BYOK usage records for attribution. */
     synthesisRunId: string;
-  },
+  }
 ): Promise<{
   history: ModelMessage[];
   turnTrace: PersistedTurnTrace | undefined;
@@ -889,7 +899,7 @@ export async function drainAssistantTurn(
   const modelIdStr = String(modelDefinition.id);
   const onConversationComplete = (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace,
+    turnTrace: PersistedTurnTrace
   ) => {
     captured = [...fullHistory];
     capturedTurnTrace = turnTrace;
@@ -948,7 +958,7 @@ export async function drainAssistantTurn(
         Object.keys(args.tools as Record<string, unknown>).length > 0
       ) {
         throw new Error(
-          "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime.",
+          "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime."
         );
       }
       response = handleLocalOrgChatModel({
@@ -1036,7 +1046,7 @@ function extractAssistantText(history: ModelMessage[]): string {
           typeof part === "object" &&
           part !== null &&
           (part as { type?: string }).type === "text" &&
-          typeof (part as { text?: unknown }).text === "string",
+          typeof (part as { text?: unknown }).text === "string"
       )
       .map((part) => part.text)
       .join("");

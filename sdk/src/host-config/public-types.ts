@@ -15,6 +15,7 @@
 import type {
   CspDomainSet,
   HostConfigComputer,
+  HostConfigComputerInput,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   HostStyleId,
@@ -35,10 +36,19 @@ export type {
 
 /**
  * Personal cloud workstation attached to a host — one machine per
- * (project, user), surfaced as the chat `bash` tool and the web terminal.
- * `{ kind: "personal", toolset: "bash" }` is the only shape in MVP.
+ * (project, user). This is the RESOURCE attachment only; the capabilities
+ * the model gets on it (e.g. `bash`) are granted via `builtInToolIds`.
+ * `{ kind: "personal" }` is the only shape in MVP.
  */
 export type HostComputer = HostConfigComputer;
+
+/**
+ * Input-tolerant computer shape for the Host builder / JSON snapshots: the
+ * legacy `toolset` key is accepted (and dropped by the canonicalizer) so
+ * pre-existing programmatic callers keep compiling. New code should write
+ * `{ kind: "personal" }` and grant capabilities via `builtInToolIds`.
+ */
+export type HostComputerInput = HostConfigComputerInput;
 
 /** Per-host connection defaults (headers + request timeout in ms). */
 export type HostConnectionDefaults = HostConfigConnectionDefaults;
