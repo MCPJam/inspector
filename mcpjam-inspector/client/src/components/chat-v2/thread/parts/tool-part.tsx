@@ -45,6 +45,7 @@ import {
 import { CspWorkbench } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
+import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
@@ -511,12 +512,13 @@ export function ToolPart({
 
   // Device-flow login URLs surfaced by the computer `bash` tool (e.g. from
   // `gh auth login`). The tool lifts them into a structured `authUrls` field
-  // so the user can click instead of hunting through scrollback.
+  // so the user can click instead of hunting through scrollback. Tool output
+  // is UNTRUSTED, so each candidate is re-validated to a safe http(s) link
+  // here — never render `javascript:`/`data:`/etc. as a clickable link.
   const renderAuthUrls = () => {
-    const authUrls: unknown = (outputData as { authUrls?: unknown })?.authUrls;
-    const urls = Array.isArray(authUrls)
-      ? authUrls.filter((u): u is string => typeof u === "string")
-      : [];
+    const urls = filterSafeExternalLinkUrls(
+      (outputData as { authUrls?: unknown })?.authUrls
+    );
     if (urls.length === 0) return null;
     return (
       <div className="space-y-1" data-testid="tool-part-auth-urls">

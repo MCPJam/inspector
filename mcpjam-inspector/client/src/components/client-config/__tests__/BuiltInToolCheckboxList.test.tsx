@@ -82,4 +82,57 @@ describe("BuiltInToolCheckboxList — computer gating", () => {
     fireEvent.click(checkboxFor(container, "Web Search"));
     expect(onChange).toHaveBeenCalledWith(["web_search"]);
   });
+
+  it("keeps a stale selected-but-blocked tool removable (repairs invalid state)", () => {
+    // bash already selected with no computer attached: must stay unchecking-
+    // able so the user can fix the invalid draft.
+    const onChange = vi.fn();
+    const { container } = render(
+      <BuiltInToolCheckboxList
+        label="Built-in tools"
+        selected={["bash"]}
+        available={[BASH]}
+        computerAttached={false}
+        onChange={onChange}
+      />
+    );
+    const bash = checkboxFor(container, "Bash");
+    expect(bash.checked).toBe(true);
+    expect(bash.disabled).toBe(false); // removable
+    fireEvent.click(bash);
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+
+  it("disallows computer-backed tools entirely on eval suites, but stale ones stay removable", () => {
+    const onChange = vi.fn();
+    const { container, getByText, rerender } = render(
+      <BuiltInToolCheckboxList
+        label="Built-in tools"
+        selected={[]}
+        available={[BASH]}
+        computerAttached
+        computerToolsDisallowed
+        onChange={onChange}
+      />
+    );
+    // Even with a (hypothetical) computer attached, eval disallows it.
+    expect(checkboxFor(container, "Bash").disabled).toBe(true);
+    expect(getByText(/Not available for eval suites/i)).toBeTruthy();
+
+    // A stale selected one is still removable.
+    rerender(
+      <BuiltInToolCheckboxList
+        label="Built-in tools"
+        selected={["bash"]}
+        available={[BASH]}
+        computerAttached={false}
+        computerToolsDisallowed
+        onChange={onChange}
+      />
+    );
+    const bash = checkboxFor(container, "Bash");
+    expect(bash.disabled).toBe(false);
+    fireEvent.click(bash);
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
 });

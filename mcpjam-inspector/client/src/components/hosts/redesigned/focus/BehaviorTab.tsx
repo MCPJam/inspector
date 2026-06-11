@@ -23,6 +23,11 @@ import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
+import {
+  attachComputerPatch,
+  catalogHasComputerBackedTool,
+  detachComputerPatch,
+} from "@/lib/host-config-computer";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -33,14 +38,14 @@ import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolC
 // stays distinct from an explicit on/off override.
 type ProgressiveTriState = "auto" | "on" | "off";
 function progressiveValueToTri(
-  value: boolean | undefined,
+  value: boolean | undefined
 ): ProgressiveTriState {
   if (value === true) return "on";
   if (value === false) return "off";
   return "auto";
 }
 function triToProgressiveValue(
-  value: ProgressiveTriState,
+  value: ProgressiveTriState
 ): boolean | undefined {
   if (value === "on") return true;
   if (value === "off") return false;
@@ -50,7 +55,7 @@ function triToProgressiveValue(
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
   /**
@@ -91,6 +96,10 @@ export function BehaviorTab({
   // FocusBlock entirely in both cases so empty installs don't render a dead card.
   const builtInToolCatalog = useBuiltInToolCatalog();
   const showBuiltInTools = (builtInToolCatalog?.length ?? 0) > 0;
+  // The personal-computer toggle appears only once the deployment exposes a
+  // computer-backed tool (the `bash` row ships disabled until launch).
+  const showComputerToggle =
+    showBuiltInTools && catalogHasComputerBackedTool(builtInToolCatalog);
 
   // Labels and descriptions are sourced from the shared field schema so
   // the focus tab and the cross-host comparison matrix stay in sync.
@@ -208,8 +217,8 @@ export function BehaviorTab({
                 >
                   Auto lets the chat orchestrator hide the catalog behind{" "}
                   <code>search_mcp_tools</code> / <code>load_mcp_tools</code>{" "}
-                  once the host crosses ~30 tools, 10k tool tokens, or 3% of
-                  the model's context window. On forces it always, Off never.
+                  once the host crosses ~30 tools, 10k tool tokens, or 3% of the
+                  model's context window. On forces it always, Off never.
                 </TooltipContent>
               </Tooltip>
             </span>
@@ -233,7 +242,7 @@ export function BehaviorTab({
                 if (!value) return;
                 update({
                   progressiveToolDiscovery: triToProgressiveValue(
-                    value as ProgressiveTriState,
+                    value as ProgressiveTriState
                   ),
                 });
               }}
@@ -252,15 +261,35 @@ export function BehaviorTab({
             </ToggleGroup>
           }
         />
-
       </FocusBlock>
 
       {showBuiltInTools ? (
         <FocusBlock title="Built-in tools">
+          {showComputerToggle ? (
+            <FieldRow
+              label="Personal computer"
+              description="Attach a per-member cloud workstation (a persistent Linux sandbox). Required by computer-backed tools like Bash."
+              control={
+                <Switch
+                  checked={draft.computer !== undefined}
+                  onCheckedChange={(checked) =>
+                    update(
+                      checked
+                        ? attachComputerPatch()
+                        : detachComputerPatch(draft, builtInToolCatalog)
+                    )
+                  }
+                  aria-label="Personal computer"
+                  disabled={readOnly}
+                />
+              }
+            />
+          ) : null}
           <BuiltInToolCheckboxList
             label="Attached"
             selected={draft.builtInToolIds}
             available={builtInToolCatalog ?? []}
+            computerAttached={draft.computer !== undefined}
             onChange={(builtInToolIds) => update({ builtInToolIds })}
           />
         </FocusBlock>

@@ -6,6 +6,12 @@ import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
  * Presentational multi-checkbox picker for host-managed built-in tools.
  * Mirrors `ServerCheckboxList` (same file family): the parent owns the
  * catalog fetch + the empty-catalog gate, this just renders the toggles.
+ *
+ * Computer-backed tools (`requiresComputer`, e.g. `bash`) are gated to mirror
+ * the backend's write-time invariant in the UI: they can't be *added* unless
+ * a personal computer is attached (or are wholly disallowed on eval suites).
+ * A tool that is already selected but currently blocked stays togglable so
+ * the user can always REMOVE a stale invalid id — only adding is blocked.
  */
 export function BuiltInToolCheckboxList({
   label,
@@ -13,17 +19,20 @@ export function BuiltInToolCheckboxList({
   available,
   onChange,
   computerAttached = false,
+  computerToolsDisallowed = false,
 }: {
   label: string;
   selected: string[];
   available: ReadonlyArray<BuiltInToolCatalogEntry>;
   onChange: (ids: string[]) => void;
-  /**
-   * Whether the host has a personal `computer` attached. Computer-backed
-   * tools (`requiresComputer`) are disabled until it is — checking one
-   * without the resource is the exact draft the backend rejects on save.
-   */
+  /** Whether the host has a personal `computer` attached. */
   computerAttached?: boolean;
+  /**
+   * When true, computer-backed tools can never be used on this surface at all
+   * (eval suites — the backend aborts eval runs whose host carries a
+   * computer). They render blocked regardless of `computerAttached`.
+   */
+  computerToolsDisallowed?: boolean;
 }) {
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const toggle = useCallback(
@@ -53,29 +62,36 @@ export function BuiltInToolCheckboxList({
       <Label>{label}</Label>
       <div className="grid gap-1.5 max-h-40 overflow-y-auto rounded border px-2 py-2">
         {available.map((tool) => {
-          const blockedOnComputer = Boolean(
-            tool.requiresComputer && !computerAttached
-          );
+          const isSelected = selectedSet.has(tool.id);
+          let blockReason: string | null = null;
+          if (tool.requiresComputer) {
+            if (computerToolsDisallowed) {
+              blockReason = "Not available for eval suites.";
+            } else if (!computerAttached) {
+              blockReason = "Requires a personal computer (attach it above).";
+            }
+          }
+          const blocked = blockReason !== null;
+          // A blocked tool that is already selected stays removable, so a
+          // stale invalid id (e.g. `bash` saved without a computer) can always
+          // be unchecked. Only adding a blocked tool is disabled.
+          const disabled = blocked && !isSelected;
           return (
             <label
               key={tool.id}
               className={
-                blockedOnComputer
+                disabled
                   ? "flex items-start gap-2 text-sm cursor-not-allowed opacity-60"
                   : "flex items-start gap-2 text-sm cursor-pointer"
               }
-              title={
-                blockedOnComputer
-                  ? "Attach a personal computer to enable this tool"
-                  : undefined
-              }
+              title={disabled ? blockReason ?? undefined : undefined}
             >
               <input
                 type="checkbox"
                 className="mt-0.5"
-                checked={selectedSet.has(tool.id)}
-                disabled={blockedOnComputer}
-                onChange={() => toggle(tool.id, blockedOnComputer)}
+                checked={isSelected}
+                disabled={disabled}
+                onChange={() => toggle(tool.id, disabled)}
               />
               <span className="grid">
                 <span>{tool.displayLabel}</span>
@@ -84,9 +100,10 @@ export function BuiltInToolCheckboxList({
                     {tool.description}
                   </span>
                 ) : null}
-                {blockedOnComputer ? (
+                {blocked ? (
                   <span className="text-xs text-amber-600 dark:text-amber-500">
-                    Requires a personal computer (attach it above).
+                    {blockReason}
+                    {isSelected ? " Uncheck to remove." : ""}
                   </span>
                 ) : null}
               </span>

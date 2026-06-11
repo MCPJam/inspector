@@ -58,6 +58,11 @@ import {
 } from "@/lib/client-styles";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { BuiltInToolCheckboxList } from "./BuiltInToolCheckboxList";
+import {
+  attachComputerPatch,
+  catalogHasComputerBackedTool,
+  detachComputerPatch,
+} from "@/lib/host-config-computer";
 
 export type HostConfigEditorOwner =
   | "project-default"
@@ -158,12 +163,19 @@ export function ClientConfigEditor({
   const builtInToolCatalog = useBuiltInToolCatalog();
   const showBuiltInToolsSection =
     owner !== "connection-only" && (builtInToolCatalog?.length ?? 0) > 0;
+  // Eval suites can never use a personal computer: the backend aborts eval
+  // runs whose resolved host config carries one. So hide the toggle and mark
+  // computer-backed tools disallowed (they render blocked, but a stale id
+  // stays removable).
+  const computerToolsDisallowed = owner === "eval-suite";
   // The personal-computer toggle only appears once the deployment exposes a
   // computer-backed tool in the catalog (the `bash` row ships disabled until
-  // launch, so this stays hidden until then — no dead toggle pre-launch).
+  // launch, so this stays hidden until then — no dead toggle pre-launch) and
+  // the surface actually allows a computer.
   const showComputerToggle =
     showBuiltInToolsSection &&
-    (builtInToolCatalog ?? []).some((t) => t.requiresComputer);
+    !computerToolsDisallowed &&
+    catalogHasComputerBackedTool(builtInToolCatalog);
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
 
@@ -372,26 +384,13 @@ export function ClientConfigEditor({
                 <Switch
                   id={`${reactId}-computer`}
                   checked={value.computer !== undefined}
-                  onCheckedChange={(checked) => {
-                    if (checked) {
-                      update({ computer: { kind: "personal" } });
-                    } else {
-                      // Detaching the resource must also drop any
-                      // computer-backed ids, or the save would fail the
-                      // backend's requiresComputer invariant.
-                      const computerBacked = new Set(
-                        (builtInToolCatalog ?? [])
-                          .filter((t) => t.requiresComputer)
-                          .map((t) => t.id)
-                      );
-                      update({
-                        computer: undefined,
-                        builtInToolIds: value.builtInToolIds.filter(
-                          (id) => !computerBacked.has(id)
-                        ),
-                      });
-                    }
-                  }}
+                  onCheckedChange={(checked) =>
+                    update(
+                      checked
+                        ? attachComputerPatch()
+                        : detachComputerPatch(value, builtInToolCatalog)
+                    )
+                  }
                 />
               </div>
             ) : null}
@@ -400,6 +399,7 @@ export function ClientConfigEditor({
               selected={value.builtInToolIds}
               available={builtInToolCatalog ?? []}
               computerAttached={value.computer !== undefined}
+              computerToolsDisallowed={computerToolsDisallowed}
               onChange={(builtInToolIds) => update({ builtInToolIds })}
             />
           </section>
