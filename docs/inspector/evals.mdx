@@ -117,6 +117,10 @@ Each eval suite has a **Default Execution Config** section that controls the mod
 
 Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
 
+<Note>
+  **Personal computers are not available for eval suites.** The personal computer toggle and computer-backed tools (such as Bash) are hidden and blocked in the suite execution config editor. If the project's default host config has a computer attached, resetting a suite to that default automatically strips the computer and any computer-backed tool ids — so eval runs are never aborted by the backend's computer restriction.
+</Note>
+
 ### How suite defaults apply to test cases
 
 The suite-level **system prompt** and **temperature** are runtime defaults: when a test case does not set its own system prompt or temperature, the suite values are used for that iteration. A per-case override always wins — the suite default only fills the gap.
