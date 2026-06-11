@@ -7,26 +7,22 @@ declare namespace Cloudflare {
 	}
 	interface PreviewEnv {
 		AUTHKIT_DOMAIN: "dynamic-echo-14-staging.authkit.app";
-		CONVEX_URL: "https://proper-clownfish-150.convex.cloud";
-		CONVEX_HTTP_URL: "https://proper-clownfish-150.convex.site";
+		PLATFORM_API_URL: "https://staging.mcpjam.com/api/v1";
 		MCP_OBJECT: DurableObjectNamespace<import("./src/index").McpJamMcpServer>;
 	}
 	interface StagingEnv {
 		AUTHKIT_DOMAIN: "dynamic-echo-14-staging.authkit.app";
-		CONVEX_URL: "https://proper-clownfish-150.convex.cloud";
-		CONVEX_HTTP_URL: "https://proper-clownfish-150.convex.site";
+		PLATFORM_API_URL: "https://staging.mcpjam.com/api/v1";
 		MCP_OBJECT: DurableObjectNamespace<import("./src/index").McpJamMcpServer>;
 	}
 	interface ProductionEnv {
 		AUTHKIT_DOMAIN: "login.mcpjam.com";
-		CONVEX_URL: "https://outstanding-fennec-304.convex.cloud";
-		CONVEX_HTTP_URL: "https://outstanding-fennec-304.convex.site";
+		PLATFORM_API_URL: "https://app.mcpjam.com/api/v1";
 		MCP_OBJECT: DurableObjectNamespace<import("./src/index").McpJamMcpServer>;
 	}
 	interface Env {
 		AUTHKIT_DOMAIN?: "dynamic-echo-14-staging.authkit.app" | "login.mcpjam.com";
-		CONVEX_URL?: "https://proper-clownfish-150.convex.cloud" | "https://outstanding-fennec-304.convex.cloud";
-		CONVEX_HTTP_URL?: "https://proper-clownfish-150.convex.site" | "https://outstanding-fennec-304.convex.site";
+		PLATFORM_API_URL?: "https://staging.mcpjam.com/api/v1" | "https://app.mcpjam.com/api/v1";
 		MCP_OBJECT?: DurableObjectNamespace<import("./src/index").McpJamMcpServer>;
 	}
 }

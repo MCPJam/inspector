@@ -21,6 +21,8 @@ export default defineConfig({
     "src/host-config/index.ts",
     // Low-level first-party entry used by the backend and SDK tooling.
     "src/host-config/internal.ts",
+    // Runtime-agnostic Platform API client (Workers/browser/Node safe).
+    "src/platform/index.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],

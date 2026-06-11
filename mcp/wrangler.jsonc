@@ -25,8 +25,9 @@
       "workers_dev": true,
       "vars": {
         "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
-        "CONVEX_URL": "https://proper-clownfish-150.convex.cloud",
-        "CONVEX_HTTP_URL": "https://proper-clownfish-150.convex.site"
+        // Staging Inspector API: the worker's AuthKit JWTs are staging-tenant
+        // tokens, which the production app would reject with 401.
+        "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1"
       },
       "migrations": [
         {
@@ -53,8 +54,7 @@
       ],
       "vars": {
         "AUTHKIT_DOMAIN": "dynamic-echo-14-staging.authkit.app",
-        "CONVEX_URL": "https://proper-clownfish-150.convex.cloud",
-        "CONVEX_HTTP_URL": "https://proper-clownfish-150.convex.site"
+        "PLATFORM_API_URL": "https://staging.mcpjam.com/api/v1"
       },
       "migrations": [
         {
@@ -83,8 +83,7 @@
       ],
       "vars": {
         "AUTHKIT_DOMAIN": "login.mcpjam.com",
-        "CONVEX_URL": "https://outstanding-fennec-304.convex.cloud",
-        "CONVEX_HTTP_URL": "https://outstanding-fennec-304.convex.site"
+        "PLATFORM_API_URL": "https://app.mcpjam.com/api/v1"
       },
       "migrations": [
         {
