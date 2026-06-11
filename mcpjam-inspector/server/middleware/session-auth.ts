@@ -52,6 +52,11 @@ const UNPROTECTED_PREFIXES = [
   "/api/mcp/adapter-http/", // HTTP adapter for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/manager-http/", // HTTP manager for tunneled MCP clients - auth via URL secrecy
   "/api/mcp/xaa/.well-known/", // Public XAA issuer discovery + JWKS for external authorization servers
+  // CLI OAuth bridge: public front-channel (config metadata + browser
+  // redirects through AuthKit). Returns no tokens or sensitive data; the
+  // callback's redirect target is integrity-protected by an HMAC-signed
+  // state and restricted to loopback (see routes/cli-auth/state.ts).
+  "/api/cli/auth/",
 ];
 
 /**

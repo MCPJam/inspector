@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
+import { registerAuthCommands } from "./commands/auth.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerPromptCommands } from "./commands/prompts.js";
@@ -69,6 +70,7 @@ export async function main(
   registerAppsCommands(program);
   registerOAuthCommands(program);
   registerProtocolCommands(program);
+  registerAuthCommands(program);
   registerInspectorCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 

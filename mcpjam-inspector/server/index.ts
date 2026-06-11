@@ -103,6 +103,7 @@ import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
+import cliAuthRoutes from "./routes/cli-auth/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
@@ -382,6 +383,13 @@ app.use(
   })
 );
 app.route("/api/v1", v1Routes);
+
+// CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+// auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
+// disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
+// set. Mirror of the mount in server/app.ts::createHonoApp — both
+// production entries must wire this up.
+app.route("/api/cli/auth", cliAuthRoutes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
