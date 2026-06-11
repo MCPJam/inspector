@@ -522,7 +522,12 @@ export function ServerDetailModal({
             projectId,
             serverId: hostedServerId,
           });
-          revealedHeaders = secrets.headers ?? {};
+          // A null headers payload means the stored set couldn't be read;
+          // merging against it would wipe the saved headers, so fail closed.
+          if (!secrets.headers) {
+            throw new Error("Stored headers missing from reveal response");
+          }
+          revealedHeaders = secrets.headers;
         } catch {
           toast.error(
             "Couldn't load this server's saved headers to apply this change. Reveal saved headers in Advanced settings and try again."
