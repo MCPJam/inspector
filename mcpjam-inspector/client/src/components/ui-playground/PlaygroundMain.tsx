@@ -2767,7 +2767,9 @@ export function PlaygroundMain({
   const showFullscreenChatOverlay =
     displayMode === "fullscreen" &&
     isWidgetFullscreen &&
-    storeDeviceType === "desktop" &&
+    // "fill" is the desktop-like default layout — it keeps the overlay
+    // composer/chat affordance fullscreen widgets had under "desktop".
+    (storeDeviceType === "fill" || storeDeviceType === "desktop") &&
     !isWidgetFullTakeover;
 
   useEffect(() => {
