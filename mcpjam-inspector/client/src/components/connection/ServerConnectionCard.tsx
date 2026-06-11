@@ -64,6 +64,7 @@ import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
+import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -662,6 +663,17 @@ export function ServerConnectionCard({
               )}
             </button>
           </div>
+
+          {isConnected && (
+            <HostCompatStrip
+              server={server}
+              onOpenDetails={
+                isDetailModalEnabled
+                  ? () => openDetailModal("compatibility", "card_click")
+                  : undefined
+              }
+            />
+          )}
 
           {server.connectionStatus === "oauth-flow" && (
             <div
