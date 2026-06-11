@@ -25,9 +25,9 @@ welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
   you'll be asked to sign in and then land right back on the API keys page.
 </Card>
 
-The MCPJam API lets you run the inspector's live diagnostics against MCP
-servers saved in your [hosted](/hosted/overview) projects — from CI, scripts,
-or your own agents — without opening the UI.
+The MCPJam API lets you run the inspector's live diagnostics and write
+operations against MCP servers saved in your [hosted](/hosted/overview)
+projects — from CI, scripts, or your own agents — without opening the UI.
 
 What you can do with it today:
 
@@ -37,10 +37,13 @@ What you can do with it today:
 - **List tools, prompts, and resources** — the server's MCP primitives
 - **Read a resource** by URI
 - **Export a full snapshot** — tools, resources, and prompts as one JSON document
+- **Call a tool** — execute a tool and get the MCP result back directly
+- **Render a prompt** — call `prompts/get` with arguments and receive the messages
+- **Run eval suites** — start an async eval run and poll for status, per-iteration results, token usage, and traces
+- **Import OAuth tokens** — push tokens your agent obtained to close the `OAUTH_REQUIRED` loop
 
 All endpoints operate on servers you have already added to a project in the
-hosted inspector. Executing tools, running evals, and managing keys are **not**
-part of the API yet — see [Not in the API yet](#not-in-the-api-yet).
+hosted inspector. Managing keys is **not** part of the API — see [Not in the API yet](#not-in-the-api-yet).
 
 ## Base URL
 
