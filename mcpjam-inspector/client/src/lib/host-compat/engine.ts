@@ -24,11 +24,19 @@ const hasAdvertisedCapability = (
   key: string,
 ): boolean => capabilities[key] != null;
 
+export type CompatDerivationOptions = {
+  /** An ngrok tunnel is live, exposing a stdio server over HTTPS. */
+  hasActiveTunnel?: boolean;
+};
+
 export function deriveServerRequirements(
   server: ServerWithName,
   toolsData?: ListToolsResultWithMetadata | null,
+  options?: CompatDerivationOptions,
 ): ServerRequirements {
   const transport = "url" in server.config ? "http" : "stdio";
+  const reachableRemotely =
+    transport === "http" || options?.hasActiveTunnel === true;
   const usesOAuth = server.useOAuth === true || server.oauthTokens != null;
 
   const unknownDimensions: string[] = [];
@@ -76,6 +84,7 @@ export function deriveServerRequirements(
 
   return {
     transport,
+    reachableRemotely,
     usesOAuth,
     protocolVersion: server.initializationInfo?.protocolVersion,
     capabilities,
@@ -96,7 +105,13 @@ export function evaluateHostCompat(
 ): HostCompatReport {
   const findings: CompatFinding[] = [];
 
-  if (requirements.transport === "stdio" && !profile.transports.stdio) {
+  // A stdio server with an active tunnel is reachable over HTTPS, so it no
+  // longer blocks on remote-only hosts.
+  if (
+    requirements.transport === "stdio" &&
+    !profile.transports.stdio &&
+    !requirements.reachableRemotely
+  ) {
     findings.push({
       severity: "blocker",
       title: "Local server unreachable",
@@ -206,8 +221,9 @@ export type HostCompatEvaluation = {
 export function evaluateAllHosts(
   server: ServerWithName,
   toolsData?: ListToolsResultWithMetadata | null,
+  options?: CompatDerivationOptions,
 ): HostCompatEvaluation {
-  const requirements = deriveServerRequirements(server, toolsData);
+  const requirements = deriveServerRequirements(server, toolsData, options);
   return {
     requirements,
     reports: HOST_COMPAT_PROFILES.map((profile) =>

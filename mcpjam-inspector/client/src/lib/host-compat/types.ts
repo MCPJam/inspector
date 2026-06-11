@@ -46,6 +46,13 @@ export type HostCompatReport = {
  */
 export type ServerRequirements = {
   transport: "stdio" | "http";
+  /**
+   * Whether a remote-only host could reach this server. True for HTTP
+   * servers, and for stdio servers that have an active tunnel (ngrok)
+   * exposing them over HTTPS. Drives the transport blocker so a tunnel the
+   * user created from the card actually clears the verdict.
+   */
+  reachableRemotely: boolean;
   usesOAuth: boolean;
   protocolVersion?: string;
   /** undefined = not connected yet (capabilities unknown, not "none"). */

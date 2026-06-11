@@ -100,6 +100,21 @@ describe("evaluateHostCompat", () => {
     );
   });
 
+  it("clears the stdio blocker on remote-only hosts when a tunnel is active", () => {
+    const reqs = deriveServerRequirements(stdioServer, null, {
+      hasActiveTunnel: true,
+    });
+    expect(reqs.reachableRemotely).toBe(true);
+    // ChatGPT/Copilot are remote-only; with a tunnel they're no longer
+    // blocked (the remaining dimensions are merely unknown).
+    expect(evaluateHostCompat(reqs, CHATGPT_COMPAT_PROFILE).verdict).not.toBe(
+      "blocked",
+    );
+    expect(evaluateHostCompat(reqs, COPILOT_COMPAT_PROFILE).verdict).not.toBe(
+      "blocked",
+    );
+  });
+
   it("degrades OpenAI-only widgets on MCP-Apps-only hosts, with remediation", () => {
     const reqs = deriveServerRequirements(
       baseServer({ initializationInfo: { serverCapabilities: { tools: {} } } }),

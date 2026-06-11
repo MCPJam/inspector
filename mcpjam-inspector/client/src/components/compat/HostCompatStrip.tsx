@@ -127,12 +127,17 @@ export function HostCompatStripView({
  */
 export function HostCompatStrip({
   server,
+  hasTunnel,
   onOpenDetails,
 }: {
   server: ServerWithName;
+  /** Active ngrok tunnel — makes a stdio server remote-reachable. */
+  hasTunnel?: boolean;
   onOpenDetails?: () => void;
 }) {
-  const { reports } = useHostCompatReports(server);
+  const { reports } = useHostCompatReports(server, {
+    hasActiveTunnel: hasTunnel,
+  });
   return (
     <HostCompatStripView
       serverName={server.name}

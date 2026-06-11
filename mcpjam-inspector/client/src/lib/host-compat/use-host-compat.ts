@@ -22,16 +22,21 @@ const TOOLS_FETCH_MAX_ATTEMPTS = 3;
  */
 export function useHostCompatReports(
   server: ServerWithName,
+  options?: { hasActiveTunnel?: boolean },
 ): HostCompatEvaluation {
   const isConnected = server.connectionStatus === "connected";
+  const hasActiveTunnel = options?.hasActiveTunnel === true;
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // Clear any prior server's tools up front so a disconnect or a rename
+    // (server.name change) never evaluates widgets against stale metadata
+    // while the new fetch is in flight.
+    setToolsData(null);
     if (!isConnected) {
-      setToolsData(null);
       return;
     }
 
@@ -58,7 +63,7 @@ export function useHostCompatReports(
   }, [isConnected, server.name]);
 
   return useMemo(
-    () => evaluateAllHosts(server, toolsData),
-    [server, toolsData],
+    () => evaluateAllHosts(server, toolsData, { hasActiveTunnel }),
+    [server, toolsData, hasActiveTunnel],
   );
 }
