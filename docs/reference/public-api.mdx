@@ -1,6 +1,6 @@
 ---
 title: "MCPJam API"
-description: "Programmatic access to live MCP server diagnostics — validate, inspect, and export servers in your MCPJam projects."
+description: "Programmatic access to the MCP servers in your MCPJam projects — diagnostics, tool calls, prompt rendering, and asynchronous eval runs."
 icon: "braces"
 tag: "Preview"
 ---
@@ -25,9 +25,9 @@ welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
   you'll be asked to sign in and then land right back on the API keys page.
 </Card>
 
-The MCPJam API lets you run the inspector's live diagnostics against MCP
-servers saved in your [hosted](/hosted/overview) projects — from CI, scripts,
-or your own agents — without opening the UI.
+The MCPJam API lets you operate the MCP servers saved in your
+[hosted](/hosted/overview) projects — from CI, scripts, or your own agents —
+without opening the UI.
 
 What you can do with it today:
 
@@ -35,12 +35,20 @@ What you can do with it today:
 - **Run the doctor** — the probe → connect → initialize → capabilities workflow
 - **Check OAuth requirements** — does this server need an OAuth grant?
 - **List tools, prompts, and resources** — the server's MCP primitives
+- **Call a tool / render a prompt** — execute primitives and get the MCP result back verbatim
 - **Read a resource** by URI
 - **Export a full snapshot** — tools, resources, and prompts as one JSON document
+- **Run eval suites asynchronously** — create a run, get a `202` + `runId`
+  immediately, then poll status, per-iteration results (tool calls, token
+  usage, latency), and full traces. Runs appear live in the hosted UI,
+  tagged `source: "api"`
+- **Import OAuth tokens** — complete OAuth yourself (e.g. the SDK's
+  `runOAuthLogin`) and push the tokens; subsequent calls inject and refresh
+  them server-side
 
 All endpoints operate on servers you have already added to a project in the
-hosted inspector. Executing tools, running evals, and managing keys are **not**
-part of the API yet — see [Not in the API yet](#not-in-the-api-yet).
+hosted inspector. Managing API keys remains UI-only — see
+[Not in the API yet](#not-in-the-api-yet).
 
 ## Base URL
 
@@ -108,9 +116,9 @@ from [Settings](https://app.mcpjam.com/settings/api-keys).
 
 ## Conventions
 
-**Requests.** All v1 endpoints are `POST` and accept a JSON body. Most accept
-an empty body (`{}`); list endpoints take an optional `cursor`, and
-`resources/read` requires a `uri`.
+**Requests.** Operations on servers are `POST` with a JSON body (most accept
+an empty `{}`). Eval-run **reads** are `GET` and take their options
+(`cursor`, `limit`) as query parameters.
 
 **Responses.** Three envelope shapes, used consistently:
 
@@ -121,8 +129,13 @@ an empty body (`{}`); list endpoints take an optional `cursor`, and
 | Error | `{ "code": "...", "message": "...", "details": {...} }` with a matching HTTP status |
 
 **Pagination.** Collections are cursor-based. Pass the previous response's
-`nextCursor` as `cursor` in the next request body. Cursors are opaque — don't
-parse them.
+`nextCursor` as `cursor` in the next request (body field on `POST` lists,
+query parameter on `GET` lists). Cursors are opaque — don't parse them.
+
+**Async writes.** `POST /eval-runs` validates and creates the run
+synchronously, then detaches execution and responds `202` with a `runId`.
+Poll `GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
+`cancelled`.
 
 **IDs.** `projectId` and `serverId` are the identifiers the hosted inspector
 itself uses. While the API is in preview there is no listing endpoint for them
@@ -170,10 +183,10 @@ to be tuned during the preview.
 
 ## Endpoints
 
-All endpoints follow the pattern
-`POST /projects/{projectId}/servers/{serverId}/...`. Each one is fully
-documented — request and response schemas, examples, and an interactive
-playground — under **Endpoints** in the sidebar.
+Each endpoint is fully documented — request and response schemas, examples,
+and an interactive playground — under **Endpoints** in the sidebar.
+
+**Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 
 | Endpoint | What it does |
 | --- | --- |
@@ -181,24 +194,81 @@ playground — under **Endpoints** in the sidebar.
 | `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
 | `POST .../check-oauth` | Does this server require an OAuth grant? |
 | `POST .../tools` | List the server's tools |
+| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` verbatim |
 | `POST .../prompts` | List the server's prompts |
+| `POST .../prompts/get` | Render a prompt; returns the MCP `GetPromptResult` verbatim |
 | `POST .../resources` | List the server's resources |
 | `POST .../resources/read` | Read one resource by URI |
 | `POST .../export` | One JSON snapshot of tools, resources, and prompts |
+| `POST .../oauth/import-tokens` | Store OAuth tokens you obtained yourself; later calls inject + refresh them |
+
+**Eval runs** (`/projects/{projectId}/...`):
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST .../eval-runs` | Create a run from a `suiteId` (rerun) or `suiteName` + inline `tests` (new suite); responds `202` + `runId` |
+| `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
+| `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
+| `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
+| `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
 
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.
+
+## Run evals from the API
+
+The shortest useful loop — create a run with one inline test, then poll:
+
+```bash
+# 1. Create (responds 202 immediately; -f + jq -e fail fast on errors)
+RUN_ID=$(curl -fsS -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "suiteName": "smoke",
+    "serverIds": ["'$SERVER_ID'"],
+    "tests": [{
+      "title": "echo works",
+      "query": "Use the echo tool to say hi",
+      "runs": 1,
+      "model": "claude-sonnet-4-6",
+      "provider": "anthropic",
+      "expectedToolCalls": [{ "toolName": "echo", "arguments": { "text": "hi" } }]
+    }]
+  }' | jq -er .runId)
+
+# 2. Poll until status is completed | failed | cancelled
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 3. Inspect per-iteration tool calls, token usage, latency
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+```
+
+Reruns are even shorter: `{ "suiteId": "...", "serverIds": ["..."] }` reruns
+the suite exactly as configured. Per-organization concurrency is capped
+(default **2** concurrent runs); exceeding it returns `429` with
+`details.reason: "CONCURRENT_RUN_LIMIT"` — wait for an active run to finish.
+
+If a server answers `401 OAUTH_REQUIRED`, complete the OAuth flow yourself
+(the SDK's `runOAuthLogin` handles interactive, headless, and
+client-credentials flows) and push the result to
+`POST .../oauth/import-tokens` once. Subsequent calls inject the stored token
+and refresh it server-side.
 
 ## Not in the API yet
 
 To set expectations while in preview, these are **not** available over the API
 today (most exist in the hosted inspector UI):
 
-- Executing tools or running evals
 - Listing your projects and servers (planned; see [IDs](#conventions))
 - Creating or revoking API keys (UI-only by design — see [Authentication](#authentication))
-- Chat, conformance suites, and OAuth flows
+- Chat and conformance suites
+- Browser-based OAuth flows initiated by the API (use
+  `oauth/import-tokens` after completing OAuth yourself)
 
 If one of these blocks you, tell us on
 [Discord](https://discord.gg/JEnDtz8X6z) — it directly shapes what we
