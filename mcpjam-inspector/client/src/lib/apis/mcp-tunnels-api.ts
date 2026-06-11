@@ -280,7 +280,18 @@ export async function getTunnelRequests(
   );
 
   if (!response.ok) {
-    return [];
+    // Throw rather than return [] so the polling caller can keep its last
+    // good snapshot instead of flashing an empty list on a transient error.
+    let message = "Failed to fetch tunnel requests";
+    try {
+      const error = (await response.json()) as { error?: string };
+      if (typeof error?.error === "string") {
+        message = error.error;
+      }
+    } catch {
+      // keep default message
+    }
+    throw new Error(message);
   }
 
   const data = (await response.json()) as {

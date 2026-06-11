@@ -372,7 +372,13 @@ export function ServerConnectionCard({
     }
   };
 
+  // Rotate and close issue conflicting tunnel-lifecycle calls, so only one may
+  // be in flight at a time (the server serializes per-tunnel too; this keeps
+  // the UI from firing the conflicting request and showing a stale URL).
+  const isTunnelMutationInFlight = isClosingTunnel || isRotatingTunnel;
+
   const handleCloseTunnel = async () => {
+    if (isTunnelMutationInFlight) return;
     setIsClosingTunnel(true);
     try {
       const accessToken = await getAccessToken();
@@ -397,6 +403,7 @@ export function ServerConnectionCard({
   };
 
   const handleRotateTunnel = async () => {
+    if (isTunnelMutationInFlight) return;
     setIsRotatingTunnel(true);
     try {
       const accessToken = await getAccessToken();
@@ -841,7 +848,7 @@ export function ServerConnectionCard({
                       <button
                         data-server-card-context-menu-exempt
                         onClick={handleRotateTunnel}
-                        disabled={isRotatingTunnel}
+                        disabled={isTunnelMutationInFlight}
                         className="inline-flex items-center justify-center px-1.5 py-0.5 transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                         aria-label="Rotate tunnel secret (revokes the current URL)"
                         title="Rotate tunnel secret (revokes the current URL)"
@@ -856,7 +863,7 @@ export function ServerConnectionCard({
                       <button
                         data-server-card-context-menu-exempt
                         onClick={handleCloseTunnel}
-                        disabled={isClosingTunnel}
+                        disabled={isTunnelMutationInFlight}
                         className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                         aria-label="Close tunnel"
                         title="Close tunnel"

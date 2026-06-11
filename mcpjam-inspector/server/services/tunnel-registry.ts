@@ -14,7 +14,19 @@
 const activeDomains = new Map<string, string | null>();
 
 function normalizeHost(host: string): string {
-  return host.toLowerCase().split(":")[0];
+  const lower = host.toLowerCase();
+  // Bracketed IPv6, optionally with a port: "[::1]" / "[::1]:8080".
+  if (lower.startsWith("[")) {
+    const end = lower.indexOf("]");
+    return end === -1 ? lower : lower.slice(1, end);
+  }
+  // Bare IPv6 (multiple colons) carries no port in a Host header — keep as-is.
+  if (lower.indexOf(":") !== lower.lastIndexOf(":")) {
+    return lower;
+  }
+  // hostname[:port] — strip a single trailing port.
+  const colon = lower.lastIndexOf(":");
+  return colon === -1 ? lower : lower.slice(0, colon);
 }
 
 export function registerTunnelDomain(
