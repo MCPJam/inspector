@@ -571,6 +571,18 @@ export const createDebugOAuthStateMachine = (
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
 
+  // Per RFC 8707 and the MCP Authorization spec, the OAuth `resource` indicator
+  // must use the identifier advertised in the server's Protected Resource
+  // Metadata when one was discovered. That identifier may be any URI (including
+  // a URN) and is not required to equal the MCP endpoint URL, so the client must
+  // not overwrite it with the canonicalized server URL. Only fall back to the
+  // canonical server URL when no PRM `resource` is available. Resolving through a
+  // single helper also guarantees the authorization request and the token
+  // request send an identical resource value — some authorization servers reject
+  // a mismatch between the two.
+  const resolveResourceParameter = (): string =>
+    getCurrentState().resourceMetadata?.resource ?? canonicalServerUrl;
+
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
       url,
@@ -1749,7 +1761,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: canonicalServerUrl,
+                resource: resolveResourceParameter(),
               }
             );
 
@@ -1785,7 +1797,7 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            authUrl.searchParams.set("resource", canonicalServerUrl);
+            authUrl.searchParams.set("resource", resolveResourceParameter());
 
             const requestedScopeValue = resolveRequestedScopeValue({
               customScopes,
@@ -1870,7 +1882,7 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            tokenRequestBodyObj.resource = canonicalServerUrl;
+            tokenRequestBodyObj.resource = resolveResourceParameter();
 
             const tokenRequest = {
               method: "POST",
@@ -1934,8 +1946,9 @@ export const createDebugOAuthStateMachine = (
                 tokenRequestBody.set("client_secret", state.clientSecret);
               }
 
-              // Add resource parameter (canonicalized per RFC 8707)
-              tokenRequestBody.set("resource", canonicalServerUrl);
+              // Add resource parameter (per RFC 8707; prefers the PRM-advertised
+              // resource identifier, falling back to the canonical server URL)
+              tokenRequestBody.set("resource", resolveResourceParameter());
 
               // Make the token request via backend proxy
               const response = await executeRequest(
