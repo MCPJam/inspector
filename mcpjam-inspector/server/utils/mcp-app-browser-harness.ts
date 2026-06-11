@@ -818,8 +818,16 @@ export class McpAppBrowserHarness {
         const settled = framesEqual(shot, prev);
         if (painted && settled) break;
         prev = shot;
+      } else if (page.isClosed()) {
+        // Not transient: the page/context is gone, so screenshots will never
+        // succeed. Stop now (don't spin the whole budget) and let the caller's
+        // capture fail into `screenshot_failed` instead of throwing here.
+        break;
       }
-      await page.waitForTimeout(150);
+      // Guarded: on a closing page `waitForTimeout` itself rejects, and this runs
+      // OUTSIDE renderWidget's screenshot try — an unguarded throw would escape
+      // as an unhandled error instead of a clean `screenshot_failed` observation.
+      await page.waitForTimeout(150).catch(() => {});
     } while (Date.now() < deadline);
 
     // Blank iff the settled frame is still indistinguishable from the empty
