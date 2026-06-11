@@ -1,6 +1,10 @@
 import ngrok from "@ngrok/ngrok";
 import type { Listener } from "@ngrok/ngrok";
 import { logger } from "../utils/logger";
+import {
+  registerTunnelDomain,
+  unregisterTunnelDomain,
+} from "./tunnel-registry";
 
 interface TunnelEntry {
   listener: Listener;
@@ -8,6 +12,11 @@ interface TunnelEntry {
   credentialId?: string;
   domainId?: string;
   domain?: string;
+  // Full bearer URL (contains the ?k= secret). Held in memory ONLY — the
+  // backend persists just the secret hash, so this entry is the single
+  // holder of the plaintext URL while the listener is live.
+  publicUrl?: string;
+  secretVersion?: number;
 }
 
 interface CreateTunnelOptions {
@@ -16,6 +25,11 @@ interface CreateTunnelOptions {
   credentialId?: string;
   domainId?: string;
   domain?: string;
+  // Stringified ngrok Traffic Policy enforcing the bearer secret, the
+  // per-server path scope, and rate limiting at the edge.
+  trafficPolicy?: string;
+  publicUrl?: string;
+  secretVersion?: number;
 }
 
 class TunnelManager {
@@ -24,7 +38,7 @@ class TunnelManager {
 
   async createTunnel(
     tunnelId: string,
-    options: CreateTunnelOptions,
+    options: CreateTunnelOptions
   ): Promise<string> {
     const existingTunnel = this.tunnels.get(tunnelId);
     if (existingTunnel) {
@@ -49,6 +63,10 @@ class TunnelManager {
         ];
       }
 
+      if (options.trafficPolicy) {
+        config.traffic_policy = options.trafficPolicy;
+      }
+
       const listener = await ngrok.forward(config);
       const baseUrl = listener.url()!;
       this.tunnels.set(tunnelId, {
@@ -57,7 +75,15 @@ class TunnelManager {
         credentialId: options.credentialId,
         domainId: options.domainId,
         domain: options.domain,
+        publicUrl: options.publicUrl,
+        secretVersion: options.secretVersion,
       });
+      if (options.domain) {
+        registerTunnelDomain(
+          options.domain,
+          tunnelId === this.sharedTunnelId ? null : tunnelId
+        );
+      }
 
       logger.info(`✓ Created tunnel (${tunnelId}): ${baseUrl} -> ${addr}`);
       return baseUrl;
@@ -65,6 +91,20 @@ class TunnelManager {
       logger.error(`✗ Failed to create tunnel:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Re-establish the listener with a fresh authtoken + traffic policy.
+   * ngrok bakes both in at listen time, so rotation is close-then-forward;
+   * the reserved domain is reused so the base URL never changes — only the
+   * bearer secret in the policy/URL does.
+   */
+  async rotateTunnel(
+    tunnelId: string,
+    options: CreateTunnelOptions
+  ): Promise<string> {
+    await this.closeTunnel(tunnelId);
+    return this.createTunnel(tunnelId, options);
   }
 
   async closeTunnel(tunnelId: string): Promise<void> {
@@ -75,6 +115,9 @@ class TunnelManager {
 
     await entry.listener.close();
     this.tunnels.delete(tunnelId);
+    if (entry.domain) {
+      unregisterTunnelDomain(entry.domain);
+    }
     logger.info(`✓ Closed tunnel (${tunnelId})`);
 
     try {
@@ -109,11 +152,17 @@ class TunnelManager {
   }
 
   getServerTunnelUrl(serverId: string): string | null {
-    const perServerTunnelUrl = this.getTunnelUrl(serverId);
+    const entry = this.tunnels.get(serverId);
+    if (!entry) {
+      return null;
+    }
+    // Prefer the bearer URL (contains the edge-enforced secret); fall back
+    // to the bare adapter path for legacy listeners without a policy.
+    if (entry.publicUrl) {
+      return entry.publicUrl;
+    }
     const encodedServerId = encodeURIComponent(serverId);
-    return perServerTunnelUrl
-      ? `${perServerTunnelUrl}/api/mcp/adapter-http/${encodedServerId}`
-      : null;
+    return `${entry.baseUrl}/api/mcp/adapter-http/${encodedServerId}`;
   }
 
   hasTunnel(): boolean {

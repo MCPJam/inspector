@@ -32,7 +32,11 @@ vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
     serverId: "test-server",
   }),
   closeServerTunnel: vi.fn().mockResolvedValue(undefined),
-  cleanupOrphanedTunnels: vi.fn().mockResolvedValue(undefined),
+  rotateServerTunnel: vi.fn().mockResolvedValue({
+    url: "https://rotated.ngrok.app/api/mcp/adapter-http/test-server?k=newsecret",
+    serverId: "test-server",
+  }),
+  getTunnelRequests: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({

@@ -91,6 +91,24 @@ export type RequestEventMap = {
     tunnelDomain?: string;
     errorCode: string;
   };
+  "tunnel.rotated": {
+    tunnelKind: "shared" | "server";
+    tunnelDomain?: string;
+    full?: boolean;
+  };
+  "tunnel.rotation_failed": {
+    tunnelKind: "shared" | "server";
+    errorCode: string;
+    tunnelDomain?: string;
+  };
+  // One event per JSON-RPC request arriving through an active tunnel
+  // (never for local UI calls). `path` is scrubbed of bearer secrets by
+  // the request logger's URL scrubbing before emission.
+  "tunnel.request": {
+    tunnelKind: "shared" | "server";
+    rpcMethod?: string;
+    path: string;
+  };
   "chat.session.persist.failed": {
     failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
     statusCode?: number;

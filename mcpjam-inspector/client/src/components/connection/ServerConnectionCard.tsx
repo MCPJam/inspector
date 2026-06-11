@@ -58,10 +58,12 @@ import {
   TUNNEL_EXPLANATION_DISMISSED_KEY,
 } from "./TunnelExplanationModal";
 import {
-  cleanupOrphanedTunnels,
   closeServerTunnel,
   createServerTunnel,
   getServerTunnel,
+  getTunnelRequests,
+  rotateServerTunnel,
+  type TunnelRequestLogEntry,
 } from "@/lib/apis/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -155,6 +157,11 @@ export function ServerConnectionCard({
   );
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
+  const [isRotatingTunnel, setIsRotatingTunnel] = useState(false);
+  const [showTunnelRequests, setShowTunnelRequests] = useState(false);
+  const [tunnelRequests, setTunnelRequests] = useState<TunnelRequestLogEntry[]>(
+    []
+  );
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
@@ -216,6 +223,33 @@ export function ServerConnectionCard({
       isCancelled = true;
     };
   }, [getAccessToken, server.name, serverTunnelUrl, showTunnelActions]);
+
+  // Poll the recent-requests log while the observability panel is open.
+  useEffect(() => {
+    if (!showTunnelRequests || !tunnelUrl) {
+      return;
+    }
+    let isCancelled = false;
+
+    const fetchRequests = async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const requests = await getTunnelRequests(server.name, accessToken);
+        if (!isCancelled) {
+          setTunnelRequests(requests);
+        }
+      } catch {
+        // Panel is best-effort; keep the last snapshot on errors.
+      }
+    };
+
+    fetchRequests();
+    const intervalId = setInterval(fetchRequests, 4000);
+    return () => {
+      isCancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [getAccessToken, server.name, showTunnelRequests, tunnelUrl]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -315,12 +349,8 @@ export function ServerConnectionCard({
     setIsCreatingTunnel(true);
     try {
       const accessToken = await getAccessToken();
-      await cleanupOrphanedTunnels(accessToken);
-
       const result = await createServerTunnel(server.name, accessToken);
       setTunnelUrl(result.url);
-
-      await cleanupOrphanedTunnels(accessToken);
       toast.success("Tunnel is ready to use!");
       posthog.capture("tunnel_created", {
         location: "server_connection_card",
@@ -348,6 +378,8 @@ export function ServerConnectionCard({
       const accessToken = await getAccessToken();
       await closeServerTunnel(server.name, accessToken);
       setTunnelUrl(null);
+      setShowTunnelRequests(false);
+      setTunnelRequests([]);
       toast.success("Tunnel closed successfully");
       posthog.capture("tunnel_closed", {
         location: "server_connection_card",
@@ -361,6 +393,28 @@ export function ServerConnectionCard({
       toast.error(`Failed to close tunnel: ${errorMessage}`);
     } finally {
       setIsClosingTunnel(false);
+    }
+  };
+
+  const handleRotateTunnel = async () => {
+    setIsRotatingTunnel(true);
+    try {
+      const accessToken = await getAccessToken();
+      const result = await rotateServerTunnel(server.name, accessToken);
+      setTunnelUrl(result.url);
+      toast.success("Tunnel secret rotated — the old URL no longer works");
+      posthog.capture("tunnel_rotated", {
+        location: "server_connection_card",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        server_id: server.name,
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to rotate tunnel";
+      toast.error(`Failed to rotate tunnel: ${errorMessage}`);
+    } finally {
+      setIsRotatingTunnel(false);
     }
   };
 
@@ -766,6 +820,31 @@ export function ServerConnectionCard({
                       <span className="h-4 w-px bg-border/80" />
                       <button
                         data-server-card-context-menu-exempt
+                        onClick={() => setShowTunnelRequests((open) => !open)}
+                        className="inline-flex items-center justify-center px-1.5 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer"
+                        aria-label="Recent tunnel requests"
+                        title="Recent tunnel requests"
+                      >
+                        <FileText className="h-3 w-3" />
+                      </button>
+                      <span className="h-4 w-px bg-border/80" />
+                      <button
+                        data-server-card-context-menu-exempt
+                        onClick={handleRotateTunnel}
+                        disabled={isRotatingTunnel}
+                        className="inline-flex items-center justify-center px-1.5 py-0.5 transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                        aria-label="Rotate tunnel secret (revokes the current URL)"
+                        title="Rotate tunnel secret (revokes the current URL)"
+                      >
+                        {isRotatingTunnel ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </button>
+                      <span className="h-4 w-px bg-border/80" />
+                      <button
+                        data-server-card-context-menu-exempt
                         onClick={handleCloseTunnel}
                         disabled={isClosingTunnel}
                         className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
@@ -803,11 +882,42 @@ export function ServerConnectionCard({
             </div>
           </div>
 
-          {hasError && (
+          {showTunnelActions && hasTunnel && showTunnelRequests && (
             <div
-              className="mt-3"
+              className="mt-2 rounded-md border border-border/70 bg-muted/20 p-2"
               onClick={(e) => e.stopPropagation()}
+              data-server-card-context-menu-exempt
             >
+              <div className="mb-1 text-[11px] font-medium text-muted-foreground">
+                Recent tunnel requests
+              </div>
+              {tunnelRequests.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground">
+                  No requests through the tunnel yet.
+                </div>
+              ) : (
+                <div className="max-h-40 overflow-y-auto">
+                  {tunnelRequests.slice(0, 20).map((entry, index) => (
+                    <div
+                      key={`${entry.ts}-${index}`}
+                      className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+                    >
+                      <span className="shrink-0 tabular-nums">
+                        {new Date(entry.ts).toLocaleTimeString()}
+                      </span>
+                      <span className="shrink-0 font-medium text-foreground">
+                        {entry.method}
+                      </span>
+                      <span className="truncate">{entry.path}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {hasError && (
+            <div className="mt-3" onClick={(e) => e.stopPropagation()}>
               {oauthFailureStep ? (
                 <div className="mb-1 text-xs font-medium text-red-700 dark:text-red-300">
                   OAuth failed during {oauthFailureStep.title}
