@@ -4,6 +4,7 @@ import {
   catalogHasComputerBackedTool,
   computerBackedToolIds,
   detachComputerPatch,
+  sanitizeHostConfigForEvalSuite,
 } from "../host-config-computer";
 import { emptyHostConfigInputV2 } from "../client-config-v2";
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
@@ -58,5 +59,35 @@ describe("host-config-computer helpers", () => {
       computer: undefined,
       builtInToolIds: ["web_search"],
     });
+  });
+});
+
+describe("sanitizeHostConfigForEvalSuite", () => {
+  it("clears the computer and strips computer-backed ids", () => {
+    const value = emptyHostConfigInputV2({
+      builtInToolIds: ["web_search", "bash"],
+      computer: { kind: "personal", workdir: "/srv" },
+    });
+    const out = sanitizeHostConfigForEvalSuite(value, CATALOG);
+    expect(out.computer).toBeUndefined();
+    expect(out.builtInToolIds).toEqual(["web_search"]);
+  });
+
+  it("clears the computer even before the catalog has loaded (catalog-independent)", () => {
+    const value = emptyHostConfigInputV2({
+      builtInToolIds: ["web_search", "bash"],
+      computer: { kind: "personal" },
+    });
+    const out = sanitizeHostConfigForEvalSuite(value, undefined);
+    expect(out.computer).toBeUndefined();
+    // bash not stripped without the catalog, but it's inert in evals (the
+    // resolver skips it without a computer, and the run-start guard keys on
+    // `computer`, now cleared).
+    expect(out.builtInToolIds).toEqual(["web_search", "bash"]);
+  });
+
+  it("returns the same reference when already clean (no spurious dirty state)", () => {
+    const value = emptyHostConfigInputV2({ builtInToolIds: ["web_search"] });
+    expect(sanitizeHostConfigForEvalSuite(value, CATALOG)).toBe(value);
   });
 });

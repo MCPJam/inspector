@@ -12,9 +12,9 @@ describe("isSafeExternalLinkUrl", () => {
     ).toBe(true);
   });
 
-  it("allows http only for loopback hosts", () => {
-    expect(isSafeExternalLinkUrl("http://localhost:8080/cb")).toBe(true);
-    expect(isSafeExternalLinkUrl("http://127.0.0.1:53682/")).toBe(true);
+  it("rejects all plain http, including localhost (points at the user's machine, not the sandbox)", () => {
+    expect(isSafeExternalLinkUrl("http://localhost:8080/cb")).toBe(false);
+    expect(isSafeExternalLinkUrl("http://127.0.0.1:53682/")).toBe(false);
     expect(isSafeExternalLinkUrl("http://example.com")).toBe(false);
   });
 
@@ -45,14 +45,14 @@ describe("filterSafeExternalLinkUrls", () => {
       "javascript:alert(1)",
       "https://github.com/login/device", // dup
       "data:text/html,x",
-      "http://localhost:9000/cb",
-      "http://evil.example/cb",
+      "http://localhost:9000/cb", // plain http dropped
+      "https://microsoft.com/devicelogin",
       42,
       null,
     ];
     expect(filterSafeExternalLinkUrls(input)).toEqual([
       "https://github.com/login/device",
-      "http://localhost:9000/cb",
+      "https://microsoft.com/devicelogin",
     ]);
   });
 

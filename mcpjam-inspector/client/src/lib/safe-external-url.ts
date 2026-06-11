@@ -4,12 +4,12 @@
  * vetted URL — `javascript:`, `data:`, `vbscript:`, `file:` and unparseable
  * values must never become a clickable link.
  *
- * Policy: only absolute `https:` URLs pass. Plain `http:` is allowed solely
- * for loopback hosts, because device-flow logins occasionally print a
- * `http://localhost:<port>` callback; every other host must be https.
+ * Policy: only absolute `https:` URLs pass. We intentionally do NOT allow
+ * plain `http:` (even to localhost): device-flow verification URLs are always
+ * https, and a clickable `http://localhost:<port>` link would point a user at
+ * their OWN machine, not the sandbox — surprising at best, an SSRF-flavored
+ * footgun at worst.
  */
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
-
 export function isSafeExternalLinkUrl(value: unknown): value is string {
   if (typeof value !== "string" || value.length === 0) return false;
   let url: URL;
@@ -18,9 +18,7 @@ export function isSafeExternalLinkUrl(value: unknown): value is string {
   } catch {
     return false;
   }
-  if (url.protocol === "https:") return true;
-  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return true;
-  return false;
+  return url.protocol === "https:";
 }
 
 /**

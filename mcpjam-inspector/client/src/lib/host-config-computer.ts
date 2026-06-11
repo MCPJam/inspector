@@ -44,3 +44,26 @@ export function detachComputerPatch(
     builtInToolIds: value.builtInToolIds.filter((id) => !backed.has(id)),
   };
 }
+
+/**
+ * Sanitize a host config for an eval suite: clear the `computer` resource and
+ * strip computer-backed tool ids. Eval runs are aborted by the backend when
+ * the resolved host config carries a computer (a personal computer is mutable
+ * per-user state an eval can't reproduce), so the eval-suite editor must never
+ * persist one — including via "Reset to project default", which copies a
+ * project config that may have a computer attached, and on first load of a
+ * pre-existing suite config. Returns the SAME reference when already clean so
+ * it never introduces spurious dirty state. The `computer` clear is
+ * catalog-independent (the part the backend guard keys on); id-stripping is
+ * best-effort with whatever catalog has loaded.
+ */
+export function sanitizeHostConfigForEvalSuite(
+  value: HostConfigInputV2,
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined
+): HostConfigInputV2 {
+  const backed = computerBackedToolIds(catalog);
+  const cleanedIds = value.builtInToolIds.filter((id) => !backed.has(id));
+  const idsChanged = cleanedIds.length !== value.builtInToolIds.length;
+  if (value.computer === undefined && !idsChanged) return value;
+  return { ...value, computer: undefined, builtInToolIds: cleanedIds };
+}
