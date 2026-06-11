@@ -64,7 +64,6 @@ import {
   finalizeAiSdkTraceOnFailure,
   patchAiSdkRecordedSpansMessageRangesFromSteps,
   registerAiSdkPrepareStep,
-  wrapToolSetForEvalTrace,
 } from "./evals/eval-trace-capture";
 import type {
   EvalTraceBlobV1,
@@ -85,13 +84,12 @@ import {
   prepareChatV2,
   type PrepareChatV2Result,
 } from "../utils/chat-v2-orchestration.js";
-import { runAssistantTurn } from "../utils/assistant-turn.js";
 import type {
-  MCPJamEngineErrorEvent,
   MCPJamStepFinishEvent,
   MCPJamToolCallEvent,
   MCPJamToolResultEvent,
 } from "../utils/mcpjam-stream-handler.js";
+import { driveHostedEvalTurn } from "./evals/drive-hosted-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { finalizeEvalIteration } from "./evals/finalize-iteration.js";
 import {
@@ -1953,267 +1951,39 @@ const runIterationViaBackendWithBrowser = async (
       return returnCancelled();
     }
 
-    const promptTurn = promptTurns[promptIndex]!;
-
-    // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
-    // this turn, and start the turn with a clean widget surface — a widget
-    // kept mounted by a previous prompt turn must not bleed into this one
-    // (otherwise Computer Use could be advertised against the prior turn's
-    // widget before this turn's own MCP App tool runs).
-    browser.setActivePromptIndex(promptIndex);
-    await browser.dismissCarriedWidget();
-
-    // Per-turn span-capture context. `wrapToolSetForEvalTrace` instruments
-    // each tool's `execute` to push to `traceCtx.recordedSpans`; we drain
-    // into `capturedSpans` after the engine finishes.
-    const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
-    // PR 14: the Computer Use tools ride the same wrap so `computer` /
-    // `finish_widget` executions land as tool spans in the trace UI like
-    // every other locally-executed tool.
-    const tracedTools = wrapToolSetForEvalTrace(
-      { ...prepared.allTools, ...browser.computerWidgetTools },
-      traceCtx,
-      promptIndex
-    );
-
-    // Cursor review round-2 fix: push the user prompt into
-    // `messageHistory` BEFORE the engine call so a failed turn still
-    // persists the user side of the transcript. The legacy backend
-    // loop pushed the user message at the top of its per-step while
-    // loop; that meant `finishIteration` saw the user prompt even
-    // when the iteration failed mid-step. Recording the input keeps
-    // the transcript honest about WHICH turn errored.
-    messageHistory.push({
-      role: "user",
-      content: promptTurn.prompt,
+    // Shared hosted-turn body (engine call + browser pipeline + accumulator
+    // drains + three-shape failure detection) — see driveHostedEvalTurn.
+    // This batch runner layers no SSE sinks.
+    const outcome = await driveHostedEvalTurn({
+      promptIndex,
+      prompt: promptTurns[promptIndex]!.prompt,
+      browser,
+      prepared,
+      modelDefinition,
+      modelId,
+      selectedServers,
+      mcpClientManager,
+      evalAuthContext,
+      endpointPath,
+      extraBodyFields,
+      toolChoice,
+      abortSignal,
+      maxSteps: MAX_STEPS,
+      runStartedAt,
+      isAborted,
+      extractToolCalls: (messages) =>
+        extractToolCallsFromConversation({ messages }),
+      acc: {
+        messageHistory,
+        capturedSpans,
+        accumulatedUsage,
+        toolsCalledByPrompt,
+      },
     });
-    const messageCountBeforeTurn = messageHistory.length;
-    const inputMessages: ModelMessage[] = [...messageHistory];
-
-    // Cursor + Codex review fix: thread `toolChoice` AND
-    // `maxOutputTokens` through `extraBodyFields` since the engine's
-    // `RunAssistantTurnOptions` / `MCPJamHandlerOptions` don't expose
-    // them as first-class fields. The Convex `/stream` (and
-    // `/stream/org`) handlers already accept both in the request body
-    // — the engine spreads `extraBodyFields` into the body unchanged.
-    // `maxOutputTokens: 16384` matches the legacy per-step Convex body
-    // (Cursor round-2 finding "Dropped eval maxOutputTokens limit"):
-    // without it, hosted backend eval turns would inherit the
-    // `/stream` handler's default, which can truncate long multi-step
-    // tool loops differently than the historical eval cap.
-    const mergedExtraBodyFields: Record<string, unknown> = {
-      maxOutputTokens: 16384,
-      ...(extraBodyFields ?? {}),
-      ...(toolChoice ? { toolChoice } : {}),
-    };
-
-    let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
-    try {
-      turnResult = await runAssistantTurn({
-        messages: inputMessages,
-        // Eval's `runTestCase` already resolved the canonical model id
-        // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads
-        // it in as `modelId` — for the JAM-paid path that's e.g.
-        // `anthropic/claude-haiku-4.5`. The engine reads
-        // `modelDefinition.id` for the wire payload, so override here so
-        // backend wallet/quota lookup keys match what live chat sends.
-        modelDefinition: { ...modelDefinition, id: modelId },
-        systemPrompt: prepared.enhancedSystemPrompt,
-        ...(prepared.resolvedTemperature != null
-          ? { temperature: prepared.resolvedTemperature }
-          : {}),
-        tools: tracedTools,
-        ...(selectedServers.length
-          ? { selectedServerIds: selectedServers }
-          : {}),
-        mcpClientManager,
-        authContext: evalAuthContext,
-        sourceType: "eval",
-        origin: "eval",
-        streamSink: "none",
-        persistMode: "caller",
-        approvalMode: "auto-deny",
-        endpointPath,
-        extraBodyFields: mergedExtraBodyFields,
-        ...(abortSignal ? { abortSignal } : {}),
-        maxSteps: MAX_STEPS,
-        progressivePlan: prepared.progressivePlan,
-        discoveryState: prepared.discoveryState,
-        // Browser-rendered MCP App eval (PR 14): cache tool-call inputs for
-        // the widget shim, render MCP App tool results in the harness (the
-        // engine awaits the hook, so a mounted widget is visible to the next
-        // step's gate), and hide `computer` / `finish_widget` until a widget
-        // has actually rendered.
-        onToolCall: (event) => browser.noteToolCallInput(event),
-        onToolResult: (event) => browser.handleEngineToolResult(event),
-        ...(browser.prepareAdvertisedTools
-          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
-          : {}),
-      });
-    } catch (error) {
-      // Cancellation: bail without recording. AbortError can surface
-      // either as a thrown exception (when fetch is aborted mid-flight)
-      // or as the engine's internal silent-cancellation path (handled
-      // by the `isAborted()` check after the success path below). Check
-      // `abortSignal.aborted` to catch BOTH paths consistently.
-      if (
-        isAborted() ||
-        (error instanceof Error && error.name === "AbortError")
-      ) {
-        logger.debug("[evals] backend iteration aborted due to cancellation");
-        return returnCancelled();
-      }
-
-      // Non-abort runtime error from the engine. Map to `iterationError`
-      // for the post-loop verdict gate; preserve a truncated message and,
-      // when available, a `responseBody` for `errorDetails`.
-      if (error instanceof Error) {
-        iterationError = error.message || error.toString();
-        const responseBody = (error as { responseBody?: unknown }).responseBody;
-        if (responseBody && typeof responseBody === "string") {
-          iterationErrorDetails = responseBody;
-        }
-      } else if (typeof error === "string") {
-        iterationError = error;
-      } else {
-        iterationError = String(error);
-      }
-      if (iterationError && iterationError.length > 500) {
-        iterationError = iterationError.substring(0, 497) + "...";
-      }
-      logger.error("[evals] runAssistantTurn failed", error);
-      break;
-    }
-
-    // Cursor review fix: cancellation that fired DURING
-    // `runAssistantTurn` without surfacing as a throw. The engine
-    // catches AbortError, sets its internal `aborted` flag, omits the
-    // `turnTrace`, and returns normally. Without this check we'd fall
-    // through to the silent-cycle-failure branch below and record an
-    // aborted run as a verdict failure.
-    if (isAborted()) {
-      logger.debug(
-        "[evals] backend iteration aborted mid-turn; skipping record"
-      );
-      return returnCancelled();
-    }
-
-    // Drain per-turn outputs into the iteration-level accumulators
-    // BEFORE the failure checks below. Doing it first preserves
-    // whatever partial good state the engine produced (tool spans,
-    // partial transcript, usage), so the persisted iteration shows
-    // what completed before the failure point.
-    //
-    // Codex round-3 (P2 "Preserve backend tool step indices"):
-    // `wrapToolSetForEvalTrace` records tool spans in
-    // `traceCtx.recordedSpans` but never gets `prepareStep` updates
-    // from the engine (eval is no longer calling `generateText`
-    // directly), so those spans land with `stepIndex: -1`. The engine
-    // emits its OWN correctly-indexed LLM-step spans into
-    // `turnTrace.spans` (already `EvalTraceSpan[]` shape — see
-    // `PersistedTurnTrace` in chat-ingestion.ts). Merge both: the
-    // engine's LLM spans give per-step granularity; the wrap's tool
-    // spans give per-tool-call detail. Tool spans still have
-    // `stepIndex: -1` for now — fixing that requires correlating
-    // each tool span back to its parent LLM step via the engine's
-    // step events, which is a separate workstream.
-    capturedSpans.push(...traceCtx.recordedSpans);
-    if (turnResult.turnTrace?.spans?.length) {
-      capturedSpans.push(...turnResult.turnTrace.spans);
-    }
-    if (turnResult.usage) {
-      accumulatedUsage.inputTokens =
-        (accumulatedUsage.inputTokens || 0) +
-        (turnResult.usage.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        (accumulatedUsage.outputTokens || 0) +
-        (turnResult.usage.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        (accumulatedUsage.totalTokens || 0) +
-        (turnResult.usage.totalTokens ?? 0);
-    }
-
-    // Extract per-turn tool calls from the new messages only (engine
-    // returns the FULL transcript; slice from `messageCountBeforeTurn`
-    // to get just this turn's appended assistant + tool messages so
-    // prior turns' calls aren't double-counted).
-    const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
-    const promptToolsCalled = extractToolCallsFromConversation({
-      messages: newMessages,
-    });
-    toolsCalledByPrompt.push(promptToolsCalled);
-
-    // Roll the engine's transcript forward as the next turn's starting
-    // point. Includes prior conversation + this turn's user prompt + this
-    // turn's assistant/tool messages.
-    messageHistory.length = 0;
-    messageHistory.push(...turnResult.messages);
-
-    // Failure detection (ordered most-specific → least-specific).
-    // Three engine failure shapes the runner must catch:
-    //
-    //  (a) Cursor round-3 ("Partial turn hides engine failures"):
-    //      Engine catch fired AFTER partial messages were appended
-    //      (some text deltas / partial tool call landed before the
-    //      error). The engine's `executeEngine` `try { ... }
-    //      catch (error) { logger.error; emit error chunk; ... }` at
-    //      mcpjam-stream-handler.ts:2227 leaves `runSucceeded:
-    //      false` → `turnTrace` is NOT captured even though
-    //      `messages.length > messageCountBeforeTurn`. The
-    //      message-count check and the error-span check both miss
-    //      this. `!turnTrace` is the reliable signal.
-    //
-    //  (b) Codex P1 round-1 + the original silent-cycle-failure:
-    //      Engine succeeded (turnTrace captured) but produced no new
-    //      content (step-level non-OK at
-    //      mcpjam-stream-handler.ts:1384 returns
-    //      `shouldContinue:false`, synthetic finish, runSucceeded
-    //      true). Detect via `messages.length <=
-    //      messageCountBeforeTurn`.
-    //
-    //  (c) Codex P1 round-2 ("Fail turns when later backend steps
-    //      error"): step 1 succeeded, step 2 errored. `turnTrace`
-    //      captured, `messages.length` grew, but `turnTrace.spans`
-    //      includes an `EvalTraceSpan` with `status:"error"`.
-    if (!turnResult.turnTrace) {
-      iterationError =
-        "Backend stream failed during iteration (engine caught an error mid-turn)";
-      logger.error(
-        `[evals] runAssistantTurn returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${
-          newMessages.length > 0
-        })`
-      );
-      break;
-    }
-    if (newMessages.length === 0) {
-      iterationError =
-        "Backend step returned no content (stream error or empty response)";
-      logger.error(
-        "[evals] runAssistantTurn produced no new messages this turn; treating as cycle failure"
-      );
-      break;
-    }
-    // Codex P1 round-3 ("Don't treat tool-result error spans as
-    // backend failures"): `wrapBackendToolsForTrace` records ORDINARY
-    // local tool-result errors (MCP tool returned `isError: true`,
-    // tool execution threw, ...) as `status: "error"` with
-    // `category: "tool"`. The original match-any-error-span check
-    // would set `iterationError` and break before
-    // `finalizePassedForEval` could apply the configured
-    // `failOnToolError` policy — so otherwise-passing evals were
-    // force-failed when a tool returned a recoverable error and the
-    // model recovered. Filter to backend step / LLM failure spans
-    // only (categories `"step" | "llm" | "error"`); tool-category
-    // error spans flow through the existing tool-error gate (see
-    // `finalizePassedForEval` + `advancedConfig.failOnToolError`).
-    const stepErrorSpan = turnResult.turnTrace.spans.find(
-      (span) => span.status === "error" && span.category !== "tool"
-    );
-    if (stepErrorSpan) {
-      iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
-      logger.error(
-        `[evals] runAssistantTurn turnTrace has non-tool error-status span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`
-      );
+    if (outcome.kind === "cancelled") return returnCancelled();
+    if (outcome.kind === "failed") {
+      iterationError = outcome.iterationError;
+      iterationErrorDetails = outcome.iterationErrorDetails;
       break;
     }
   }
@@ -4065,623 +3835,265 @@ const streamIterationViaBackendWithBrowser = async (
     }
 
     const promptTurn = promptTurns[promptIndex]!;
-    const promptToolsCalled: ToolCall[] = [];
-    toolsCalledByPrompt.push(promptToolsCalled);
-    messageHistory.push({
-      role: "user",
-      content: promptTurn.prompt,
-    });
 
-    // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
-    // this turn, and start the turn with a clean widget surface (a widget
-    // kept mounted by a previous prompt turn must not bleed into this one).
-    browser.setActivePromptIndex(promptIndex);
-    await browser.dismissCarriedWidget();
-
-    emit({
-      type: "turn_start",
-      turnIndex: promptIndex,
+    // Shared hosted-turn body (engine call + browser pipeline + accumulator
+    // drains + three-shape failure detection) — see driveHostedEvalTurn.
+    // This SSE runner layers its emitters through `buildSinks`; the factory
+    // runs once per turn so the per-turn accumulators (partial-response
+    // builders, step counters, usage deltas) reset naturally.
+    const outcome = await driveHostedEvalTurn({
+      promptIndex,
       prompt: promptTurn.prompt,
-    });
+      browser,
+      prepared,
+      modelDefinition,
+      modelId,
+      selectedServers,
+      mcpClientManager,
+      evalAuthContext,
+      endpointPath,
+      extraBodyFields,
+      toolChoice,
+      abortSignal,
+      maxSteps: MAX_STEPS,
+      runStartedAt,
+      isAborted,
+      logSuffix: " (stream)",
+      extractToolCalls: (messages) =>
+        extractToolCallsFromConversation({ messages }),
+      acc: {
+        messageHistory,
+        capturedSpans,
+        accumulatedUsage,
+        toolsCalledByPrompt,
+      },
+      buildSinks: ({ baselineUsage, traceCtx, promptToolsCalled }) => {
+        // Track engine-emitted step events so the post-turn `turn_finish`
+        // trace_snapshot has a stable last-step index, and so failure
+        // branches can carry stepIndex when available.
+        let activeCompletedStepCount = 0;
+        let lastSettledStepIndex: number | undefined;
+        // Engine reports turn-cumulative usage on each `onStepFinish`. The
+        // legacy inline loop emitted PER-STEP token counts on `step_finish`
+        // SSE, so we track the previous step's cumulative and emit the delta.
+        // (Cursor PR 5b review fix: "Step finish reports cumulative usage".)
+        let prevStepCumulativeInput = 0;
+        let prevStepCumulativeOutput = 0;
 
-    // Per-turn span-capture context. `wrapToolSetForEvalTrace`
-    // instruments each tool's `execute` to push to
-    // `traceCtx.recordedSpans`; we drain into `capturedSpans` after the
-    // engine finishes (same shape as the non-stream backend runner).
-    const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
-    // PR 14: Computer Use tools ride the same wrap (see the non-stream
-    // backend runner).
-    const tracedTools = wrapToolSetForEvalTrace(
-      { ...prepared.allTools, ...browser.computerWidgetTools },
-      traceCtx,
-      promptIndex
-    );
+        // In-flight partial-response accumulator. Mid-turn `step_finish`
+        // trace_snapshot needs to carry the assistant/tool content that
+        // already streamed within the turn — the engine doesn't roll its own
+        // `messageHistory` ref forward until the turn settles, so
+        // `messageHistory` here is stale (prior turns + this turn's user
+        // prompt). Mirror PR 5a's `activePartialResponseMessages` shape.
+        // (Cursor PR 5b review fix: "Step snapshots omit in-turn messages".)
+        let partialAssistantText = "";
+        const partialAssistantToolCalls: Array<{
+          type: "tool-call";
+          toolCallId: string;
+          toolName: string;
+          input: unknown;
+        }> = [];
+        const partialToolResultMessages: ModelMessage[] = [];
+        const buildPartialResponseMessages = (): ModelMessage[] => {
+          const content: unknown[] = [];
+          if (partialAssistantText) {
+            content.push({ type: "text", text: partialAssistantText });
+          }
+          content.push(...partialAssistantToolCalls);
+          const out: ModelMessage[] = [];
+          if (content.length > 0) {
+            out.push({ role: "assistant", content } as ModelMessage);
+          }
+          out.push(...partialToolResultMessages);
+          return out;
+        };
 
-    const messageCountBeforeTurn = messageHistory.length;
-    const inputMessages: ModelMessage[] = [...messageHistory];
-    const accumulatedUsageBeforeTurn = {
-      inputTokens: accumulatedUsage.inputTokens ?? 0,
-      outputTokens: accumulatedUsage.outputTokens ?? 0,
-      totalTokens: accumulatedUsage.totalTokens ?? 0,
-    };
-    // Track engine-emitted step events so the post-turn `turn_finish`
-    // trace_snapshot has a stable last-step index, and so failure
-    // branches can carry stepIndex when available.
-    let activeCompletedStepCount = 0;
-    let lastSettledStepIndex: number | undefined;
-    // Engine reports turn-cumulative usage on each `onStepFinish`. The
-    // legacy inline loop emitted PER-STEP token counts on
-    // `step_finish` SSE, so we track the previous step's cumulative
-    // and emit the delta. (Cursor PR 5b review fix: "Step finish
-    // reports cumulative usage" — multi-step hosted eval turns
-    // otherwise show inflated per-step counts vs the local-BYOK
-    // stream path / consumeFullStreamAsEvalEvents.)
-    let prevStepCumulativeInput = 0;
-    let prevStepCumulativeOutput = 0;
-
-    // In-flight partial-response accumulator. Mid-turn `step_finish`
-    // trace_snapshot needs to carry the assistant/tool content that
-    // already streamed within the turn — the engine doesn't roll its
-    // own `messageHistory` ref forward into `runAssistantTurn`'s
-    // return value until the turn settles, so `messageHistory` here
-    // is stale (only contains prior turns' history + this turn's user
-    // prompt). Mirror PR 5a's `activePartialResponseMessages` shape:
-    // synthesize one rolling assistant message from text deltas + tool
-    // calls, and append synthetic tool-result messages from tool
-    // results. (Cursor PR 5b review fix: "Step snapshots omit in-turn
-    // messages" — without this, live UI consumers watching SSE see
-    // empty assistant transcripts mid-turn even though tool_call /
-    // text_delta SSE already fired.)
-    let partialAssistantText = "";
-    const partialAssistantToolCalls: Array<{
-      type: "tool-call";
-      toolCallId: string;
-      toolName: string;
-      input: unknown;
-    }> = [];
-    const partialToolResultMessages: ModelMessage[] = [];
-    const buildPartialResponseMessages = (): ModelMessage[] => {
-      const content: unknown[] = [];
-      if (partialAssistantText) {
-        content.push({ type: "text", text: partialAssistantText });
-      }
-      content.push(...partialAssistantToolCalls);
-      const out: ModelMessage[] = [];
-      if (content.length > 0) {
-        out.push({ role: "assistant", content } as ModelMessage);
-      }
-      out.push(...partialToolResultMessages);
-      return out;
-    };
-
-    // PR 5b-followup-2: capture the engine's structured-error event
-    // when the Convex `/stream` response is non-OK (429 daily-cap,
-    // hosted-model errors, ...) or when an in-stream catch fires. The
-    // engine writes a generic `error` UI chunk to the no-op writer
-    // (because `streamSink: "none"`); the callback gives us the
-    // parsed `{ code?, message, details? }` shape so failure-detection
-    // branches below can surface the actual reason on the eval SSE
-    // error event instead of dropping the detail with the generic
-    // "Backend stream failed during iteration" fallback.
-    let lastEngineError: MCPJamEngineErrorEvent | undefined;
-
-    // Engine callbacks → SSE events. These mirror the events the old
-    // inline backend stream loop emitted from its chunk-processing
-    // switch:
-    //  - `onLiveTextDelta` → `text_delta` SSE + rolling assistant text
-    //  - `onToolCall`      → `tool_call` SSE + push to partial assistant
-    //  - `onToolResult`    → `tool_result` SSE + append synthetic tool msg
-    //  - `onStepFinish`    → `step_finish` SSE (with per-step usage
-    //                        DELTA, not cumulative) + step_finish trace
-    //                        snapshot. Gated on `settledWithError ===
-    //                        false` per Marcelo's PR 5b-pre review
-    //                        caveat. After firing, the partial-response
-    //                        accumulators reset so the next step starts
-    //                        fresh.
-    //  - `onEngineError`   → captures the structured guardrail error
-    //                        body for use in the failure-detection
-    //                        fallback (PR 5b-followup-2).
-    //
-    // `promptToolsCalled` mirrors the legacy local accumulator; the
-    // engine's `messageHistory` is the source of truth post-turn, so
-    // we also rebuild from there for the eval grader (see
-    // `extractToolCallsFromConversation` below). Pushing into
-    // `promptToolsCalled` here keeps the SSE consumer's running view
-    // aligned with the trace snapshot's `actualToolCalls`.
-    const onLiveTextDelta = (delta: string) => {
-      if (typeof delta !== "string" || delta.length === 0) return;
-      partialAssistantText += delta;
-      emit({ type: "text_delta", content: delta });
-    };
-    const onToolCall = (event: MCPJamToolCallEvent) => {
-      if (!event.toolName) return;
-      // PR 14: cache the input so the widget render hook can feed the
-      // OpenAI-compat shim the real tool-call args.
-      browser.noteToolCallInput(event);
-      const args = (event.input ?? {}) as Record<string, unknown>;
-      promptToolsCalled.push({
-        toolName: event.toolName,
-        arguments: args as Record<string, any>,
-      });
-      partialAssistantToolCalls.push({
-        type: "tool-call",
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        input: args,
-      });
-      emit({
-        type: "tool_call",
-        toolName: event.toolName,
-        toolCallId: event.toolCallId,
-        args,
-      });
-    };
-    const onToolResult = async (event: MCPJamToolResultEvent) => {
-      partialToolResultMessages.push({
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: event.toolCallId,
-            ...(event.toolName ? { toolName: event.toolName } : {}),
-            output: event.output,
-            ...(event.isError ? { isError: true } : {}),
+        // Engine callbacks → SSE events, mirroring the legacy inline loop:
+        //  - `onLiveTextDelta` → `text_delta` SSE + rolling assistant text
+        //  - `onToolCall`      → `tool_call` SSE + push to partial assistant
+        //                        (the input cache write happens in the shared
+        //                        helper before this sink fires)
+        //  - `onToolResult`    → `tool_result` SSE + synthetic tool msg (the
+        //                        harness render happens in the shared helper
+        //                        AFTER this sink — live consumers shouldn't
+        //                        wait on Chromium)
+        //  - `onStepFinish`    → `step_finish` SSE (per-step usage DELTA) +
+        //                        step_finish trace snapshot, gated on
+        //                        `settledWithError === false`
+        //  - `onTurnFailure`   → failure trace_snapshot + `error` SSE
+        //  - `onTurnSuccess`   → turn_finish trace_snapshot + `turn_finish`
+        return {
+          onTurnStart: () =>
+            emit({
+              type: "turn_start",
+              turnIndex: promptIndex,
+              prompt: promptTurn.prompt,
+            }),
+          onLiveTextDelta: (delta: string) => {
+            if (typeof delta !== "string" || delta.length === 0) return;
+            partialAssistantText += delta;
+            emit({ type: "text_delta", content: delta });
           },
-        ],
-      } as ModelMessage);
-      emit({
-        type: "tool_result",
-        toolCallId: event.toolCallId,
-        result: event.output,
-        isError: event.isError,
-      });
-      // PR 14: render MCP App tool results in the harness AFTER the SSE
-      // emit (live consumers shouldn't wait on Chromium). The engine awaits
-      // this callback, so the widget is mounted before the next step's
-      // advertised-tool gate runs.
-      await browser.handleEngineToolResult(event);
-    };
-    const onStepFinish = (event: MCPJamStepFinishEvent) => {
-      // Marcelo's PR 5b-pre review caveat: only emit `step_finish` for
-      // settled-OK steps; failed backend steps surface through the
-      // post-turn failure detection (no `turnTrace`, error span, etc).
-      if (event.settledWithError) return;
-      activeCompletedStepCount += 1;
-      lastSettledStepIndex = event.stepIndex;
-      // Per-step delta = cumulative-now − cumulative-at-prev-step.
-      // Engine reports turn-cumulative on `event.turnUsage`; emit just
-      // this step's contribution on the SSE `step_finish.usage` field
-      // so the wire shape matches the legacy inline loop (which
-      // forwarded each step's own `messageMetadata` totals).
-      const cumulativeInput = event.turnUsage?.inputTokens ?? 0;
-      const cumulativeOutput = event.turnUsage?.outputTokens ?? 0;
-      const cumulativeTotal = event.turnUsage?.totalTokens ?? 0;
-      const stepDeltaInput = Math.max(
-        0,
-        cumulativeInput - prevStepCumulativeInput
-      );
-      const stepDeltaOutput = Math.max(
-        0,
-        cumulativeOutput - prevStepCumulativeOutput
-      );
-      prevStepCumulativeInput = cumulativeInput;
-      prevStepCumulativeOutput = cumulativeOutput;
-      // Roll `accumulatedUsage` forward to the engine's reported
-      // turn-cumulative + the pre-turn baseline (multi-turn runs).
-      accumulatedUsage.inputTokens =
-        accumulatedUsageBeforeTurn.inputTokens + cumulativeInput;
-      accumulatedUsage.outputTokens =
-        accumulatedUsageBeforeTurn.outputTokens + cumulativeOutput;
-      accumulatedUsage.totalTokens =
-        accumulatedUsageBeforeTurn.totalTokens + cumulativeTotal;
-      emit({
-        type: "step_finish",
-        stepNumber: activeCompletedStepCount,
-        usage: {
-          inputTokens: stepDeltaInput,
-          outputTokens: stepDeltaOutput,
-        },
-      });
-      // Live trace snapshot for the step. Compose snapshot messages
-      // from the stale `messageHistory` (prior turns + this turn's
-      // user prompt) PLUS the in-flight partial response built from
-      // the chunk-event accumulators — without this, mid-turn step
-      // snapshots show only the user prompt even though `tool_call` /
-      // `text_delta` SSE already fired. Spans:
-      //  - `capturedSpans`        — prior turns' merged spans.
-      //  - `traceCtx.recordedSpans` — this turn's tool-instrumentation
-      //                              spans from `wrapToolSetForEvalTrace`.
-      //  - `event.turnSpans`      — PR 5b-followup-2: this turn's
-      //                              engine-recorded LLM-step + tool
-      //                              spans, snapshot at step settlement
-      //                              (closes Cursor PR 5b "Step
-      //                              snapshots omit LLM spans"). Without
-      //                              this the live trace UI lost
-      //                              per-step LLM timing for
-      //                              multi-step hosted streaming evals.
-      const snapshotMessages = [
-        ...messageHistory,
-        ...buildPartialResponseMessages(),
-      ];
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          stepIndex: event.stepIndex,
-          snapshotKind: "step_finish",
-          messages: withSystemPrefix(snapshotMessages),
-          spans: [
-            ...capturedSpans,
-            ...traceCtx.recordedSpans,
-            ...event.turnSpans,
-          ],
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: snapshotMessages,
-          }),
-          usage: accumulatedUsage,
-        })
-      );
-      // NO per-step reset of partial-response accumulators. The
-      // earlier version of this PR cleared them here, which corrupted
-      // step N's snapshot by dropping step 1..N-1's assistant/tool
-      // content — `messageHistory` doesn't roll forward from
-      // `turnResult.messages` until AFTER `runAssistantTurn` returns,
-      // so during the turn the accumulators are the ONLY source of
-      // in-flight content for snapshot fidelity. The accumulators are
-      // per-turn `let`s scoped to this `for` body, so they reset
-      // naturally on the next prompt-turn iteration; no double-count
-      // risk because `messageHistory` is replaced with the engine's
-      // canonical post-turn transcript below before the next iteration.
-    };
-    // PR 5b-followup-2: capture the engine's structured-error event.
-    // The callback fires at the same site that emits the writer-side
-    // `error` UI chunk; capturing here lets the failure-detection
-    // branches below surface guardrail detail (429 daily-cap text,
-    // hosted-model setup errors, ...) on the eval SSE error event.
-    const onEngineError = (event: MCPJamEngineErrorEvent) => {
-      lastEngineError = event;
-    };
-
-    // `runAssistantTurn` call shape mirrors `runIterationViaBackend`
-    // (the non-stream backend runner) with SSE callback wires added.
-    // The contract bullets carried since PR 5a:
-    //  - Wire shape: `systemPrompt:` arg (engine sends `system:` field
-    //    to Convex `/stream`).
-    //  - Persistence prefix: `backendEnhancedSystemPromptForPersist`
-    //    prepended at finishParams (see post-loop section).
-    //  - SSE prefix: `withSystemPrefix` applied at every
-    //    `buildTraceSnapshotEvent` call site.
-    //  - Eval correctness invariants: progressive discovery, skill
-    //    tools, anthropic name validation flow from `prepareChatV2`.
-    //  - Resolver wire-up: `resolveExecutionContext` + suite
-    //    hostConfig already in place (PR 4d).
-    //  - UI event contract preserved: text_delta / tool_call /
-    //    tool_result / step_finish / turn_finish / trace_snapshot all
-    //    still emit in the same order as the legacy inline loop.
-    const mergedExtraBodyFields: Record<string, unknown> = {
-      maxOutputTokens: 16384,
-      ...(extraBodyFields ?? {}),
-      ...(toolChoice ? { toolChoice } : {}),
-    };
-
-    let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
-    try {
-      turnResult = await runAssistantTurn({
-        messages: inputMessages,
-        modelDefinition: { ...modelDefinition, id: modelId },
-        systemPrompt: prepared.enhancedSystemPrompt,
-        ...(prepared.resolvedTemperature != null
-          ? { temperature: prepared.resolvedTemperature }
-          : {}),
-        tools: tracedTools,
-        ...(selectedServers.length
-          ? { selectedServerIds: selectedServers }
-          : {}),
-        mcpClientManager,
-        authContext: evalAuthContext,
-        sourceType: "eval",
-        origin: "eval",
-        streamSink: "none",
-        persistMode: "caller",
-        approvalMode: "auto-deny",
-        endpointPath,
-        extraBodyFields: mergedExtraBodyFields,
-        ...(abortSignal ? { abortSignal } : {}),
-        maxSteps: MAX_STEPS,
-        progressivePlan: prepared.progressivePlan,
-        discoveryState: prepared.discoveryState,
-        onLiveTextDelta,
-        onToolCall,
-        onToolResult,
-        onStepFinish,
-        onEngineError,
-        // Browser-rendered MCP App eval (PR 14): hide `computer` /
-        // `finish_widget` until a widget has actually rendered.
-        ...(browser.prepareAdvertisedTools
-          ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
-          : {}),
-      });
-    } catch (error) {
-      // Cancellation: bail without recording. AbortError can surface
-      // either as a thrown exception or as the engine's internal
-      // silent-cancellation path; check `isAborted()` to catch both.
-      if (
-        isAborted() ||
-        (error instanceof Error && error.name === "AbortError")
-      ) {
-        logger.debug(
-          "[evals] backend streaming iteration aborted due to cancellation"
-        );
-        return returnCancelled();
-      }
-
-      if (error instanceof Error) {
-        iterationError = error.message || error.toString();
-        const responseBody = (error as { responseBody?: unknown }).responseBody;
-        if (responseBody && typeof responseBody === "string") {
-          iterationErrorDetails = responseBody;
-        }
-      } else if (typeof error === "string") {
-        iterationError = error;
-      } else {
-        iterationError = String(error);
-      }
-      if (iterationError && iterationError.length > 500) {
-        iterationError = iterationError.substring(0, 497) + "...";
-      }
-      logger.error("[evals] runAssistantTurn (stream) failed", error);
-      // Mirror the in-stream failure signal the legacy inline loop
-      // emitted: failure trace_snapshot + error event before `break`
-      // so live SSE consumers don't see a silent end.
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        })
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        details: iterationErrorDetails,
-      });
-      break;
-    }
-
-    // Cancellation that fired DURING `runAssistantTurn` without
-    // surfacing as a throw (engine catches AbortError, sets internal
-    // `aborted` flag, omits `turnTrace`, returns normally).
-    if (isAborted()) {
-      logger.debug(
-        "[evals] backend streaming iteration aborted mid-turn; skipping record"
-      );
-      return returnCancelled();
-    }
-
-    // Drain per-turn outputs into iteration-level accumulators BEFORE
-    // failure checks. Same shape as `runIterationViaBackend` (PR 3/4d).
-    //
-    // Tool spans from `wrapToolSetForEvalTrace` land in
-    // `traceCtx.recordedSpans` with `stepIndex: -1` (no `prepareStep`
-    // bridge to the engine yet); the engine's own LLM-step spans land
-    // on `turnResult.turnTrace.spans` with correct per-step indices.
-    // Merge both for the persisted run.
-    capturedSpans.push(...traceCtx.recordedSpans);
-    if (turnResult.turnTrace?.spans?.length) {
-      capturedSpans.push(...turnResult.turnTrace.spans);
-    }
-    // Reconcile accumulated usage to the engine's canonical post-turn
-    // total. The per-step `onStepFinish` callback already updates
-    // `accumulatedUsage` for each completed step, but if the engine
-    // resolved with zero settled-OK steps (no-content failure path),
-    // the baseline is the only source of truth — fold in `turnTrace.usage`
-    // to match the non-stream runner's "totalUsage merged BEFORE
-    // failure branches" invariant from PR 4b.
-    if (turnResult.usage) {
-      accumulatedUsage.inputTokens =
-        accumulatedUsageBeforeTurn.inputTokens +
-        (turnResult.usage.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        accumulatedUsageBeforeTurn.outputTokens +
-        (turnResult.usage.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        accumulatedUsageBeforeTurn.totalTokens +
-        (turnResult.usage.totalTokens ?? 0);
-    }
-
-    // Per-turn tool calls — rebuild from the new messages only so
-    // prior turns' calls aren't double-counted. The engine returns
-    // the full transcript; slice from `messageCountBeforeTurn`.
-    const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
-    // `promptToolsCalled` was already populated via the `onToolCall`
-    // callback during the run. Reconcile against the engine's
-    // transcript so the grader sees the canonical post-turn shape
-    // (handles cases where `onToolCall` arguments were `undefined`).
-    const canonicalPromptToolsCalled = extractToolCallsFromConversation({
-      messages: newMessages,
+          onToolCall: (event: MCPJamToolCallEvent) => {
+            if (!event.toolName) return;
+            const args = (event.input ?? {}) as Record<string, unknown>;
+            promptToolsCalled.push({
+              toolName: event.toolName,
+              arguments: args as Record<string, any>,
+            });
+            partialAssistantToolCalls.push({
+              type: "tool-call",
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              input: args,
+            });
+            emit({
+              type: "tool_call",
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              args,
+            });
+          },
+          onToolResult: (event: MCPJamToolResultEvent) => {
+            partialToolResultMessages.push({
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: event.toolCallId,
+                  ...(event.toolName ? { toolName: event.toolName } : {}),
+                  output: event.output,
+                  ...(event.isError ? { isError: true } : {}),
+                },
+              ],
+            } as ModelMessage);
+            emit({
+              type: "tool_result",
+              toolCallId: event.toolCallId,
+              result: event.output,
+              isError: event.isError,
+            });
+          },
+          onStepFinish: (event: MCPJamStepFinishEvent) => {
+            // Marcelo's PR 5b-pre review caveat: only emit `step_finish` for
+            // settled-OK steps; failed backend steps surface through the
+            // post-turn failure detection.
+            if (event.settledWithError) return;
+            activeCompletedStepCount += 1;
+            lastSettledStepIndex = event.stepIndex;
+            // Per-step delta = cumulative-now − cumulative-at-prev-step.
+            const cumulativeInput = event.turnUsage?.inputTokens ?? 0;
+            const cumulativeOutput = event.turnUsage?.outputTokens ?? 0;
+            const cumulativeTotal = event.turnUsage?.totalTokens ?? 0;
+            const stepDeltaInput = Math.max(
+              0,
+              cumulativeInput - prevStepCumulativeInput
+            );
+            const stepDeltaOutput = Math.max(
+              0,
+              cumulativeOutput - prevStepCumulativeOutput
+            );
+            prevStepCumulativeInput = cumulativeInput;
+            prevStepCumulativeOutput = cumulativeOutput;
+            // Roll `accumulatedUsage` forward to the engine's reported
+            // turn-cumulative + the pre-turn baseline (multi-turn runs).
+            accumulatedUsage.inputTokens =
+              baselineUsage.inputTokens + cumulativeInput;
+            accumulatedUsage.outputTokens =
+              baselineUsage.outputTokens + cumulativeOutput;
+            accumulatedUsage.totalTokens =
+              baselineUsage.totalTokens + cumulativeTotal;
+            emit({
+              type: "step_finish",
+              stepNumber: activeCompletedStepCount,
+              usage: {
+                inputTokens: stepDeltaInput,
+                outputTokens: stepDeltaOutput,
+              },
+            });
+            // Live trace snapshot for the step: stale `messageHistory`
+            // (prior turns + this turn's user prompt) PLUS the in-flight
+            // partial response; spans = prior turns' merged spans + this
+            // turn's tool-instrumentation spans + the engine's per-step
+            // LLM spans (PR 5b-followup-2).
+            const snapshotMessages = [
+              ...messageHistory,
+              ...buildPartialResponseMessages(),
+            ];
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                stepIndex: event.stepIndex,
+                snapshotKind: "step_finish",
+                messages: withSystemPrefix(snapshotMessages),
+                spans: [
+                  ...capturedSpans,
+                  ...traceCtx.recordedSpans,
+                  ...event.turnSpans,
+                ],
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: snapshotMessages,
+                }),
+                usage: accumulatedUsage,
+              })
+            );
+            // NO per-step reset of the partial-response accumulators: during
+            // the turn they are the ONLY source of in-flight content for
+            // snapshot fidelity; they reset naturally with the next turn's
+            // sink factory.
+          },
+          onTurnFailure: (failure) => {
+            // Mirror the in-stream failure signal the legacy inline loop
+            // emitted: failure trace_snapshot + error event before the break
+            // so live SSE consumers don't see a silent end.
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                ...(lastSettledStepIndex != null
+                  ? { stepIndex: lastSettledStepIndex }
+                  : {}),
+                snapshotKind: "failure",
+                messages: withSystemPrefix(messageHistory),
+                spans: capturedSpans,
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: messageHistory,
+                }),
+                usage: accumulatedUsage,
+              })
+            );
+            emit({
+              type: "error",
+              message: failure.iterationError,
+              ...(failure.iterationErrorDetails
+                ? { details: failure.iterationErrorDetails }
+                : {}),
+            });
+          },
+          onTurnSuccess: () => {
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                snapshotKind: "turn_finish",
+                messages: withSystemPrefix(messageHistory),
+                spans: capturedSpans,
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: messageHistory,
+                }),
+                usage: accumulatedUsage,
+              })
+            );
+            emit({ type: "turn_finish", turnIndex: promptIndex });
+          },
+        };
+      },
     });
-    promptToolsCalled.length = 0;
-    promptToolsCalled.push(...canonicalPromptToolsCalled);
-
-    // Roll the engine's transcript forward as the next turn's input.
-    messageHistory.length = 0;
-    messageHistory.push(...turnResult.messages);
-
-    // Failure detection — same three-signal shape as the non-stream
-    // backend runner (PR 3/4d):
-    //   (a) Engine catch fired mid-turn (`!turnTrace`) — engine
-    //       runSucceeded=false, partial messages may exist.
-    //   (b) Engine succeeded but produced no new content
-    //       (`newMessages.length === 0`).
-    //   (c) Engine succeeded and produced content, but a later step
-    //       errored (non-tool error span on `turnTrace.spans`).
-    if (!turnResult.turnTrace) {
-      // PR 5b-followup-2: prefer the engine's captured structured
-      // error when present. Closes Cursor PR 5b "Stream guardrail
-      // errors lose detail" — without this, 429 daily-cap users saw
-      // the generic fallback below instead of the actual reason
-      // ("Daily MCPJam model limit reached. Use BYOK or try again
-      // tomorrow."). When no engine error was captured (true engine
-      // catch shape vs. a missed `onEngineError` site), keep the
-      // generic fallback for diagnostic clarity.
-      if (lastEngineError) {
-        iterationError = lastEngineError.message;
-        iterationErrorDetails = lastEngineError.rawText;
-      } else {
-        iterationError =
-          "Backend stream failed during iteration (engine caught an error mid-turn)";
-      }
-      logger.error(
-        `[evals] runAssistantTurn (stream) returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${
-          newMessages.length > 0
-        }, engineError=${
-          lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-        })`
-      );
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        })
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
-      });
+    if (outcome.kind === "cancelled") return returnCancelled();
+    if (outcome.kind === "failed") {
+      iterationError = outcome.iterationError;
+      iterationErrorDetails = outcome.iterationErrorDetails;
       break;
     }
-    if (newMessages.length === 0) {
-      // PR 5b-followup-2 review fix (Cursor High "Guardrail errors
-      // ignore captured engine"): non-OK Convex `/stream` responses
-      // make `processOneStep` return `{shouldContinue: false}` — the
-      // engine breaks the loop, fires a synthetic finish chunk, sets
-      // `runSucceeded = true`, and surfaces a populated `turnTrace`.
-      // 429-shaped guardrail turns also add no assistant messages, so
-      // this branch fires (NOT the `!turnTrace` branch above). The
-      // captured `lastEngineError` is the actual reason ("Daily
-      // MCPJam model limit reached…"); the generic "Backend step
-      // returned no content" message loses it. Prefer the engine
-      // event here too.
-      if (lastEngineError) {
-        iterationError = lastEngineError.message;
-        iterationErrorDetails = lastEngineError.rawText;
-      } else {
-        iterationError =
-          "Backend step returned no content (stream error or empty response)";
-      }
-      logger.error(
-        `[evals] runAssistantTurn (stream) produced no new messages this turn; treating as cycle failure (engineError=${
-          lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-        })`
-      );
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        })
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
-      });
-      break;
-    }
-    // Cursor / Codex PR 5a review fix applied here too: filter to
-    // backend step / LLM failure spans only (exclude `category: "tool"`
-    // AND any span carrying a `toolCallId` — the child error span that
-    // `wrapToolSetForEvalTrace` emits alongside a failed tool span).
-    // Tool-category error spans flow through the `failOnToolError`
-    // gate below; treating them as cycle failures here would defeat
-    // that policy.
-    const stepErrorSpan = turnResult.turnTrace.spans.find(
-      (span) =>
-        span.status === "error" &&
-        span.category !== "tool" &&
-        !(span as { toolCallId?: string }).toolCallId
-    );
-    if (stepErrorSpan) {
-      // PR 5b-followup-2 review fix: same shape as the no-content
-      // branch above — a captured engine error is more informative
-      // than the span-name fallback. The error-span case fires for
-      // later-step failures after partial success (engine logged an
-      // `error`-category span via `pushAiSdkTrailingErrorSpan` or
-      // similar); if `onEngineError` also fired, prefer it.
-      if (lastEngineError) {
-        iterationError = lastEngineError.message;
-        iterationErrorDetails = lastEngineError.rawText;
-      } else {
-        iterationError = `Backend step failed mid-turn: ${stepErrorSpan.name}`;
-      }
-      logger.error(
-        `[evals] runAssistantTurn (stream) turnTrace has non-tool error-status span; treating as cycle failure (span=${
-          stepErrorSpan.name
-        } category=${stepErrorSpan.category} engineError=${
-          lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-        })`
-      );
-      emit(
-        buildTraceSnapshotEvent({
-          turnIndex: promptIndex,
-          ...(lastSettledStepIndex != null
-            ? { stepIndex: lastSettledStepIndex }
-            : {}),
-          snapshotKind: "failure",
-          messages: withSystemPrefix(messageHistory),
-          spans: capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: messageHistory,
-          }),
-          usage: accumulatedUsage,
-        })
-      );
-      emit({
-        type: "error",
-        message: iterationError,
-        ...(iterationErrorDetails ? { details: iterationErrorDetails } : {}),
-      });
-      break;
-    }
-
-    emit(
-      buildTraceSnapshotEvent({
-        turnIndex: promptIndex,
-        snapshotKind: "turn_finish",
-        messages: withSystemPrefix(messageHistory),
-        spans: capturedSpans,
-        actualToolCalls: extractToolCallsFromConversation({
-          messages: messageHistory,
-        }),
-        usage: accumulatedUsage,
-      })
-    );
-    emit({ type: "turn_finish", turnIndex: promptIndex });
   }
 
   const evaluation = evaluateMultiTurnResults(
