@@ -75,7 +75,8 @@ function deriveAuthkitDomain(clientId: string): string | undefined {
   }
 }
 
-function resolveAuthkitIssuer(
+/** Exported for the CLI auth bridge (`routes/cli-auth`), which advertises the issuer's authorize/token endpoints. */
+export function resolveAuthkitIssuer(
   clientId: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
