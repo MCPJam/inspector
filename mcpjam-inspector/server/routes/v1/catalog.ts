@@ -39,11 +39,19 @@ function forwardQueryParams(
   }
 }
 
-async function proxyConvexV1Read(
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" ||
+      (error as { code?: string }).code === "ABORT_ERR")
+  );
+}
+
+async function fetchConvexV1Read(
   c: Context,
   convexPath: string,
   configure?: (target: URL) => void
-): Promise<Response> {
+): Promise<{ status: number; body: unknown }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -56,20 +64,34 @@ async function proxyConvexV1Read(
   const target = new URL(convexPath, convexUrl);
   configure?.(target);
 
+  // The abort deadline must cover the WHOLE exchange: `fetch` resolves on
+  // headers, so clearing the timer there would leave a stalled response
+  // body free to hang `response.json()` indefinitely.
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
   let response: Response;
+  let body: unknown;
   try {
     response = await fetch(target, {
       method: "GET",
       headers: { Authorization: `Bearer ${bearer}` },
       signal: controller.signal,
     });
+    try {
+      body = await response.json();
+    } catch (parseError) {
+      // A body stalled past the deadline rejects with an abort, which is a
+      // timeout, not a malformed payload — let the outer classifier map it.
+      if (isAbortError(parseError)) throw parseError;
+      throw new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        `Catalog service returned a non-JSON response (${response.status})`
+      );
+    }
   } catch (error) {
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        (error as { code?: string }).code === "ABORT_ERR");
+    if (error instanceof WebRouteError) throw error;
+    const isAbort = isAbortError(error);
     throw new WebRouteError(
       isAbort ? 504 : 502,
       isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
@@ -81,18 +103,17 @@ async function proxyConvexV1Read(
     clearTimeout(timeoutId);
   }
 
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new WebRouteError(
-      502,
-      ErrorCode.SERVER_UNREACHABLE,
-      `Catalog service returned a non-JSON response (${response.status})`
-    );
-  }
+  return { status: response.status, body };
+}
+
+async function proxyConvexV1Read(
+  c: Context,
+  convexPath: string,
+  configure?: (target: URL) => void
+): Promise<Response> {
+  const { status, body } = await fetchConvexV1Read(c, convexPath, configure);
   // Same envelope on both surfaces — pass status and body through verbatim.
-  return c.json(body as Record<string, unknown>, response.status as 200);
+  return c.json(body as Record<string, unknown>, status as 200);
 }
 
 // GET /v1/me
@@ -132,5 +153,33 @@ catalog.get("/chat-sessions", (c) =>
     forwardQueryParams(c, target, ["projectId", "status", "limit", "before"])
   )
 );
+
+// GET /v1/projects/:projectId/chatboxes
+// The chatboxes published from the project — name, access mode, attached
+// servers, share link.
+catalog.get("/projects/:projectId/chatboxes", (c) =>
+  proxyConvexV1Read(c, "/v1/chatboxes", (target) =>
+    target.searchParams.set("projectId", c.req.param("projectId"))
+  )
+);
+
+// GET /v1/projects/:projectId/chatboxes/:chatboxId
+// One chatbox's read-only settings. Project-nested with a cross-check,
+// matching the eval-read contract: the upstream takes a bare chatboxId, so a
+// real chatbox living in a different project must read as NOT_FOUND under
+// this path rather than leak across projects.
+catalog.get("/projects/:projectId/chatboxes/:chatboxId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const { status, body } = await fetchConvexV1Read(c, "/v1/chatbox", (target) =>
+    target.searchParams.set("chatboxId", c.req.param("chatboxId"))
+  );
+  if (
+    status === 200 &&
+    String((body as { projectId?: unknown })?.projectId ?? "") !== projectId
+  ) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Chatbox not found");
+  }
+  return c.json(body as Record<string, unknown>, status as 200);
+});
 
 export default catalog;

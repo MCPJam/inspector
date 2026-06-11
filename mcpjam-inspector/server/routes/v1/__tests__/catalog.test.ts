@@ -75,17 +75,24 @@ describe("v1 catalog read proxies", () => {
       "/api/v1/chat-sessions?projectId=p1&status=archived&limit=10&before=123",
       "https://convex-http.example.com/v1/chat-sessions?projectId=p1&status=archived&limit=10&before=123",
     ],
-  ])("maps %s onto the Convex read surface", async (inspectorPath, convexUrl) => {
-    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
-    const res = await request(makeApp(), inspectorPath);
-    expect(res.status).toBe(200);
-    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
-    expect(String(target)).toBe(convexUrl);
-    // JWT callers: the original bearer is forwarded verbatim.
-    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
-      "Bearer tok"
-    );
-  });
+    [
+      "/api/v1/projects/p1/chatboxes",
+      "https://convex-http.example.com/v1/chatboxes?projectId=p1",
+    ],
+  ])(
+    "maps %s onto the Convex read surface",
+    async (inspectorPath, convexUrl) => {
+      fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+      const res = await request(makeApp(), inspectorPath);
+      expect(res.status).toBe(200);
+      const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+      expect(String(target)).toBe(convexUrl);
+      // JWT callers: the original bearer is forwarded verbatim.
+      expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+        "Bearer tok"
+      );
+    }
+  );
 
   it("passes the upstream page body through verbatim", async () => {
     const page = {
@@ -117,9 +124,71 @@ describe("v1 catalog read proxies", () => {
   });
 
   it("maps a non-JSON upstream response to 502", async () => {
-    fetchMock.mockResolvedValue(new Response("<html>oops</html>", { status: 200 }));
+    fetchMock.mockResolvedValue(
+      new Response("<html>oops</html>", { status: 200 })
+    );
     const res = await request(makeApp(), "/api/v1/me");
     expect(res.status).toBe(502);
+  });
+
+  it("maps an upstream timeout to 504 TIMEOUT", async () => {
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    fetchMock.mockRejectedValue(abortError);
+    const res = await request(makeApp(), "/api/v1/me");
+    expect(res.status).toBe(504);
+    expect(((await res.json()) as { code?: string }).code).toBe("TIMEOUT");
+  });
+
+  it("maps a response body stalled past the deadline to 504 TIMEOUT, not 502", async () => {
+    // fetch resolves on headers; the deadline must keep guarding the body
+    // read. A stalled body surfaces as json() rejecting with an abort.
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    fetchMock.mockResolvedValue({
+      status: 200,
+      json: () => Promise.reject(abortError),
+    } as unknown as Response);
+    const res = await request(makeApp(), "/api/v1/me");
+    expect(res.status).toBe(504);
+    expect(((await res.json()) as { code?: string }).code).toBe("TIMEOUT");
+  });
+
+  it("returns the chatbox detail when the path projectId matches", async () => {
+    const detail = {
+      id: "cbx_1",
+      projectId: "p1",
+      name: "Support Chatbox",
+      modelId: "gpt-4o-mini",
+      servers: [{ id: "srv_1", name: "server-a", url: null, useOAuth: false }],
+    };
+    fetchMock.mockResolvedValue(jsonResponse(detail));
+    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/cbx_1");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(detail);
+    expect(String((fetchMock.mock.calls[0] as [URL])[0])).toBe(
+      "https://convex-http.example.com/v1/chatbox?chatboxId=cbx_1"
+    );
+  });
+
+  it("answers NOT_FOUND when the chatbox lives in a different project", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: "cbx_1", projectId: "p2", name: "Support Chatbox" })
+    );
+    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/cbx_1");
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
+  });
+
+  it("passes a chatbox upstream error through with its status", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ code: "VALIDATION_ERROR", message: "bad id" }, 400)
+    );
+    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/bad");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code?: string }).code).toBe(
+      "VALIDATION_ERROR"
+    );
   });
 
   it("rejects guests at the v1 boundary", async () => {
