@@ -11,6 +11,7 @@ import { useConvexAuth, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
+import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
@@ -28,6 +29,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import { cn } from "@/lib/utils";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
@@ -35,27 +37,38 @@ import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
  * of the app chrome is the navigation control: switching hosts switches
  * the chatbox shown here. Tabs:
  *
- *   - Publish   — link, mode, members, chatUi (`ChatboxShareSection`)
+ *   - Publish   — link, mode, members, chatUi (`ChatboxShareSection`) on the
+ *                 left; the right pane toggles between a live preview of the
+ *                 published chatbox and the read-only host graph
  *   - Sessions  — thread list / detail (`ChatboxUsagePanel section="sessions"`)
  *   - Clusters  — topic map / insights (`ChatboxUsagePanel section="insights"`)
  *
- * No "Definition" / "Preview" tabs — those belong to the Host tab inside
- * Connect (agent config) and the public chatbox URL respectively. The
- * "Open preview" button here launches the public share link.
+ * No "Definition" tab — that belongs to the Host tab inside Connect (agent
+ * config). The "Open preview" button here launches the public share link in
+ * a new browser tab. Note the embedded preview loads the real share URL, so
+ * every visit to this (landing) tab starts a guest session — preview
+ * traffic shows up in Sessions and guest analytics.
  */
 interface ChatboxesTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
 }
 
-type ChatboxTab = "publish" | "preview" | "sessions" | "clusters";
+type ChatboxTab = "publish" | "sessions" | "clusters";
 
 const TAB_OPTIONS: ReadonlyArray<{ value: ChatboxTab; label: string }> = [
   { value: "publish", label: "Publish" },
-  { value: "preview", label: "Preview" },
   { value: "sessions", label: "Sessions" },
   { value: "clusters", label: "Clusters" },
 ];
+
+type PublishPanelView = "preview" | "graph";
+
+const PUBLISH_PANEL_OPTIONS: Array<{ value: PublishPanelView; label: string }> =
+  [
+    { value: "preview", label: "Preview" },
+    { value: "graph", label: "Host graph" },
+  ];
 
 export function ChatboxesTab({
   projectId,
@@ -63,6 +76,7 @@ export function ChatboxesTab({
 }: ChatboxesTabProps) {
   const navigate = useAppNavigate();
   const [tab, setTab] = useState<ChatboxTab>("publish");
+  const [panelView, setPanelView] = useState<PublishPanelView>("preview");
   const [previewedHostId] = usePreviewedHostId(projectId);
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
@@ -295,18 +309,44 @@ export function ChatboxesTab({
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={30}>
-              <ChatboxHostCanvasPanel
-                hostId={chatbox.namedHostId}
-                projectId={chatbox.projectId}
-                isAuthenticated={effectiveAuth}
-              />
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 justify-end border-b border-border/40 px-3 py-1.5">
+                  <SegmentedControl
+                    size="sm"
+                    value={panelView}
+                    onChange={setPanelView}
+                    options={PUBLISH_PANEL_OPTIONS}
+                  />
+                </div>
+                <div className="relative min-h-0 flex-1">
+                  {/* Keep the preview iframe mounted (just hidden) while the
+                      graph is shown so toggling back doesn't restart the
+                      guest session. The graph remounts cheaply, and hidden
+                      ReactFlow canvases mis-measure anyway. */}
+                  <div
+                    className={cn(
+                      "absolute inset-0",
+                      panelView === "preview" ? "" : "hidden",
+                    )}
+                  >
+                    <ChatboxPreviewPane
+                      publishLink={publishLink}
+                      mcpProfile={host?.config.mcpProfile}
+                    />
+                  </div>
+                  {panelView === "graph" ? (
+                    <div className="absolute inset-0">
+                      <ChatboxHostCanvasPanel
+                        hostId={chatbox.namedHostId}
+                        projectId={chatbox.projectId}
+                        isAuthenticated={effectiveAuth}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        ) : tab === "preview" ? (
-          <ChatboxPreviewPane
-            publishLink={publishLink}
-            mcpProfile={host?.config.mcpProfile}
-          />
         ) : tab === "sessions" ? (
           <ChatboxUsagePanel chatbox={chatbox} section="sessions" />
         ) : (
