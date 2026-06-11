@@ -23,6 +23,7 @@ import type { CspMode } from "@/stores/ui-playground-store";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { resolveHostInfo } from "@/lib/client-config-v2";
 import { useAppToolsRegistry } from "./app-tools-registry";
 
@@ -146,6 +147,9 @@ export function McpAppsModal({
   // Same scope as the inline renderer — `ActiveMcpProfileProvider` wraps
   // both. Used to resolve `hostInfo` for the modal's AppBridge handshake.
   const activeMcpProfile = useActiveMcpProfile();
+  // Same scope as the inline renderer — chatbox runtime sessions route
+  // widget-content fetches through the hosted API on every platform.
+  const webManagedServers = useWebManagedServers();
   const modalColorScheme =
     hostContextRef.current?.theme === "light" ||
     hostContextRef.current?.theme === "dark"
@@ -177,6 +181,7 @@ export function McpAppsModal({
       try {
         const { html } = await fetchMcpAppsWidgetContent({
           serverId,
+          forceWebEndpoint: webManagedServers,
           resourceUri,
           toolInput: toolInputRef.current,
           toolOutput: toolOutputRef.current,
@@ -206,6 +211,7 @@ export function McpAppsModal({
     toolName,
     cspMode,
     injectOpenAiCompat,
+    webManagedServers,
     toolInputRef,
     toolOutputRef,
     themeModeRef,

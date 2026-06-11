@@ -43,6 +43,7 @@ import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-clie
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
+import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
@@ -942,6 +943,12 @@ export function ChatboxChatPage({
               hostStyle={hostStyle}
             >
               <ChatboxSurfaceProvider value={true}>
+                {/* Redeemed sessions: servers are Convex-resolved, so MCP
+                    Apps widget fetches and bridge resource/prompt calls
+                    must take the hosted API branch on every platform.
+                    Playground previews keep platform routing (local
+                    builds reuse the builder's local connections). */}
+                <WebManagedServersProvider value={!playgroundParams}>
                 <div
                   className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
                   data-host-style={hostStyle}
@@ -983,6 +990,7 @@ export function ChatboxChatPage({
 
                   {renderContent()}
                 </div>
+                </WebManagedServersProvider>
               </ChatboxSurfaceProvider>
             </ActiveHostCapsResolverScope>
           </ActiveMcpProfileProvider>

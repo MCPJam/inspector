@@ -17,8 +17,12 @@ export interface BatchPromptsResponse {
   errors?: Record<string, string>;
 }
 
-export async function listPrompts(serverId: string): Promise<MCPPrompt[]> {
+export async function listPrompts(
+  serverId: string,
+  opts?: { forceHosted?: boolean },
+): Promise<MCPPrompt[]> {
   return runByMode({
+    forceHosted: opts?.forceHosted,
     hosted: async () => {
       const body = await listHostedPrompts({ serverNameOrId: serverId });
       return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];

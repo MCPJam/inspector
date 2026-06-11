@@ -160,8 +160,10 @@ export function injectHostedServerMapping(
 }
 
 export function getHostedProjectId(): string {
-  assertHostedMode();
-
+  // Context-gated, not mode-gated: local builds populate the same API
+  // context (unified bootstrap, chatbox runtime), and the null check below
+  // is the real guard. Callers that are genuinely hosted-only stay behind
+  // their own HOSTED_MODE forks.
   const projectId = apiContext.projectId;
   if (!projectId) {
     throw new BootstrapNotReadyError(
@@ -216,8 +218,7 @@ const HOSTED_SERVER_NOT_FOUND_OPAQUE_MESSAGE =
   "Hosted server not found. The server is not in your hosted project, or the server list is still loading.";
 
 export function resolveHostedServerId(serverNameOrId: string): string {
-  assertHostedMode();
-
+  // Context-gated, not mode-gated — see getHostedProjectId.
   const mapped = apiContext.serverIdsByName[serverNameOrId];
   if (mapped) return mapped;
 
