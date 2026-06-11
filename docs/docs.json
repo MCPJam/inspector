@@ -54,6 +54,7 @@
               "inspector/home",
               "inspector/clients",
               "inspector/projects",
+              "inspector/computer",
               "inspector/protocol-versions"
             ]
           },
