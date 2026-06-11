@@ -526,7 +526,7 @@ describe("HTTP Adapters Security", () => {
     it("appends ?k= from the incoming GET to the advertised messages URL", async () => {
       const res = await app.request(
         "/api/mcp/adapter-http/test-server?k=tunnelsecret123",
-        { method: "GET" },
+        { method: "GET" }
       );
       expect(res.status).toBe(200);
 
@@ -621,6 +621,46 @@ describe("HTTP Adapters Security", () => {
       expect(buf).toContain("event: message");
       expect(buf).toContain("notifications/resources/list_changed");
       expect(buf).toContain('"jsonrpc":"2.0"');
+    });
+
+    it("re-registers stable relay handlers on every SSE open (survives removeServer)", async () => {
+      // removeServer() clears the manager's stored notification handlers;
+      // a re-added server with the same id must get its relay hooks back
+      // when the next tunneled stream opens. The handler instances must be
+      // stable so re-registration dedupes in the manager's handler Set.
+      const serverId = `rehook-server-${Date.now()}`;
+      const registrations: Array<{ method: string; handler: unknown }> = [];
+      manager.addNotificationHandler.mockImplementation(
+        (sid: string, method: string, handler: unknown) => {
+          if (sid === serverId) {
+            registrations.push({ method, handler });
+          }
+        }
+      );
+
+      const first = await app.request(`/api/mcp/adapter-http/${serverId}`, {
+        method: "GET",
+      });
+      expect(first.status).toBe(200);
+      const firstCount = registrations.length;
+      expect(firstCount).toBeGreaterThan(0);
+      await first.body!.cancel();
+
+      // Simulates the state after removeServer + re-add: the manager lost
+      // its handlers, and a new SSE open must register them again.
+      const second = await app.request(`/api/mcp/adapter-http/${serverId}`, {
+        method: "GET",
+      });
+      expect(second.status).toBe(200);
+      await second.body!.cancel();
+
+      expect(registrations.length).toBe(firstCount * 2);
+      const firstByMethod = new Map(
+        registrations.slice(0, firstCount).map((r) => [r.method, r.handler])
+      );
+      for (const { method, handler } of registrations.slice(firstCount)) {
+        expect(handler).toBe(firstByMethod.get(method));
+      }
     });
   });
 

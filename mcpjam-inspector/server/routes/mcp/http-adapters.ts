@@ -41,7 +41,12 @@ const RELAYED_NOTIFICATION_METHODS = [
 ] as const;
 
 const notificationRelays = new Map<string, Set<(payload: string) => void>>();
-const relayHookedServers = new Set<string>();
+// Stable dispatcher instances per server+method. Registration must be
+// re-runnable: removeServer() clears the manager's stored handlers, so a
+// re-added server with the same id needs its relay hooks re-applied. The
+// manager keeps handlers in a Set, so re-adding the SAME function instance
+// is an idempotent no-op while the server stays registered.
+const relayDispatchers = new Map<string, Map<string, (n: any) => void>>();
 
 function pushFrameToClient(
   serverId: string,
@@ -60,23 +65,26 @@ function pushFrameToClient(
 }
 
 function ensureNotificationRelay(clientManager: any, serverId: string): void {
-  if (relayHookedServers.has(serverId)) {
-    return;
+  let dispatchers = relayDispatchers.get(serverId);
+  if (!dispatchers) {
+    dispatchers = new Map();
+    for (const method of RELAYED_NOTIFICATION_METHODS) {
+      dispatchers.set(method, (notification: any) => {
+        pushFrameToClient(serverId, {
+          jsonrpc: "2.0",
+          method: notification?.method ?? method,
+          params: notification?.params,
+        });
+      });
+    }
+    relayDispatchers.set(serverId, dispatchers);
   }
-  relayHookedServers.add(serverId);
-  for (const method of RELAYED_NOTIFICATION_METHODS) {
+  // Register on every SSE open (not once per process): restores the hooks
+  // after removeServer() wiped them, dedupes via the manager's handler Set
+  // otherwise.
+  for (const [method, handler] of dispatchers) {
     try {
-      clientManager.addNotificationHandler(
-        serverId,
-        method as any,
-        (notification: any) => {
-          pushFrameToClient(serverId, {
-            jsonrpc: "2.0",
-            method: notification?.method ?? method,
-            params: notification?.params,
-          });
-        }
-      );
+      clientManager.addNotificationHandler(serverId, method as any, handler);
     } catch {
       // Server may not support handler registration yet; the manager
       // re-applies stored handlers when the client (re)connects.
@@ -207,7 +215,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       const incomingSecret = incomingUrl.searchParams.get("k");
       if (incomingSecret && !/[?&]k=/.test(endpointBase)) {
         const sep = endpointBase.includes("?") ? "&" : "?";
-        endpointBase = `${endpointBase}${sep}k=${encodeURIComponent(incomingSecret)}`;
+        endpointBase = `${endpointBase}${sep}k=${encodeURIComponent(
+          incomingSecret
+        )}`;
       }
       const sessionId = crypto.randomUUID();
       const relayServerId = normalizeServerId(c.mcpClientManager, serverId);
